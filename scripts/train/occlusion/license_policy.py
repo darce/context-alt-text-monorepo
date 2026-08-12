@@ -64,34 +64,48 @@ never on the joined full token. Testing the joined form first let bare
 ``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
 disagreeing with component-level exception/deny outcomes.
 
-**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7 / F8 / F9): every
-slash component is scanned by one iterative **deny-first** suffix walker
-(FIR-7-A10-02 / B11-01 / B12-1):
+**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7 / F8 / F9 / F10):
+every slash component is scanned by one iterative **deny-first** suffix
+walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
 
   1. For each separator-aligned suffix S of the current token (longest
      first):
      * **Elevated deny (a)/(b)/(c) first** — :func:`_deny_folded_ab_hit`
-       evaluates (a), (b), **and** (c) independently (FIR-7-B12-1; the
-       F8 ``elif`` chain left (c) dead whenever the (b) flag was on).
-       Elevated deny-(c) is the **primary closer** for compact deny
-       debris whose rem after the deny seed fits ``[a-z0-9]{1,3}``
-       (``yoloseg`` / ``yolosg`` / ``yolosx`` / ``yolosv8``). DENY
-       immediately **unless** S forms a **legitimate exception-family
-       spelling boundary**:
-         - exact exception identity (a) — bare ``yolos`` / ``yolop``;
-         - separator (b) whose residual does **not** reconstitute a deny
-           claim when re-glued with the exception seed (FIR-7-B12-2:
-           ``yolos_tiny`` admits; ``yolos_eg`` / ``yolof_ree`` deny);
-         - compact (c) with a **per-family real tag** residual
-           (FIR-7-B12-3: ``yoloxs`` / ``yolopv2`` / ``ppyoloe``; NOT
-           global digit-wildcard / size-letter set — ``yolosv8`` /
-           ``yolosx`` / ``yoloxs2`` deny).
-       Folded (a)/(b) claims always win (``yolo_x`` / ``yolo_seg``).
-     * **Steal backstop** (``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED``) —
-       narrower than elevated deny-(c): fires only when elevated miss
-       (rem after underlying deny seed > 3), covering ``yolofree`` /
-       ``yolopose`` and separator reconstitutions of those forms. Not a
-       second closer for rem ≤ 3 (single-mechanism red-proof).
+       evaluates (a), (b), and (c) independently (FIR-7-B12-1). Elevated
+       deny-(c) closes pure compact deny debris whose rem after the deny
+       seed fits ``[a-z0-9]{1,3}`` (``yolov9t`` / ``fastsamx``) **and**
+       long-seed compact prefix glue (FIR-7-B13-5: ``ultralyticsplus`` —
+       denylist stem length ≥
+       ``_DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN`` with non-empty alnum
+       rem). DENY immediately **unless** an exception-family seed
+       **claims** S (exact / separator / compact / head-segment / unbounded
+       compact prefix). Folded (a)/(b) claims always win (``yolo_x`` /
+       ``yolo_seg``) even when an exception compact spelling collides.
+     * **Exception residual classification** (single mechanism, FIR-7 F10
+       — flag ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED``) replaces the
+       F9 length-heuristic band split (elevated rem ≤ 3 vs steal rem > 3)
+       and the accidental ``len(segment) ≤ 3`` reconstitution gate. After
+       an exception seed is stripped, every residual (compact rem or
+       separator segment chain) is classified without using length as a
+       discriminator:
+         (a) **legitimate** — every residual segment is a per-family
+             size/version tag **or** an export/format shield tag from
+             ``_NC_TRAILING_SHIELD_TAGS`` (``trt`` / ``pt`` / ``bin`` /
+             ``onnx`` / …) → admit carve-out / continue strip;
+         (b) **deny-reconstituting** — progressive re-glue of residual
+             segments onto the exception seed head matches a deny claim
+             that is not a legitimate exception spelling → DENY with
+             that claim's honest entry (``yolos_eg`` → ``yoloseg``);
+         (c) **unknown residual** — fail-closed DENY with an honest
+             unknown-residual note (NOT a fabricated Ultralytics
+             attribution). Covers long debris (``yolosegme`` /
+             ``yolosfree`` / ``yolos_segment``), tag+debris laundering
+             (``yolos_tiny_eg`` / ``yolox_s_free``), and any residual
+             that is neither a real tag nor a matched deny claim.
+       Residual-alone deny seeds (``yolox_ultralytics`` → residual
+       ``ultralytics``) **defer** to residual re-scan so attribution
+       stays honest. Export short tags (``yolox_trt`` / ``yolox_pt``)
+       admit as (a).
      * Else exception-family hit → strip seed; pure-exception (empty
        residual) only continues to later suffixes — it never early-returns
        admit past un-scanned deny content (fixes
@@ -104,33 +118,34 @@ slash component is scanned by one iterative **deny-first** suffix walker
      ``yolox_yolop`` ADMIT after successive pure-exception strips
      (FIR-7-B7-06).
 
-**Per-family compact tags** (FIR-7-B12-3 / B12-4): each exception seed
-has its own legitimate compact-(c) tag set reflecting real checkpoints
-— ``yolox``: s/m/l/x; ``yolos``: ∅ (tiny/small/base/large are separator-
-only, len ≥ 4); ``yolof``: r50; ``yolop``: v2/v3; ``ppyolo``: e/v2.
-YOLOS single-letter size twins (``yolosx`` / ``yolosn`` / …) are NOT
-real hustvl sizes → deny; ``yoloxs`` stays admitted (x-family real ``s``).
+**Per-family tags** (FIR-7-B12-3 / B12-4 / F10): each exception seed has
+compact-(c) tags (fit the 1–3 alnum bound) **and** separator-boundary
+tags (any length) reflecting real checkpoints — ``yolox``: s/m/l/x +
+nano/tiny/darknet; ``yolos``: tiny/small/base/large (no compact single-
+letter sizes); ``yolof``: r50/r101 + c5; ``yolop``: v2/v3; ``ppyolo``:
+e/v2. YOLOS single-letter size twins (``yolosx`` / ``yolosn`` / …) are
+NOT real hustvl sizes → deny; ``yoloxs`` stays admitted. Export/format
+tags from ``_NC_TRAILING_SHIELD_TAGS`` are legitimate residuals for
+**all** families regardless of tag length (``yolox_trt`` admits;
+``yolox_s_trt`` admits).
 
 Vendor-prefix underscore forms of pure exception seeds
 (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
 ``megvii_model_yolof``) ADMIT: the trailing exception suffix is pure-
-exception (exact exception identity — legitimate boundary carve-out for
-deny (c)). Path-split / size-tag shields
-(``yolox/s_ultralytics``, ``s_ultralytics``, ``yolox_xultralytics``)
-still DENY via the outer suffix walk + (e). Bare exception seeds and
-their size/version forms (``yoloxs``, ``yolopv2``, ``yolos_tiny``,
-``ppyoloe``) still ADMIT.
+exception (exact exception identity — elevated-(c) carve-out). Path-
+split / size-tag shields (``yolox/s_ultralytics``, ``s_ultralytics``,
+``yolox_xultralytics``) still DENY via the outer suffix walk + (e). Bare
+exception seeds and their size/version forms (``yoloxs``, ``yolopv2``,
+``yolos_tiny``, ``ppyoloe``) still ADMIT.
 
-**AGPL-adjacent compound segments** (FIR-7-B12-6): multi-axis door
-promotion requires an AGPL seed hit at a legitimate family boundary.
-Glue-extended names that are not themselves deny seeds
-(``ultralyticsplus``) do not trip the AGPL axis; NC membership on a
-sibling slash component (``ultralyticsplus/buffalo_l`` → ``buffalo_l``)
-still rejects fail-closed as ``nc_model_derived``. Exact AGPL seeds and
-separator/compact family forms (``ultralytics`` / ``ultralytics_foo`` /
-``xultralytics``) keep the AGPL axis. Rationale: reason-axis honesty —
-fail-closed already holds via NC; inventing an AGPL note for a
-non-seed spelling would mis-attribute lineage.
+**AGPL compact-prefix glue** (FIR-7-B13-5): denylist stems of compact
+length ≥ ``_DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN`` with a non-empty
+alnum remainder deny via elevated folded-compact machinery
+(``ultralyticsplus`` / ``ultralytics_plus`` / ``ultralytics-plus``).
+Short deny seeds (``yolo``, len 4) keep the 1–3 rem bound so
+``yolodummy`` still admits. Multi-axis compounds with a real AGPL glue
+hit report ``denylisted_package`` first; bare ``buffalo_l`` stays
+``nc_model_derived``.
 
 **Iterative fail-closed bounds** (FIR-7-B8-02 / B8-05 / B9-04): the walker
 is an iterative loop, not recursion. Each successful strip must strictly
@@ -2824,26 +2839,27 @@ def _reject_non_string(
 
 # Branch enable flags (always True in production). Tests red-prove each branch
 # by monkeypatching EXACTLY ONE flag to False (TEST-15): disable (b) → compound
-# witnesses admit; disable (c) → yolov9t admits **and** elevated deny-(c)
-# compact pins (yoloseg / yolosg) admit (FIR-7-B12-1); disable head-segment →
-# yolov9t-seg admits; disable outer residual-suffix scan → path-split /
-# size-tag shields admit; disable (e) → compact glue (xultralytics /
-# yoloxultralytics) admits; disable residual re-scan → yolox_ultralytics
-# admits (exception short-circuit); disable multi-strip continuation →
-# yolox_yolop_ultralytics admits; disable fail-closed scan bounds →
-# non-shrinking strip admits (synthetic invariant probe; FIR-7-B9-04);
-# disable NC structural match → yolo_nas_l_free / yolo_nas_l_blah admit on
-# weights doors (sole-path: pure-alpha short tags that are NOT export-
-# shaped, so floor whole-component promotion misses — FIR-7-B11-04;
-# known export tags like yolo_nas_l_trt still reject via floor);
-# disable NC package component-suffix walk → myprefix_antelopev2 admits
-# on weights doors (FIR-7-B9-02 follow-up); disable illegitimate-steal
-# backstop → yolofree / yolopose admit (rem after bare deny seed exceeds
-# the 1–3 compact bound so elevated deny-(c) cannot reach — FIR-7-B12-1);
-# disable elevated deny-(c) arm alone → yoloseg / yolosg admit while
-# steal still closes yolofree (FIR-7-B12-1 single-mechanism).
+# witnesses admit; disable (c) → yolov9t admits; disable elevated deny-(c)
+# arm alone → pure elevated pins (yolov9t / fastsamx) admit while exception-
+# residual classify still closes yoloseg / yolofree (FIR-7 F10 single-
+# mechanism split); disable head-segment → yolov9t-seg admits; disable outer
+# residual-suffix scan → path-split / size-tag shields admit; disable (e) →
+# compact glue (xultralytics / yoloxultralytics) admits; disable residual
+# re-scan → yolox_ultralytics admits (exception short-circuit); disable
+# multi-strip continuation → yolox_yolop_ultralytics admits; disable fail-
+# closed scan bounds → non-shrinking strip admits (synthetic invariant
+# probe; FIR-7-B9-04); disable NC structural match → yolo_nas_l_free /
+# yolo_nas_l_blah admit on weights doors (sole-path: pure-alpha short tags
+# that are NOT export-shaped, so floor whole-component promotion misses —
+# FIR-7-B11-04; known export tags like yolo_nas_l_trt still reject via
+# floor); disable NC package component-suffix walk → myprefix_antelopev2
+# admits on weights doors (FIR-7-B9-02 follow-up); disable exception
+# residual classification (``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED``) →
+# yoloseg / yolofree / yolos_eg / yolosfree / yolox_s_free admit (F10
+# single mechanism for exception+debris); disable long-seed compact-prefix
+# glue → ultralyticsplus admits (FIR-7-B13-5).
 # Every surviving flag must change ≥ 1 pinned outcome when flipped alone
-# (no-op flags are TEST-15 violations). Flag inventory (F9): the twelve
+# (no-op flags are TEST-15 violations). Flag inventory (F10): the thirteen
 # booleans below; ``_FAMILY_GENERALIZED_SUFFIX_ENABLED`` is deleted.
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
@@ -2860,22 +2876,39 @@ _NC_STRUCTURAL_MATCH_ENABLED: bool = True  # sole-path: yolo_nas_l_free (B11-04)
 # whole slash-component is tested (export-shaped ``insightface_trt`` still
 # rejects; prefix forms admit — red-proof cell).
 _NC_PACKAGE_COMPONENT_SUFFIX_ENABLED: bool = True
-# FIR-7-B12-1: steal backstop for exception+debris where elevated deny-(c)
-# cannot reach (rem after underlying deny seed > 3). Not a second closer
-# for rem ≤ 3 — those are owned by elevated deny-(c) alone.
+# FIR-7 F10: single-mechanism residual classification for exception-family
+# seeds with non-empty residual (compact or separator). Covers short debris
+# (yoloseg / yolos_eg), long debris (yolofree / yolosegme / yolosfree),
+# tag+debris laundering (yolos_tiny_eg / yolox_s_free), and unknown
+# residual fail-closed. Length is never the discriminator. Flag name kept
+# for TEST-15 continuity with the F9 steal gate it supersedes.
 _EXCEPTION_ILLEGITIMATE_STEAL_ENABLED: bool = True
-# FIR-7-B12-1: gates only the elevated deny-(c) arm inside
+# FIR-7-B12-1 / F10: gates only the elevated deny-(c) arm (1–3 rem) inside
 # ``_deny_folded_ab_hit``. Distinct from ``_FAMILY_COMPACT_REMAINDER_ENABLED``
-# (which also gates exception/deny family (c) matching) so the elevated
-# closer is single-mechanism red-provable without disabling exception (c)
-# that the steal path needs for long-rem witnesses (``yolofree``).
+# so elevated pure-deny pins (yolov9t) are single-mechanism red-provable
+# without killing exception (c) matching that residual classify needs.
+# Exception-prefix debris (yoloseg) is owned by residual classify, not
+# this flag — elevated alone does not close those forms (F10).
 _ELEVATED_DENY_COMPACT_ENABLED: bool = True
+# FIR-7-B13-5: long denylist-stem compact-prefix glue (ultralyticsplus).
+_DENY_COMPACT_PREFIX_GLUE_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
 # Compact segment-suffix (e): seed must be at least this many compact chars so
 # short seeds like ``yolo`` (4) cannot false-deny ``myyolo``.
 _COMPACT_SUFFIX_MIN_SEED_LEN: int = 5
+# Long-seed compact-prefix glue (FIR-7-B13-5): denylist stems at least this
+# many compact chars deny any non-empty alnum remainder (ultralytics+plus).
+# Short seeds (yolo, len 4) stay on the 1–3 bound so yolodummy admits.
+# ultralytics=11; keep above buffalo_l/buffalos (8) so separator (b) alone
+# still owns buffalo_l_extra (TEST-15 for _FAMILY_BOUNDARY_PREFIX_ENABLED).
+_DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN: int = 11
+_DENY_COMPACT_PREFIX_GLUE_REMAINDER = re.compile(r"^[a-z0-9]+$")
+# Progressive residual re-glue bound (FIR-7 F10). Module-level so TEST-15 can
+# pin it; length of *segments* is not a debris classifier — this only caps
+# how many residual segments participate in deny-reconstitution re-glue.
+_MAX_RECONST_SEGMENTS: int = 8
 
 
 def _folded_family_seed_keys(mapping: Mapping[str, Any]) -> set[str]:
@@ -2931,8 +2964,16 @@ def _family_match_abc(
     token: str,
     seed_canonical: str,
     seed_compact: str,
+    *,
+    allow_rule_c: bool = True,
 ) -> bool:
-    """True if folded ``token`` hits seed under head-aligned rules (a)(b)(c)."""
+    """True if folded ``token`` hits seed under head-aligned rules (a)(b)(c).
+
+    ``allow_rule_c=False`` skips compact remainder (c) — used by deny-path
+    whole-token matching so elevated deny-(c) is the sole whole-token (c)
+    closer (FIR-7 F10 TEST-15). Head-segment (d) keeps ``allow_rule_c=True``
+    so ``yolov9t-seg`` still matches on the head.
+    """
     if not token or not seed_canonical:
         return False
     token_compact = _compact_canonical(token)
@@ -2950,7 +2991,11 @@ def _family_match_abc(
             return True
 
     # (c) bounded compact remainder: compact starts with seed, rem ∈ [a-z0-9]{1,3}.
-    if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_compact:
+    if (
+        allow_rule_c
+        and _FAMILY_COMPACT_REMAINDER_ENABLED
+        and seed_compact
+    ):
         if token_compact.startswith(seed_compact):
             rem = token_compact[len(seed_compact) :]
             if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
@@ -3016,21 +3061,32 @@ def _family_match_seed(
     *,
     for_deny: bool = False,
     allow_rule_e: bool = True,
+    allow_rule_c: bool = True,
 ) -> bool:
     """True if folded ``token`` hits one family seed.
 
     Exception path (``for_deny=False``): rules (a)(b)(c) + head-segment (d).
-    Deny path (``for_deny=True``): whole-token (a)(b)(c)/(d) plus (e)
+    Deny path (``for_deny=True``): whole-token (a)(b)/(c)/(d) plus (e)
     compact segment-suffix when ``allow_rule_e`` is True. Separator-aligned
     suffix coverage is the **outer** walk in :func:`_uniform_component_scan`
     (FIR-7-A9-01) — there is no inner (d') walk. NC doors pass
     ``allow_rule_e=False`` so BR-28 controls like ``not-insightface`` stay
     clean on membership-only paths (FIR-7-B8-06).
+
+    ``allow_rule_c=False`` skips whole-token compact (c) so the uniform
+    scanner's trailing deny family hit does not double-cover elevated
+    deny-(c) (FIR-7 F10 TEST-15 sole-path). Head-segment (d) still uses
+    (c) on the head. NC door promotion keeps ``allow_rule_c=True``.
     """
     if not token or not seed_canonical:
         return False
 
-    if _family_match_abc(token, seed_canonical, seed_compact):
+    if _family_match_abc(
+        token,
+        seed_canonical,
+        seed_compact,
+        allow_rule_c=allow_rule_c,
+    ):
         return True
     if _family_match_head_segment(token, seed_canonical, seed_compact):
         return True
@@ -3093,6 +3149,7 @@ def _best_family_seed_match(
     *,
     for_deny: bool = False,
     allow_rule_e: bool = True,
+    allow_rule_c: bool = True,
 ) -> tuple[str, str, Any] | None:
     """Longest-matching family seed triple ``(seed_c, seed_k, entry)``, or None.
 
@@ -3111,6 +3168,7 @@ def _best_family_seed_match(
             seed_k,
             for_deny=for_deny,
             allow_rule_e=allow_rule_e,
+            allow_rule_c=allow_rule_c,
         ):
             continue
         spec = _family_match_specificity(token, seed_c, seed_k)
@@ -3127,10 +3185,15 @@ def _best_family_hit(
     *,
     for_deny: bool = False,
     allow_rule_e: bool = True,
+    allow_rule_c: bool = True,
 ) -> Any | None:
     """Longest-matching family seed entry for ``token``, or None."""
     matched = _best_family_seed_match(
-        token, mapping, for_deny=for_deny, allow_rule_e=allow_rule_e
+        token,
+        mapping,
+        for_deny=for_deny,
+        allow_rule_e=allow_rule_e,
+        allow_rule_c=allow_rule_c,
     )
     if matched is None:
         return None
@@ -3221,21 +3284,40 @@ def _scan_invariant_deny(detail: str) -> PackageDenylistEntry:
 # Only tags that fit the 1–3 alnum compact remainder bound and match REAL
 # checkpoints for that exception family. Digit-bearing remainders are NOT
 # globally legitimate — ``v8`` / ``s2`` / ``8`` launder through exception
-# seeds unless listed here. Longer real tags (``tiny`` / ``nano`` / ``r101``)
-# use separator-boundary (b), not compact (c).
+# seeds unless listed here. Longer real tags live in
+# ``_EXCEPTION_FAMILY_SEPARATOR_TAGS`` (separator-boundary (b)).
 _EXCEPTION_FAMILY_COMPACT_TAGS: dict[str, frozenset[str]] = {
-    # YOLOX (Megvii): s/m/l/x; nano/tiny arrive via (b) (len > 3).
+    # YOLOX (Megvii): s/m/l/x; nano/tiny arrive via separator tags.
     "yolox": frozenset({"s", "m", "l", "x"}),
-    # YOLOS (hustvl): tiny/small/base/large are all len ≥ 4 → separator (b)
-    # only. No legitimate compact-(c) single-letter sizes (FIR-7-B12-4).
+    # YOLOS (hustvl): tiny/small/base/large are separator-only.
+    # No legitimate compact-(c) single-letter sizes (FIR-7-B12-4).
     "yolos": frozenset(),
-    # YOLOF: r50 fits compact (c); r101 uses separator (b).
+    # YOLOF: r50 fits compact (c); r101 uses separator tags.
     "yolof": frozenset({"r50"}),
     # YOLOP (hustvl): v2 / v3.
     "yolop": frozenset({"v2", "v3"}),
     # PP-YOLO (Baidu): e (PP-YOLOe) / v2 (PP-YOLOv2).
     "ppyolo": frozenset({"e", "v2"}),
 }
+
+# Per-family separator-boundary size/version/backbone tags (FIR-7 F10).
+# Used by residual classification (a): length is irrelevant — membership is.
+# Compact tags are also accepted as separator segments (``yolox_s``).
+_EXCEPTION_FAMILY_SEPARATOR_TAGS: dict[str, frozenset[str]] = {
+    "yolox": frozenset({"s", "m", "l", "x", "nano", "tiny", "darknet"}),
+    # hustvl YOLOS size tags + real task suffix (yolos-tiny-seg pin).
+    # ``seg`` is yolos-only — ``yolox_s_seg`` must still deny (F10 A13-2).
+    "yolos": frozenset({"tiny", "small", "base", "large", "seg"}),
+    "yolof": frozenset({"r50", "r101", "c5"}),
+    "yolop": frozenset({"v2", "v3"}),
+    "ppyolo": frozenset({"e", "v2"}),
+}
+
+# Residual classification outcomes (FIR-7 F10).
+_RESIDUAL_LEGITIMATE = "legitimate"
+_RESIDUAL_DEFER = "defer"
+_RESIDUAL_DENY_RECONST = "deny_reconstituting"
+_RESIDUAL_UNKNOWN = "unknown"
 
 
 def _is_legitimate_exception_compact_rem(rem: str, seed_c: str = "") -> bool:
@@ -3251,6 +3333,27 @@ def _is_legitimate_exception_compact_rem(rem: str, seed_c: str = "") -> bool:
         return False
     tags = _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed_c, frozenset())
     return rem in tags
+
+
+def _is_legitimate_residual_segment(segment: str, seed_c: str) -> bool:
+    """True when one residual segment is a family tag or export shield tag.
+
+    FIR-7 F10 classification (a): per-family compact/separator tags **or**
+    any member of ``_NC_TRAILING_SHIELD_TAGS`` (export/format inventory is
+    the single source of truth for ``trt`` / ``pt`` / ``bin`` / ``onnx`` /
+    …). Length is never consulted.
+    """
+    if not segment:
+        return False
+    if segment in _NC_TRAILING_SHIELD_TAGS:
+        return True
+    if not seed_c:
+        return False
+    if segment in _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed_c, frozenset()):
+        return True
+    if segment in _EXCEPTION_FAMILY_SEPARATOR_TAGS.get(seed_c, frozenset()):
+        return True
+    return False
 
 
 def _exception_match_shape(
@@ -3281,6 +3384,65 @@ def _exception_match_shape(
     return None
 
 
+def _is_exact_exception_seed(token: str, seed_c: str, seed_k: str) -> bool:
+    """True when token is exact folded/compact identity of exception seed."""
+    if not token or not seed_c:
+        return False
+    token_compact = _compact_canonical(token)
+    return (
+        token == seed_c
+        or token_compact == seed_k
+        or token == seed_k
+        or token_compact == seed_c
+    )
+
+
+def _exception_seed_match_for_residual(
+    token: str,
+) -> tuple[str, str, str] | None:
+    """Return ``(seed_c, seed_k, residual)`` for residual classification.
+
+    FIR-7 F10: includes unbounded compact-prefix matches so long debris
+    (``yolosegme`` / ``yolosfree``) is classifiable. Residual is empty for
+    exact seed identity. Longest exception compact seed wins.
+    """
+    if not token:
+        return None
+    token_compact = _compact_canonical(token)
+
+    matched = _best_family_seed_match(
+        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
+    )
+    if matched is not None:
+        seed_c, seed_k, _entry = matched
+        if _is_exact_exception_seed(token, seed_c, seed_k):
+            return seed_c, seed_k, ""
+        residual = _strip_exception_seed_residual(token, seed_c, seed_k)
+        if residual:
+            return seed_c, seed_k, residual
+        # Family match without a structural strip residual: fall through
+        # to unbounded compact prefix (long debris on a matched seed).
+
+    best: tuple[str, str, str] | None = None
+    best_len = -1
+    for seed_c, seed_k, _entry in _iter_family_seeds(
+        PACKAGE_EXCEPTION_ALLOWLIST
+    ):
+        if not seed_k or not token_compact.startswith(seed_k):
+            continue
+        if len(token_compact) <= len(seed_k):
+            continue
+        rem = token_compact[len(seed_k) :]
+        if not rem or not _DENY_COMPACT_PREFIX_GLUE_REMAINDER.fullmatch(rem):
+            continue
+        # Prefer longest exception seed (yolos over bare collisions).
+        rank = len(seed_k)
+        if rank > best_len:
+            best_len = rank
+            best = (seed_c, seed_k, rem)
+    return best
+
+
 def _is_legitimate_exception_compact_spelling(token: str) -> bool:
     """True when ``token`` is exact exception (a) or compact (c) + real tag."""
     matched = _best_family_seed_match(
@@ -3298,138 +3460,14 @@ def _is_legitimate_exception_compact_spelling(token: str) -> bool:
     return False
 
 
-def _compact_is_illegitimate_deny_extension(token: str) -> bool:
-    """True when compact ``token`` is exception+debris beyond elevated deny-(c).
-
-    Steal-class witness: ``yolofree`` / ``yolopose`` — exception seed matches
-    with a non-tag rem, and the rem after the *underlying* deny seed exceeds
-    the 1–3 compact bound so elevated deny-(c) cannot claim the token.
-    """
-    matched = _best_family_seed_match(
-        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
-    )
-    if matched is None:
-        return False
-    seed_c, seed_k, _entry = matched
-    if _deny_seed_underlying_exception(seed_k) is None:
-        return False
-    shape = _exception_match_shape(token, seed_c, seed_k)
-    if shape != "c":
-        return False
-    rem = _compact_canonical(token)[len(seed_k) :]
-    if not rem or _is_legitimate_exception_compact_rem(rem, seed_c):
-        return False
-    # Elevated band (rem ≤ 3 after underlying deny) is not steal-class.
-    if _underlying_deny_rem_in_elevated_band(token, seed_k):
-        return False
-    return True
-
-
-def _exception_residual_reconstitutes_deny(
-    seed_c: str,
-    seed_k: str,
-    residual: str,
-) -> bool:
-    """True when residual re-glued with exception seed is deny debris.
-
-    FIR-7-B12-2: after exception match at any boundary shape, re-check the
-    residual. Progressive compact re-glue of residual segments onto the
-    exception seed (``yolos`` + ``eg`` → ``yoloseg``) reconstitutes a deny
-    claim **at the same alignment** when elevated deny-(c) or the
-    steal-class extension fires and the glued form is not a legitimate
-    exception spelling. Separator twins of compact denies (``yolos_eg`` /
-    ``yolof_ree`` / ``yolop_ose``) fail closed; clean family residuals
-    (``yolos_tiny`` / ``yolox_darknet``) do not reconstitute.
-
-    Residual-alone deny seeds (``yolop_ultralytics`` → residual
-    ``ultralytics``) are **not** reconstitution — the walker strips the
-    exception and residual-rescans the deny at the residual's own
-    alignment. Treating residual-alone as reconstitution would steal the
-    wrong seed (``yolo`` via yolop) and short-circuit multi-strip.
-    """
-    if not residual or not seed_k:
-        return False
-
-    parts = [p for p in residual.split("_") if p]
-    if not parts:
-        return False
-    # Reconstitution only when the residual is entirely short debris
-    # (each segment ≤ 3 compact chars — the elevated-(c) bound). Longer
-    # residual segments (``ultralytics``, ``yolop``, …) sit at a *later*
-    # alignment that residual re-scan / multi-strip owns; treating a short
-    # intermediate size letter (``yolop_s_ultralytics`` → ``s``) as
-    # reconstitution would steal the wrong seed and break multi-strip
-    # red-proofs (FIR-7-B12-2 / B8-04).
-    debris_parts: list[str] = []
-    for part in parts:
-        part_k = _compact_canonical(part)
-        if not part_k or len(part_k) > 3:
-            return False
-        debris_parts.append(part_k)
-    # Bound progressive re-glue length (deep short-debris chains are not
-    # a measured laundering channel).
-    _MAX_RECONST_SEGMENTS = 4
-    acc_k = seed_k
-    for part_k in debris_parts[:_MAX_RECONST_SEGMENTS]:
-        acc_k = acc_k + part_k
-        if _deny_folded_ab_hit(acc_k) is not None:
-            if not _is_legitimate_exception_compact_spelling(acc_k):
-                return True
-        if _compact_is_illegitimate_deny_extension(acc_k):
-            return True
-    return False
-
-
-def _token_has_legitimate_exception_boundary(token: str) -> bool:
-    """True when token is a clean exception-family spelling (B11-01 / B12-2).
-
-    Elevated deny-(c) is suppressed only for genuine exception-family
-    spellings — not for separator twins that reconstitute a compact deny:
-
-      * exact exception identity (a) — bare ``yolos`` / ``yolof`` / ``yolop``
-      * separator-boundary (b) whose residual does **not** reconstitute a
-        deny claim when re-glued with the exception seed (``yolos_tiny`` /
-        ``yolox_s`` / ``yolof_r50`` / ``yolox_darknet`` admit;
-        ``yolos_eg`` / ``yolof_ree`` deny)
-      * compact (c) with a **per-family** real size/version residual
-        (``yoloxs`` / ``yolopv2`` / ``ppyoloe``; not ``yolosv8`` / ``yolosx``)
-
-    Compact (c) or head-segment (d) with arbitrary debris (``yoloseg``,
-    ``yolofree``, ``yoloseg_v8``) is NOT legitimate.
-    """
-    matched = _best_family_seed_match(
-        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
-    )
-    if matched is None:
-        return False
-    seed_c, seed_k, _entry = matched
-    shape = _exception_match_shape(token, seed_c, seed_k)
-    if shape == "a":
-        return True
-    if shape == "b":
-        residual = token[len(seed_c) + 1 :]
-        return not _exception_residual_reconstitutes_deny(
-            seed_c, seed_k, residual
-        )
-    if shape == "c":
-        rem = _compact_canonical(token)[len(seed_k) :]
-        return _is_legitimate_exception_compact_rem(rem, seed_c)
-    if shape == "d":
-        # Head alone must be a clean exception spelling; trailing residual
-        # is re-scanned by the walker after strip.
-        head = token.split("_", 1)[0]
-        return _token_has_legitimate_exception_boundary(head)
-    return False
-
-
 def _deny_seed_underlying_exception(
     exc_seed_k: str,
 ) -> PackageDenylistEntry | None:
     """If exception compact seed is a (c) extension of a deny seed, return it.
 
     ``yolos`` / ``yolof`` / ``yolop`` / ``yolox`` are each bare ``yolo`` + a
-    1-char compact remainder. Used to fail-closed illegitimate exception
-    compact steals (``yolofree``) where deny (c) rem exceeds the 1–3 bound.
+    1-char compact remainder. Used when residual classification attributes
+    deny-reconstituting debris to the underlying deny lineage.
     """
     if not exc_seed_k:
         return None
@@ -3446,6 +3484,217 @@ def _deny_seed_underlying_exception(
                 best_len = len(deny_k)
                 best = entry  # type: ignore[assignment]
     return best
+
+
+def _residual_structurally_defer(residual: str) -> bool:
+    """True when residual should be residual-rescanned (own-alignment deny).
+
+    Residual-alone deny seeds (``ultralytics``, ``yolov8``, ``xultralytics``)
+    must **defer** so multi-strip / honest attribution and flag red-proofs
+    for (d)/(e) stay load-bearing (``yolox_ultralytics`` /
+    ``yolox_xultralytics``).
+
+    Checks live deny hits **and** structural rule-(e) shape (segment ends
+    with a deny seed of ≥ ``_COMPACT_SUFFIX_MIN_SEED_LEN`` compact chars)
+    even when the (e) flag is off — deferral must not invent a yolo
+    reconstitution that would shadow the (e) red-proof path.
+    """
+    if not residual:
+        return False
+    parts = [p for p in residual.split("_") if p]
+    if not parts:
+        return False
+    for i in range(len(parts)):
+        suffix = "_".join(parts[i:])
+        if _deny_folded_ab_hit(suffix) is not None:
+            return True
+        if _best_family_hit(suffix, PACKAGE_DENYLIST, for_deny=True) is not None:
+            return True
+    # Structural (e)-shape defer (flag-independent).
+    for part in parts:
+        part_k = _compact_canonical(part)
+        if not part_k:
+            continue
+        for _sc, deny_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
+            if not deny_k or len(deny_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+                continue
+            if part_k == deny_k:
+                return True
+            if len(part_k) > len(deny_k) and part_k.endswith(deny_k):
+                return True
+    return False
+
+
+def _unknown_exception_residual_entry(
+    seed_c: str, residual: str
+) -> PackageDenylistEntry:
+    """Fail-closed deny for unknown exception residual (honest note, F10).
+
+    Does **not** name a deny lineage the residual did not match — no
+    fabricated Ultralytics AGPL attribution for unknown debris.
+    """
+    return PackageDenylistEntry(
+        package_id=f"{seed_c}_unknown_residual",
+        display_name=f"unknown residual after {seed_c}",
+        spdx_id="FAIL-CLOSED",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes=(
+            f"exception-family seed {seed_c!r} with unknown residual "
+            f"{residual!r}; fail-closed (no matching deny-lineage claim)"
+        ),
+    )
+
+
+def _residual_progressive_reconst_deny(
+    seed_c: str,
+    seed_k: str,
+    residual: str,
+) -> PackageDenylistEntry | None:
+    """Progressive re-glue residual segments onto seed; return deny entry.
+
+    No per-segment length gate (FIR-7 F10). Bounded only by module-level
+    ``_MAX_RECONST_SEGMENTS`` (red-proof pinned). Skips glued forms that
+    are legitimate exception spellings (``yolox`` + ``s`` → ``yoloxs``).
+
+    Two passes:
+
+      1. all residual segments (tag+debris chains like ``s_eg``);
+      2. non-tag segments only (after peeling legit tags/shields).
+
+    Deny-reconstituting requires either an elevated/glue deny hit on the
+    glued compact form, or — for non-tag-only glue — an underlying deny
+    lineage when the exception seed is itself a compact extension of a
+    deny seed (``yolos`` ⊃ ``yolo`` → ``yolosfree`` / ``yolos_eg``).
+    Residual-alone package identities (``xultralytics``) do **not**
+    reconstitute here; they defer via :func:`_residual_structurally_defer`.
+    """
+    if not residual or not seed_k:
+        return None
+    parts = [p for p in residual.split("_") if p]
+    if not parts:
+        return None
+    underlying = _deny_seed_underlying_exception(seed_k)
+
+    def _glue_parts(
+        segs: list[str], *, allow_underlying: bool
+    ) -> PackageDenylistEntry | None:
+        acc_k = seed_k
+        for part in segs[:_MAX_RECONST_SEGMENTS]:
+            part_k = _compact_canonical(part)
+            if not part_k:
+                continue
+            acc_k = acc_k + part_k
+            if _is_legitimate_exception_compact_spelling(acc_k):
+                continue
+            hit = _deny_folded_ab_hit(acc_k)
+            if hit is not None:
+                return hit
+            if (
+                allow_underlying
+                and underlying is not None
+                and acc_k.startswith(seed_k)
+            ):
+                rem = acc_k[len(seed_k) :]
+                # Only compact-shaped non-tag rem (or any rem after a
+                # non-tag-only glue pass) attributes to underlying.
+                if rem and not _is_legitimate_exception_compact_rem(
+                    rem, seed_c
+                ):
+                    return underlying
+        return None
+
+    # Pass 1: all segments — elevated hits only (no underlying). Lets
+    # ``yolox``+``s``+``eg`` reach ``yoloxseg`` for elevated/underlying
+    # via pass 2 non-tags while not treating ``xultralytics`` residual
+    # as underlying yolo.
+    hit = _glue_parts(parts, allow_underlying=False)
+    if hit is not None:
+        return hit
+
+    # Pass 2: non-tag segments only (tag+debris laundering).
+    non_tags = [
+        p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
+    ]
+    if not non_tags:
+        return None
+    return _glue_parts(non_tags, allow_underlying=True)
+
+
+def _classify_exception_residual(
+    seed_c: str,
+    seed_k: str,
+    residual: str,
+) -> tuple[str, PackageDenylistEntry | None]:
+    """Classify residual after exception seed strip (FIR-7 F10).
+
+    Returns ``(outcome, entry)`` where outcome is one of:
+
+      * ``legitimate`` — all segments are family tags or export shields;
+      * ``defer`` — residual has a deny hit at its own alignment (re-scan);
+      * ``deny_reconstituting`` — re-glue matches a deny claim (entry set);
+      * ``unknown`` — fail-closed with honest unknown-residual entry.
+
+    Length is never the discriminator.
+    """
+    if not residual:
+        return _RESIDUAL_LEGITIMATE, None
+
+    parts = [p for p in residual.split("_") if p]
+    if not parts:
+        return _RESIDUAL_LEGITIMATE, None
+
+    # (a) every residual segment is a legit family tag or export shield.
+    if all(_is_legitimate_residual_segment(p, seed_c) for p in parts):
+        return _RESIDUAL_LEGITIMATE, None
+
+    # Defer residual-alone deny seeds to residual re-scan (honest attribution).
+    if _residual_structurally_defer(residual):
+        return _RESIDUAL_DEFER, None
+
+    # (b) progressive re-glue reconstitutes a deny claim.
+    reconst = _residual_progressive_reconst_deny(seed_c, seed_k, residual)
+    if reconst is not None:
+        return _RESIDUAL_DENY_RECONST, reconst
+
+    # Non-tag segments that did not reconstitute → (c) unknown fail-closed.
+    non_tags = [
+        p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
+    ]
+    if non_tags:
+        return _RESIDUAL_UNKNOWN, _unknown_exception_residual_entry(
+            seed_c, residual
+        )
+
+    return _RESIDUAL_LEGITIMATE, None
+
+
+def _token_has_exception_seed_claim(token: str) -> bool:
+    """True when an exception seed claims ``token`` (any residual length).
+
+    Used as the elevated deny-(c) carve-out gate (FIR-7 F10): exception-
+    prefix debris is owned by residual classification, not elevated (c).
+    Folded deny (a)/(b) claims still win via ``_deny_has_folded_ab_claim``.
+    """
+    return _exception_seed_match_for_residual(token) is not None
+
+
+def _token_has_legitimate_exception_boundary(token: str) -> bool:
+    """True when token is a clean exception-family spelling (B11-01 / F10).
+
+    Load-bearing helper for residual-classify legitimacy and tests.
+    Residual classification (a) or empty residual → legitimate. Deny-
+    reconstituting / unknown residual → not legitimate. Defer (residual-
+    alone deny seed) counts as boundary so the walker can strip and
+    residual-rescan with honest attribution.
+    """
+    matched = _exception_seed_match_for_residual(token)
+    if matched is None:
+        return False
+    seed_c, seed_k, residual = matched
+    if not residual:
+        return True
+    outcome, _entry = _classify_exception_residual(seed_c, seed_k, residual)
+    return outcome in (_RESIDUAL_LEGITIMATE, _RESIDUAL_DEFER)
 
 
 def _deny_has_folded_ab_claim(token: str) -> bool:
@@ -3480,17 +3729,19 @@ def _deny_has_folded_ab_claim(token: str) -> bool:
 
 
 def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
-    """Longest deny seed claiming ``token`` via (a)/(b)/(c) (FIR-7-B12-1).
+    """Longest deny seed claiming ``token`` via (a)/(b)/(c)/glue (F10).
 
-    Elevated before exception absorption. **Architecture (F9):** elevated
-    deny-(c) is the primary closer for compact deny debris whose remainder
-    after the deny seed fits ``[a-z0-9]{1,3}`` (``yoloseg`` / ``yolosg`` /
-    ``yolosx``). The steal path is a narrower backstop only for debris
-    whose rem after the *underlying* deny seed exceeds that bound
-    (``yolofree`` / ``yolopose``). Callers apply the legitimate-exception-
-    boundary carve-out **only** for pure (c) hits (bare ``yolop`` /
-    ``yoloxs`` still admit); folded (a)/(b) claims always win
-    (``yolo_x`` / ``yolo_s``).
+    Elevated before exception absorption. **Architecture (F10):**
+
+      * Elevated deny-(c) closes pure compact deny debris whose rem after
+        the deny seed fits ``[a-z0-9]{1,3}`` (``yolov9t`` / ``fastsamx``).
+      * Long-seed compact-prefix glue (FIR-7-B13-5) closes denylist stems
+        of compact length ≥ ``_DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN`` with
+        any non-empty alnum rem (``ultralyticsplus``).
+      * Exception-prefix debris (``yoloseg`` / ``yolofree`` / ``yolos_eg``)
+        is owned by residual classification (``_exception_illegitimate_deny_steal``),
+        not by elevated (c) — callers carve out when an exception seed
+        claims the token.
 
     FIR-7-B12-1: (a), (b), and (c) are each evaluated independently —
     flag-gating only what the flag governs. The prior ``elif
@@ -3539,6 +3790,17 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
             rem = token_compact[len(seed_k) :]
             if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                 hit = True
+        # (c-glue) long-seed compact-prefix glue (FIR-7-B13-5).
+        if (
+            not hit
+            and _DENY_COMPACT_PREFIX_GLUE_ENABLED
+            and seed_k
+            and len(seed_k) >= _DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN
+            and token_compact.startswith(seed_k)
+        ):
+            rem = token_compact[len(seed_k) :]
+            if rem and _DENY_COMPACT_PREFIX_GLUE_REMAINDER.fullmatch(rem):
+                hit = True
         if not hit:
             continue
         spec = _family_match_specificity(token, seed_c, seed_k)
@@ -3552,110 +3814,43 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
 def _exception_illegitimate_deny_steal(
     token: str,
 ) -> PackageDenylistEntry | None:
-    """Deny entry when exception steals a deny-seed extension (B11-01 / B12-1).
+    """Deny entry for exception-family residual that fails F10 classification.
 
-    **Narrow backstop** (FIR-7-B12-1): elevated deny-(c) is the primary
-    closer for rem ≤ 3 after the underlying deny seed. Steal fires only
-    when elevated deny-(c) does **not** claim the token — i.e. when the
-    rem after the underlying deny seed exceeds the 1–3 bound
-    (``yolofree`` / ``yolopose``) or when a separator residual re-glues
-    into such a form (``yolof_ree``). Exception seeds that are themselves
-    compact (c) extensions of a deny seed (``yolos``/``yolof``/``yolop``/
-    ``yolox`` ⊃ ``yolo``) may only absorb via exact (a), separator (b)
-    without deny-reconstituting residual, or compact (c) with a
-    per-family real tag residual.
+    **Single mechanism** (FIR-7 F10) for all exception+debris forms —
+    short compact (``yoloseg``), long compact (``yolofree`` / ``yolosegme``
+    / ``yolosfree``), separator twins (``yolos_eg`` / ``yolof_ree``), and
+    tag+debris laundering (``yolos_tiny_eg`` / ``yolox_s_free``). Length
+    is never the discriminator.
+
+    Classification via :func:`_classify_exception_residual`:
+
+      * legitimate tag/shield residual → ``None`` (admit / strip);
+      * defer (residual-alone deny seed) → ``None`` (walker residual-rescans);
+      * deny-reconstituting → the matched deny entry (honest lineage);
+      * unknown residual → fail-closed entry with honest unknown-residual
+        note (never fabricates an Ultralytics attribution).
+
+    Gated by ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED`` (TEST-15 flag name
+    retained from the F9 steal gate this supersedes).
     """
     if not _EXCEPTION_ILLEGITIMATE_STEAL_ENABLED:
         return None
-    matched = _best_family_seed_match(
-        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
-    )
+    matched = _exception_seed_match_for_residual(token)
     if matched is None:
         return None
-    seed_c, seed_k, _entry = matched
-    underlying = _deny_seed_underlying_exception(seed_k)
-    if underlying is None:
+    seed_c, seed_k, residual = matched
+    if not residual:
         return None
-    shape = _exception_match_shape(token, seed_c, seed_k)
-    if shape == "a":
+    # Legitimate / defer residuals use the shared boundary helper so it
+    # stays load-bearing (TEST dead-helper guard) and matches carve-out.
+    if _token_has_legitimate_exception_boundary(token):
         return None
-    if shape == "b":
-        residual = token[len(seed_c) + 1 :]
-        if _exception_residual_reconstitutes_deny(seed_c, seed_k, residual):
-            return underlying
+    outcome, entry = _classify_exception_residual(seed_c, seed_k, residual)
+    if outcome in (_RESIDUAL_LEGITIMATE, _RESIDUAL_DEFER):
         return None
-    if shape == "c":
-        rem = _compact_canonical(token)[len(seed_k) :]
-        if _is_legitimate_exception_compact_rem(rem, seed_c):
-            return None
-        # Band split (FIR-7-B12-1): elevated deny-(c) owns tokens whose
-        # rem after the *underlying* deny seed fits 1–3 alnum. Steal
-        # owns only the long-rem band — never double-cover rem ≤ 3 even
-        # when the elevated flag is off (single-mechanism red-proof).
-        if _underlying_deny_rem_in_elevated_band(token, seed_k):
-            return None
-        return underlying
-    if shape == "d":
-        head = token.split("_", 1)[0]
-        head_k = _compact_canonical(head)
-        if seed_k and head_k.startswith(seed_k):
-            head_rem = head_k[len(seed_k) :]
-            if head_rem and not _is_legitimate_exception_compact_rem(
-                head_rem, seed_c
-            ):
-                # Head debris: if head alone is elevated-band, still fail
-                # closed as underlying when trailing tags push the full
-                # token out of elevated reach (``yoloseg_v8``).
-                if _underlying_deny_rem_in_elevated_band(token, seed_k):
-                    return None
-                return underlying
-            if not head_rem:
-                # head is exact exception; (d) strip is legitimate.
-                return None
-        # head matches exception via (a)/(c) on head alone.
-        head_shape = _exception_match_shape(head, seed_c, seed_k)
-        if head_shape == "a":
-            return None
-        if head_shape == "c":
-            rem = head_k[len(seed_k) :]
-            if _is_legitimate_exception_compact_rem(rem, seed_c):
-                return None
-            if _underlying_deny_rem_in_elevated_band(token, seed_k):
-                return None
-            return underlying
-        return underlying
-    return None
-
-
-def _underlying_deny_rem_in_elevated_band(
-    token: str, exc_seed_k: str
-) -> bool:
-    """True when rem after underlying deny seed fits elevated deny-(c) 1–3.
-
-    Used by the steal backstop to refuse the elevated-owned band so the
-    two closers never double-cover (FIR-7-B12-1 TEST-15). Selects the
-    same underlying deny compact that :func:`_deny_seed_underlying_exception`
-    would return.
-    """
-    if not token or not exc_seed_k:
-        return False
-    token_compact = _compact_canonical(token)
-    best_k = ""
-    best_len = -1
-    for _sc, deny_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
-        if not deny_k or len(deny_k) >= len(exc_seed_k):
-            continue
-        if not exc_seed_k.startswith(deny_k):
-            continue
-        seed_rem = exc_seed_k[len(deny_k) :]
-        if seed_rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(seed_rem):
-            if len(deny_k) > best_len:
-                best_len = len(deny_k)
-                best_k = deny_k
-    if not best_k or not token_compact.startswith(best_k):
-        return False
-    full_rem = token_compact[len(best_k) :]
-    return bool(full_rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(full_rem))
+    if entry is not None:
+        return entry
+    return _unknown_exception_residual_entry(seed_c, residual)
 
 
 def _uniform_component_scan(
@@ -3734,27 +3929,27 @@ def _uniform_component_scan(
             if not suffix:
                 continue
 
-            # FIR-7-A10-02 / B11-01: deny (a)/(b)/(c) BEFORE exception
-            # absorption. Folded (a)/(b) always win (yolo_x / yolo_seg).
-            # Pure compact (c) is suppressed only when the token forms a
-            # legitimate exception-family spelling boundary (yolop / yoloxs).
+            # FIR-7-A10-02 / B11-01 / F10: deny (a)/(b)/(c)/glue BEFORE
+            # exception absorption. Folded (a)/(b) always win (yolo_x /
+            # yolo_seg). Pure elevated (c)/glue is suppressed when an
+            # exception-family seed *claims* the suffix (any residual
+            # length) — residual classification owns exception+debris
+            # (yoloseg / yolofree / yolos_eg / yoloxs / yolos_tiny).
             abc_deny = _deny_folded_ab_hit(suffix)
             if abc_deny is not None:
                 ab_claim = _deny_has_folded_ab_claim(suffix)
-                if ab_claim or not _token_has_legitimate_exception_boundary(
-                    suffix
-                ):
+                if ab_claim or not _token_has_exception_seed_claim(suffix):
                     if reasons is None or abc_deny.reason in reasons:
                         return abc_deny
                     # Other-axis elevated deny under reasons filter: do not
                     # let exception strip consume the deny alignment either.
                     continue
-                # Pure (c) + legitimate exception boundary: fall through
-                # to exception absorption (bare yolop / yoloxs / yolos_tiny).
+                # Exception seed claims suffix: fall through to residual
+                # classification (bare yolop / yoloxs / yoloseg / yolofree).
 
-            # Illegitimate exception (c)/(d) steal of a deny-seed extension
-            # (yolofree / yolopose / yoloseg_v8) — fail closed even when
-            # deny (c) rem exceeds the 1–3 bound.
+            # FIR-7 F10: exception residual classification (single mechanism
+            # for exception+debris — short/long compact, separator twins,
+            # tag+debris laundering, unknown residual fail-closed).
             steal = _exception_illegitimate_deny_steal(suffix)
             if steal is not None:
                 if reasons is None or steal.reason in reasons:
@@ -3794,7 +3989,14 @@ def _uniform_component_scan(
                 queued = (new_residual, strip_depth + 1)
                 break
 
-            deny = _best_family_hit(suffix, PACKAGE_DENYLIST, for_deny=True)
+            # Trailing deny (d)/(e): skip whole-token (c) — elevated already
+            # owns pure compact (c) (FIR-7 F10 sole-path TEST-15).
+            deny = _best_family_hit(
+                suffix,
+                PACKAGE_DENYLIST,
+                for_deny=True,
+                allow_rule_c=False,
+            )
             if deny is not None and (
                 reasons is None or deny.reason in reasons
             ):
@@ -4052,9 +4254,9 @@ def _door_package_floor_promotion(
     and not an NC note on an AGPL residue). Never admit a dual-axis
     compound; never attribute one lineage's residue to the other's note.
 
-    AGPL-adjacent non-seed spellings (``ultralyticsplus`` — FIR-7-B12-6)
-    do not produce an AGPL floor hit; NC membership on a sibling component
-    still rejects. Exact / family-boundary AGPL seeds keep the AGPL axis.
+    Compact AGPL-adjacent glue on long denylist stems (``ultralyticsplus``
+    — FIR-7-B13-5) is an AGPL floor hit via elevated compact-prefix glue.
+    Bare NC seeds (``buffalo_l``) stay ``nc_model_derived``.
     """
     agpl_reasons = frozenset({RejectionReason.DENYLISTED_PACKAGE})
     agpl = _package_denylist_hit(value, reasons=agpl_reasons)

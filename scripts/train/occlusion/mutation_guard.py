@@ -97,7 +97,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1720  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1774  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -304,10 +304,10 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB1106InsightfaceNoteWording::test_buffalo_l_keeps_historical_buffalo_wording',
     'test_license_policy.py::TestB1106InsightfaceNoteWording::test_insightface_note_names_model_zoo_not_buffalo_pack',
     'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_deny_has_folded_ab_claim_load_bearing_for_yolo_x',
-    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_elevated_deny_c_hits_compact_debris_directly',
-    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_elevated_c_alone_turns_compact_pins_red',
-    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_steal_alone_turns_long_rem_pins_red',
-    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_steal_owns_long_rem_only',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_elevated_deny_c_hits_pure_deny_compact',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_elevated_c_alone_turns_pure_deny_pins_red',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_residual_classify_alone_turns_debris_pins_red',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_residual_classify_owns_exception_debris',
     'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[hustvl_yolos]',
     'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[hustvl_yolos_tiny]',
     'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[megvii_yolox_s]',
@@ -365,11 +365,15 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolost]',
     'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosx]',
     'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yoloxs_real_size_admits',
+    'test_license_policy.py::TestB125CarveOutTest15Debts::test_causal_free_in_shield_admits_exception_residual',
     'test_license_policy.py::TestB125CarveOutTest15Debts::test_free_and_blah_outside_nc_trailing_shield_tags',
     'test_license_policy.py::TestB125CarveOutTest15Debts::test_red_proof_elevated_c_flag_is_load_bearing',
-    'test_license_policy.py::TestB125CarveOutTest15Debts::test_red_proof_steal_flag_is_load_bearing',
+    'test_license_policy.py::TestB125CarveOutTest15Debts::test_red_proof_residual_classify_flag_is_load_bearing',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_bare_buffalo_l_stays_nc_model_derived',
     'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_exact_ultralytics_buffalo_still_agpl_precedence',
-    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_ultralyticsplus_buffalo_l_is_nc_not_agpl',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_red_proof_compact_prefix_glue_flag',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_ultralyticsplus_buffalo_l_agpl_precedence',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_ultralyticsplus_denies_agpl',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-bytes]',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-dict]',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-empty-list]',
@@ -1278,6 +1282,56 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestEntryPointParityAndCommonNcGate::test_br23_synthetic_parity_with_audit_synthetic_source',
     'test_license_policy.py::TestEntryPointParityAndCommonNcGate::test_br23_synthetic_requires_nonempty_source',
     'test_license_policy.py::TestEntryPointParityAndCommonNcGate::test_br26_occluder_rejects_nc_derived',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolof_bin]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolop_trt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolos_pt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_bin]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_fp16]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_int8]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_onnx]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_pt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_s_trt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_tensorrt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_admit_clean[yolox_trt]',
+    'test_license_policy.py::TestF10ExportTagAdmit::test_export_tags_are_shield_inventory_members',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolof_r50]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolof_r50_c5]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolopv2]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolos_tiny]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolox_nano]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_clean_family_tags_admit[yolox_s]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolof_r50_pose]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolop_v2_free]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolos_eg_tiny]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolos_tiny_eg]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolox_nano_seg]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolox_s_free]',
+    'test_license_policy.py::TestF10LegitTagGlueLaundering::test_tag_glue_denies[yolox_s_seg]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolos_egmentation]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolos_free]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolos_pose]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolos_segment]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolosegme]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolosegv8]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolosfree]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolospose]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies[yolossegment]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolos_egmentation]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolos_free]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolos_pose]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolos_segment]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolosegme]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolosegv8]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolosfree]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolospose]',
+    'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolossegment]',
+    'test_license_policy.py::TestF10MaxReconstSegmentsPin::test_max_reconst_segments_is_module_level',
+    'test_license_policy.py::TestF10MaxReconstSegmentsPin::test_red_proof_max_reconst_segments_perturbation',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_export_shield_is_legitimate_residual_segment',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_prior_admit_set_still_holds',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_prior_deny_set_still_holds',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_separator_tag_inventory_pins',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',
@@ -2838,17 +2892,20 @@ MUTATIONS: list[Mutation] = [
             "test_c_shaped_door_promotion_via_monkeypatch",
             "test_not_insightface_door_admit_is_deliberate",
             "test_scrfd_rejects_rows_and_doors",
-            # Wave F9 (B12-1..B12-6 / A12-3): elevated deny-(c) / steal
-            # red-proofs, separator-twin reconstitution, per-family digit
-            # laundering / YOLOS letter twins, B12-5 flag load-bearing pins,
-            # shared-door helper parity, and AGPL-glue exact pin all die when
-            # the hit helper always misses (they precondition on a denylist
-            # hit). Shape of _package_denylist_hit unchanged; new deny
-            # witnesses join the M14 victim set so attribution stays
-            # strong-form (RV-07).
-            "test_steal_owns_long_rem_only",
-            "test_red_proof_elevated_c_alone_turns_compact_pins_red",
-            "test_red_proof_steal_alone_turns_long_rem_pins_red",
+            # Wave F9/F10 (B12-1..B13-5 / A12-3 / F10): elevated deny-(c) /
+            # residual-classify red-proofs, separator-twin reconstitution,
+            # per-family digit laundering / YOLOS letter twins, B12-5 flag
+            # load-bearing pins, shared-door helper parity, AGPL compact-
+            # glue pins, and F10 long-debris / tag-glue / export-tag pins
+            # all die when the hit helper always misses. Shape of
+            # _package_denylist_hit unchanged; renamed F9 victims
+            # re-anchored and F10 witnesses join the M14 victim set so
+            # attribution stays strong-form (RV-07).
+            # F10 renames of F9 elevated/steal band-split pins:
+            "test_elevated_deny_c_hits_pure_deny_compact",
+            "test_residual_classify_owns_exception_debris",
+            "test_red_proof_elevated_c_alone_turns_pure_deny_pins_red",
+            "test_red_proof_residual_classify_alone_turns_debris_pins_red",
             "test_deny_has_folded_ab_claim_load_bearing_for_yolo_x",
             "test_separator_twins_deny",
             "test_full_row_and_doors_deny_separator_twins",
@@ -2856,9 +2913,21 @@ MUTATIONS: list[Mutation] = [
             "test_yolos_letter_twins_deny",
             "test_yoloxs_real_size_admits",
             "test_red_proof_elevated_c_flag_is_load_bearing",
-            "test_red_proof_steal_flag_is_load_bearing",
+            "test_red_proof_residual_classify_flag_is_load_bearing",
             "test_doors_agree_on_dual_axis_and_nc_only",
             "test_exact_ultralytics_buffalo_still_agpl_precedence",
+            # F10 B13-5 / A13 compact glue + residual classification pins.
+            "test_ultralyticsplus_denies_agpl",
+            "test_ultralyticsplus_buffalo_l_agpl_precedence",
+            "test_bare_buffalo_l_stays_nc_model_derived",
+            "test_red_proof_compact_prefix_glue_flag",
+            "test_long_debris_denies",
+            "test_long_debris_denies_on_doors_and_row",
+            "test_tag_glue_denies",
+            "test_prior_deny_set_still_holds",
+            "test_prior_admit_set_still_holds",  # also pins yolop_s_ultralytics deny
+            "test_causal_free_in_shield_admits_exception_residual",
+            "test_red_proof_max_reconst_segments_perturbation",
         ),
     ),
     Mutation(
@@ -2902,6 +2971,11 @@ MUTATIONS: list[Mutation] = [
             # Wave F9 (A12-3): source-door reason pins now share the helper.
             "test_br24_ultralytics_source_field_fails_denylisted",
             "test_exact_ultralytics_buffalo_still_agpl_precedence",
+            # Wave F10: door-reason pins that hit denylisted_package via the
+            # shared helper (compact glue + long-debris door surface).
+            "test_ultralyticsplus_denies_agpl",
+            "test_ultralyticsplus_buffalo_l_agpl_precedence",
+            "test_long_debris_denies_on_doors_and_row",
         ),
     ),
     Mutation(

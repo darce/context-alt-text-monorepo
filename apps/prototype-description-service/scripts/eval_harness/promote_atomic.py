@@ -15,6 +15,12 @@ stage (VLM6-R2-B-04). Unknown journal phases refuse and preserve evidence
 (VLM6-R2-B-01). Per-namespace exclusive flock serializes promote/recover/scavenge
 (VLM6-R2-B-02).
 
+Journals are untrusted recovery input (Wave E / RC-01): ``stage`` must resolve
+under dest with the namespace stage prefix; ``names`` must be plain basenames
+that do not collide with lock/journal/stage infrastructure (RC-04, CDX-05);
+``phase`` must be a known string (RC-02). Install temps are unique per
+namespace + process so caption/face cannot share ``.<stem>.promoting`` (CDX-04).
+
 Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-002, rg-006, rg-008, sr-006.
 """
 
@@ -86,6 +92,161 @@ def _lock_path(dest_dir: Path, ns: PromoteNamespace) -> Path:
     return dest_dir / f".vlm-{ns.generator}-promote.lock"
 
 
+def _lock_basename(ns: PromoteNamespace) -> str:
+    return f".vlm-{ns.generator}-promote.lock"
+
+
+# Reserved basenames that must never appear in a promote name set (CDX-05).
+_RESERVED_BASENAMES: frozenset[str] = frozenset(
+    {
+        LEGACY_PROMOTE_JOURNAL,
+        CAPTION_PROMOTE.journal_name,
+        FACE_PROMOTE.journal_name,
+        _lock_basename(CAPTION_PROMOTE),
+        _lock_basename(FACE_PROMOTE),
+    }
+)
+
+
+def _is_plain_basename(name: str) -> bool:
+    """True iff *name* is a single path segment with no traversal (RC-04)."""
+    if not isinstance(name, str) or not name or name in {".", ".."}:
+        return False
+    # Reject separators and empty segments without resolving against a root.
+    if "/" in name or "\\" in name or "\x00" in name:
+        return False
+    # Path(name).name collapses ".." and strips dirs; require identity.
+    if Path(name).name != name:
+        return False
+    return True
+
+
+def _validate_promote_names(
+    names: list[Any], *, dest_dir: Path, ns: PromoteNamespace, context: str
+) -> list[str]:
+    """Refuse path-like or reserved *names* with a structured error (RC-04, CDX-05).
+
+    Journals and caller-supplied name lists are untrusted input. A name that
+    escapes the dest tree, replaces the lock inode, or collides with journal /
+    stage infrastructure must never reach install.
+    """
+    if not isinstance(names, list) or not names:
+        raise PromoteError(
+            f"{context}: promote names missing or empty "
+            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+        )
+    cleaned: list[str] = []
+    for raw in names:
+        if not isinstance(raw, str):
+            raise PromoteError(
+                f"{context}: promote name must be a string, got {type(raw).__name__} "
+                f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            )
+        if not _is_plain_basename(raw):
+            raise PromoteError(
+                f"{context}: unsafe promote name {raw!r} — must be a plain basename "
+                f"(no separators, no '..') "
+                f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            )
+        if raw in _RESERVED_BASENAMES:
+            raise PromoteError(
+                f"{context}: reserved promote name {raw!r} collides with lock/journal "
+                f"infrastructure (generator={ns.generator!r} dest={dest_dir}); "
+                f"refuse to proceed (CDX-05)"
+            )
+        if raw.startswith(CAPTION_PROMOTE.stage_prefix) or raw.startswith(
+            FACE_PROMOTE.stage_prefix
+        ):
+            raise PromoteError(
+                f"{context}: reserved promote name {raw!r} collides with stage prefix "
+                f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            )
+        if raw.startswith(".vlm-promote-stage-"):
+            raise PromoteError(
+                f"{context}: reserved promote name {raw!r} collides with legacy stage "
+                f"prefix (generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            )
+        if raw.endswith(".promoting") or raw.endswith(".tmp"):
+            raise PromoteError(
+                f"{context}: reserved promote name {raw!r} collides with promote temp "
+                f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            )
+        cleaned.append(raw)
+    return cleaned
+
+
+def _validate_stage_path(
+    stage_raw: Any,
+    *,
+    dest_dir: Path,
+    ns: PromoteNamespace,
+    journal_path: Path,
+) -> Path:
+    """Refuse journal stage paths that escape dest or miss the namespace prefix (RC-01).
+
+    The journal is recovery state from a previous process — untrusted. A hostile
+    or corrupt ``stage`` must never be installed from or deleted.
+    """
+    if not isinstance(stage_raw, str) or not stage_raw:
+        raise PromoteError(
+            f"promote journal at {journal_path} has invalid stage={stage_raw!r} "
+            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+        )
+    stage = Path(stage_raw)
+    try:
+        dest_resolved = dest_dir.resolve()
+        stage_resolved = stage.resolve()
+    except OSError as exc:
+        raise PromoteError(
+            f"promote journal at {journal_path} stage path unresolvable: {stage_raw!r} "
+            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed "
+            f"({exc})"
+        ) from exc
+    try:
+        stage_resolved.relative_to(dest_resolved)
+    except ValueError as exc:
+        raise PromoteError(
+            f"promote journal at {journal_path} stage escapes dest: stage={stage_raw!r} "
+            f"resolved={stage_resolved} dest={dest_resolved} "
+            f"(generator={ns.generator!r}); refuse to install from or delete external tree "
+            f"(RC-01)"
+        ) from exc
+    if stage_resolved.parent != dest_resolved:
+        raise PromoteError(
+            f"promote journal at {journal_path} stage is not a direct child of dest: "
+            f"stage={stage_resolved} dest={dest_resolved} "
+            f"(generator={ns.generator!r}); refuse to proceed (RC-01)"
+        )
+    if not stage_resolved.name.startswith(ns.stage_prefix):
+        raise PromoteError(
+            f"promote journal at {journal_path} stage basename {stage_resolved.name!r} "
+            f"does not match namespace prefix {ns.stage_prefix!r} "
+            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed (RC-01)"
+        )
+    return stage_resolved
+
+
+def _validate_phase(phase: Any, *, journal_path: Path, dest_dir: Path, ns: PromoteNamespace) -> str:
+    """Allow-list exact known string phases; never TypeError on unhashable (RC-02)."""
+    if not isinstance(phase, str) or phase not in _KNOWN_PHASES:
+        raise PromoteError(
+            f"promote journal at {journal_path} has unknown phase={phase!r} "
+            f"(allowed={sorted(_KNOWN_PHASES)}); refuse to tear down journal/stage "
+            f"(generator={ns.generator!r} dest={dest_dir}); operator must reconcile"
+        )
+    return phase
+
+
+def _promoting_tmp(dest_dir: Path, ns: PromoteNamespace, name: str) -> Path:
+    """Install temp unique per namespace + process + artifact name (CDX-04).
+
+    Caption and face generators share ``out_dir`` and may promote the same stem
+    under different namespace locks; a shared ``.<name>.promoting`` path lets
+    them clobber each other. Namespace + pid keep temps disjoint.
+    """
+    return dest_dir / f".{ns.generator}-{os.getpid():x}-{name}.promoting"
+
+
 @contextmanager
 def _namespace_lock(dest_dir: Path, ns: PromoteNamespace) -> Iterator[None]:
     """Exclusive per-namespace flock across scavenge + recover + promote + cleanup.
@@ -115,13 +276,23 @@ def _namespace_lock(dest_dir: Path, ns: PromoteNamespace) -> Iterator[None]:
 
 
 def _check_legacy_journal(dest_dir: Path) -> None:
-    """Refuse silently ignoring a pre-namespace-split promote journal (VLM6-R2-B-01)."""
+    """Refuse silently ignoring a pre-namespace-split promote journal (VLM6-R2-B-01).
+
+    Refuse stays hard (sr-001) but the message must name a real, clearable path
+    (RC-03 / rg-006): there is no old-layout recover API in this module.
+    """
     legacy = dest_dir / LEGACY_PROMOTE_JOURNAL
     if legacy.is_file():
         raise PromoteError(
-            f"legacy promote journal present at {legacy}; refuse to proceed — "
-            f"operator must reconcile pre-namespace-split crash state "
-            f"(recover under the old layout, then remove the legacy journal). "
+            f"legacy promote journal present at {legacy}; refuse to proceed. "
+            f"There is no automated recovery for pre-namespace journals. "
+            f"Manual steps: (1) inspect {legacy} for phase/stage/names; "
+            f"(2) if phase is installing and its stage dir still holds a complete "
+            f"artifact set under this dest tree, copy those files into dest by hand; "
+            f"(3) remove any leftover .vlm-promote-stage-* dirs only when abandoning; "
+            f"(4) remove {legacy} only after that manual reconcile to clear the block. "
+            f"Namespaced journals use {CAPTION_PROMOTE.journal_name!r} / "
+            f"{FACE_PROMOTE.journal_name!r}. "
             f"Silent ignore of a present promote journal is forbidden (VLM6-R2-B-01)."
         )
 
@@ -205,40 +376,51 @@ def _recover_promote_unlocked(dest_dir: Path, ns: PromoteNamespace) -> None:
     if not journal_path.is_file():
         return
     journal = _load_journal(journal_path, dest_dir=dest_dir, ns=ns)
-    names = list(journal.get("names") or [])
-    stage = Path(journal["stage"]) if journal.get("stage") else None
-    phase = journal.get("phase")
-    if stage is None or not names:
-        # Incomplete journal metadata — leave evidence, refuse silent success.
+    # Journal fields are untrusted recovery input (RC-01/02/04): validate before
+    # any install or delete.
+    if not journal.get("stage") or not journal.get("names"):
         raise PromoteError(
             f"promote journal at {journal_path} missing stage/names "
             f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
         )
-    # Allow-list only exact known phases. Never tear down on unknown/None/typo
-    # (VLM6-R2-B-03) — mixed dest must keep recovery evidence.
-    if phase not in _KNOWN_PHASES:
-        raise PromoteError(
-            f"promote journal at {journal_path} has unknown phase={phase!r} "
-            f"(allowed={sorted(_KNOWN_PHASES)}); refuse to tear down journal/stage "
-            f"(generator={ns.generator!r} dest={dest_dir}); operator must reconcile"
-        )
+    names = _validate_promote_names(
+        list(journal.get("names") or []),
+        dest_dir=dest_dir,
+        ns=ns,
+        context=f"promote journal at {journal_path}",
+    )
+    stage = _validate_stage_path(
+        journal.get("stage"),
+        dest_dir=dest_dir,
+        ns=ns,
+        journal_path=journal_path,
+    )
+    phase = _validate_phase(
+        journal.get("phase"),
+        journal_path=journal_path,
+        dest_dir=dest_dir,
+        ns=ns,
+    )
     if phase == "installing":
         if not stage.is_dir():
             raise PromoteError(
                 f"phase=installing but stage dir missing: {stage} "
-                f"(generator={ns.generator!r} dest={dest_dir}); refuse to tear down journal"
+                f"(journal={journal_path} generator={ns.generator!r} dest={dest_dir}); "
+                f"refuse to tear down journal. After manual reconcile of dest artifacts, "
+                f"remove {journal_path} to clear the block; do not remove if stage may "
+                f"still be recoverable (RC-05)"
             )
         missing = [name for name in names if not (stage / name).is_file()]
         if missing:
             raise PromoteError(
                 f"phase=installing incomplete stage at {stage}: missing {missing!r} "
-                f"(generator={ns.generator!r} dest={dest_dir}); refuse to leave dest mixed "
-                f"or delete evidence"
+                f"(journal={journal_path} generator={ns.generator!r} dest={dest_dir}); "
+                f"refuse to leave dest mixed or delete evidence"
             )
         for name in names:
             src = stage / name
             dest = dest_dir / name
-            tmp = dest_dir / f".{name}.promoting"
+            tmp = _promoting_tmp(dest_dir, ns, name)
             tmp.write_bytes(src.read_bytes())
             _fsync_path(tmp)
             os.replace(tmp, dest)
@@ -292,10 +474,15 @@ def atomic_promote(
     tree until recovery runs.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
+    # Validate caller names before acquiring lock work that stages bytes — refuse
+    # reserved/path-like names up front (RC-04, CDX-05).
+    safe_names = _validate_promote_names(
+        list(names), dest_dir=dest_dir, ns=ns, context="atomic_promote"
+    )
     with _namespace_lock(dest_dir, ns):
         _recover_promote_unlocked(dest_dir, ns)
 
-        token = f"{os.getpid():x}-{id(names):x}-{len(names):x}-{uuid.uuid4().hex[:8]}"
+        token = f"{os.getpid():x}-{id(safe_names):x}-{len(safe_names):x}-{uuid.uuid4().hex[:8]}"
         stage = dest_dir / f"{ns.stage_prefix}{token}"
         n = 0
         while stage.exists():
@@ -303,7 +490,7 @@ def atomic_promote(
             stage = dest_dir / f"{ns.stage_prefix}{token}-{n}"
         stage.mkdir()
         try:
-            for name in names:
+            for name in safe_names:
                 target = stage / name
                 target.write_bytes((src_dir / name).read_bytes())
                 _fsync_path(target)
@@ -312,17 +499,17 @@ def atomic_promote(
             _write_promote_journal(
                 dest_dir,
                 ns,
-                {"stage": str(stage), "names": list(names), "phase": "staged"},
+                {"stage": str(stage), "names": list(safe_names), "phase": "staged"},
             )
             _write_promote_journal(
                 dest_dir,
                 ns,
-                {"stage": str(stage), "names": list(names), "phase": "installing"},
+                {"stage": str(stage), "names": list(safe_names), "phase": "installing"},
             )
 
-            for name in names:
+            for name in safe_names:
                 dest = dest_dir / name
-                tmp = dest_dir / f".{name}.promoting"
+                tmp = _promoting_tmp(dest_dir, ns, name)
                 tmp.write_bytes((stage / name).read_bytes())
                 _fsync_path(tmp)
                 os.replace(tmp, dest)

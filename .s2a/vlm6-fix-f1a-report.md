@@ -4,7 +4,7 @@
 **Task:** `VLM-6`  
 **Scope:** F1-1 + F1-2 only (assignment #517)  
 **Sandbox base:** history-stripped clone (sandbox-only object; not present here).
-<!-- sandbox base was `c9f7c6e` — unresolvable at destination; do not cite as a commit -->
+<!-- history-stripped sandbox clone; the base object does not exist here -->
 **Destination-reachable parent base:** `6b50ddde`
 
 ## Verdict

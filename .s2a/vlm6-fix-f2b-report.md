@@ -118,7 +118,7 @@ CONTROL clean (real children): determinism check passed [score]: ... PASS
 
 Sandbox history is stripped to a single base commit that does not exist in this
 repository, so a literal `git checkout ec493295 -- cli.py` is impossible here.
-<!-- sandbox base was `7ad6d52` — unresolvable at destination; named only inside this comment -->
+<!-- history-stripped sandbox clone; the base object does not exist here -->
 
 Equivalent proof:
 

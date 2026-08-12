@@ -129,7 +129,11 @@ def test_digest_keyword_does_not_veto_commit_citation(report_dir: Path) -> None:
 
 
 def test_content_digest_exclusions_do_not_flag(report_dir: Path) -> None:
-    """Narrow digest exclusions: sha256:, manifest_sha256, msha=, sha256sum listings."""
+    """Narrow digest exclusions: sha256:, manifest_sha256, msha=, sha256sum listings.
+
+    S5-03 / TEST-15: bare commit + ellipsis is NOT excluded — only labelled digests
+    and sha256sum-style ``hex…  path`` listings. (Revisited: former loophole removed.)
+    """
     # Use tokens that definitely do not resolve as commits.
     path = _write(
         report_dir / "digests_ok.md",
@@ -148,17 +152,157 @@ def test_content_digest_exclusions_do_not_flag(report_dir: Path) -> None:
     rel = str(path.relative_to(REPO_ROOT))
     proc = _run_guard(rel)
     assert proc.returncode == 0, f"digest exclusions leaked: stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    assert "all resolve" in proc.stdout
+    # S5-05: success no longer says "all resolve" when wording may over-claim.
+    assert "citation" in proc.stdout.lower() or "resolved" in proc.stdout.lower() or "none to resolve" in proc.stdout
+
+
+def test_bare_commit_ellipsis_is_not_a_content_digest(report_dir: Path) -> None:
+    """S5-03 / TEST-15: truncated commit display must still resolve (not digest-vetoed)."""
+    path = _write(
+        report_dir / "commit_ellipsis.md",
+        "Landed at commit `deadbee…` (sandbox).\nBase was cafebab...\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"bare commit+ellipsis must fail; got stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    err = proc.stderr.lower()
+    assert "deadbee" in err
+    assert "does not resolve" in err
+
+
+def test_html_comment_does_not_hide_unresolvable_sha(report_dir: Path) -> None:
+    """S5-01: unresolvable hex inside HTML comments is not a free pass."""
+    path = _write(
+        report_dir / "hidden_comment.md",
+        "**Sandbox base:** history-stripped clone.\n"
+        "<!-- sandbox base was `c9f7c6e` — unresolvable at destination; do not cite as a commit -->\n"
+        "**Destination-reachable parent base:** placeholder\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"comment-hidden unresolvable SHA must fail; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "c9f7c6e" in proc.stderr
+    assert "does not resolve" in proc.stderr
+
+
+def test_real_report_shape_f1a_f2b_comment_hide_fails(report_dir: Path) -> None:
+    """S5-01 / TEST-15: real f1a/f2b prose with sandbox hex restored must exit 1."""
+    f1a_shape = (
+        "**Sandbox base:** history-stripped clone (sandbox-only object; not present here).\n"
+        "<!-- sandbox base was `c9f7c6e` — unresolvable at destination; do not cite as a commit -->\n"
+        "**Destination-reachable parent base:** `6b50ddde`\n"
+    )
+    f2b_shape = (
+        "Sandbox history is stripped to a single base commit that does not exist in this\n"
+        "repository, so a literal `git checkout ec493295 -- cli.py` is impossible here.\n"
+        "<!-- sandbox base was `7ad6d52` — unresolvable at destination; named only inside this comment -->\n"
+    )
+    p1 = _write(report_dir / "f1a_shape.md", f1a_shape)
+    p2 = _write(report_dir / "f2b_shape.md", f2b_shape)
+    rels = [str(p1.relative_to(REPO_ROOT)), str(p2.relative_to(REPO_ROOT))]
+    proc = _run_guard(*rels)
+    assert proc.returncode != 0, (
+        f"restored f1a/f2b comment-hide shape must fail; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    err = proc.stderr
+    assert "c9f7c6e" in err
+    assert "7ad6d52" in err
+
+
+def test_unclosed_html_comment_fails_closed(report_dir: Path) -> None:
+    """S5-02 / TEST-15: unclosed <!-- must not skip the rest of the file."""
+    path = _write(
+        report_dir / "unclosed.md",
+        "note <!-- sandbox deadbee\n"
+        "Landed at commit beef001 for real.\n"
+        "Also cafebab.\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"unclosed comment must exit non-zero; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "all resolve" not in combined
+    # Either unclosed-comment violation and/or the later commit tokens must surface.
+    assert (
+        "unclosed" in combined
+        or "beef001" in combined
+        or "cafebab" in combined
+        or "deadbee" in combined
+    )
+
+
+def test_scan_staged_empty_does_not_claim_resolve() -> None:
+    """S5-04 / TEST-15 / AUDIT-07: empty staged set must not print 'all resolve'."""
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        empty_index = Path(td) / "empty-index"
+        subprocess.run(
+            ["git", "read-tree", "--empty"],
+            cwd=REPO_ROOT,
+            env={**os.environ, "GIT_INDEX_FILE": str(empty_index)},
+            check=True,
+            capture_output=True,
+        )
+        proc = subprocess.run(
+            [sys.executable, str(GUARD), "--scan-staged"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "GIT_INDEX_FILE": str(empty_index)},
+        )
+    combined = proc.stdout + proc.stderr
+    assert "all resolve" not in combined, f"empty sample claimed resolve: {combined!r}"
+    # Exit 0 is fine (nothing to check) — but must not claim resolution over empty sample.
+    assert "nothing to check" in combined.lower() or "0 staged" in combined.lower(), (
+        f"expected empty-sample message; got {combined!r}"
+    )
+
+
+def test_ignore_marker_scopes_to_nearest_token(report_dir: Path) -> None:
+    """S5-07: sha-guard:ignore applies to the nearest token only, not the whole line."""
+    path = _write(
+        report_dir / "nearest_ignore.md",
+        "Foreign `deadbee` sha-guard:ignore and also unresolvable `beef001` here.\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"second token must still fail; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    err = proc.stderr
+    assert "beef001" in err
+    # deadbee is nearest to ignore marker — must not be the only/required violation name alone.
+    # It is OK if deadbee is absent from err (ignored); beef001 must be present.
+    assert "does not resolve" in err
+
+
+def test_success_message_reports_citation_counts(report_dir: Path) -> None:
+    """S5-05: success string must not claim 'all resolve' over zero tokens."""
+    empty = _write(report_dir / "no_tokens.md", "No hex tokens of commit length here.\n")
+    rel = str(empty.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode == 0
+    assert "all resolve" not in proc.stdout
+    assert "0 citations found" in proc.stdout or "none to resolve" in proc.stdout
 
 
 def test_html_comment_and_ignore_marker_allow_deliberate_foreign_sha(report_dir: Path) -> None:
-    """Deliberate foreign SHAs may be quoted in comments or with sha-guard:ignore."""
+    """Deliberate foreign SHAs belong in visible prose with sha-guard:ignore (S5-01)."""
     path = _write(
         report_dir / "deliberate.md",
         "\n".join(
             [
-                "<!-- the lane cited `ac2740b`, which resolves nowhere here -->",
                 "Sandbox SHA quoted on purpose: `deadbee`  sha-guard:ignore",
+                "Another foreign object `cafebab` sha-guard:ignore for documentation.",
                 "",
             ]
         ),
@@ -180,6 +324,7 @@ def test_resolvable_commit_passes(report_dir: Path) -> None:
     rel = str(path.relative_to(REPO_ROOT))
     proc = _run_guard(rel)
     assert proc.returncode == 0, f"expected pass for {head}: stderr={proc.stderr!r}"
+    assert "citation" in proc.stdout.lower() or "resolved" in proc.stdout.lower()
 
 
 def test_summary_counts_only_opened_files(report_dir: Path) -> None:
@@ -188,4 +333,6 @@ def test_summary_counts_only_opened_files(report_dir: Path) -> None:
     rel = str(good.relative_to(REPO_ROOT))
     proc = _run_guard(rel)
     assert proc.returncode == 0
-    assert "1 file(s) checked, all resolve" in proc.stdout
+    assert "1 file(s)" in proc.stdout
+    assert "all resolve" not in proc.stdout
+    assert "0 citations found" in proc.stdout or "none to resolve" in proc.stdout

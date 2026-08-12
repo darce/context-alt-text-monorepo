@@ -10,8 +10,9 @@ Mirrors the load/generate surface of
 ``scene/infrastructure/vlm/florence_local_adapter.py`` (``<MORE_DETAILED_CAPTION>``,
 num_beams=3, max_new_tokens=512, 1024 px longest-edge downsample, float32 CPU) and
 the revision pins in ``scene/config/profiles.py``: base-ft is pinned to the
-benchmarked commit; large-ft is unpinned upstream, so the resolved commit is
-logged at load time for provenance.
+benchmarked commit; large-ft remains unpinned in profiles (pin-on-enablement)
+and this driver refuses ``--model large-ft`` at argument-parse time until a
+revision is pinned here (VLM6-RH-09 — fail before the ~1.5 GB download).
 
 Durability semantics mirror ``scripts/eval_harness/describe_baseline.py``:
 resumable JSONL append (complete rows keyed by attachment+model+task skipped on
@@ -41,6 +42,47 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+# Shared latency schema (VLM6-RH-04). Package import when run inside the monorepo;
+# standalone single-file copies on the batch VM fall back to a local twin so the
+# file remains copy-deployable without the eval_harness package.
+try:
+    from scripts.eval_harness.face_metrics import latency_summary as _latency_summary
+except ImportError:  # pragma: no cover — standalone single-file deploy path
+    def _latency_summary(  # type: ignore[misc]
+        values: list[float],
+        *,
+        unit: str = "s",
+        wall_clock_s: float | None = None,
+        throughput_n: int | None = None,
+        decimals: int = 3,
+    ) -> dict[str, object] | None:
+        if not values:
+            return None
+        ordered = sorted(float(v) for v in values)
+        n = len(ordered)
+
+        def _pct(q: float) -> float:
+            return ordered[min(int(q * n), n - 1)]
+
+        out: dict[str, object] = {
+            "unit": unit,
+            "n": n,
+            "mean": round(sum(ordered) / n, decimals),
+            "min": round(ordered[0], decimals),
+            "p50": round(_pct(0.50), decimals),
+            "p95": round(_pct(0.95), decimals),
+            "p99": round(_pct(0.99), decimals),
+            "max": round(ordered[-1], decimals),
+        }
+        if wall_clock_s is not None:
+            wall = float(wall_clock_s)
+            out["wall_clock_s"] = round(wall, 1)
+            if throughput_n is not None and wall > 0 and throughput_n > 0:
+                out["images_per_min"] = round(float(throughput_n) / (wall / 60.0), 1)
+            else:
+                out["images_per_min"] = None
+        return out
 
 CAPTION_TASK = "<MORE_DETAILED_CAPTION>"
 DEFAULT_STALL_LIMIT = 5  # parity with scripts.eval_harness.cli.DEFAULT_STALL_LIMIT
@@ -272,30 +314,6 @@ def load_captioner(spec: ModelSpec) -> tuple[Captioner, str | None]:
 
 
 # ------------------------------------------------------------------ run loop
-def _latency_aggregates(latencies: list[float]) -> dict[str, float | None]:
-    """mean/min/max/p50/p95 over caption latencies; all None when empty (A-12)."""
-    if not latencies:
-        return {
-            "mean_latency_s": None,
-            "min_latency_s": None,
-            "max_latency_s": None,
-            "p50_latency_s": None,
-            "p95_latency_s": None,
-        }
-    ordered = sorted(latencies)
-
-    def _pct(q: float) -> float:
-        return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
-
-    return {
-        "mean_latency_s": round(sum(latencies) / len(latencies), 3),
-        "min_latency_s": round(min(latencies), 3),
-        "max_latency_s": round(max(latencies), 3),
-        "p50_latency_s": round(_pct(0.50), 3),
-        "p95_latency_s": round(_pct(0.95), 3),
-    }
-
-
 def run(
     rows: list[tuple[int, Path]],
     captioner: Captioner,
@@ -426,8 +444,9 @@ def run(
         "missing": len(missing),
         "captioned_ok": ok,
         "errors": errors,
+        # Canonical nested block (VLM6-RH-04) — unit seconds, n/mean/min/p50/p95/p99/max.
+        "latency": _latency_summary(latencies, unit="s"),
     }
-    summary.update(_latency_aggregates(latencies))
     return summary
 
 
@@ -452,6 +471,18 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.images_dir and args.tsv and args.out_jsonl):
         parser.error("--images-dir, --tsv and --out-jsonl are required (flags or IMAGES_DIR/TSV/OUT_JSONL env)")
 
+    # VLM6-RH-09: refuse unpinned specs before the HF download / CPU model load.
+    # A null revision makes the A-05 resume key unstable; discovering that after
+    # ~1.5 GB + full load on a billed VM is the expensive place to fail.
+    spec = MODEL_SPECS[args.model]
+    if spec.revision is None:
+        parser.error(
+            f"--model {args.model} has no pinned revision "
+            f"(MODEL_SPECS[{args.model!r}].revision is None). Pin a benchmarked "
+            "commit hash before running — refusing to download/load an unpinned "
+            "checkpoint that would later fail closed on null model_revision (A-05)."
+        )
+
     images_dir = Path(args.images_dir).expanduser()
     tsv_path = Path(args.tsv).expanduser()
     out_jsonl = Path(args.out_jsonl).expanduser()
@@ -463,7 +494,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no parsable rows in {tsv_path}", file=sys.stderr)
         return 1
 
-    spec = MODEL_SPECS[args.model]
     captioner, resolved = load_captioner(spec)
     try:
         summary = run(

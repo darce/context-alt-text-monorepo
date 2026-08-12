@@ -41,8 +41,9 @@ from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
-from scripts.eval_harness.cli import _extract_identities
+from scripts.eval_harness.cli import _extract_identities, _image_dimensions
 from scripts.eval_harness.corpus_inventory import ImageRecord, dedupe_by_sha256, load_records
+from scripts.eval_harness.face_metrics import latency_summary, sort_identity_rows_by_normalized_centre
 from scripts.eval_harness.strata import Source, is_eligible
 from shared.secrets import get_secret_provider
 
@@ -306,10 +307,16 @@ def run_face_pass(
             try:
                 image_path = roots[source] / record.path
                 image_bytes = image_path.read_bytes()
+                # A-08 / VLM6-RH-03: absolute-pixel wire bboxes need image size so
+                # L→R order can share the manifest normalized-centre convention.
+                image_width, image_height = _image_dimensions(image_bytes)
                 job_id = client.analyze([(media_id, image_path.name, image_bytes)])
                 client.wait_job(job_id)
                 names, face_count, _ordering = _extract_identities(
                     client.media_identities([media_id]), media_id
+                )
+                names = sort_identity_rows_by_normalized_centre(
+                    names, image_width=image_width, image_height=image_height
                 )
                 row = FacePassRow(
                     sha256=record.sha256,
@@ -350,29 +357,19 @@ def run_face_pass(
     return done
 
 
-def _percentile(values: Sequence[float], q: float) -> float:
-    """Nearest-rank percentile (q in 0..1), deterministic, no numpy. Caller guarantees non-empty."""
-    ordered = sorted(values)
-    return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
-
-
-def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
+def summarize(
+    rows: Sequence[FacePassRow],
+    *,
+    wall_clock_s: float | None = None,
+    throughput_n: int | None = None,
+) -> dict[str, Any]:
     ok = [r for r in rows if r.error is None and r.face_count is not None]
     counts = [r.face_count for r in ok]
-    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01 — never an average),
-    # from the open-loop per-item timing (PERF-03). Absent on legacy rows -> latency_ms is None.
-    latencies = [r.elapsed_ms for r in rows if r.elapsed_ms is not None]
-    latency_ms = (
-        {
-            "n": len(latencies),
-            "p50": round(_percentile(latencies, 0.50), 1),
-            "p95": round(_percentile(latencies, 0.95), 1),
-            "p99": round(_percentile(latencies, 0.99), 1),
-            "max": round(max(latencies), 1),
-        }
-        if latencies
-        else None
-    )
+    # Execution stats: per-call analyze latency as PERCENTILES (PERF-01 — never an
+    # average), from open-loop per-item timing (PERF-03). Convert ms → seconds so
+    # the shared latency_summary schema matches florence_describe / describe_baseline
+    # (VLM6-RH-04). Absent on legacy rows -> latency is None.
+    latencies_s = [r.elapsed_ms / 1000.0 for r in rows if r.elapsed_ms is not None]
     return {
         "scanned": len(rows),
         "ok": len(ok),
@@ -380,7 +377,13 @@ def summarize(rows: Sequence[FacePassRow]) -> dict[str, Any]:
         "with_faces": sum(1 for c in counts if c >= 1),
         "crowds": sum(1 for c in counts if c >= 3),
         "faces_found": sum(counts),
-        "latency_ms": latency_ms,
+        "latency": latency_summary(
+            latencies_s,
+            unit="s",
+            wall_clock_s=wall_clock_s,
+            throughput_n=throughput_n,
+            decimals=3,
+        ),
     }
 
 
@@ -472,14 +475,13 @@ def _main(argv: Sequence[str] | None = None) -> int:
     finally:
         client.close()
 
-    summary = summarize(done)
-    # Wall-clock throughput for THIS run (resumed rows were timed in their own run). Latency
-    # percentiles are per-call (summarize.latency_ms); this is the open-loop run-level view.
+    # Wall-clock throughput for THIS run folds into the shared latency schema
+    # (VLM6-RH-04). Resumed rows were timed in their own run; analyzed_this_run
+    # stays under ``run`` as operational metadata.
+    summary = summarize(done, wall_clock_s=wall_s, throughput_n=len(with_ids))
     summary["run"] = {
         "analyzed_this_run": len(with_ids),
         "resumed": len(resume_rows),
-        "wall_clock_s": round(wall_s, 1),
-        "images_per_min": round(len(with_ids) / wall_s * 60, 1) if wall_s > 0 and with_ids else None,
     }
     print(json.dumps(summary, indent=2))
     return 0

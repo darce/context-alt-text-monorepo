@@ -95,6 +95,178 @@ class ImageIdentities:
     labeled_order_known: bool = True
 
 
+def nearest_rank_percentile(values: Sequence[float], q: float) -> float:
+    """Nearest-rank percentile (q in 0..1). Deterministic, no numpy/interpolation.
+
+    Caller guarantees a non-empty ``values`` sequence.
+    """
+    if not values:
+        raise ValueError("nearest_rank_percentile requires a non-empty values sequence")
+    ordered = sorted(float(v) for v in values)
+    return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
+
+
+def latency_summary(
+    values: Sequence[float],
+    *,
+    unit: str = "s",
+    wall_clock_s: float | None = None,
+    throughput_n: int | None = None,
+    decimals: int = 3,
+) -> dict[str, Any] | None:
+    """Canonical latency/throughput block for eval-harness runners (VLM6-RH-04).
+
+    One schema for face_pass / florence_describe / describe_baseline consumers —
+    seconds preferred, with n/mean/min/p50/p95/p99/max plus optional throughput.
+    Returns ``None`` when ``values`` is empty (no timed samples).
+    """
+    if not values:
+        return None
+    if unit not in ("s", "ms"):
+        raise ValueError(f"latency_summary unit must be 's' or 'ms', got {unit!r}")
+    vals = [float(v) for v in values]
+    n = len(vals)
+    out: dict[str, Any] = {
+        "unit": unit,
+        "n": n,
+        "mean": round(sum(vals) / n, decimals),
+        "min": round(min(vals), decimals),
+        "p50": round(nearest_rank_percentile(vals, 0.50), decimals),
+        "p95": round(nearest_rank_percentile(vals, 0.95), decimals),
+        "p99": round(nearest_rank_percentile(vals, 0.99), decimals),
+        "max": round(max(vals), decimals),
+    }
+    if wall_clock_s is not None:
+        wall = float(wall_clock_s)
+        out["wall_clock_s"] = round(wall, 1)
+        if throughput_n is not None and wall > 0 and throughput_n > 0:
+            out["images_per_min"] = round(float(throughput_n) / (wall / 60.0), 1)
+        else:
+            out["images_per_min"] = None
+    return out
+
+
+def wire_bbox_normalized_centre(
+    bbox: Any,
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> tuple[float, float] | None:
+    """Convert wire absolute-pixel corner ``{x,y,width,height}`` → normalized centre.
+
+    Manifest face boxes and ``labeled_left_to_right`` use normalized centre-point
+    coords (0..1). Wire identities from ``/media/identities`` carry absolute-pixel
+    corner bboxes (A-08). Centre-x and corner-x are not order-equivalent when face
+    widths differ (VLM6-RH-03) — normalize with captured image size before sorting.
+    Returns ``None`` when bbox or dimensions are unusable (never invents coords).
+    """
+    if not isinstance(bbox, Mapping):
+        return None
+    if image_width is None or image_height is None:
+        return None
+    try:
+        width_px = float(image_width)
+        height_px = float(image_height)
+        x = float(bbox["x"])
+        y = float(bbox["y"])
+        w = float(bbox["width"])
+        h = float(bbox["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width_px <= 0 or height_px <= 0:
+        return None
+    return ((x + w / 2.0) / width_px, (y + h / 2.0) / height_px)
+
+
+def predicted_left_to_right(
+    identities: Sequence[Any] | None,
+    *,
+    image_width: float | None = None,
+    image_height: float | None = None,
+) -> list[str] | None:
+    """Named predicted identities L→R by normalized centre-x (mirrors labeled side).
+
+    Sorts wire identity rows using ``wire_bbox_normalized_centre`` so both sides of
+    ``positional_identification`` share the manifest centre-point convention
+    (VLM6-RH-03). **Leftmost-wins duplicate-name dedup** mirrors
+    ``labeled_left_to_right`` (VLM6-R4-08).
+
+    Returns:
+    - ``None`` when ``identities`` is None (unknown).
+    - Ordered unique names when rows are present. Unpositioned / unnormalizable
+      named rows sort after positioned ones (stable by name) and still participate
+      in leftmost-wins dedup. Empty input → ``[]``.
+    """
+    if identities is None:
+        return None
+    if not identities:
+        return []
+    positioned: list[tuple[float, str]] = []
+    unpositioned: list[str] = []
+    for entry in identities:
+        if isinstance(entry, Mapping):
+            name = entry.get("name")
+            bbox = entry.get("bbox")
+        else:
+            name = getattr(entry, "name", None)
+            bbox = getattr(entry, "bbox", None)
+        if name is None or name == "":
+            continue
+        centre = wire_bbox_normalized_centre(
+            bbox, image_width=image_width, image_height=image_height
+        )
+        if centre is None:
+            unpositioned.append(str(name))
+        else:
+            positioned.append((centre[0], str(name)))
+    positioned.sort(key=lambda t: (t[0], t[1]))
+    unpositioned.sort()
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for _, name in positioned:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    for name in unpositioned:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
+def sort_identity_rows_by_normalized_centre(
+    identities: Sequence[Any],
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> list[dict[str, Any]]:
+    """Re-order wire identity dict rows by normalized centre-x (no name dedup).
+
+    Used by runners that store full identity rows (face_pass). Keeps every row so
+    face_count/name multiset is preserved; only sort key is corrected (VLM6-RH-03).
+    Unpositioned rows follow positioned ones (stable secondary key = name).
+    """
+    positioned: list[tuple[float, float, str, dict[str, Any]]] = []
+    unpositioned: list[tuple[str, dict[str, Any]]] = []
+    for entry in identities:
+        if not isinstance(entry, Mapping):
+            continue
+        row = dict(entry)
+        name = str(row.get("name") or "")
+        centre = wire_bbox_normalized_centre(
+            row.get("bbox"), image_width=image_width, image_height=image_height
+        )
+        if centre is None:
+            unpositioned.append((name, row))
+        else:
+            positioned.append((centre[0], centre[1], name, row))
+    positioned.sort(key=lambda t: (t[0], t[1], t[2]))
+    unpositioned.sort(key=lambda t: t[0])
+    return [t[-1] for t in positioned] + [t[1] for t in unpositioned]
+
+
 def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
     """Named identities left-to-right by face-box centre ``x``, or None if unknown.
 
@@ -107,15 +279,22 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
     - ``None`` when ``face_boxes`` is missing/empty — order cannot be
       established; the image must be excluded from positional scoring (never
       fall back to stored ``present_identities`` order).
+    - ``None`` when boxes are present and at least one is named but **every**
+      named box lacks an ``x`` coordinate — malformed ground truth, not an
+      empty labeled order. Scoring as ``[]`` would charge every predicted name
+      as a positional miss (VLM6-R4-08).
     - Ordered unique names when boxes are present. Anonymous boxes (``name``
       None/empty) are skipped. **Duplicate names keep the leftmost occurrence
       only** so the sequence cardinality matches what ``predicted`` can hold
       (one slot per distinct identity, as ``present_identities`` is a set-like
       list). Later same-name boxes are ignored, not multi-counted.
+    - ``[]`` when boxes are present but all anonymous (order established, nobody
+      named) — distinct from the malformed-GT ``None`` case above.
     """
     if not face_boxes:
         return None
     named: list[tuple[float, str]] = []
+    named_missing_x = 0
     for box in face_boxes:
         if isinstance(box, Mapping):
             name = box.get("name")
@@ -126,8 +305,12 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
         if name is None or name == "":
             continue
         if x is None:
+            named_missing_x += 1
             continue
         named.append((float(x), str(name)))
+    # Named boxes exist but none carry x → manifest defect, not empty order.
+    if not named and named_missing_x > 0:
+        return None
     # Boxes present but none named (all strangers): established empty order.
     named.sort(key=lambda t: t[0])
     ordered: list[str] = []

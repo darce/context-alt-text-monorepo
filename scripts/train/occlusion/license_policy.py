@@ -27,7 +27,14 @@ A folded token HITS a family seed when ANY of:
   (c) **bounded compact remainder**: compact token starts with the seed's
       compact form and the remainder is ``[a-z0-9]{1,3}`` (e.g. ``yolov9t``,
       ``fastsamx``, ``yolo11n``). Longer remainders (``yolodummy``) and
-      non-prefix tokens (``myyolo``) do **not** hit.
+      non-prefix tokens (``myyolo``) do **not** hit;
+  (d) **head-segment**: if the canonical token contains ``_``, the leading
+      segment (up to the first ``_``) hits the seed via (a) exact or (c)
+      bounded compact remainder (not (b) — the head has no separator).
+      Closes compact+task compounds such as ``yolov9t-seg`` / ``yolo11n-pose``
+      where whole-token (c) remainder (``tseg`` / ``npose``) exceeds 3 chars.
+      Longer head remainders (``yolodummy-seg``) and non-prefix heads
+      (``myyolo-seg``) still do **not** hit.
 
 **Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
 packages whose names overlap the YOLO naming surface (Deci YOLO-NAS, Megvii
@@ -2105,9 +2112,10 @@ def _reject_non_string(
 
 # Branch enable flags (always True in production). Tests red-prove each branch
 # by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
-# admit; disable (c) → yolov9t admits.
+# admit; disable (c) → yolov9t admits; disable (d) → yolov9t-seg admits.
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
+_FAMILY_HEAD_SEGMENT_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
@@ -2167,7 +2175,7 @@ def _family_match_seed(
     seed_canonical: str,
     seed_compact: str,
 ) -> bool:
-    """True if folded ``token`` hits one family seed under rules (a)(b)(c)."""
+    """True if folded ``token`` hits one family seed under rules (a)(b)(c)(d)."""
     if not token or not seed_canonical:
         return False
     token_compact = _compact_canonical(token)
@@ -2190,6 +2198,24 @@ def _family_match_seed(
             rem = token_compact[len(seed_compact) :]
             if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                 return True
+
+    # (d) head-segment: leading segment before first '_' hits via (a) or (c).
+    # Do not apply (b) to the head (it has no separator). Not recursive on (d).
+    if _FAMILY_HEAD_SEGMENT_ENABLED and "_" in token:
+        head = token.split("_", 1)[0]
+        if head:
+            head_compact = _compact_canonical(head)
+            # (a) on head alone.
+            if head == seed_canonical or head_compact == seed_compact:
+                return True
+            if head == seed_compact or head_compact == seed_canonical:
+                return True
+            # (c) on head alone (respects the compact-remainder branch flag).
+            if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_compact:
+                if head_compact.startswith(seed_compact):
+                    rem = head_compact[len(seed_compact) :]
+                    if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                        return True
     return False
 
 
@@ -2217,12 +2243,13 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
 
       (a) exact folded/compact match;
       (b) separator-boundary prefix (``seed_`` + rest);
-      (c) bounded compact remainder (1–3 alnum after seed compact form).
+      (c) bounded compact remainder (1–3 alnum after seed compact form);
+      (d) head-segment (leading segment hits via (a) or (c)).
 
-    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` deny; ``yolodummy`` /
-    ``myyolo`` / exception-family tokens (``yolo_nas``, ``yolox``) do not.
-    Empty / None canonical → no denylist hit (doors treat empty/None as
-    ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
+    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` deny;
+    ``yolodummy`` / ``myyolo`` / exception-family tokens (``yolo_nas``,
+    ``yolox``) do not. Empty / None canonical → no denylist hit (doors treat
+    empty/None as ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:

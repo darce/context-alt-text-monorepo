@@ -5749,12 +5749,13 @@ class TestB501StructuralFamilyBoundary:
     """FIR-7 Wave F: structural family-boundary rule replaces tag-strip.
 
     A folded token hits a deny seed on (a) exact, (b) separator-boundary
-    prefix, or (c) bounded compact remainder. Exception-family seeds
-    (yolo_nas / yolox / yolos / yolof) admit under the same rules; yolor
-    is GPL-3.0 and stays on the deny axis.
+    prefix, (c) bounded compact remainder, or (d) head-segment. Exception-
+    family seeds (yolo_nas / yolox / yolos / yolof) admit under the same
+    rules; yolor is GPL-3.0 and stays on the deny axis.
 
-    Red-proven: disable boundary-prefix → compound witnesses admit;
-    disable compact-remainder → yolov9t admits; restore both.
+    Red-proven: disable boundary-prefix → pure-(b) compounds admit;
+    disable compact-remainder → yolov9t admits; disable head-segment →
+    yolov9t-seg admits; restore each.
     """
 
     # (b) separator-boundary prefix witnesses + raw spellings that fold to them.
@@ -5805,12 +5806,30 @@ class TestB501StructuralFamilyBoundary:
         "yolor_s",
     )
 
+    # (d) head-segment: compact head hits seed, but whole-token compact rem
+    # (tseg/npose/…) exceeds 3 chars and head != seed, so (a)/(b)/(c) miss.
+    HEAD_SEGMENT_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolov9t-seg",
+        "yolov9e-seg",
+        "yolov9c-seg",
+        "yolo11n-pose",
+        "yolov8nn-seg",
+        # raw spellings that fold into the same head-segment forms
+        "YOLOv9T-SEG",
+        "yolov9t-seg.pt",
+        "yolo11n_pose",
+    )
+
     ADMIT_COUNTEREXAMPLES: ClassVar[tuple[str, ...]] = (
         "yolodummy",  # remainder 'dummy' is 5 chars
         "myyolo",  # no prefix
         "sam",
         "timm",
         "numba",
+        # head-segment creep guards: head rem >3 / non-prefix / non-seed
+        "yolodummy-seg",
+        "myyolo-seg",
+        "numba-seg",
     )
 
     EXCEPTION_ALLOWLIST: ClassVar[tuple[str, ...]] = (
@@ -5826,11 +5845,15 @@ class TestB501StructuralFamilyBoundary:
         "yolos-tiny",
         "yolof",
         "yolof_r50",
+        # Exception check runs first at the component level (not per-rule):
+        # head 'yolo' would be an exact deny seed via (d)/(a), but whole-token
+        # hits exception family yolo_nas via (b) before deny is consulted.
+        "yolo-nas-s-seg",
     )
 
     @pytest.mark.parametrize(
         "token",
-        BOUNDARY_WITNESSES + COMPACT_WITNESSES,
+        BOUNDARY_WITNESSES + COMPACT_WITNESSES + HEAD_SEGMENT_WITNESSES,
     )
     def test_structural_family_token_denylisted_package(self, token: str) -> None:
         hit = policy._package_denylist_hit(token)
@@ -5850,6 +5873,50 @@ class TestB501StructuralFamilyBoundary:
         assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
             f"{token!r}: expected denylisted_package, got {result.reason} "
             f"({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token", HEAD_SEGMENT_WITNESSES)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_head_segment_denylisted_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        """Head-segment deny witnesses fail denylisted_package on both row doors."""
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"head-segment token {token!r} admitted on {category.value}"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}/{category.value}: expected denylisted_package, got "
+            f"{result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token", HEAD_SEGMENT_WITNESSES)
+    def test_head_segment_denylisted_on_scalar_doors(self, token: str) -> None:
+        """Head-segment deny witnesses fail both scalar doors."""
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.ok is False, f"tooling scalar admitted {token!r}"
+        assert tooling.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"tooling {token!r}: expected denylisted_package, got "
+            f"{tooling.reason} ({tooling.detail})"
+        )
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.ok is False, f"model_ingest scalar admitted {token!r}"
+        assert ingest.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"model_ingest {token!r}: expected denylisted_package, got "
+            f"{ingest.reason} ({ingest.detail})"
         )
 
     @pytest.mark.parametrize("token", ADMIT_COUNTEREXAMPLES)
@@ -5903,10 +5970,19 @@ class TestB501StructuralFamilyBoundary:
     def test_red_proof_boundary_prefix_branch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Disable (b) → pure boundary-prefix compounds admit (TEST-15)."""
-        # Witnesses that need (b) and do NOT also hit via (a) or (c).
-        # yolov8n_oiv7: compact rem 'oiv7' is 4 chars → only boundary hits.
-        pure_boundary = ("yolov8n_oiv7", "yolov7_tiny", "yolov8n_torchscript")
+        """Disable (b) → pure boundary-prefix compounds admit (TEST-15).
+
+        Pure-(b) witnesses use an underscore-bearing seed whose first segment
+        is not itself a deny seed (``buffalo_l_*``), so head-segment (d) cannot
+        re-deny when (b) is off. Seed-as-head compounds (``yolov8n_oiv7``)
+        correctly stay denied via (d) after (b) is disabled.
+        """
+        # Compact rem after seed 'buffalol' must be >3 so (c) cannot re-deny.
+        pure_boundary = (
+            "buffalo_l_extra",  # rem 'extra' = 5
+            "buffalo_l_weights",  # rem 'weights' = 7
+            "buffalo_l_engine",  # rem 'engine' = 6
+        )
         for token in pure_boundary:
             assert policy._package_denylist_hit(token) is not None, (
                 f"precondition: {token!r} must deny with both branches on"
@@ -5919,6 +5995,8 @@ class TestB501StructuralFamilyBoundary:
         # Compact-remainder witnesses still deny without boundary.
         assert policy._package_denylist_hit("yolov9t") is not None
         assert policy._package_denylist_hit("fastsamx") is not None
+        # Seed-as-head compounds still deny via head-segment (d).
+        assert policy._package_denylist_hit("yolov8n_oiv7") is not None
 
     def test_red_proof_compact_remainder_branch(
         self, monkeypatch: pytest.MonkeyPatch
@@ -5937,6 +6015,34 @@ class TestB501StructuralFamilyBoundary:
         # Boundary witnesses still deny without compact remainder.
         assert policy._package_denylist_hit("yolov8n_oiv7") is not None
         assert policy._package_denylist_hit("yolov7_tiny") is not None
+        # Head-segment pure-(d) cells need (c) on the head; they admit too.
+        assert policy._package_denylist_hit("yolov9t-seg") is None
+
+    def test_red_proof_head_segment_branch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable (d) → pure head-segment compounds admit (TEST-15)."""
+        pure_head = (
+            "yolov9t-seg",
+            "yolov9e-seg",
+            "yolov9c-seg",
+            "yolo11n-pose",
+            "yolov8nn-seg",
+        )
+        for token in pure_head:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with head-segment on"
+            )
+        monkeypatch.setattr(policy, "_FAMILY_HEAD_SEGMENT_ENABLED", False)
+        for token in pure_head:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with head-segment disabled, {token!r} must admit"
+            )
+        # (a)/(b)/(c) cells stay green without head-segment.
+        assert policy._package_denylist_hit("yolov9t") is not None  # (c)
+        assert policy._package_denylist_hit("yolov8n_oiv7") is not None  # (b)
+        assert policy._package_denylist_hit("yolov8n") is not None  # (a)
+        assert policy._package_denylist_hit("fastsamx") is not None  # (c)
 
 
 # ---------------------------------------------------------------------------

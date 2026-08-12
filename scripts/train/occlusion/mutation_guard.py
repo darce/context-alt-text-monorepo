@@ -89,7 +89,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1093  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1130  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -233,6 +233,7 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_tooling_scalar_confusable_invalid_row[unicode_hyphen]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_deny_and_exception_seed_sets_are_disjoint',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[YOLO-NAS]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolo-nas-s-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolo-nas-s]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolo-nas]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolo_nas]',
@@ -244,19 +245,50 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolos]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolox]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolox_s]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-YOLOv9T-SEG]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolo11n-pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolo11n_pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolov8nn-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolov9c-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolov9e-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolov9t-seg.pt]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[tooling-yolov9t-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-YOLOv9T-SEG]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolo11n-pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolo11n_pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolov8nn-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolov9c-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolov9e-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolov9t-seg.pt]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_row_doors[training_data-yolov9t-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[YOLOv9T-SEG]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolo11n-pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolo11n_pose]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolov8nn-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolov9c-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolov9e-seg]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolov9t-seg.pt]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_head_segment_denylisted_on_scalar_doors[yolov9t-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_red_proof_boundary_prefix_branch',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_red_proof_compact_remainder_branch',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_red_proof_head_segment_branch',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[myyolo-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[myyolo]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[numba-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[numba]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[sam]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[timm]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[yolodummy-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_admit_counterexamples[yolodummy]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[YOLOv9T-SEG]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[YOLOv9T]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[fastsamx.pt]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[fastsamx]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo-world-s]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo-worldv2-s]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo11n-pose]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo11n]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo11n_pose]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo11s]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo12n]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolo_worldv2_s]',
@@ -280,14 +312,19 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8n_p6]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8n_torchscript]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8n_world]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8nn-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8nn]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8s-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8s_worldv2]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov8x-cls]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9_e]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9_t]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9c-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9c]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9e-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9e]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9t-seg.pt]',
+    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9t-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_structural_family_token_denylisted_package[yolov9t]',
     'test_license_policy.py::TestB504PackageIdentityCanonicalEmptyFailClosed::test_model_ingest_scalar_format_only_invalid_row[bom]',
     'test_license_policy.py::TestB504PackageIdentityCanonicalEmptyFailClosed::test_model_ingest_scalar_format_only_invalid_row[word_joiner]',
@@ -1619,15 +1656,17 @@ def _m14_package_denylist_always_miss(src: str) -> str:
         "      (a) exact folded/compact match;\n"
         "      (b) separator-boundary prefix (``seed_`` + rest);\n"
         "      (c) bounded compact remainder (1–3 alnum after seed compact "
-        "form).\n"
+        "form);\n"
+        "      (d) head-segment (leading segment hits via (a) or (c)).\n"
         "\n"
-        "    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` deny; "
-        "``yolodummy`` /\n"
-        "    ``myyolo`` / exception-family tokens (``yolo_nas``, ``yolox``) "
-        "do not.\n"
-        "    Empty / None canonical → no denylist hit (doors treat "
-        "empty/None as\n"
-        "    ``invalid_row`` separately — FIR-7-B4-01 / B5-04).\n"
+        "    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` "
+        "deny;\n"
+        "    ``yolodummy`` / ``myyolo`` / exception-family tokens "
+        "(``yolo_nas``,\n"
+        "    ``yolox``) do not. Empty / None canonical → no denylist hit "
+        "(doors treat\n"
+        "    empty/None as ``invalid_row`` separately — FIR-7-B4-01 / "
+        "B5-04).\n"
         '    """\n'
         "    c = canonical(value)"
     )
@@ -2024,10 +2063,14 @@ MUTATIONS: list[Mutation] = [
             # FIR-7 Wave F: structural family-boundary witnesses also die when
             # the hit helper always misses (must pin for attribution; RV-07).
             "test_structural_family_token_denylisted_package",
+            # Wave F2 head-segment multi-door pins (row + scalar).
+            "test_head_segment_denylisted_on_row_doors",
+            "test_head_segment_denylisted_on_scalar_doors",
             # Wave F red-proofs precondition on a deny hit before flipping a
             # branch flag — they die when the hit helper always misses.
             "test_red_proof_boundary_prefix_branch",
             "test_red_proof_compact_remainder_branch",
+            "test_red_proof_head_segment_branch",
             # model_ingest / tooling scalar / BR-24 package-floor pins
             # (expanded blast radius after folded lookup; FIR-7-B3-01/A3-01)
             "test_ultralytics_agpl_is_denylisted",

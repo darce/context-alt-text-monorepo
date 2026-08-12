@@ -528,7 +528,9 @@ def test_extract_identities_orders_left_to_right_not_alphabetically():
             "bbox": {"x": 10, "y": 40, "width": 50, "height": 60},
         },
     ]
-    identities, face_count, ordering = _extract_identities(payload, media_id=1)
+    identities, face_count, ordering = _extract_identities(
+        payload, media_id=1, image_width=400, image_height=200
+    )
     assert face_count == 3
     from scripts.eval_harness.cli import IdentityOrdering
 
@@ -539,6 +541,43 @@ def test_extract_identities_orders_left_to_right_not_alphabetically():
     assert names != sorted(names, reverse=True)  # not reverse-alphabetical (A-11)
     assert [row["identity_id"] for row in identities] == ["id-cam", "id-amy", "id-zoe"]
     assert all(row["unpositioned"] is False for row in identities)
+
+
+def test_extract_identities_orders_by_centre_x_not_corner_x():  # VLM6-B-03
+    """Corner-x and centre-x disagree when face widths differ — extract must use centre.
+
+    Wide @ corner-x=100 width=200 → centre 200; Narrow @ corner-x=150 width=50 →
+    centre 175. Corner order is [Wide, Narrow]; centre order is [Narrow, Wide].
+    """
+    from scripts.eval_harness.cli import IdentityOrdering, _extract_identities
+
+    payload = [
+        {
+            "identity_id": "id-wide",
+            "media_id": 1,
+            "cluster_label": "Wide Right",
+            "is_auto_label": False,
+            "bbox": {"x": 100, "y": 0, "width": 200, "height": 100},
+        },
+        {
+            "identity_id": "id-narrow",
+            "media_id": 1,
+            "cluster_label": "Narrow Left",
+            "is_auto_label": False,
+            "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
+        },
+    ]
+    identities, face_count, ordering = _extract_identities(
+        payload, media_id=1, image_width=400, image_height=200
+    )
+    assert face_count == 2
+    assert ordering == IdentityOrdering.POSITIONAL.value
+    names = [row["name"] for row in identities]
+    assert names == ["Narrow Left", "Wide Right"]
+    # Explicit discrimination: corner-x order must NOT be what we return.
+    corner_order = sorted(payload, key=lambda r: r["bbox"]["x"])
+    assert [r["cluster_label"] for r in corner_order] == ["Wide Right", "Narrow Left"]
+    assert names != [r["cluster_label"] for r in corner_order]
 
 
 def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
@@ -646,11 +685,30 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
 
 
+def _single_name_measurable_fields(name: str, *, x: float = 0.4) -> dict:
+    """face_boxes + spatial_facts so positional/placement claim units have π>0.
+
+    Caption must assert the foreground phrase for placement claims to fire.
+    FaceBox schema is centre-point {x,y,w,h,name,source} (rg-005).
+    """
+    return {
+        "face_boxes": [{"name": name, "x": x, "y": 0.4, "w": 0.2, "h": 0.3, "source": "iptc"}],
+        "spatial_facts": [
+            {
+                "subject": name,
+                "relation": "foreground",
+                "phrases": ["in the foreground"],
+            }
+        ],
+    }
+
+
 def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = False):
     """One publishable celeb (media 10) + one local-only personal photo (media 20).
 
-    Default is a clean successful score (correct local identity). Pass
-    ``inject_wrong_name=True`` when the case needs a wrong-name floor breach
+    Default is a clean successful score (correct local identity) with measurable
+    positional + placement categories (π>0) so verdict can honestly be pass.
+    Pass ``inject_wrong_name=True`` when the case needs a wrong-name floor breach
     (public redaction, wrong-name failure path).
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
@@ -671,6 +729,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
             "easy_wrong": [_W1_LOCAL_NAME],
             "policy": {"recognition_enabled": True},
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            **_single_name_measurable_fields(_W1_PUBLIC_NAME, x=0.3),
         },
         {
             "path": _W1_LOCAL_PATH,
@@ -684,6 +743,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
             "easy_wrong": [_W1_PUBLIC_NAME],
             "policy": {"recognition_enabled": True},
             "provenance": {"source": "localwp", "license": "consented", "publishable": False},
+            **_single_name_measurable_fields(_W1_LOCAL_NAME, x=0.5),
         },
     ]
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, [_W1_PUBLIC_NAME, _W1_LOCAL_NAME])
@@ -704,7 +764,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                         "media_id": 10,
                         "path": _W1_PUBLIC_PATH,
                         "describe": {
-                            "alt_text_draft": f"{_W1_PUBLIC_NAME} at a podium.",
+                            "alt_text_draft": f"{_W1_PUBLIC_NAME} in the foreground at a podium.",
                             "visual_facts": {"objects": []},
                         },
                         "identities": [
@@ -715,13 +775,16 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                             }
                         ],
                         "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
                         "error": None,
                     },
                     {
                         "media_id": 20,
                         "path": _W1_LOCAL_PATH,
                         "describe": {
-                            "alt_text_draft": f"{_W1_LOCAL_NAME} at a party.",
+                            "alt_text_draft": f"{_W1_LOCAL_NAME} in the foreground at a party.",
                             "visual_facts": {"objects": []},
                         },
                         "identities": [
@@ -732,6 +795,9 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
                             }
                         ],
                         "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
                         "error": None,
                     },
                 ],
@@ -1017,7 +1083,11 @@ def test_cmd_score_exits_nonzero_when_wrong_name_rate_breaches_floor(tmp_path, m
 
 
 def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monkeypatch):
-    """Complementary green path: clean identities + no failures → score exits 0."""
+    """Complementary green path: clean identities + measurable categories → exit 0 / pass.
+
+    Fixture supplies face_boxes + spatial_facts (π>0) so the honest verdict is
+    pass, not not_ready (VLM6-A-05 / OBS-04).
+    """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     entries = [
@@ -1032,6 +1102,7 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
             "must_right": ["Alice Example"],
             "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
+            **_single_name_measurable_fields("Alice Example"),
         }
     ]
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
@@ -1052,7 +1123,7 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
                         "media_id": 1,
                         "path": "mock_images/alice.jpg",
                         "describe": {
-                            "alt_text_draft": "Alice Example outdoors.",
+                            "alt_text_draft": "Alice Example in the foreground outdoors.",
                             "visual_facts": {"objects": []},
                         },
                         "identities": [
@@ -1063,6 +1134,9 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
                             }
                         ],
                         "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
                         "error": None,
                     }
                 ],
@@ -1075,10 +1149,16 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     assert report["verdict"]["verdict"] == "pass"
     assert report["verdict"]["wrong_name_rate"] == 0.0
     assert report["verdict"]["reasons"] == []
+    assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert report["placement"]["claims"] >= 1
 
 
 def _clean_score_manifest_and_record(tmp_path):
-    """Minimal clean caption run-record + manifest for score determinism tests."""
+    """Minimal clean caption run-record + manifest for score determinism tests.
+
+    Includes face_boxes + spatial_facts + asserted placement so score exits 0
+    with verdict=pass (OBS-04 / VLM6-A-05 — vacuous fixtures are not_ready).
+    """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     entries = [
@@ -1093,6 +1173,7 @@ def _clean_score_manifest_and_record(tmp_path):
             "must_right": ["Alice Example"],
             "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
+            **_single_name_measurable_fields("Alice Example"),
         }
     ]
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
@@ -1113,7 +1194,7 @@ def _clean_score_manifest_and_record(tmp_path):
                         "media_id": 1,
                         "path": "mock_images/alice.jpg",
                         "describe": {
-                            "alt_text_draft": "Alice Example outdoors.",
+                            "alt_text_draft": "Alice Example in the foreground outdoors.",
                             "visual_facts": {"objects": []},
                         },
                         "identities": [
@@ -1124,6 +1205,9 @@ def _clean_score_manifest_and_record(tmp_path):
                             }
                         ],
                         "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
                         "error": None,
                     }
                 ],
@@ -2159,20 +2243,21 @@ def _corpus_entries(n: int, *, with_rubric: bool) -> tuple[list[str], list[dict]
     for i in range(1, n + 1):
         name = f"Person {i}"
         roster.append(name)
-        entries.append(
-            {
-                "path": f"mock_images/p{i}.jpg",
-                "sha256": f"{i:064x}",
-                "media_id": i,
-                "face_count": 1,
-                "present_identities": [name],
-                "context_pack": {},
-                "base_caption": "",
-                "must_right": [name] if with_rubric else [],
-                "easy_wrong": [f"Person {(i % n) + 1}"] if with_rubric else [],
-                "policy": {"recognition_enabled": True},
-            }
-        )
+        entry = {
+            "path": f"mock_images/p{i}.jpg",
+            "sha256": f"{i:064x}",
+            "media_id": i,
+            "face_count": 1,
+            "present_identities": [name],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": [name] if with_rubric else [],
+            "easy_wrong": [f"Person {(i % n) + 1}"] if with_rubric else [],
+            "policy": {"recognition_enabled": True},
+            # Measurable categories so clean runs can honestly pass (VLM6-A-05).
+            **_single_name_measurable_fields(name, x=0.3 + 0.05 * (i % 5)),
+        }
+        entries.append(entry)
     return roster, entries
 
 
@@ -2188,6 +2273,7 @@ def _score_run_record(
 
     Filename is not part of the record body — callers write to their own
     ``record_path`` under ``tmp_path``. ``aborted`` stamps the partial-run flag.
+    Items stamp identity_ordering + image dims so centre-based positional can run.
     """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
@@ -2203,6 +2289,9 @@ def _score_run_record(
                 },
                 "identities": identity_fn(entry),
                 "face_count": entry["face_count"],
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
                 "error": None,
             }
         )
@@ -2262,22 +2351,35 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     """F1b-2: --rubric-gate skip bypasses must-right gate only (seeded/shakedown shape).
 
     Un-flagged seeded shape (generic captions, mixed must_right) exits non-zero
-    under default enforce. With --rubric-gate skip the same record exits 0 and
-    the artifact records rubric_gate=skip. Other gates remain active.
+    under default enforce. With --rubric-gate skip on a corpus with measurable
+    positional/placement (π>0), the same record exits 0 as pass_ungated.
+    Vacuous real-golden skip is a separate test (not_ready, not pass_ungated).
     """
     roster, entries = _corpus_entries(6, with_rubric=True)
     # Leave one entry without must_right and without present identities so
     # generic caption scores gated 1.0 (seeded no-name shape on real golden).
     entries[-1]["must_right"] = []
     entries[-1]["present_identities"] = []
+    entries[-1]["face_boxes"] = []  # no named GT on the empty entry
+    entries[-1]["spatial_facts"] = [
+        {
+            "subject": "a human",
+            "relation": "foreground",
+            "phrases": ["in the foreground"],
+        }
+    ]
     assert entries[-1]["easy_wrong"]  # independent vacuity still non-empty
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record = _score_run_record(
         entries,
         # Avoid the token "person" — synthetic easy_wrong names are "Person N"
         # and token-level traps would fire the wrong-name floor gate.
-        caption_fn=lambda _e: "A human standing outdoors near greenery.",
-        identity_fn=lambda _e: [],
+        # Assert placement so placement claims > 0 (not vacuous).
+        caption_fn=lambda _e: "A human standing in the foreground outdoors near greenery.",
+        # Correct centre-ordered identity rows so positional is evaluable (not π=0).
+        identity_fn=lambda e: (
+            [_score_identity(e["present_identities"][0])] if e.get("present_identities") else []
+        ),
         manifest_sha=manifest_sha,
     )
     record_path = tmp_path / "run-seeded-shape.json"
@@ -2308,6 +2410,8 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     # F1d-1: skip must not persist a bare gated pass (OBS-04 overclaim).
     assert report["verdict"]["verdict"] == "pass_ungated"
     assert report["verdict"]["must_right_failed_images"] > 0
+    assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert report["placement"]["claims"] >= 1
 
 
 def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
@@ -2316,7 +2420,8 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
     record = _score_run_record(
         entries,
-        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        # Assert placement phrase so placement is measurable (honest pass).
+        caption_fn=lambda e: f"{e['present_identities'][0]} in the foreground outdoors smiling.",
         identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
         manifest_sha=manifest_sha,
     )
@@ -2327,6 +2432,7 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
     report = json.loads(record_path.with_name("run-rubric-flag-report.json").read_text())
     assert report["verdict"]["rubric_gate"] == "enforce"
+    assert report["verdict"]["verdict"] == "pass"
     md = record_path.with_name("run-rubric-flag-report.md").read_text()
     assert "rubric_gate" in md
     assert "enforce" in md
@@ -2873,18 +2979,35 @@ def _assert_on_disk_fail_reason(report: dict, *, must_contain: str, must_not: tu
         assert other.lower() not in blob, f"reason class leaked: {other!r} in {reasons!r}"
 
 
-def test_score_persisted_verdict_control_pass_on_real_golden(tmp_path, monkeypatch):
-    """F1d-1 discrimination control: clean real golden run persists pass, exits 0."""
+def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch):
+    """F1d-1 / VLM6-A-05: clean real golden (π=0 face_boxes/spatial_facts) → not_ready.
+
+    Renamed from control_pass: the 37-item harness has face_boxes/spatial_facts
+    on 0/37, so the honest artifact is not_ready (not pass). OBS-04: process
+    exit is non-zero to match the artifact. A genuine pass control lives on
+    measurable synthetic fixtures (e.g. test_cmd_score_exits_zero_...).
+    """
     golden, record = _real_golden_good_record()
-    record_path = tmp_path / "run-control-pass.json"
+    record_path = tmp_path / "run-control-not-ready.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
-    assert main(["score", "--manifest", str(golden), "--run-record", str(record_path)]) is None
-    report = json.loads(record_path.with_name("run-control-pass-report.json").read_text())
-    assert report["verdict"]["verdict"] == "pass"
-    assert report["verdict"]["reasons"] == []
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "category-vacuity" in str(excinfo.value).lower() or "not_ready" in str(excinfo.value).lower()
+    report = json.loads(record_path.with_name("run-control-not-ready-report.json").read_text())
+    assert report["verdict"]["verdict"] == "not_ready"
+    reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
+    assert "positional" in reasons_blob
+    assert "placement" in reasons_blob
     assert report["verdict"]["rubric_gate"] == "enforce"
     assert report["counts"]["scored"] == 37
+    # B-10: machine-readable positional vacuity on the real corpus.
+    pos = report["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 0
+    assert pos["evaluable"] is False
+    assert pos["status"] == "not_evaluable"
+    assert pos["vacuity_signal"]
 
 
 def test_score_persisted_verdict_fail_failed_items_real_golden(tmp_path, monkeypatch):
@@ -3116,8 +3239,14 @@ def test_score_persisted_verdict_fail_schema_error_real_golden(tmp_path, monkeyp
     assert any("caption.must_right_failed_images" in r for r in report["verdict"]["reasons"])
 
 
-def test_score_persisted_verdict_pass_ungated_on_rubric_gate_skip(tmp_path, monkeypatch):
-    """F1d-1: --rubric-gate skip persists pass_ungated (not bare pass) on real golden."""
+def test_score_persisted_verdict_skip_still_not_ready_on_real_golden(tmp_path, monkeypatch):
+    """F1d-1 / OBS-04: --rubric-gate skip does not clear category vacuity on real golden.
+
+    Skip only exempts must-right failures. Real golden still has π=0 positional
+    and placement, so the honest verdict is not_ready (never pass_ungated over
+    an unmeasurable corpus). pass_ungated is covered by the measurable skip
+    fixture in test_score_guard_rubric_gate_skip_bypasses_must_right_gate.
+    """
     import copy
 
     golden, record = _real_golden_good_record()
@@ -3134,7 +3263,7 @@ def test_score_persisted_verdict_pass_ungated_on_rubric_gate_skip(tmp_path, monk
     record_path = tmp_path / "run-ungated.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
-    assert (
+    with pytest.raises(SystemExit) as excinfo:
         main(
             [
                 "score",
@@ -3146,13 +3275,13 @@ def test_score_persisted_verdict_pass_ungated_on_rubric_gate_skip(tmp_path, monk
                 "skip",
             ]
         )
-        is None
-    )
+    assert excinfo.value.code != 0
     report = json.loads(record_path.with_name("run-ungated-report.json").read_text())
-    assert report["verdict"]["verdict"] == "pass_ungated"
+    assert report["verdict"]["verdict"] == "not_ready"
     assert report["verdict"]["rubric_gate"] == "skip"
     assert report["verdict"]["must_right_failed_images"] > 0
-    assert report["verdict"]["reasons"] == []
+    reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
+    assert "positional" in reasons_blob or "placement" in reasons_blob
 
 
 # --- VLM-6 S2A F1d-2: rounding floor (F1-7) + scored-set rubric denominator (F1-8) ---
@@ -3345,16 +3474,22 @@ def test_score_empty_rubric_keys_on_scored_set_not_manifest(tmp_path, monkeypatc
     assert all("schema error" not in r for r in empty_reasons)
 
 
-def test_score_f1d2_control_clean_real_golden_still_passes(tmp_path, monkeypatch):
-    """F1d-2 discrimination control: clean real golden still exits 0 / pass."""
+def test_score_f1d2_control_clean_real_golden_not_ready(tmp_path, monkeypatch):
+    """F1d-2: clean real golden scores fully but is not_ready (π=0 categories).
+
+    Controls that must_right denominators and scored count stay honest while
+    the readiness verdict correctly refuses pass (VLM6-A-05 / OBS-04).
+    """
     golden, record = _real_golden_good_record()
     record_path = tmp_path / "run-f1d2-control.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
-    assert main(["score", "--manifest", str(golden), "--run-record", str(record_path)]) is None
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
     report = json.loads(record_path.with_name("run-f1d2-control-report.json").read_text())
-    assert report["verdict"]["verdict"] == "pass"
-    assert report["verdict"]["reasons"] == []
+    assert report["verdict"]["verdict"] == "not_ready"
+    assert report["verdict"]["reasons"]  # non-empty vacuity reasons
     assert report["caption"]["must_right_defined_images"] == 34
     assert report["counts"]["scored"] == 37
 

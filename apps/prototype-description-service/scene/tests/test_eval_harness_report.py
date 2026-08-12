@@ -2602,6 +2602,272 @@ def test_public_per_image_allow_list_drops_future_name_field():  # VLM6-A-01
     assert "inserted_identities" not in pub_row
 
 
+def test_score_run_record_positional_uses_centre_x_not_corner_x():  # VLM6-B-03
+    """Production positional path must centre-order predicted names (not list/corner order).
+
+    Wide @ corner-x=100 width=200 → centre 200; Narrow @ corner-x=150 width=50 →
+    centre 175. Stored identities in corner order [Wide, Narrow] are wrong for
+    L→R; centre order [Narrow, Wide] matches labeled face_boxes. Without B-03
+    wiring, position_accuracy is 0.0 (swap); with it, 1.0 (TEST-15).
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/pair.jpg",
+                "describe": {
+                    "alt_text_draft": "Narrow Left stands left of Wide Right.",
+                    "visual_facts": {"objects": []},
+                },
+                # Corner-x order (Wide first) — centre-x order is Narrow first.
+                "identities": [
+                    {
+                        "name": "Wide Right",
+                        "bbox": {"x": 100.0, "y": 0.0, "width": 200.0, "height": 100.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Narrow Left",
+                        "bbox": {"x": 150.0, "y": 0.0, "width": 50.0, "height": 100.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "image_width": 400,
+                "image_height": 200,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/pair.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Narrow Left", "Wide Right"],
+            "must_right": ["Narrow Left"],
+            "easy_wrong": ["Carol Decoy"],
+            "policy": {"recognition_enabled": True},
+            # Labeled L→R by centre-x (Narrow left of Wide).
+            "face_boxes": [
+                {"name": "Narrow Left", "x": 0.4375, "y": 0.25},
+                {"name": "Wide Right", "x": 0.5, "y": 0.25},
+            ],
+            "spatial_facts": [
+                {
+                    "subject": "Narrow Left",
+                    "relation": "left_of",
+                    "reference": "Wide Right",
+                    "phrases": ["left of Wide Right"],
+                }
+            ],
+        },
+    ]
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 1
+    assert pos["swap_images"] == 0
+    assert pos["position_accuracy"] == pytest.approx(1.0)
+    assert pos["exact_order_rate"] == pytest.approx(1.0)
+
+
+def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-10
+    """Real golden corpus (0/37 face_boxes) must emit positional vacuity fields.
+
+    Frame (AUDIT-07): target=adoption readiness; sampling unit=scored image;
+    observation unit=image with face_boxes L→R; π=0 on face_boxes today.
+    """
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    golden = Path(__file__).resolve().parent / "seed" / "golden.json"
+    manifest = load_manifest(str(golden), skip_hash_verification=True)
+    entries = [e.model_dump() for e in manifest.entries]
+    assert len(entries) == 37
+    assert all(not (e.get("face_boxes") or []) for e in entries)
+    msha = _manifest_sha(manifest)
+    items = []
+    for entry in entries:
+        names = list(entry.get("present_identities") or [])
+        must = list(entry.get("must_right") or [])
+        cap = " ".join(must + names + ["outdoors smiling."]) if (must or names) else "A scenic outdoor photograph."
+        items.append(
+            {
+                "media_id": entry["media_id"],
+                "path": entry["path"],
+                "describe": {
+                    "alt_text_draft": cap,
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": n,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                    for n in names
+                ],
+                "face_count": entry.get("face_count") or 0,
+                "error": None,
+            }
+        )
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": msha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": items,
+    }
+    scored = score_run_record(record, entries, score_manifest_sha256=msha, manifest_roster=list(manifest.roster or []))
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 0
+    assert pos["evaluable"] is False
+    assert pos["status"] == "not_evaluable"
+    assert pos["vacuity_signal"]
+    assert "π=0" in pos["vacuity_signal"] or "not evaluable" in pos["vacuity_signal"].lower()
+    assert pos["sampling_frame"]
+    assert scored["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("positional" in r.lower() for r in scored["verdict"]["reasons"])
+
+
+def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B-10 control
+    """When face_boxes exist and order is known, vacuity signal clears and pass is allowed."""
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Alice Example", "Bob Builder"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Carol Decoy"],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Alice Example", "x": 0.2, "y": 0.4},
+                {"name": "Bob Builder", "x": 0.6, "y": 0.4},
+            ],
+            "spatial_facts": [
+                {
+                    "subject": "Alice Example",
+                    "relation": "left_of",
+                    "reference": "Bob Builder",
+                    "phrases": ["left of Bob Builder"],
+                }
+            ],
+        },
+    ]
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] >= 1
+    assert pos["evaluable"] is True
+    assert pos["status"] == "scored"
+    assert pos["vacuity_signal"] is None
+    assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value
+
+
+def test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous():  # VLM6-C-05 / fx4
+    """None fabricated_fact_rate is not measurable — never a clean zero-hallucination pass.
+
+    Injects None on an otherwise-passable scored dict (TEST-15). Works for both
+    current 0.0 (traps present, none fired) and fx4's None (no traps).
+    """
+    from scripts.eval_harness.report import build_score_verdict
+
+    # Measurable positional + placement so only fabricated_fact vacuity fires.
+    scored = {
+        "counts": {"total": 1, "scored": 1, "failed": 0},
+        "corpus": {"media_id_missing": 0, "media_id_extra": 0},
+        "provenance": {"manifest_sha256": "a" * 64},
+        "caption": {
+            "must_right_defined_images": 1,
+            "easy_wrong_defined_images": 1,
+            "must_right_failed_images": 0,
+            "insertion_rate": 0.0,
+            "mean_gated_score": 1.0,
+        },
+        "faces": {
+            "identification": {
+                "evaluated_images": 1,
+                "wrong_names": [],
+                "ignored_wrong_names": [],
+                "positional": {
+                    "compared_images": 1,
+                    "evaluable": True,
+                    "status": "scored",
+                    "excluded_images": [],
+                },
+            },
+            "identity_ordering": {"degraded_images": 0},
+        },
+        "placement": {"claims": 1, "accuracy": 1.0, "abstained": 0, "images_scored": 1},
+        "hallucination": {
+            "fabricated_fact_rate": None,
+            "fabricated_fact_rate_trapped": None,
+            "images_with_traps": 0,
+        },
+    }
+    verdict = build_score_verdict(scored, rubric_gate="enforce")
+    assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("fabricated_fact" in r for r in verdict["reasons"])
+    # Control: numeric 0.0 is measurable clean (not vacuous).
+    scored["hallucination"]["fabricated_fact_rate"] = 0.0
+    scored["hallucination"]["fabricated_fact_rate_trapped"] = 0.0
+    scored["hallucination"]["images_with_traps"] = 1
+    verdict_ok = build_score_verdict(scored, rubric_gate="enforce")
+    assert verdict_ok["verdict"] == ScoreVerdict.PASS.value
+    assert not any("fabricated_fact" in r for r in verdict_ok["reasons"])
+
+
 def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM6-A-05
     """Clean identities on a π=0 corpus must NOT persist verdict=pass (EVAL-23).
 

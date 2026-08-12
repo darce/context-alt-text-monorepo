@@ -39,10 +39,16 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # File digests of the committed triple — update only when intentionally regenerating.
 # Regenerated VLM6-lb1 after default-on hash verification unblocked the generator
 # (manifest_sha256 prefix 83bfdc4e; prior freeze 859a083e was stale vs current golden/schema).
+# Regenerated again after the wave-C merge: scoring gained `strata`, `placement`,
+# `hallucination`, positional `compared_images`/`excluded_images`, and the
+# `wrong_name_images`/`wrong_name_assertions` verdict split. Cause (2) of the
+# ANCHOR_MISMATCH message — deliberate scoring change, stale freeze. The run-record
+# digest is unchanged (4c80fdbf), which is the evidence that only scoring moved:
+# the recorded model output is byte-identical, so this is not corruption.
 _FROZEN_DIGESTS = {
     _RUN.name: "4c80fdbf08d1599268d54e684505cdf6cfd33a91d2010151ea572f914e23573a",
-    _REPORT_JSON.name: "a838caa17c104f17bbe6de66985ba3616b166f2fdf2e3a3ca01fa500f9abad30",
-    _REPORT_MD.name: "ee5f2c9dbacb39c679168bbe6591487f5cb8a6f6d92d7a6bea1fe1531f0d7480",
+    _REPORT_JSON.name: "1c627ec2dd28c843082a871c1ac75b8999f2cae25eb1e4606e1b658893168f64",
+    _REPORT_MD.name: "46e1e485bebfb97efaba3abba32a4fa592262ac9d9a03471cfd75ddcf705c83c",
 }
 
 

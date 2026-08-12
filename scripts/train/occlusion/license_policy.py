@@ -441,6 +441,10 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
 }
 
 # Ultralytics and other AGPL / NC frameworks — route cascade around these.
+# Matching is exact on the *folded* form (FIR-7-B3-01): canonical (case +
+# separator unify) then compact (drop underscores). ``yolo-v5`` / ``yolo_v5`` /
+# ``yolov5`` therefore share one identity without substring matching.
+# yolo-nas is Deci (Apache-2.0) and is intentionally NOT listed.
 PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
     "ultralytics": PackageDenylistEntry(
         package_id="ultralytics",
@@ -449,9 +453,6 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="AGPL-3.0; person→face cascade must use RT-DETR / D-FINE / PP-PicoDet.",
     ),
-    # Ultralytics AGPL family seed set (FIR-7-B2-03). Exact-match only (BR-50/52);
-    # each token is a genuine Ultralytics AGPL-3.0 lineage identifier. yolo-nas is
-    # Deci (Apache-2.0) and is intentionally NOT listed.
     "yolo": PackageDenylistEntry(
         package_id="yolo",
         display_name="YOLO (Ultralytics family)",
@@ -459,65 +460,145 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="Ultralytics AGPL family alias; banned for cascade person-detection.",
     ),
+    # Darknet origin; Ultralytics fork is one common identity. Fail-closed on
+    # ambiguous identity / AGPL-distribution channel (FIR-7-B3-02).
     "yolov3": PackageDenylistEntry(
         package_id="yolov3",
-        display_name="YOLOv3 (Ultralytics)",
+        display_name="YOLOv3 (Darknet / Ultralytics fork)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes=(
+            "Darknet origin; Ultralytics fork is one identity. Fail-closed on "
+            "ambiguous identity / AGPL-distribution channel."
+        ),
     ),
     "yolov5": PackageDenylistEntry(
         package_id="yolov5",
         display_name="YOLOv5 (Ultralytics)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="Ultralytics AGPL-3.0 lineage; banned for cascade person-detection.",
     ),
+    # Meituan YOLOv6 — GPL-3.0 upstream (not Ultralytics AGPL). Still denied:
+    # GPL-3.0 is a deny-axis licence (FIR-7-B3-02).
     "yolov6": PackageDenylistEntry(
         package_id="yolov6",
-        display_name="YOLOv6 (Ultralytics)",
-        spdx_id="AGPL-3.0",
+        display_name="YOLOv6 (Meituan)",
+        spdx_id="GPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="Meituan YOLOv6, GPL-3.0 upstream; denied on GPL-3.0 axis.",
     ),
+    # WongKinYiu YOLOv7 — GPL-3.0 upstream (not Ultralytics AGPL). Still denied
+    # on the GPL-3.0 deny-axis (FIR-7-B3-02).
     "yolov7": PackageDenylistEntry(
         package_id="yolov7",
-        display_name="YOLOv7 (Ultralytics)",
-        spdx_id="AGPL-3.0",
+        display_name="YOLOv7 (WongKinYiu)",
+        spdx_id="GPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="WongKinYiu YOLOv7, GPL-3.0 upstream; denied on GPL-3.0 axis.",
     ),
     "yolov8": PackageDenylistEntry(
         package_id="yolov8",
         display_name="YOLOv8 (Ultralytics)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="Ultralytics AGPL-3.0 lineage; banned for cascade person-detection.",
+    ),
+    # Ultralytics YOLOv8 size-tag model ids (n/s/m/l/x) — genuine package tokens.
+    "yolov8n": PackageDenylistEntry(
+        package_id="yolov8n",
+        display_name="YOLOv8n (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv8 nano size tag; AGPL-3.0 lineage.",
+    ),
+    "yolov8s": PackageDenylistEntry(
+        package_id="yolov8s",
+        display_name="YOLOv8s (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv8 small size tag; AGPL-3.0 lineage.",
+    ),
+    "yolov8m": PackageDenylistEntry(
+        package_id="yolov8m",
+        display_name="YOLOv8m (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv8 medium size tag; AGPL-3.0 lineage.",
+    ),
+    "yolov8l": PackageDenylistEntry(
+        package_id="yolov8l",
+        display_name="YOLOv8l (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv8 large size tag; AGPL-3.0 lineage.",
+    ),
+    "yolov8x": PackageDenylistEntry(
+        package_id="yolov8x",
+        display_name="YOLOv8x (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv8 xlarge size tag; AGPL-3.0 lineage.",
     ),
     "yolov9": PackageDenylistEntry(
         package_id="yolov9",
         display_name="YOLOv9 (Ultralytics)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="Ultralytics AGPL-3.0 lineage; banned for cascade person-detection.",
     ),
+    # THU-MIG YOLOv10 — Apache-2.0 upstream, commonly consumed via the AGPL
+    # ultralytics package. Fail-closed on ambiguous identity / AGPL-distribution
+    # channel (FIR-7-B3-02).
     "yolov10": PackageDenylistEntry(
         package_id="yolov10",
-        display_name="YOLOv10 (Ultralytics)",
-        spdx_id="AGPL-3.0",
+        display_name="YOLOv10 (THU-MIG / Ultralytics channel)",
+        spdx_id="Apache-2.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes=(
+            "THU-MIG Apache-2.0 upstream; commonly consumed via AGPL ultralytics. "
+            "Fail-closed on ambiguous identity / AGPL-distribution channel."
+        ),
     ),
     "yolo11": PackageDenylistEntry(
         package_id="yolo11",
         display_name="YOLO11 (Ultralytics)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+        notes="Ultralytics AGPL-3.0 lineage; banned for cascade person-detection.",
     ),
-    # Seed key is the post-canonical form: canonical("yolo-v8") == "yolo_v8",
-    # so a single seed covers both underscore and hyphen spellings (exact-match
-    # after separator unify — BR-50/52).
+    # Compact form of yolo11 is yolo11; yolov11 is a distinct spelling (v infix).
+    "yolov11": PackageDenylistEntry(
+        package_id="yolov11",
+        display_name="YOLOv11 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLOv11 spelling (v-infix); AGPL-3.0 lineage.",
+    ),
+    "yolo12": PackageDenylistEntry(
+        package_id="yolo12",
+        display_name="YOLO12 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLO12 lineage; AGPL-3.0.",
+    ),
+    # Post-canonical seed: canonical("yolo-world") == "yolo_world".
+    "yolo_world": PackageDenylistEntry(
+        package_id="yolo_world",
+        display_name="YOLO-World (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics YOLO-World; AGPL-3.0 lineage.",
+    ),
+    "fastsam": PackageDenylistEntry(
+        package_id="fastsam",
+        display_name="FastSAM (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics FastSAM; AGPL-3.0 lineage.",
+    ),
+    # Seed key is the post-canonical form: canonical("yolo-v8") == "yolo_v8".
+    # Compact fold also maps this onto the yolov8 seed (FIR-7-B3-01).
     "yolo_v8": PackageDenylistEntry(
         package_id="yolo_v8",
         display_name="YOLO v8 (Ultralytics)",
@@ -1907,23 +1988,56 @@ def _reject_non_string(
     )
 
 
+def _package_denylist_folded_index() -> dict[str, PackageDenylistEntry]:
+    """Index PACKAGE_DENYLIST under separator-folded + compact keys (FIR-7-B3-01).
+
+    Same fold the row doors use via :func:`_resolve_model_key` / :func:`canonical`
+    (case + ``-``/``_`` unify), plus compact form (drop underscores) so
+    ``yolo-v5`` / ``yolo_v5`` / ``yolov5`` share one exact-match identity.
+    Rebuilt per call so monkeypatched ``PACKAGE_DENYLIST`` stays honest.
+    """
+    index: dict[str, PackageDenylistEntry] = {}
+    for key, entry in PACKAGE_DENYLIST.items():
+        kc = canonical(key)
+        if kc is None or not kc:
+            # Fallback for odd seeds: resolve_model_key-style fold.
+            kc = _resolve_model_key(key)
+        if not kc:
+            continue
+        index.setdefault(kc, entry)
+        compact = _compact_canonical(kc)
+        if compact:
+            index.setdefault(compact, entry)
+    return index
+
+
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Exact PACKAGE_DENYLIST lookup on canonical form / slash components (BR-51)."""
+    """Exact PACKAGE_DENYLIST lookup after separator/case fold (BR-51 / FIR-7-B3-01).
+
+    Matching is exact on the *folded* form only (BR-50/52): :func:`canonical`
+    (NFKC, casefold, unify ``-``/``_``/``.``/space) then compact (drop
+    underscores). ``yolo-v5`` hits the ``yolov5`` seed; ``yolodummy`` /
+    ``myyolo`` do **not** hit ``yolo`` (no substring matching).
+    """
     c = canonical(value)
     if c is None or not c:
         return None
     candidates = [c]
     if "/" in c:
         candidates.extend(p for p in c.split("/") if p)
+    index = _package_denylist_folded_index()
     seen: set[str] = set()
     for cand in candidates:
         if cand in seen:
             continue
         seen.add(cand)
-        resolved = _resolve_model_key(cand)
-        deny = PACKAGE_DENYLIST.get(resolved) or PACKAGE_DENYLIST.get(cand)
-        if deny is not None:
-            return deny
+        probes = (cand, _compact_canonical(cand), _resolve_model_key(cand))
+        for probe in probes:
+            if not probe:
+                continue
+            deny = index.get(probe) or index.get(_compact_canonical(probe))
+            if deny is not None:
+                return deny
     return None
 
 
@@ -2152,10 +2266,40 @@ def _spdx_expression_malformed_reason(tag: str) -> str | None:
     Empty parentheses (``()``), a trailing / leading operator (``MIT AND``,
     ``OR MIT``), or an empty RHS after an operator must fail closed (GATE-10 /
     FIR-7-B2-06) — never silently drop the empty component and admit the rest.
+
+    Unicode dashes (en/em) and unbalanced parentheses also fail closed with an
+    expression-hygiene label (FIR-7-B3-04 / FIR-7-A3-02) — bare ``unknown_spdx``
+    without the hygiene detail would hide the structural defect, and unbalanced
+    ``(MIT`` / ``MIT)`` must not admit after silent paren strip.
     """
     text = str.strip(tag)
     if not text:
         return None
+    # FIR-7-B3-04: non-ASCII dash/hyphen variants are not SPDX punctuation.
+    # U+2010..U+2015 (hyphen / non-breaking hyphen / figure dash / en / em /
+    # horizontal bar) and U+2212 (minus sign).
+    if re.search(r"[\u2010-\u2015\u2212]", text):
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: non-ASCII dash)"
+        )
+    # FIR-7-A3-02: unbalanced parentheses — count and order.
+    depth = 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return (
+                    f"license {tag!r} is a malformed SPDX expression "
+                    "(expression-hygiene: unbalanced parentheses)"
+                )
+    if depth != 0:
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: unbalanced parentheses)"
+        )
     if re.search(r"\(\s*\)", text):
         return (
             f"license {tag!r} is a malformed SPDX expression "
@@ -2382,7 +2526,9 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
         )
     resolved = _resolve_model_key(model_id)
 
-    deny = PACKAGE_DENYLIST.get(resolved)
+    # FIR-7-B3-01: folded denylist lookup (separator/case + compact) so
+    # yolo-v5 / yolo_v5 hit the same seed as yolov5.
+    deny = _package_denylist_hit(str.strip(model_id))
     if deny is not None:
         return _fail(
             deny.reason,
@@ -2453,7 +2599,11 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
             category=PolicyCategory.TOOLING,
         )
     key = _normalize_token(package_name)
-    deny = PACKAGE_DENYLIST.get(key)
+    # FIR-7-A3-01 / FIR-7-B3-01: denylist lookup uses the same separator/case
+    # fold as row doors (via _package_denylist_hit). Bare PACKAGE_DENYLIST.get
+    # on the lowercased token missed yolo-v8 / ultralytics-yolo and reported
+    # unknown_source instead of denylisted_package.
+    deny = _package_denylist_hit(str.strip(package_name))
     if deny is not None:
         return _fail(
             deny.reason,

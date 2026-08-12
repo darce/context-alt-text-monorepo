@@ -5221,11 +5221,15 @@ class TestLr04OccluderResearchSourceReasonPreservation:
 
 
 class TestB201PackageIdentityNonStringFailClosed:
-    """FIR-7-B2-01: non-string package-identity values → invalid_row on every door.
+    """FIR-7-B2-01 / FIR-7-B3-03: non-string package-identity → invalid_row.
 
     Previously ``isinstance(raw, str) ... else continue`` skipped list/dict
     values so ``package=['ultralytics']`` admitted on TRAINING_DATA /
     OCCLUDER_ASSET. BR-68 parity with source/derived/license type checks.
+
+    FIR-7-B3-03 completes the type-pin matrix: empty list, True, False,
+    bytes, 0, and explicit None under a package-identity key must also
+    fail closed (not truthiness-skipped).
     """
 
     @pytest.mark.parametrize(
@@ -5233,10 +5237,41 @@ class TestB201PackageIdentityNonStringFailClosed:
         [
             {"package": ["ultralytics"]},
             {"package": {"name": "ultralytics"}},
+            {"package": []},
+            {"package": True},
+            {"package": False},
+            {"package": b"ultralytics"},
+            {"package": 0},
+            {"package": None},
         ],
-        ids=["list", "dict"],
+        ids=[
+            "list",
+            "dict",
+            "empty-list",
+            "true",
+            "false",
+            "bytes",
+            "zero",
+            "none",
+        ],
     )
-    @pytest.mark.parametrize("door", list(policy.PolicyCategory))
+    @pytest.mark.parametrize(
+        "door",
+        [
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+            policy.PolicyCategory.MODEL_INGEST,
+            policy.PolicyCategory.OCCLUDER_ASSET,
+            policy.PolicyCategory.SYNTHETIC_SOURCE,
+        ],
+        ids=[
+            "training_data",
+            "tooling",
+            "model_ingest",
+            "occluder_asset",
+            "synthetic_source",
+        ],
+    )
     def test_non_string_package_invalid_row_every_door(
         self, dirty: dict, door: policy.PolicyCategory
     ) -> None:
@@ -5258,11 +5293,18 @@ class TestB201PackageIdentityNonStringFailClosed:
             f"({result.detail})"
         )
         assert "package" in result.detail
-        # Detail must name the type problem (list / dict).
+        # Detail must name the type problem (list / dict / bool / bytes / …).
+        # None is reported as the literal ``None`` (not NoneType).
         bad_val = next(iter(dirty.values()))
-        assert type(bad_val).__name__ in result.detail, (
-            f"detail must name type {type(bad_val).__name__!r}: {result.detail!r}"
-        )
+        if bad_val is None:
+            assert "None" in result.detail, (
+                f"detail must name None: {result.detail!r}"
+            )
+        else:
+            assert type(bad_val).__name__ in result.detail, (
+                f"detail must name type {type(bad_val).__name__!r}: "
+                f"{result.detail!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -5343,11 +5385,33 @@ class TestB202PackageIdentityKeyAliasNormalisation:
 
 
 class TestB203UltralyticsAgplFamilyDenylistVocabulary:
-    """FIR-7-B2-03: seed-set family members reject via exact-match denylist."""
+    """FIR-7-B2-03 / FIR-7-B3-01: family tokens reject via folded exact denylist.
 
-    NEW_FAMILY_TOKENS: ClassVar[tuple[str, ...]] = (
-        "yolo_v8",
-        "yolo-v8",
+    Separator variants (``yolo-v5`` / ``yolo_v5``) must hit the compact seed
+    after structural fold; substring-adjacent tokens (``yolodummy``, ``myyolo``)
+    must not.
+    """
+
+    # Witness spellings measured admitting before FIR-7-B3-01, plus compact
+    # forms, dual-seed forms, and new Ultralytics-lineage tokens.
+    FAMILY_TOKENS: ClassVar[tuple[str, ...]] = (
+        # separator variants of seeded versions (were ADMIT before B3-01)
+        "yolo-v5",
+        "yolo_v5",
+        "yolo-v9",
+        "yolo_v9",
+        "yolo-v10",
+        "yolo_v10",
+        "yolo-11",
+        "yolo_11",
+        "yolov11",
+        "yolo-v3",
+        "yolo_v3",
+        "yolo-v6",
+        "yolo_v6",
+        "yolo-v7",
+        "yolo_v7",
+        # compact forms (already denied pre-B3-01)
         "yolov3",
         "yolov5",
         "yolov6",
@@ -5355,10 +5419,24 @@ class TestB203UltralyticsAgplFamilyDenylistVocabulary:
         "yolov9",
         "yolov10",
         "yolo11",
+        # dual-seed yolo_v8 / yolo-v8 + compact
+        "yolo_v8",
+        "yolo-v8",
+        "yolov8",
         "ultralytics-yolo",
+        # genuinely Ultralytics-lineage additions (FIR-7-B3-01)
+        "yolo12",
+        "yolo-world",
+        "yolo_world",
+        "fastsam",
+        "yolov8n",
+        "yolov8s",
+        "yolov8m",
+        "yolov8l",
+        "yolov8x",
     )
 
-    @pytest.mark.parametrize("token", NEW_FAMILY_TOKENS)
+    @pytest.mark.parametrize("token", FAMILY_TOKENS)
     def test_family_token_fails_package_floor(self, token: str) -> None:
         row = {
             "source": "self-generated",
@@ -5375,9 +5453,82 @@ class TestB203UltralyticsAgplFamilyDenylistVocabulary:
             f"({result.detail})"
         )
 
+    @pytest.mark.parametrize("token", ("yolodummy", "myyolo"))
+    def test_substring_adjacent_tokens_do_not_hit(self, token: str) -> None:
+        """BR-50/52: folded exact-match must not substring-match 'yolo'."""
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must NOT hit package denylist (no substring creep)"
+        )
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        # May fail on unknown_source / other axes for tooling, but must not
+        # be denylisted_package from substring matching.
+        if not result.ok:
+            assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"{token!r} incorrectly denylisted via substring: {result.detail}"
+            )
+
+
+class TestB302HonestLineageNotes:
+    """FIR-7-B3-02: PACKAGE_DENYLIST notes/spdx reflect true upstream licences."""
+
+    def test_yolov6_is_meituan_gpl(self) -> None:
+        entry = policy.PACKAGE_DENYLIST["yolov6"]
+        assert entry.spdx_id == "GPL-3.0"
+        assert "Meituan" in entry.notes
+        assert "GPL-3.0" in entry.notes
+
+    def test_yolov7_is_wongkinyiu_gpl(self) -> None:
+        entry = policy.PACKAGE_DENYLIST["yolov7"]
+        assert entry.spdx_id == "GPL-3.0"
+        assert "WongKinYiu" in entry.notes
+        assert "GPL-3.0" in entry.notes
+
+    def test_yolov10_is_thumig_fail_closed(self) -> None:
+        entry = policy.PACKAGE_DENYLIST["yolov10"]
+        assert entry.spdx_id == "Apache-2.0"
+        assert "THU-MIG" in entry.notes
+        assert "Fail-closed" in entry.notes or "fail-closed" in entry.notes.lower()
+        assert "AGPL" in entry.notes
+
+    def test_yolov3_is_darknet_fail_closed(self) -> None:
+        entry = policy.PACKAGE_DENYLIST["yolov3"]
+        assert "Darknet" in entry.notes
+        assert "Fail-closed" in entry.notes or "fail-closed" in entry.notes.lower()
+        # Still denied.
+        assert entry.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
 
 # ---------------------------------------------------------------------------
-# FIR-7-B2-06 — SPDX expression empty parens / empty RHS fail closed
+# FIR-7-A3-01 — scalar tooling door uses folded denylist lookup
+# ---------------------------------------------------------------------------
+
+
+class TestA301ToolingScalarDenylistFold:
+    """FIR-7-A3-01: audit_tooling_dependency reports denylisted_package for yolo-v8."""
+
+    @pytest.mark.parametrize(
+        "token",
+        ("yolo-v8", "yolo_v8", "ultralytics-yolo", "yolov8"),
+    )
+    def test_tooling_scalar_denylisted_package(self, token: str) -> None:
+        result = policy.audit_tooling_dependency(token)
+        assert result.ok is False, f"tooling scalar admitted {token!r}"
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}: expected denylisted_package, got {result.reason} "
+            f"({result.detail})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B2-06 / B3-04 / A3-02 — SPDX expression-hygiene completeness
 # ---------------------------------------------------------------------------
 
 
@@ -5408,6 +5559,57 @@ class TestB206SpdxExpressionEmptyComponentFailClosed:
         )
         assert "expression-hygiene" in result.detail, (
             f"{spdx!r}: detail must name expression-hygiene; got {result.detail!r}"
+        )
+
+
+class TestB304A302SpdxExpressionHygieneCompleteness:
+    """FIR-7-B3-04 / FIR-7-A3-02: unicode dashes + unbalanced parens fail closed.
+
+    Must carry the expression-hygiene detail label (not bare unknown_spdx).
+    """
+
+    @pytest.mark.parametrize(
+        "spdx",
+        [
+            "MIT\u2013OR\u2013Apache-2.0",  # en-dash
+            "MIT\u2014Apache-2.0",  # em-dash
+            "Apache-2.0\u2013only",  # en-dash in id-shaped token
+        ],
+        ids=["en-dash-or", "em-dash", "en-dash-id"],
+    )
+    def test_unicode_dash_fails_expression_hygiene(self, spdx: str) -> None:
+        result = policy.audit_spdx(spdx)
+        assert result.ok is False, (
+            f"{spdx!r} must FAIL closed (unicode dash); got PASS "
+            f"detail={result.detail!r}"
+        )
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX, (
+            f"{spdx!r}: expected unknown_spdx, got {result.reason}"
+        )
+        assert "expression-hygiene" in result.detail, (
+            f"{spdx!r}: detail must name expression-hygiene; got {result.detail!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "spdx",
+        ["(MIT", "MIT)", ")MIT("],
+        ids=["open-only", "close-only", "reversed"],
+    )
+    def test_unbalanced_parens_fail_expression_hygiene(self, spdx: str) -> None:
+        result = policy.audit_spdx(spdx)
+        assert result.ok is False, (
+            f"{spdx!r} must FAIL closed (unbalanced parens); got PASS "
+            f"detail={result.detail!r}"
+        )
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX, (
+            f"{spdx!r}: expected unknown_spdx, got {result.reason}"
+        )
+        assert "expression-hygiene" in result.detail, (
+            f"{spdx!r}: detail must name expression-hygiene; got {result.detail!r}"
+        )
+        assert "unbalanced" in result.detail.lower(), (
+            f"{spdx!r}: detail must name unbalanced parentheses; got "
+            f"{result.detail!r}"
         )
 
 

@@ -57,7 +57,7 @@ cd apps/prototype-description-service && uv run --extra dev pytest scene/tests/t
 
 Actual output (excerpt):
 ```
-.......FF.FFFFFFF.FF                                                     [100%]
+[progress: several FAILED]                                                     [100%]
 =================================== FAILURES ===================================
 E   AttributeError: 'PlacementScores' object has no attribute 'abstained'
 ...

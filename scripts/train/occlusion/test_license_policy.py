@@ -2139,9 +2139,12 @@ class TestGate09MultiFaultPrecedencePinned:
     """GATE-09: short-circuit is by design; precedence must be documented and
     pinned so a future reordering is a visible test failure (CLM-03).
 
-    Floor order (see ``_common_provenance_checks`` docstring):
-      derived taint → source taint → clearance_decision → registration → licence
-    TOOLING additionally places the package denylist before licence (GATE-05).
+    Floor order (see ``_common_provenance_checks`` docstring) — six steps:
+      derived taint → source taint → clearance_decision →
+      package-identity denylist (FIR-7-RV-10; every door, not TOOLING-only) →
+      registration → licence
+    TOOLING additionally places the door-local package allowlist admission
+    between the package-identity floor and registration (GATE-05 / GATE-22).
     BR-74: clearance outranks the door-local BR-25 licence-before-allowlist
     ordering whenever both fire.
     """
@@ -3886,10 +3889,11 @@ class TestBr73AllowlistedPackageDeferredLicenseStillRuns:
 
 
 class TestGate20FloorPrecedenceAdjacentPairs:
-    """GATE-20: pin each adjacent pair in the documented floor order.
+    """GATE-20: pin each adjacent pair in the documented six-step floor order.
 
-    Documented order (``_common_provenance_checks`` / BR-72):
-      derived taint → source taint → clearance_decision → registration → licence
+    Documented order (``_common_provenance_checks`` / BR-72 / FIR-7-D2-01):
+      derived taint → source taint → clearance_decision →
+      package-identity denylist → registration → licence
 
     A row tainted at step N and step N+1 must report step N's reason.
     """
@@ -3935,9 +3939,47 @@ class TestGate20FloorPrecedenceAdjacentPairs:
         # clearance. Good.
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
 
+    def test_clearance_outranks_package_denylist(self) -> None:
+        # Pair 3 (FIR-7-D2-01): uncleared synthetic source + denylisted package
+        # → clearance wins (step 3 before package-identity step 4). Non-TOOLING
+        # door so the floor package step is the only package gate in play.
+        row = {
+            "source": "dcface",
+            "package": "ultralytics",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE, (
+            f"clearance must outrank package-denylist; got {result.reason} "
+            f"({result.detail})"
+        )
+
+    def test_package_denylist_outranks_registration(self) -> None:
+        # Pair 4 (FIR-7-D2-01): denylisted package + unregistered derived →
+        # package-identity denylist wins (step 4 before registration step 5).
+        # Non-TOOLING door; source is not a synthetic head (clearance silent).
+        row = {
+            "source": "internal_studio",
+            "package": "ultralytics",
+            "license": "Apache-2.0",
+            "derived_from_model": "totally_unregistered_xyz_model",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"package-denylist must outrank registration; got {result.reason} "
+            f"({result.detail})"
+        )
+
     def test_clearance_outranks_registration(self) -> None:
-        # Pair 3: uncleared synthetic source + unregistered derived → clearance
-        # wins (clearance runs before registration on the floor).
+        # Pair 5: uncleared synthetic source + unregistered derived → clearance
+        # wins (clearance runs before registration on the floor; package clean).
         row = {
             "model_id": "rt-detr",
             "package": "numba",
@@ -3953,7 +3995,7 @@ class TestGate20FloorPrecedenceAdjacentPairs:
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
 
     def test_registration_outranks_licence(self) -> None:
-        # Pair 4: unregistered derived + denylisted licence → registration wins.
+        # Pair 6: unregistered derived + denylisted licence → registration wins.
         # Source must not be operator-owned (that exempts registration — BR-33).
         row = {
             "model_id": "rt-detr",
@@ -4796,9 +4838,14 @@ class TestRv10PackageDenylistFloorAcrossIdentityFields:
     First-wins among package / package_name / source previously let a
     denylisted token hide behind another non-empty field. Floor semantics
     (like BR-53) audit every package-identity field on every door.
+
+    FIR-7-B2-05: every witness uses a CLEAN primary package so the floor (not
+    the TOOLING door-local first-wins check) is the only rejector of the
+    denylisted secondary field.
     """
 
-    # Measured escape witnesses (must FAIL).
+    # Measured escape witnesses (must FAIL). Clean primary + dirty secondary
+    # so a floor neuter turns the tooling cells red (FIR-7-B2-05).
     W1_TOOLING_SHADOW: ClassVar[dict[str, str]] = {
         "package": "numba",
         "package_name": "ultralytics",
@@ -4807,13 +4854,14 @@ class TestRv10PackageDenylistFloorAcrossIdentityFields:
     }
     W2_MODEL_ID_WINS: ClassVar[dict[str, str]] = {
         "model_id": "yunet",
-        "package": "ultralytics",
+        "package": "numba",
+        "package_name": "ultralytics",
         "license": "MIT",
         "derived_from_model": "",
     }
     W3_TRAINING_PACKAGE: ClassVar[dict[str, str]] = {
         "source": "self-generated",
-        "package": "ultralytics",
+        "package": "numba",
         "package_name": "ultralytics",
         "license": "MIT",
         "derived_from_model": "",
@@ -4831,13 +4879,13 @@ class TestRv10PackageDenylistFloorAcrossIdentityFields:
             (
                 W2_MODEL_ID_WINS,
                 policy.PolicyCategory.MODEL_INGEST,
-                "package",
+                "package_name",
                 "ultralytics",
             ),
             (
                 W3_TRAINING_PACKAGE,
                 policy.PolicyCategory.TRAINING_DATA,
-                "package",
+                "package_name",
                 "ultralytics",
             ),
         ],
@@ -4895,18 +4943,38 @@ class TestRv10PackageDenylistFloorAcrossIdentityFields:
 
 
 class TestRv11SyntheticSourceAxisTaintReasonFidelity:
-    """FIR-7-RV-11: non-registry synthetic sources keep specific taint reasons."""
+    """FIR-7-RV-11: non-registry synthetic sources keep specific taint reasons.
+
+    FIR-7-B2-04: the NC cell must use a source that is NC-model-derived on the
+    source-taint axis but NOT in PACKAGE_DENYLIST — otherwise the RV-10 package
+    floor supplies nc_model_derived under an RV-11 neuter and the cell is
+    vacuous. ``retinaface`` is on the NC seed set and absent from
+    PACKAGE_DENYLIST (verified by construction).
+    """
 
     @pytest.mark.parametrize(
         ("source", "expected_reason"),
         [
             ("ffhq", policy.RejectionReason.RESEARCH_ONLY_SOURCE),
-            ("buffalo_l", policy.RejectionReason.NC_MODEL_DERIVED),
+            # Not buffalo_l: that token is also in PACKAGE_DENYLIST, so the
+            # package floor would keep the cell green under an RV-11 neuter
+            # (FIR-7-B2-04 / TEST-15).
+            ("retinaface", policy.RejectionReason.NC_MODEL_DERIVED),
         ],
     )
     def test_synthetic_door_reports_source_axis_taint(
         self, source: str, expected_reason: policy.RejectionReason
     ) -> None:
+        # Pin the NC witness is outside PACKAGE_DENYLIST so only RV-11's
+        # source-axis path can reject it.
+        if expected_reason is policy.RejectionReason.NC_MODEL_DERIVED:
+            assert source not in policy.PACKAGE_DENYLIST, (
+                f"{source!r} is in PACKAGE_DENYLIST — witness is vacuous "
+                "under an RV-11 neuter (FIR-7-B2-04)"
+            )
+            assert policy._package_denylist_hit(source) is None, (
+                f"{source!r} hits PACKAGE_DENYLIST via alias — witness vacuous"
+            )
         row = {
             "source": source,
             "license": "MIT",
@@ -5144,6 +5212,202 @@ class TestLr04OccluderResearchSourceReasonPreservation:
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE, (
             f"occluder + source=ffhq expected RESEARCH_ONLY_SOURCE, got "
             f"{result.reason} ({result.detail})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B2-01 — package-identity floor fail-closed on non-string types
+# ---------------------------------------------------------------------------
+
+
+class TestB201PackageIdentityNonStringFailClosed:
+    """FIR-7-B2-01: non-string package-identity values → invalid_row on every door.
+
+    Previously ``isinstance(raw, str) ... else continue`` skipped list/dict
+    values so ``package=['ultralytics']`` admitted on TRAINING_DATA /
+    OCCLUDER_ASSET. BR-68 parity with source/derived/license type checks.
+    """
+
+    @pytest.mark.parametrize(
+        "dirty",
+        [
+            {"package": ["ultralytics"]},
+            {"package": {"name": "ultralytics"}},
+        ],
+        ids=["list", "dict"],
+    )
+    @pytest.mark.parametrize("door", list(policy.PolicyCategory))
+    def test_non_string_package_invalid_row_every_door(
+        self, dirty: dict, door: policy.PolicyCategory
+    ) -> None:
+        row: dict = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": "numba",
+            "model_id": "yunet",
+            "photo_clearance": "cleared",
+        }
+        row.update(dirty)
+        result = policy.audit_provenance_row(row, category=door)
+        assert result.ok is False, (
+            f"door={door.value} admitted non-string package identity {dirty!r}"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"door={door.value}: expected invalid_row, got {result.reason} "
+            f"({result.detail})"
+        )
+        assert "package" in result.detail
+        # Detail must name the type problem (list / dict).
+        bad_val = next(iter(dirty.values()))
+        assert type(bad_val).__name__ in result.detail, (
+            f"detail must name type {type(bad_val).__name__!r}: {result.detail!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B2-02 — package-identity key alias / case normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestB202PackageIdentityKeyAliasNormalisation:
+    """FIR-7-B2-02: Package / PACKAGE / package_Name / Model-Id hit the floor.
+
+    Same ``_normalise_field_key`` treatment as licence keys (GATE-04). A
+    denylisted value under any alias is denylisted_package; disagreeing
+    duplicates under one canonical key are invalid_row.
+    """
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("Package", "ultralytics"),
+            ("PACKAGE", "ultralytics"),
+            ("package_Name", "ultralytics"),
+            ("Model-Id", "ultralytics"),
+        ],
+        ids=["Package", "PACKAGE", "package_Name", "Model-Id"],
+    )
+    def test_alias_key_with_denylisted_value_fails(self, key: str, value: str) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+            # Clean exact primary so only the alias field can fire the floor.
+            "package": "numba",
+            key: value,
+        }
+        # Model-Id aliases to model_id — drop the clean package primary noise
+        # is fine; package=numba + Model-Id=ultralytics should still deny.
+        if key in ("Package", "PACKAGE"):
+            # Alias collides with package=numba → disagreeing values → invalid_row
+            # OR if we don't set package, just the alias.
+            row.pop("package", None)
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, (
+            f"alias key {key!r}={value!r} admitted; floor missed normalisation"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"alias {key!r}: expected denylisted_package, got {result.reason} "
+            f"({result.detail})"
+        )
+        assert value in result.detail
+
+    def test_disagreeing_package_alias_is_invalid_row(self) -> None:
+        # package=numba + Package=ultralytics → same canonical key, different
+        # values → fail-closed invalid_row (licence-key BR-35 precedent).
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": "numba",
+            "Package": "ultralytics",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"disagreeing package aliases must be invalid_row, got "
+            f"{result.reason} ({result.detail})"
+        )
+        assert "disagreeing" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B2-03 — Ultralytics AGPL family denylist vocabulary
+# ---------------------------------------------------------------------------
+
+
+class TestB203UltralyticsAgplFamilyDenylistVocabulary:
+    """FIR-7-B2-03: seed-set family members reject via exact-match denylist."""
+
+    NEW_FAMILY_TOKENS: ClassVar[tuple[str, ...]] = (
+        "yolo_v8",
+        "yolo-v8",
+        "yolov3",
+        "yolov5",
+        "yolov6",
+        "yolov7",
+        "yolov9",
+        "yolov10",
+        "yolo11",
+        "ultralytics-yolo",
+    )
+
+    @pytest.mark.parametrize("token", NEW_FAMILY_TOKENS)
+    def test_family_token_fails_package_floor(self, token: str) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, f"family token {token!r} admitted"
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}: expected denylisted_package, got {result.reason} "
+            f"({result.detail})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B2-06 — SPDX expression empty parens / empty RHS fail closed
+# ---------------------------------------------------------------------------
+
+
+class TestB206SpdxExpressionEmptyComponentFailClosed:
+    """FIR-7-B2-06: empty parens / trailing operator / empty RHS are malformed.
+
+    ``MIT OR ()`` previously admitted with components=['MIT'] after silently
+    dropping the empty parenthesised component (GATE-10 hygiene).
+    """
+
+    @pytest.mark.parametrize(
+        "spdx",
+        [
+            "MIT OR ()",
+            "MIT AND",
+            "() OR MIT",
+        ],
+    )
+    def test_empty_component_expressions_fail_closed(self, spdx: str) -> None:
+        result = policy.audit_spdx(spdx)
+        assert result.ok is False, (
+            f"{spdx!r} must FAIL closed (expression-hygiene); got PASS "
+            f"detail={result.detail!r}"
+        )
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX, (
+            f"{spdx!r}: expected unknown_spdx (expression-hygiene), got "
+            f"{result.reason}"
+        )
+        assert "expression-hygiene" in result.detail, (
+            f"{spdx!r}: detail must name expression-hygiene; got {result.detail!r}"
         )
 
 

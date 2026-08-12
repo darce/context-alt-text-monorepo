@@ -449,6 +449,44 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="AGPL-3.0; person→face cascade must use RT-DETR / D-FINE / PP-PicoDet.",
     ),
+    # Ultralytics AGPL family seed set (FIR-7-B2-03). Exact-match only (BR-50/52);
+    # each token is a genuine Ultralytics AGPL-3.0 lineage identifier. yolo-nas is
+    # Deci (Apache-2.0) and is intentionally NOT listed.
+    "yolo": PackageDenylistEntry(
+        package_id="yolo",
+        display_name="YOLO (Ultralytics family)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family alias; banned for cascade person-detection.",
+    ),
+    "yolov3": PackageDenylistEntry(
+        package_id="yolov3",
+        display_name="YOLOv3 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    "yolov5": PackageDenylistEntry(
+        package_id="yolov5",
+        display_name="YOLOv5 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    "yolov6": PackageDenylistEntry(
+        package_id="yolov6",
+        display_name="YOLOv6 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    "yolov7": PackageDenylistEntry(
+        package_id="yolov7",
+        display_name="YOLOv7 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
     "yolov8": PackageDenylistEntry(
         package_id="yolov8",
         display_name="YOLOv8 (Ultralytics)",
@@ -456,12 +494,44 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="Ultralytics AGPL family; banned for cascade person-detection.",
     ),
-    "yolo": PackageDenylistEntry(
-        package_id="yolo",
-        display_name="YOLO (Ultralytics family)",
+    "yolov9": PackageDenylistEntry(
+        package_id="yolov9",
+        display_name="YOLOv9 (Ultralytics)",
         spdx_id="AGPL-3.0",
         reason=RejectionReason.DENYLISTED_PACKAGE,
-        notes="Ultralytics AGPL family alias; banned for cascade person-detection.",
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    "yolov10": PackageDenylistEntry(
+        package_id="yolov10",
+        display_name="YOLOv10 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    "yolo11": PackageDenylistEntry(
+        package_id="yolo11",
+        display_name="YOLO11 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family; banned for cascade person-detection.",
+    ),
+    # Seed key is the post-canonical form: canonical("yolo-v8") == "yolo_v8",
+    # so a single seed covers both underscore and hyphen spellings (exact-match
+    # after separator unify — BR-50/52).
+    "yolo_v8": PackageDenylistEntry(
+        package_id="yolo_v8",
+        display_name="YOLO v8 (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family spelling variant (yolo_v8 / yolo-v8); banned.",
+    ),
+    # Seed key is post-canonical: canonical("ultralytics-yolo") == "ultralytics_yolo".
+    "ultralytics_yolo": PackageDenylistEntry(
+        package_id="ultralytics_yolo",
+        display_name="ultralytics-yolo (Ultralytics)",
+        spdx_id="AGPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes="Ultralytics AGPL family compound tag; banned for cascade person-detection.",
     ),
     "insightface": PackageDenylistEntry(
         package_id="insightface",
@@ -1868,6 +1938,19 @@ _PACKAGE_IDENTITY_FIELD_KEYS: tuple[str, ...] = (
     "source",
 )
 
+# GATE-04 / FIR-7-B2-02: package-identity keys get the same case + separator
+# normalisation as licence keys (via :func:`_normalise_field_key`). Map
+# normalised spellings to the canonical field name. ``packagename`` /
+# ``modelid`` cover the no-separator fold of ``packageName`` / ``modelId``.
+_PACKAGE_IDENTITY_KEY_ALIASES: dict[str, str] = {
+    "package": "package",
+    "package_name": "package_name",
+    "packagename": "package_name",
+    "model_id": "model_id",
+    "modelid": "model_id",
+    "source": "source",
+}
+
 
 def _floor_package_identity_denylist(
     row: Mapping[str, Any],
@@ -1880,23 +1963,84 @@ def _floor_package_identity_denylist(
     ``model_id`` / ``source`` fails closed on every door — floor semantics
     like BR-53, not first-wins among identity fields. Rejection detail names
     both the denylisted token and the field it appeared in.
+
+    Key aliases use :func:`_normalise_field_key` (case fold + underscore/hyphen
+    fold) so ``Package`` / ``PACKAGE`` / ``package_Name`` / ``Model-Id`` cannot
+    bypass the floor (FIR-7-B2-02 / GATE-04). Non-string, non-None values are
+    fail-closed ``invalid_row`` (FIR-7-B2-01 / BR-68 parity). Disagreeing
+    values under the same canonical key after normalisation are
+    ``invalid_row`` (licence-key precedent).
     """
-    for key in _PACKAGE_IDENTITY_FIELD_KEYS:
-        raw = row.get(key)
-        if not isinstance(raw, str) or not str.strip(raw):
+    # Collect (raw_key, canonical_key, raw_value) for every present identity
+    # field, including case/separator aliases. Type-check before denylist so a
+    # list/dict under ``Package`` cannot skip the floor (FIR-7-B2-01).
+    by_canonical: dict[str, list[tuple[str, Any]]] = {
+        key: [] for key in _PACKAGE_IDENTITY_FIELD_KEYS
+    }
+    for key in row:
+        if not isinstance(key, str):
             continue
-        text = str.strip(raw)
-        deny = _package_denylist_hit(text)
-        if deny is None:
+        canonical_key = _PACKAGE_IDENTITY_KEY_ALIASES.get(_normalise_field_key(key))
+        if canonical_key is None:
             continue
-        return _fail(
-            deny.reason,
-            detail=(
-                f"{key}={text!r} hits PACKAGE_DENYLIST entry "
-                f"{deny.package_id!r} ({deny.spdx_id}): {deny.notes}"
-            ),
-            category=category,
-        )
+        by_canonical[canonical_key].append((key, row[key]))
+
+    # BR-68 / FIR-7-B2-01: non-string present values fail closed, naming field
+    # and type. None is treated as a type error when the key is present (same
+    # contract as :func:`_floor_string_field` / licence keys).
+    for _canonical_key, entries in by_canonical.items():
+        for raw_key, raw in entries:
+            if raw is None:
+                return _fail(
+                    RejectionReason.INVALID_ROW,
+                    detail=(
+                        f"provenance row field {raw_key!r} must be a string, "
+                        f"got None"
+                    ),
+                    category=category,
+                )
+            if not isinstance(raw, str):
+                return _fail(
+                    RejectionReason.INVALID_ROW,
+                    detail=(
+                        f"provenance row field {raw_key!r} must be a string, "
+                        f"got {type(raw).__name__}"
+                    ),
+                    category=category,
+                )
+
+    # Disagreeing non-empty values under one canonical key → invalid_row
+    # (licence-key BR-35 / FIR-7-B2-02 precedent).
+    for canonical_key, entries in by_canonical.items():
+        texts = [str.strip(raw) for _k, raw in entries if str.strip(raw)]
+        if len({str.casefold(t) for t in texts}) > 1:
+            return _fail(
+                RejectionReason.INVALID_ROW,
+                detail=(
+                    f"provenance row declares disagreeing {canonical_key!r} "
+                    f"values {texts!r} under alias keys; fail-closed on ambiguity"
+                ),
+                category=category,
+            )
+
+    # Denylist scan: every non-empty string value under any identity alias.
+    # Emit against the raw key so detail names what the row author wrote.
+    for canonical_key in _PACKAGE_IDENTITY_FIELD_KEYS:
+        for raw_key, raw in by_canonical[canonical_key]:
+            text = str.strip(raw)
+            if not text:
+                continue
+            deny = _package_denylist_hit(text)
+            if deny is None:
+                continue
+            return _fail(
+                deny.reason,
+                detail=(
+                    f"{raw_key}={text!r} hits PACKAGE_DENYLIST entry "
+                    f"{deny.package_id!r} ({deny.spdx_id}): {deny.notes}"
+                ),
+                category=category,
+            )
     return None
 
 def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResult:
@@ -2002,6 +2146,52 @@ def _spdx_base_token(tok: str) -> str:
     return text
 
 
+def _spdx_expression_malformed_reason(tag: str) -> str | None:
+    """Return an expression-hygiene detail when ``tag`` has empty components.
+
+    Empty parentheses (``()``), a trailing / leading operator (``MIT AND``,
+    ``OR MIT``), or an empty RHS after an operator must fail closed (GATE-10 /
+    FIR-7-B2-06) — never silently drop the empty component and admit the rest.
+    """
+    text = str.strip(tag)
+    if not text:
+        return None
+    if re.search(r"\(\s*\)", text):
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: empty parentheses)"
+        )
+    # Strip grouping parens to spaces before operator / empty-part checks so
+    # ``(MIT)`` stays well-formed while ``MIT OR ()`` is already caught above.
+    work = text.replace("(", " ").replace(")", " ")
+    work_stripped = str.strip(work)
+    if not work_stripped:
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: empty component)"
+        )
+    # Trailing / leading operator with no RHS / LHS (``MIT AND``, ``OR MIT``).
+    if re.search(r"(?:^|\s)(?:OR|AND|WITH)\s*$", work_stripped, re.IGNORECASE):
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: trailing operator / empty RHS)"
+        )
+    if re.search(r"^(?:OR|AND|WITH)(?:\s|$)", work_stripped, re.IGNORECASE):
+        return (
+            f"license {tag!r} is a malformed SPDX expression "
+            "(expression-hygiene: leading operator / empty LHS)"
+        )
+    parts = _SPDX_EXPRESSION_JOINERS.split(work)
+    if len(parts) > 1:
+        for part in parts:
+            if not str.strip(part):
+                return (
+                    f"license {tag!r} is a malformed SPDX expression "
+                    "(expression-hygiene: empty component)"
+                )
+    return None
+
+
 def _spdx_expression_tokens(tag: str) -> list[str]:
     """Split a compound SPDX expression into licence-id tokens (GATE-10).
 
@@ -2009,6 +2199,9 @@ def _spdx_expression_tokens(tag: str) -> list[str]:
     component through :func:`_spdx_base_token` (trailing ``+`` / ``-or-later``).
     Does not attempt to evaluate the expression — callers check each token
     against the denylist then the allowlist fail-closed.
+
+    Callers must run :func:`_spdx_expression_malformed_reason` first so empty
+    parentheses / empty RHS cannot be silently dropped (FIR-7-B2-06).
     """
     text = str.strip(tag).replace("(", " ").replace(")", " ")
     tokens: list[str] = []
@@ -2066,6 +2259,12 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
             RejectionReason.PENDING_LEGAL_CLEARANCE,
             detail="license is PENDING-LEGAL-CLEARANCE",
         )
+
+    # FIR-7-B2-06 / GATE-10: empty parens / trailing operator / empty RHS are
+    # expression-hygiene failures — fail closed before silent component-drop.
+    hygiene = _spdx_expression_malformed_reason(tag)
+    if hygiene is not None:
+        return _fail(RejectionReason.UNKNOWN_SPDX, detail=hygiene)
 
     tokens = _spdx_expression_tokens(tag)
     # GATE-10: denylist components before allowlist / unknown_spdx.
@@ -2605,10 +2804,11 @@ def audit_provenance_row(
 
     Checks on the training-data path, in order:
       0. structural field validation (types + required keys)
-      1. shared floor via :func:`_common_provenance_checks`:
+      1. shared floor via :func:`_common_provenance_checks` (six steps):
          derived type/taint → source type/taint → content-triggered
-         clearance_decision (GATE-11 / BR-65) → unregistered derived
-         registration (BR-66) → present licence values
+         clearance_decision (GATE-11 / BR-65) → package-identity denylist
+         across package / package_name / model_id / source (FIR-7-RV-10) →
+         unregistered derived registration (BR-66) → present licence values
       2. ``source`` against research-only / NC (NOT ``generator_lineage``)
          — redundant with floor source taint for non-empty sources; still
          enforces required-source
@@ -2812,15 +3012,20 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
     Ordering (BR-24 / GATE-05 / GATE-22) — package denylist cannot be masked
     by a row-author-controlled self-declaration on any axis:
 
-      1. Floor taint + content-triggered clearance via
-         :func:`_floor_taint_and_clearance` (``derived_from_model`` NC/research
-         taint, ``source`` taint, synthetic clearance). Registration and
-         licence halves are deferred so neither can mask the package reason.
+      1. Floor taint + content-triggered clearance + package-identity denylist
+         via :func:`_floor_taint_and_clearance` (``derived_from_model``
+         NC/research taint, ``source`` taint, synthetic clearance, then
+         package-identity denylist as floor step 4 / FIR-7-RV-10). Registration
+         and licence halves are deferred so neither can mask the package reason.
       2. Resolve a package identifier from ``package`` / ``package_name`` /
          ``source`` and run :func:`audit_tooling_dependency` **before**
          registration and any row-declared SPDX check so a self-declared
          licence **or** a junk ``derived_from_model`` tag cannot launder a
-         denylisted package (BR-24 / GATE-22).
+         denylisted package (BR-24 / GATE-22). This door-local denylist /
+         allowlist check is **shadow coverage** of the floor package-identity
+         denylist (step 1 / floor step 4) for the first-wins primary field —
+         the floor already rejects denylisted tokens in any secondary identity
+         field (FIR-7-D2-02).
       3. Unregistered ``derived_from_model`` registration via
          :func:`_floor_registration` (BR-66 / GATE-21).
       4. Present row-declared licence values via :func:`_floor_licenses`

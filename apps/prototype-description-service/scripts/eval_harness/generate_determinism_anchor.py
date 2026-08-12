@@ -52,6 +52,8 @@ from scripts.eval_harness.promote_atomic import (
     CAPTION_PROMOTE,
     atomic_promote,
     recover_promote,
+    scavenge_orphan_stages,
+    validate_live_head_sha,
 )
 from scripts.eval_harness.report import score_run_record
 from scripts.eval_harness.schema import SCHEMA, DocKind
@@ -274,8 +276,13 @@ def write_anchor(
     ``head_sha``/``started_at`` are nulled so two generator runs match and no
     contract wall-clock/git field holds a fabricated sentinel (S4-04 / rg-015).
     Byte-stability comes only from ``fixture_revision`` / ``canonical_timestamp``.
-    Pass ``pin_live_provenance=False`` (or ``--live-*``) to record real values.
+    Pin mode is gated solely on this flag (RV2-05) — never on whether
+    ``live_*`` is ``None`` vs empty string. Pass ``pin_live_provenance=False``
+    (CLI ``--no-pin``) to record real values; empty ``live_head_sha`` is refused.
     """
+    # Reclaim orphan stage dirs left by crashes before journal write (RV2-07).
+    scavenge_orphan_stages(out_dir, _PROMOTE_NS)
+
     # Metadata-only: uses path/sha256/media_id/present_identities/face_count for synthetic
     # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
     manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
@@ -284,7 +291,12 @@ def write_anchor(
     fix_rev = head_sha if head_sha is not None else fixture_revision
     can_ts = started_at if started_at is not None else canonical_timestamp
 
-    if pin_live_provenance and live_head_sha is None and live_started_at is None:
+    # Pin mode is explicit (RV2-05) — not "live_* is None". Empty live_head_sha
+    # is refused so it cannot silently exit pin mode and inject wall-clock.
+    if live_head_sha is not None:
+        live_head_sha = validate_live_head_sha(live_head_sha)
+
+    if pin_live_provenance:
         # Byte-stable mode: null contract head_sha/started_at (never fabricate).
         # Sentinels live only in fixture_revision / canonical_timestamp (S4-04).
         record = build_run_record(
@@ -407,14 +419,28 @@ def main(argv: list[str] | None = None) -> int:
         help="(legacy) maps to --canonical-timestamp when set; prefer --canonical-timestamp",
     )
     parser.add_argument(
+        "--pin",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="pin mode: null provenance.head_sha/started_at (default: true). "
+        "Pass --no-pin to record live provenance (RV2-05 / S4-04).",
+    )
+    parser.add_argument(
         "--live-head-sha",
         default=None,
-        help="optional real git SHA recorded under provenance.head_sha (not a sentinel)",
+        help="real 40-char git SHA for provenance.head_sha when --no-pin "
+        "(refuses empty string, forty zeros, non-hex; RV2-04 / RV2-05 / S4-06)",
     )
     parser.add_argument(
         "--live-started-at",
         default=None,
-        help="optional real ISO-8601 recorded under provenance.started_at (not a sentinel)",
+        help="real ISO-8601 for provenance.started_at when --no-pin (not a sentinel)",
+    )
+    parser.add_argument(
+        "--verify-live-head-sha",
+        action="store_true",
+        default=False,
+        help="also require git rev-parse --verify <sha>^{commit} for --live-head-sha",
     )
     args = parser.parse_args(argv)
 
@@ -425,6 +451,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.started_at is not None:
         canonical_timestamp = args.started_at
 
+    # Validate / normalise live SHA at parse boundary (RV2-04 / RV2-05).
+    live_head = validate_live_head_sha(
+        args.live_head_sha,
+        verify_git=bool(args.verify_live_head_sha),
+    )
+    if live_head is not None and args.pin:
+        raise SystemExit(
+            "--live-head-sha requires --no-pin (pin mode nulls contract head_sha; "
+            "RV2-05 / S4-04)"
+        )
+    if args.live_started_at is not None and args.pin:
+        raise SystemExit(
+            "--live-started-at requires --no-pin (pin mode nulls contract started_at; "
+            "RV2-05 / S4-04)"
+        )
+
     run_path, report_json_path, report_md_path, manifest_sha = write_anchor(
         manifest_path=args.manifest,
         out_dir=args.out_dir,
@@ -433,8 +475,9 @@ def main(argv: list[str] | None = None) -> int:
         canonical_timestamp=canonical_timestamp,
         head_sha=args.head_sha,
         started_at=args.started_at,
-        live_head_sha=args.live_head_sha,
+        live_head_sha=live_head,
         live_started_at=args.live_started_at,
+        pin_live_provenance=bool(args.pin),
     )
     print(f"manifest_sha256={manifest_sha}")
     print(f"run_record={run_path}")

@@ -3347,6 +3347,148 @@ class TestBr65ClearanceAxesSeparated:
                 )
 
 
+    # -----------------------------------------------------------------
+    # FIR-7-RV-09 — real synthetic head dual-axis matrix coverage
+    # -----------------------------------------------------------------
+
+    SYNTH_HEAD_BASE: ClassVar[dict[str, Any]] = {
+        "model_id": "rt-detr",
+        "package": "numba",
+        "license": "Apache-2.0",
+        "source": "dcface",
+        "derived_from_model": "",
+    }
+
+    @pytest.mark.parametrize(
+        (
+            "category",
+            "has_clearance",
+            "photo_clearance",
+            "expect_ok",
+            "expected_reason",
+            "detail_substr",
+        ),
+        [
+            # Correct clearance token + each photo_clearance state: admit only
+            # when the door does not ADD a further obligation. Occluder rejects
+            # dcface as an unregistered pack-build source (photo axis orthogonal).
+            (policy.PolicyCategory.TRAINING_DATA, True, None, True, None, None),
+            (policy.PolicyCategory.TRAINING_DATA, True, "cleared", True, None, None),
+            (policy.PolicyCategory.TRAINING_DATA, True, "allowed", True, None, None),
+            (policy.PolicyCategory.TOOLING, True, None, True, None, None),
+            (policy.PolicyCategory.TOOLING, True, "cleared", True, None, None),
+            (policy.PolicyCategory.MODEL_INGEST, True, None, True, None, None),
+            (policy.PolicyCategory.MODEL_INGEST, True, "cleared", True, None, None),
+            (policy.PolicyCategory.SYNTHETIC_SOURCE, True, None, True, None, None),
+            (policy.PolicyCategory.SYNTHETIC_SOURCE, True, "cleared", True, None, None),
+            (
+                policy.PolicyCategory.SYNTHETIC_SOURCE,
+                True,
+                "operator_cleared",
+                True,
+                None,
+                None,
+            ),
+            (
+                policy.PolicyCategory.OCCLUDER_ASSET,
+                True,
+                "cleared",
+                False,
+                "unknown_source",
+                "not a registered",
+            ),
+            (
+                policy.PolicyCategory.OCCLUDER_ASSET,
+                True,
+                None,
+                False,
+                "uncleared_occluder_asset",
+                "uncleared",
+            ),
+            # Missing clearance on a real synthetic head: clearance path only.
+            (
+                policy.PolicyCategory.TRAINING_DATA,
+                False,
+                None,
+                False,
+                "pending_legal_clearance",
+                "requires clearance_decision=",
+            ),
+            (
+                policy.PolicyCategory.SYNTHETIC_SOURCE,
+                False,
+                None,
+                False,
+                "pending_legal_clearance",
+                "requires clearance_decision=",
+            ),
+            (
+                policy.PolicyCategory.TOOLING,
+                False,
+                None,
+                False,
+                "pending_legal_clearance",
+                "requires clearance_decision=",
+            ),
+            (
+                policy.PolicyCategory.MODEL_INGEST,
+                False,
+                None,
+                False,
+                "pending_legal_clearance",
+                "requires clearance_decision=",
+            ),
+            (
+                policy.PolicyCategory.OCCLUDER_ASSET,
+                False,
+                "cleared",
+                False,
+                "pending_legal_clearance",
+                "requires clearance_decision=",
+            ),
+        ],
+    )
+    def test_br65_real_synth_head_dual_axis_matrix(
+        self,
+        category,
+        has_clearance,
+        photo_clearance,
+        expect_ok,
+        expected_reason,
+        detail_substr,
+    ) -> None:
+        """FIR-7-RV-09: dual-axis admit/fail path for a real synthetic head.
+
+        Uses source=dcface so the clearance obligation is what the cell
+        exercises (unlike BASE source=operator-photo). Photo_clearance state
+        must admit or fail only for the right door-local reason.
+        """
+        row = dict(self.SYNTH_HEAD_BASE)
+        if has_clearance:
+            row["clearance_decision"] = policy.DCFACE_CLEARANCE_DECISION
+        if photo_clearance is not None:
+            row["photo_clearance"] = photo_clearance
+        result = policy.audit_provenance_row(row, category=category)
+        if expect_ok:
+            assert result.ok is True, (
+                f"{category.value} pc={photo_clearance!r}: expected PASS, got "
+                f"{result.reason} {result.detail}"
+            )
+        else:
+            assert result.ok is False, (
+                f"{category.value} pc={photo_clearance!r}: expected FAIL "
+                f"{expected_reason}, got PASS"
+            )
+            assert result.reason is policy.RejectionReason(expected_reason), (
+                f"{category.value}: expected {expected_reason!r}, got {result.reason}"
+            )
+            if detail_substr is not None:
+                assert detail_substr in result.detail, (
+                    f"{category.value}: expected detail containing "
+                    f"{detail_substr!r}, got {result.detail!r}"
+                )
+
+
 # ---------------------------------------------------------------------------
 # GATE-16 / GATE-17 — clearance axes are not interchangeable; retired key inert
 # ---------------------------------------------------------------------------

@@ -6953,16 +6953,19 @@ class TestA701YoloNasVariantNcPins:
 
 
 class TestB801UniformSuffixScan:
-    """FIR-7-B8-01 / B8-03: uniform (d')/(e) deny scan on every component.
+    """FIR-7-B8-01 / B8-03 / A9-01: uniform outer-suffix + (e) deny scan.
 
     Path-split and compact-glue witnesses bypassed the F4 residual-only
-    suffix scan. (d') generalised separator-aligned suffix + (e) compact
-    segment-suffix (seed ≥ 5 compact chars) close them on the same code
-    path used for post-exception residuals.
+    suffix scan. The **outer** separator-aligned suffix walk (gated by
+    ``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED``) + (e) compact
+    segment-suffix close them. The Wave F5 inner (d') walk was removed
+    (FIR-7-A9-01): it over-blocked vendor-prefix exception forms with a
+    false AGPL note and was verdict-dead for path-split pins.
 
-    Red-proven independently: disable (d') → path-split/size-tag witnesses
-    admit; disable (e) → compact-glue witnesses admit; ``myyolo`` stays
-    admitted under (e) (4-char seed floor).
+    Red-proven independently: disable outer residual-suffix scan →
+    path-split/size-tag witnesses admit; disable (e) → compact-glue
+    witnesses admit; ``myyolo`` stays admitted under (e) (4-char seed
+    floor). Vendor-prefix exception forms admit (FIR-7-A9-01 pins).
     """
 
     # Path-split: second component is size-tag + deny seed (F4 residual-only
@@ -6983,12 +6986,13 @@ class TestB801UniformSuffixScan:
         "yoloxsultralytics",
     )
 
-    # (d')-only cells: multi-segment size-tag shields (not compact-glue).
-    D_PRIME_WITNESSES: ClassVar[tuple[str, ...]] = (
+    # Outer-suffix-only cells: multi-segment size-tag shields (not compact-glue).
+    OUTER_SUFFIX_WITNESSES: ClassVar[tuple[str, ...]] = (
         "yolox/s_ultralytics",
         "yolox/s_buffalo_l",
         "yolox_s_ultralytics",
         "yolox/tiny_ultralytics",
+        "s_ultralytics",
     )
 
     # (e)-only cells: compact segment ends with deny seed ≥ 5 chars.
@@ -6998,6 +7002,15 @@ class TestB801UniformSuffixScan:
         "yolox_xultralytics",
         "yoloxultralytics",
         "yoloxsultralytics",
+    )
+
+    # FIR-7-A9-01: underscore vendor-prefix exception forms (were false-denied
+    # AGPL via inner (d') at Wave F5 HEAD). Join existing vendor/yolox slash pin.
+    VENDOR_PREFIX_ADMIT: ClassVar[tuple[str, ...]] = (
+        "megvii_yolox",
+        "hustvl_yolos",
+        "hustvl_yolop",
+        "megvii_model_yolof",
     )
 
     ADMIT_PINS: ClassVar[tuple[str, ...]] = (
@@ -7016,6 +7029,10 @@ class TestB801UniformSuffixScan:
         "timm",
         "numba",
         "vendor/yolox",
+        "megvii_yolox",
+        "hustvl_yolos",
+        "hustvl_yolop",
+        "megvii_model_yolof",
     )
 
     @pytest.mark.parametrize(
@@ -7024,7 +7041,7 @@ class TestB801UniformSuffixScan:
     def test_uniform_bypass_hits_package_denylist(self, token: str) -> None:
         hit = policy._package_denylist_hit(token)
         assert hit is not None, (
-            f"{token!r} must DENY under uniform (d')/(e) component scan"
+            f"{token!r} must DENY under uniform outer-suffix/(e) component scan"
         )
 
     @pytest.mark.parametrize(
@@ -7125,27 +7142,77 @@ class TestB801UniformSuffixScan:
         """(e) ≥5 floor: myyolo ends with 4-char seed yolo — must ADMIT."""
         assert policy._package_denylist_hit("myyolo") is None
 
-    def test_red_proof_generalized_suffix_d_prime(
+    @pytest.mark.parametrize("token", VENDOR_PREFIX_ADMIT)
+    def test_vendor_prefix_exception_admits_package_floor(self, token: str) -> None:
+        """FIR-7-A9-01: megvii_yolox / hustvl_* / megvii_model_yolof admit."""
+        assert policy._package_denylist_hit(token) is None, (
+            f"vendor-prefix exception {token!r} must NOT hit package denylist "
+            f"(was false AGPL via inner (d') at Wave F5)"
+        )
+
+    @pytest.mark.parametrize("token", VENDOR_PREFIX_ADMIT)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_vendor_prefix_exception_admits_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        if not result.ok:
+            assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"vendor-prefix {token!r} false-denylisted on {category.value}: "
+                f"{result.detail}"
+            )
+
+    @pytest.mark.parametrize("token", VENDOR_PREFIX_ADMIT)
+    def test_vendor_prefix_exception_admits_on_scalar_doors(self, token: str) -> None:
+        tooling = policy.audit_tooling_dependency(token)
+        if not tooling.ok:
+            assert tooling.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"tooling scalar false-denylisted {token!r}: {tooling.detail}"
+            )
+        ingest = policy.audit_model_ingest(token)
+        if not ingest.ok:
+            assert ingest.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"model_ingest scalar false-denylisted {token!r}: {ingest.detail}"
+            )
+
+    def test_red_proof_outer_residual_suffix_scan(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Disable (d') → path-split / size-tag shields admit (TEST-15)."""
-        for token in self.D_PRIME_WITNESSES:
+        """Disable outer residual-suffix scan → path-split shields admit (TEST-15).
+
+        Single-flag neuter of ``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED``
+        (the load-bearing outer walk). Inner (d') was deleted (A9-01/A9-02).
+        """
+        for token in self.OUTER_SUFFIX_WITNESSES:
             assert policy._package_denylist_hit(token) is not None, (
-                f"precondition: {token!r} must deny with (d') on"
+                f"precondition: {token!r} must deny with outer suffix scan on"
             )
-        monkeypatch.setattr(policy, "_FAMILY_GENERALIZED_SUFFIX_ENABLED", False)
-        # Also neuter the F4 residual-suffix gate (coupled to (d') in match).
         monkeypatch.setattr(
             policy, "_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED", False
         )
-        for token in self.D_PRIME_WITNESSES:
+        for token in self.OUTER_SUFFIX_WITNESSES:
             assert policy._package_denylist_hit(token) is None, (
-                f"red-proof: with (d') disabled, {token!r} must admit"
+                f"red-proof: with outer suffix scan disabled, {token!r} must admit"
             )
-        # Compact-glue (e) cells still deny without (d').
+        # Compact-glue (e) cells still deny without the outer suffix walk.
         assert policy._package_denylist_hit("yoloxultralytics") is not None
         assert policy._package_denylist_hit("ultralytics") is not None
         assert policy._package_denylist_hit("yolox") is None
+        # Vendor-prefix exceptions stay admitted.
+        assert policy._package_denylist_hit("megvii_yolox") is None
 
     def test_red_proof_compact_suffix_rule_e(
         self, monkeypatch: pytest.MonkeyPatch
@@ -7160,20 +7227,26 @@ class TestB801UniformSuffixScan:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: with (e) disabled, {token!r} must admit"
             )
-        # (d') path-split cells still deny without (e).
+        # Outer-suffix path-split cells still deny without (e).
         assert policy._package_denylist_hit("yolox/s_ultralytics") is not None
         assert policy._package_denylist_hit("yolox_s_ultralytics") is not None
         assert policy._package_denylist_hit("myyolo") is None
 
 
 class TestB802IterativeFailClosedBounds:
-    """FIR-7-B8-02 / B8-05: iterative scan, hard bound, non-shrink denies.
+    """FIR-7-B8-02 / B8-05 / B9-04: iterative scan, hard bound, non-shrink.
 
     A 1200-exception-chain token must DENY (not raise RecursionError) on all
     four package-floor doors. A deliberately non-shrinking strip must DENY
-    with denylisted_package (invariant detail). Red-proven: disable
-    fail-closed bounds → non-shrinking strip admits; neuter iterative bound
-    via zero max_steps path is covered by the non-shrink flag.
+    with denylisted_package (invariant detail).
+
+    The hard-cap overflow half of ``_SCAN_FAIL_CLOSED_BOUNDS_ENABLED`` is a
+    **defensive invariant** (FIR-7-B9-04): each counted strip consumes ≥ 1
+    unit against a bound of the initial segment count, so production inputs
+    with correct strip helpers do not overflow. Suite reaches it only via a
+    synthetic ``max_steps`` monkeypatch (labelled below). Red-proven:
+    disable fail-closed bounds → non-shrinking strip admits (synthetic
+    invariant probe of the reachable non-shrink half).
     """
 
     @staticmethod
@@ -7233,8 +7306,12 @@ class TestB802IterativeFailClosedBounds:
     ) -> None:
         """Disable fail-closed bounds → non-shrinking strip admits (TEST-15).
 
-        True neuter of the invariant path: with bounds off, a non-shrinking
-        strip returns None (admit) instead of denylisted_package.
+        Synthetic invariant probe of the **reachable** non-shrink half
+        (FIR-7-B9-04): production strip helpers always shrink, so the
+        non-shrink branch is only exercised under this monkeypatch. With
+        bounds off, a non-shrinking strip returns None (admit) instead of
+        denylisted_package. Single-flag neuter of
+        ``_SCAN_FAIL_CLOSED_BOUNDS_ENABLED``.
         """
         orig = policy._strip_exception_seed_residual
 
@@ -7254,6 +7331,29 @@ class TestB802IterativeFailClosedBounds:
         )
         # Pure deny still works without the bound path.
         assert policy._package_denylist_hit("ultralytics") is not None
+
+    def test_synthetic_overflow_bound_invariant_probe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Synthetic max_steps=1 probe of the defensive overflow branch (B9-04).
+
+        Not a production-reachable input: forces the hard-cap half of
+        ``_SCAN_FAIL_CLOSED_BOUNDS_ENABLED`` via an artificial step bound.
+        Documents that the branch DENIES fail-closed when forced, without
+        claiming production reachability.
+        """
+        orig = policy._uniform_component_scan
+
+        def _bounded(token: str, *, max_steps: int | None = None):
+            # Force overflow on any multi-strip residual path.
+            return orig(token, max_steps=1)
+
+        monkeypatch.setattr(policy, "_uniform_component_scan", _bounded)
+        # yolox_yolop_ultralytics needs >1 strip against a real bound; with
+        # max_steps=1 the overflow (or first residual deny) path still DENIES.
+        hit = policy._package_denylist_hit("yolox_yolop_ultralytics")
+        assert hit is not None, "synthetic overflow probe must DENY fail-closed"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
 
 class TestB804MultiStripContinuationPins:
@@ -7343,11 +7443,14 @@ class TestB804MultiStripContinuationPins:
 
 
 class TestB806StructuralNcDoors:
-    """FIR-7-B8-06: structural NC matching on weights-lineage doors.
+    """FIR-7-B8-06 / B9-02: structural NC matching on weights-lineage doors.
 
-    Export/quant/size tags must not shield an NC seed on
-    ``audit_derived_from_model`` / ``audit_source``. Non-NC counter-pins
-    still pass. Red-proven: disable structural NC → export-tag cell admits.
+    Export/quant/runtime tags must not shield an NC seed on
+    ``audit_derived_from_model`` / ``audit_source``. Bounded order-blind
+    strip (known tags or short structural; hard bound 3; ≥1 leading
+    segment) closes ``*_trt`` / ``*_coreml`` / mixed ``int8_trt`` without
+    a treadmill. Non-NC counter-pins still pass. Red-proven: disable
+    structural NC alone → export-tag cell admits (TEST-15).
     """
 
     EXPORT_TAG_WITNESSES: ClassVar[tuple[str, ...]] = (
@@ -7355,6 +7458,23 @@ class TestB806StructuralNcDoors:
         "yolo_nas_l_onnx",
         "yolo_nas_pose_n_onnx",
         "buffalo_l_int8",
+        # FIR-7-B9-02 measured witnesses (PASS both doors at F5 HEAD).
+        "yolo_nas_l_trt",
+        "buffalo_l_trt",
+        "antelopev2_trt",
+        "vec2face_trt",
+        "insightface_trt",
+        "yolo_nas_l_coreml",
+        "yolo_nas_l_ncnn",
+        "yolo_nas_l_int8_trt",
+    )
+
+    # Mixed order + triple-tag cells (order-blind unwrap within bound 3).
+    MIXED_ORDER_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolo_nas_l_int8_trt",
+        "yolo_nas_l_trt_int8",
+        "yolo_nas_l_fp16_onnx_trt",
+        "buffalo_l_trt_int8",
     )
 
     COUNTER_PINS: ClassVar[tuple[str, ...]] = (
@@ -7363,6 +7483,9 @@ class TestB806StructuralNcDoors:
         "mediapipe/blazeface",
         "sam",
         "timm",
+        "yolox_s",
+        "sam_onnx",
+        "blazeface_int8",
     )
 
     @pytest.mark.parametrize("token", EXPORT_TAG_WITNESSES)
@@ -7385,21 +7508,68 @@ class TestB806StructuralNcDoors:
             f"got {result.reason} ({result.detail})"
         )
 
+    @pytest.mark.parametrize("token", COUNTER_PINS)
+    def test_non_nc_counter_pins_pass_source(self, token: str) -> None:
+        result = policy.audit_source(token)
+        assert result.ok is True, (
+            f"counter-pin {token!r} must pass audit_source; "
+            f"got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token", MIXED_ORDER_WITNESSES)
+    def test_mixed_order_export_tags_reject_both_doors(self, token: str) -> None:
+        """Order-blind unwrap: int8_trt / trt_int8 / fp16_onnx_trt (B9-02)."""
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False, f"derived_from_model({token!r}) must reject"
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        source = policy.audit_source(token)
+        assert source.ok is False, f"audit_source({token!r}) must reject"
+        assert source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_three_tag_bound_does_not_over_admit_naked_nc(self) -> None:
+        """Bound overflow stops stripping; naked NC seed still rejects.
+
+        A 4-tag suffix on an NC base cannot strip past the bound of 3, but
+        the residual head remains NC-seed-shaped (or package-floor export-
+        shaped) so the door still rejects — bound overflow denies nothing
+        that a naked NC seed would not.
+        """
+        # 4 trailing tags: only 3 strip → yolo_nas_l_int8 left; further
+        # membership / package path still rejects.
+        token = "yolo_nas_l_int8_fp16_onnx_trt"
+        heads = policy._nc_iter_stripped_heads(
+            policy.canonical(token) or token
+        )
+        assert len(heads) <= policy._NC_MAX_TRAILING_TAG_STRIPS
+        assert policy.audit_derived_from_model(token).ok is False
+        assert (
+            policy.audit_derived_from_model(token).reason
+            is policy.RejectionReason.NC_MODEL_DERIVED
+        )
+        # Naked seed still rejects.
+        assert policy.audit_derived_from_model("yolo_nas_l").ok is False
+
     def test_red_proof_structural_nc_export_tag(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Disable structural NC → yolo_nas_l_int8 admits (TEST-15)."""
-        token = "yolo_nas_l_int8"
-        assert policy.audit_derived_from_model(token).ok is False, (
-            f"precondition: {token!r} must reject with structural NC on"
-        )
+        """Disable structural NC alone → export-tag cells admit (TEST-15)."""
+        tokens = ("yolo_nas_l_int8", "yolo_nas_l_trt", "antelopev2_trt")
+        for token in tokens:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"precondition: {token!r} must reject with structural NC on"
+            )
         monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
-        assert policy.audit_derived_from_model(token).ok is True, (
-            f"red-proof: with structural NC off, {token!r} must admit"
-        )
+        for token in tokens:
+            # insightface_trt may still reject via whole-component package
+            # NC promotion; antelopev2/yolo_nas_l_trt are strip-only.
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with structural NC off, {token!r} must admit"
+            )
         # Bare pinned NC seed still rejects via exact membership.
         assert policy.audit_derived_from_model("yolo_nas_l").ok is False
         assert policy.audit_derived_from_model("buffalo_l").ok is False
+        # Package-floor export-shaped NC still rejects without structural strip.
+        assert policy.audit_derived_from_model("insightface_trt").ok is False
 
 
 class TestB807DerivedDoorResidualNcParity:
@@ -7473,4 +7643,154 @@ class TestA804NcDetailNoteCleanup:
         assert variant_keys == [], (
             f"yolo_nas variant note keys should be collapsed; got {variant_keys}"
         )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F6 — (d') kill, NC tag-strip, PP-YOLO, flag independence
+# ---------------------------------------------------------------------------
+
+
+class TestB903PpYoloHonestLineage:
+    """FIR-7-B9-03: PP-YOLO is Baidu PaddleDetection Apache-2.0, not Darknet."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = ("ppyolo", "ppyoloe", "ppyolov2")
+    DARKNET_DENY: ClassVar[tuple[str, ...]] = ("yolov2", "yolov2_food", "xyolov2")
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_pp_yolo_family_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must admit (Baidu PP-YOLO exception family)"
+        )
+        entry = policy.PACKAGE_EXCEPTION_ALLOWLIST["ppyolo"]
+        assert "paddle" in entry.notes.casefold() or "baidu" in entry.notes.casefold()
+        assert "apache" in entry.spdx_id.casefold()
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_pp_yolo_detail_not_darknet(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is None
+        # If a future deny path reappears, detail must not say Darknet.
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        if not result.ok:
+            assert "darknet" not in result.detail.casefold(), (
+                f"{token!r} detail must not attribute Darknet: {result.detail!r}"
+            )
+
+    @pytest.mark.parametrize("token", DARKNET_DENY)
+    def test_darknet_yolov2_still_denies_with_darknet_note(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (Darknet-era yolov2)"
+        assert hit.package_id == "yolov2"
+        assert "darknet" in hit.notes.casefold()
+
+
+class TestA901FlagIndependence:
+    """FIR-7-A9-01: every surviving module flag changes ≥1 pinned outcome alone.
+
+    No-op flags are TEST-15 violations by construction. Bounds flag uses the
+    synthetic non-shrink fixture (B9-04 defensive invariant).
+    """
+
+    SURVIVING_FLAGS: ClassVar[tuple[str, ...]] = (
+        "_FAMILY_BOUNDARY_PREFIX_ENABLED",
+        "_FAMILY_COMPACT_REMAINDER_ENABLED",
+        "_FAMILY_HEAD_SEGMENT_ENABLED",
+        "_FAMILY_COMPACT_SUFFIX_ENABLED",
+        "_EXCEPTION_RESIDUAL_RESCAN_ENABLED",
+        "_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED",
+        "_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED",
+        "_SCAN_FAIL_CLOSED_BOUNDS_ENABLED",
+        "_NC_STRUCTURAL_MATCH_ENABLED",
+    )
+
+    def test_no_generalized_suffix_flag_remains(self) -> None:
+        assert not hasattr(policy, "_FAMILY_GENERALIZED_SUFFIX_ENABLED"), (
+            "inner (d') flag must be deleted (FIR-7-A9-02)"
+        )
+
+    def test_each_flag_flip_alone_changes_a_pinned_outcome(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Flipping each flag alone (no other flags) changes ≥1 pin."""
+        # Pinned production outcomes (no fixtures).
+        pkg_pins = (
+            "yolov8n_oiv7",  # (b)
+            "buffalo_l_extra",  # pure (b)
+            "yolov9t",  # (c)
+            "yolov9t-seg",  # (d) head-segment
+            "yoloxultralytics",  # (e)
+            "yolox_ultralytics",  # residual re-scan
+            "yolox_s_ultralytics",  # outer suffix
+            "yolox_yolop_ultralytics",  # multi-strip
+            "ultralytics",  # exact deny
+            "yolox",  # pure exception admit
+            "megvii_yolox",  # vendor-prefix admit
+        )
+        derived_pins = (
+            "yolo_nas_l_int8",
+            "yolo_nas_l_trt",
+            "buffalo_l",
+        )
+
+        def snapshot() -> dict[str, object]:
+            out: dict[str, object] = {}
+            for t in pkg_pins:
+                hit = policy._package_denylist_hit(t)
+                out[f"pkg:{t}"] = None if hit is None else hit.package_id
+            for t in derived_pins:
+                r = policy.audit_derived_from_model(t)
+                out[f"der:{t}"] = (r.ok, None if r.ok else r.reason)
+            return out
+
+        baseline = snapshot()
+        # Assert the deleted flag is gone before the loop.
+        assert "_FAMILY_GENERALIZED_SUFFIX_ENABLED" not in self.SURVIVING_FLAGS
+
+        for flag in self.SURVIVING_FLAGS:
+            # Restore all flags to True, then flip only this one.
+            for f in self.SURVIVING_FLAGS:
+                monkeypatch.setattr(policy, f, True)
+            monkeypatch.setattr(policy, flag, False)
+
+            if flag == "_SCAN_FAIL_CLOSED_BOUNDS_ENABLED":
+                # Synthetic non-shrink fixture — production strips always
+                # shrink, so this flag's load-bearing path is the probe.
+                orig = policy._strip_exception_seed_residual
+
+                def _noshrink(
+                    token: str, seed_c: str, seed_k: str, _orig=orig
+                ) -> str:
+                    residual = _orig(token, seed_c, seed_k)
+                    return token if residual else residual
+
+                monkeypatch.setattr(
+                    policy, "_strip_exception_seed_residual", _noshrink
+                )
+                # With bounds ON + non-shrink → deny; we flipped bounds OFF.
+                assert policy._package_denylist_hit("yolox_ultralytics") is None, (
+                    f"{flag}: non-shrink must admit when bounds disabled"
+                )
+                monkeypatch.setattr(
+                    policy, "_strip_exception_seed_residual", orig
+                )
+                continue
+
+            now = snapshot()
+            changed = [k for k in baseline if baseline[k] != now[k]]
+            assert changed, (
+                f"{flag}: flipping alone changed zero pinned outcomes "
+                f"(TEST-15 no-op flag)"
+            )
+
+        # Restore all flags.
+        for f in self.SURVIVING_FLAGS:
+            monkeypatch.setattr(policy, f, True)
 

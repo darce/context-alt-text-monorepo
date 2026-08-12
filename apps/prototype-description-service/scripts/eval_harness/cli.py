@@ -31,9 +31,10 @@ import sys
 import tempfile
 import time
 from datetime import UTC, datetime
+from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from typing import Any, Mapping, NamedTuple, NoReturn
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
@@ -89,14 +90,39 @@ RUBRIC_GATE_SKIP = "skip"
 _SCORE_SCHEMA_ERROR_TOKEN = "score schema error"
 
 
+class IdentityOrdering(StrEnum):
+    """Identity L→R ordering quality (sr-007; VLM6-RH-06).
+
+    Producer (``_extract_identities``) and consumers must use these values —
+    never raw ``\"positional\"`` / ``\"degraded\"`` literals. Wire form stays
+    the string value so report.py can still match without a concurrent edit.
+    """
+
+    POSITIONAL = "positional"
+    DEGRADED = "degraded"
+
+
+class ScoreGateError(RuntimeError):
+    """A score integrity/quality gate failed after reports were written (B-10).
+
+    Raised instead of ``sys.exit`` so ``run`` can score every provider record
+    and exit once with a per-record summary. ``main`` maps this to SystemExit.
+    """
+
+
+def _score_gate_fail(message: str) -> NoReturn:
+    """Fail a post-write score gate with a class-unique operator message."""
+    raise ScoreGateError(message)
+
+
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
     """Class-unique schema-error exit text (never soft-falls through)."""
     return f"{_SCORE_SCHEMA_ERROR_TOKEN}: {dotted_path} missing or not a {expected}"
 
 
-def _score_schema_error(dotted_path: str, expected: str) -> None:
-    """Exit non-zero naming the missing/wrong-type dotted path (never falls through)."""
-    sys.exit(_score_schema_error_message(dotted_path, expected))
+def _score_schema_error(dotted_path: str, expected: str) -> NoReturn:
+    """Fail naming the missing/wrong-type dotted path (never falls through)."""
+    _score_gate_fail(_score_schema_error_message(dotted_path, expected))
 
 
 def _hard_key(container: Mapping[str, Any] | None, *path: str, expected: str, check) -> Any:
@@ -164,6 +190,42 @@ def _fold_schema_errors_into_verdict(scored: dict[str, Any]) -> str | None:
     prior = [r for r in (verdict.get("reasons") or []) if r not in schema_reasons]
     verdict["verdict"] = ScoreVerdict.FAIL.value
     verdict["reasons"] = schema_reasons + prior
+    scored["verdict"] = verdict
+    return first_msg
+
+
+def _fold_evidence_gates_into_verdict(
+    scored: dict[str, Any], record: Mapping[str, Any]
+) -> str | None:
+    """Fold aborted / zero-scored evidence failures into the on-disk verdict (A-02).
+
+    Returns the first gate exit message when evidence is vacuous; mutates
+    ``scored["verdict"]`` to fail so the artifact cannot claim pass (OBS-04).
+    """
+    reasons: list[str] = []
+    first_msg: str | None = None
+    if record.get("aborted"):
+        first_msg = (
+            "score aborted-record gate: run-record is aborted "
+            "(partial evidence only); refusing to certify"
+        )
+        reasons.append("aborted-record: run was aborted before completion")
+    scored_n = int((scored.get("counts") or {}).get("scored") or 0)
+    if scored_n == 0:
+        msg = (
+            "score zero-scored gate: scored=0 items; no evidence to certify"
+        )
+        if first_msg is None:
+            first_msg = msg
+        reasons.append("zero-scored: no items scored — no evidence")
+    if first_msg is None:
+        return None
+    verdict = dict(scored.get("verdict") or {})
+    prior = list(verdict.get("reasons") or [])
+    # Prepend evidence reasons so they are visible first in the artifact.
+    merged = reasons + [r for r in prior if r not in reasons]
+    verdict["verdict"] = ScoreVerdict.FAIL.value
+    verdict["reasons"] = merged
     scored["verdict"] = verdict
     return first_msg
 
@@ -485,8 +547,9 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
     when present (A-09). Rows with missing/malformed bbox are kept, marked
     unpositioned, and sorted after positioned rows — never dropped and never given
     a fabricated bbox (rg-015). When any confirmed row is unpositioned the
-    ordering_source is ``\"degraded\"`` so callers/report can surface the fall-back
-    rather than silently reinstating alphabetical order (A-07).
+    ordering_source is ``IdentityOrdering.DEGRADED`` so callers/report can
+    surface the fall-back rather than silently reinstating alphabetical order
+    (A-07 / VLM6-RH-06).
     """
     if not isinstance(payload, list):
         raise RemoteClientError(
@@ -517,7 +580,9 @@ def _extract_identities(payload: Any, media_id: int) -> tuple[list[dict[str, Any
     # ordering_source is degraded so report surfaces the loss of pure L→R.
     unpositioned.sort(key=lambda t: t[0])
     identities = [t[-1] for t in positioned] + [t[1] for t in unpositioned]
-    ordering_source = "degraded" if unpositioned else "positional"
+    ordering_source = (
+        IdentityOrdering.DEGRADED.value if unpositioned else IdentityOrdering.POSITIONAL.value
+    )
     return identities, face_count, ordering_source
 
 
@@ -1236,7 +1301,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # and only fires when schema hard-keys are already broken — not the
         # normal determinism path.
         schema_exit = _fold_schema_errors_into_verdict(scored)
-        if schema_exit is not None:
+        evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
+        if schema_exit is not None or evidence_exit is not None:
             local_json, local_md = _serialize_score_docs(scored)
         if is_public:
             # No --expect-report on PUBLIC: committed freeze is LOCAL only.
@@ -1259,6 +1325,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             rubric_gate=rubric_gate,
         )
         schema_exit = _fold_schema_errors_into_verdict(scored)
+        evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
         local_json, local_md = _serialize_score_docs(scored)
         if is_public:
             public_json, public_md = build_reports(
@@ -1299,17 +1366,34 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"rubric_gate={rubric_gate}"
     )
     if schema_exit is not None:
-        sys.exit(schema_exit)
+        _score_gate_fail(schema_exit)
+    # evidence_exit is folded into the written verdict above; path-bearing
+    # messages below are the operator-facing class tokens (TEST-15).
+    _ = evidence_exit
+    # VLM6-S2A-A-02: aborted records must never green-exit (partial evidence).
+    if record.get("aborted"):
+        _score_gate_fail(
+            f"score aborted-record gate: run-record is aborted "
+            f"(partial evidence only; see {json_path}); refusing to certify"
+        )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
     # Gate names are distinct so a red run says which corruption class fired (VLM-6 S2A).
-    # Exit messages stay class-unique; the on-disk verdict already encodes every
-    # fired gate in reasons (built before serialisation above).
+    # Order: failed-items before zero-scored so all-error items keep the
+    # failed-items class token (scored=0 ∧ failed>0 is not vacuous evidence —
+    # it is a partial failure surface). Zero-scored covers empty items only.
     failed = int(scored["counts"]["failed"])
     if failed > 0:
-        sys.exit(
+        _score_gate_fail(
             f"score failed-items gate: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
+        )
+    scored_n = int(scored["counts"]["scored"])
+    if scored_n == 0:
+        _score_gate_fail(
+            f"score zero-scored gate: scored=0 items (counts.total="
+            f"{scored['counts'].get('total', 0)}); no evidence to certify "
+            f"(see {json_path})"
         )
     # Corpus truncation via partial run-record (fetch --limit N): media-id multiset
     # must match the score-time manifest. counts.total alone is self-referential
@@ -1321,7 +1405,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if media_id_missing or media_id_extra:
         manifest_n = int(corpus.get("manifest_entries") or 0)
         record_n = int(scored.get("counts", {}).get("total") or 0)
-        sys.exit(
+        _score_gate_fail(
             f"score truncation gate: run-record media-id multiset differs from manifest "
             f"(missing={media_id_missing}, extra={media_id_extra}; "
             f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
@@ -1336,7 +1420,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # manifest is the truncation gate above.
     fetch_manifest_sha = scored.get("provenance", {}).get("manifest_sha256")
     if not fetch_manifest_sha:
-        sys.exit(
+        _score_gate_fail(
             f"score manifest-mismatch gate: run-record provenance missing fetch-time "
             f"manifest_sha256 — record is not self-consistent with its fetch provenance "
             f"(see {json_path})"
@@ -1347,12 +1431,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     must_right_defined = int(scored.get("caption", {}).get("must_right_defined_images") or 0)
     easy_wrong_defined = int(scored.get("caption", {}).get("easy_wrong_defined_images") or 0)
     if must_right_defined == 0:
-        sys.exit(
+        _score_gate_fail(
             f"score empty-rubric gate: must_right is vacuous corpus-wide "
             f"(must_right_defined_images=0); caption hard gate is vacuous (see {json_path})"
         )
     if easy_wrong_defined == 0:
-        sys.exit(
+        _score_gate_fail(
             f"score empty-rubric gate: easy_wrong is vacuous corpus-wide "
             f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
         )
@@ -1371,7 +1455,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # from adapter/model_id (rg-009). The seeded report already discloses it is
     # "harness-shakedown numbers, NOT a caption-model baseline."
     if rubric_gate == RUBRIC_GATE_ENFORCE and must_right_failed > 0:
-        sys.exit(
+        _score_gate_fail(
             f"score must-right failures gate: {must_right_failed} image(s) failed Must-Right "
             f"caption hard-gate (caption corruption / missing required names; see {json_path})"
         )
@@ -1380,10 +1464,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Distinct token from empty-rubric so a red run names the correct class.
     ident_block = (scored.get("faces") or {}).get("identification") or {}
     identification_evaluated = int(ident_block.get("evaluated_images") or 0)
-    scored_n = int(scored["counts"]["scored"])
     if scored_n > 0 and identification_evaluated == 0:
         excluded_n = len(ident_block.get("excluded_images") or [])
-        sys.exit(
+        _score_gate_fail(
             f"score wrong-name floor vacuity gate: identification denominator is empty "
             f"(evaluated_images=0, excluded_images={excluded_n}); "
             f"wrong-name floor is vacuous — no image contributed to identification "
@@ -1407,7 +1490,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # Message shows the display rate from the artifact for operator triage,
         # but the breach decision above did not consume the rounded value.
         display_rate = verdict.get("wrong_name_rate", unrounded_rate)
-        sys.exit(
+        _score_gate_fail(
             f"score wrong-name floor gate: wrong_name_rate={display_rate} exceeds "
             f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
@@ -1437,9 +1520,21 @@ def _cmd_run(args: argparse.Namespace) -> None:
             f"run --check-determinism: per-leg certification — {mult} "
             f"= {n_children} fresh interpreter(s) before scoring completes"
         )
+    # VLM6-S2A-B-10: score every fetched record; do not abort the loop on the
+    # first gate failure. Collect per-record gate messages and exit once.
+    gate_failures: list[str] = []
     for record_path in _cmd_fetch(args):
         args.run_record = record_path
-        _cmd_score(args)
+        try:
+            _cmd_score(args)
+        except ScoreGateError as exc:
+            gate_failures.append(f"{record_path}: {exc}")
+            print(f"score gate failed for {record_path}: {exc}", file=sys.stderr)
+    if gate_failures:
+        summary = "; ".join(gate_failures)
+        sys.exit(
+            f"run score gates failed for {len(gate_failures)} record(s): {summary}"
+        )
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
@@ -1745,11 +1840,118 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
     )
+    scored_n = int(scored["counts"]["scored"])
+    if record.get("aborted"):
+        _score_gate_fail(
+            f"score-face aborted-record gate: run-record is aborted "
+            f"(partial evidence only; see {json_path}); refusing to certify"
+        )
+    if scored_n == 0:
+        _score_gate_fail(
+            f"score-face zero-scored gate: scored=0 items (counts.total="
+            f"{scored['counts'].get('total', 0)}); no evidence to certify "
+            f"(see {json_path})"
+        )
     failed = int(scored["counts"]["failed"])
     if failed > 0:
-        sys.exit(
+        _score_gate_fail(
             f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})"
         )
+
+
+# Metrics where higher candidate values meet-or-beat the baseline (VLM6-R2-08).
+_COMPARE_HIGHER_IS_BETTER: tuple[tuple[str, ...], ...] = (
+    ("caption", "insertion_rate"),
+    ("caption", "mean_gated_score"),
+)
+# Metrics where lower candidate values meet-or-beat the baseline.
+_COMPARE_LOWER_IS_BETTER: tuple[tuple[str, ...], ...] = (
+    ("caption", "must_right_failed_images"),
+    ("verdict", "wrong_name_rate"),
+)
+
+
+def _nested_number(doc: Mapping[str, Any], path: tuple[str, ...]) -> float | None:
+    cur: Any = doc
+    for key in path:
+        if not isinstance(cur, Mapping) or key not in cur:
+            return None
+        cur = cur[key]
+    if isinstance(cur, bool) or not isinstance(cur, (int, float)):
+        return None
+    return float(cur)
+
+
+def _cmd_compare(args: argparse.Namespace) -> None:
+    """Meet-or-beat regression gate: candidate vs baseline report JSON (VLM6-R2-08).
+
+    Plan acceptance: no adapter flip without the candidate meeting-or-beating the
+    incumbent on the same-corpus score report. Exit non-zero on any regression.
+    """
+    baseline_path = Path(args.baseline)
+    candidate_path = Path(args.candidate)
+    try:
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"compare: failed to load report JSON: {exc}")
+    if not isinstance(baseline, dict) or not isinstance(candidate, dict):
+        sys.exit("compare: baseline and candidate must be JSON objects")
+
+    regressions: list[str] = []
+    comparisons: list[str] = []
+    for path in _COMPARE_HIGHER_IS_BETTER:
+        label = ".".join(path)
+        b = _nested_number(baseline, path)
+        c = _nested_number(candidate, path)
+        if b is None or c is None:
+            regressions.append(f"{label}: missing (baseline={b}, candidate={c})")
+            continue
+        comparisons.append(f"{label}: baseline={b} candidate={c} (higher-better)")
+        if c + 1e-12 < b:
+            regressions.append(f"{label}: candidate {c} < baseline {b}")
+    for path in _COMPARE_LOWER_IS_BETTER:
+        label = ".".join(path)
+        b = _nested_number(baseline, path)
+        c = _nested_number(candidate, path)
+        if b is None or c is None:
+            # verdict.wrong_name_rate may be absent on pre-verdict anchors;
+            # fall back to counting wrong_names when present.
+            if path == ("verdict", "wrong_name_rate"):
+                b_names = ((baseline.get("faces") or {}).get("identification") or {}).get(
+                    "wrong_names"
+                )
+                c_names = ((candidate.get("faces") or {}).get("identification") or {}).get(
+                    "wrong_names"
+                )
+                if isinstance(b_names, list) and isinstance(c_names, list):
+                    b_n, c_n = float(len(b_names)), float(len(c_names))
+                    comparisons.append(
+                        f"faces.identification.wrong_names: baseline={b_n} "
+                        f"candidate={c_n} (lower-better)"
+                    )
+                    if c_n > b_n:
+                        regressions.append(
+                            f"faces.identification.wrong_names: candidate {c_n} > baseline {b_n}"
+                        )
+                    continue
+            regressions.append(f"{label}: missing (baseline={b}, candidate={c})")
+            continue
+        comparisons.append(f"{label}: baseline={b} candidate={c} (lower-better)")
+        if c > b + 1e-12:
+            regressions.append(f"{label}: candidate {c} > baseline {b}")
+
+    for line in comparisons:
+        print(line)
+    if regressions:
+        sys.exit(
+            "compare regression gate: candidate fails meet-or-beat vs baseline — "
+            + "; ".join(regressions)
+        )
+    print(
+        f"compare meet-or-beat: PASS candidate={candidate_path} "
+        f"baseline={baseline_path}"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1920,12 +2122,34 @@ def main(argv: list[str] | None = None) -> None:
     )
     score_face_p.set_defaults(func=_cmd_score_face)
 
+    # VLM6-R2-08: baseline-vs-candidate meet-or-beat surface for adoption decisions.
+    compare_p = sub.add_parser(
+        "compare",
+        help="meet-or-beat regression gate: candidate report vs baseline report (offline)",
+    )
+    compare_p.add_argument(
+        "--baseline",
+        required=True,
+        metavar="PATH",
+        help="incumbent score report JSON (same corpus as candidate)",
+    )
+    compare_p.add_argument(
+        "--candidate",
+        required=True,
+        metavar="PATH",
+        help="candidate score report JSON to check against baseline",
+    )
+    compare_p.set_defaults(func=_cmd_compare)
 
     args = parser.parse_args(argv)
     if getattr(args, "max_cost", None) is not None and getattr(args, "cost_per_image", None) is None:
         parser.error("--max-cost requires --cost-per-image (the cap is estimated spend; without a price it is a no-op)")
     try:
         args.func(args)
+    except ScoreGateError as exc:
+        # B-10: score gates raise; standalone score/score-face map to SystemExit
+        # so existing tests and operators still see non-zero exits with messages.
+        sys.exit(str(exc))
     except (
         ManifestError,
         RemoteClientError,

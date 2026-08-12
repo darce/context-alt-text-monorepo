@@ -11,8 +11,8 @@ Operator clearance: ``dcface_operator_clearance_20260723`` flips DCFace to
 commercial-allowed; residual FFHQ/CASIA generator lineage is disclosed in the
 informational ``generator_lineage`` field (exempt from research-source rejection).
 
-Package-identity family matching (FIR-7 Wave F / structural rule)
------------------------------------------------------------------
+Package-identity family matching (FIR-7 Wave F / F3 / structural rule)
+----------------------------------------------------------------------
 ``PACKAGE_DENYLIST`` seeds are matched by a **structural family-boundary**
 rule (replaces the Wave-E size/task tag-strip treadmill, which could not
 close an open-ended distribution-spelling space — decision
@@ -36,17 +36,48 @@ A folded token HITS a family seed when ANY of:
       Longer head remainders (``yolodummy-seg``) and non-prefix heads
       (``myyolo-seg``) still do **not** hit.
 
-**Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
-packages whose names overlap the YOLO naming surface (Deci YOLO-NAS, Megvii
-YOLOX / YOLOF, hustvl YOLOS). Exception seeds use the **same** structural
-rules with **admit** semantics — so ``yolo_nas_s`` / ``yolonas`` admit as
-Deci size variants, while bare ``yolo`` + compact-remainder would otherwise
-fail-closed on those spellings. YOLOR (WongKinYiu, GPL-3.0) is **not** an
-exception; it is a deny-axis seed with an honest lineage note.
+**Component-split-first** (FIR-7-A6-02): when the canonical form contains
+``/``, family matching runs **only** on the individual slash components —
+never on the joined full token. Testing the joined form first let bare
+``yolo`` rule (b) bridge across the path separator (``yolo_nas/weights`` →
+``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
+disagreeing with component-level exception/deny outcomes.
 
-Precedence: exception-family hit → no denylist hit (admit path continues to
-other floors); deny-family hit → ``denylisted_package``; neither → no hit.
-The two seed sets are asserted **disjoint** at import (fail loudly if not).
+**Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
+packages whose names overlap the YOLO naming surface (Megvii YOLOX, hustvl
+YOLOS / YOLOP, megvii-model YOLOF). Exception seeds use the **same**
+structural rules with **bounded admit** semantics (FIR-7-B6-01):
+
+  1. longest exception-family seed hit on the component;
+  2. strip that seed (canonical boundary form or compact prefix; exact →
+     empty residual);
+  3. re-run the DENY family scan on the residual as a whole token under
+     rules (a)-(d);
+  4. residual deny hit → component DENIES with the residual seed's entry;
+     empty residual or no residual deny → component admitted.
+
+So ``yolox`` / ``yolox_s`` / ``yolos`` admit (empty or clean residual), while
+``yolox_ultralytics`` / ``yolos_yolov8`` DENY (residual hits ultralytics /
+yolov8). An unbounded exception short-circuit that admitted the whole
+component without residual re-scan was an admit bypass — fail-closed.
+
+**NC-weights deny axis** (FIR-7-A6-03): Deci YOLO-NAS (``yolo_nas`` /
+``yolonas``) is a **deny** seed, not an exception. Code is Apache-2.0 but
+pretrained weights are non-commercial (Deci ``LICENSE.YOLONAS.md``) — the
+same NC-weights axis already enforced for ``insightface`` / ``buffalo_l``.
+Previously listing it as an Apache-2.0 exception was a policy error.
+
+**Honest lineage notes** (FIR-7-B6-02): ``yolop`` is hustvl BSD-3-Clause
+(exception); ``yolov2`` / ``yolov4`` are Darknet-era deny seeds with their
+own notes so they stop inheriting the false Ultralytics-AGPL text from bare
+``yolo``. YOLOR (WongKinYiu, GPL-3.0) remains a deny-axis seed.
+
+Precedence per component: exception-family hit → residual deny re-scan →
+residual deny or direct deny-family hit → ``denylisted_package`` (or the
+entry's reason, e.g. ``nc_model_derived`` for NC-weights); clean exception
+or neither → no hit (admit path continues to other floors). The two seed
+sets are asserted **disjoint** at import on exact folded/compact keys
+(fail loudly if not).
 
 Package-identity values that are non-empty pre-canonical but whose
 :func:`canonical` is ``None`` (confusable / non-ASCII residue) or the empty
@@ -390,9 +421,12 @@ class PackageExceptionEntry:
     """Distinct-lineage package admitted despite overlapping YOLO naming.
 
     Exception seeds use the same structural family-boundary rules as deny
-    seeds (exact / separator-boundary prefix / bounded compact remainder)
-    but with **admit** semantics. An exception hit short-circuits the
-    package denylist for that token only; other floors still apply.
+    seeds (exact / separator-boundary prefix / bounded compact remainder /
+    head-segment) but with **bounded admit** semantics: an exception hit
+    strips the exception seed and re-runs the DENY family scan on the
+    residual (rules (a)-(d)). A residual deny hit DENIES the component; an
+    empty residual or residual with no deny hit admits. Other floors still
+    apply after an admit.
     """
 
     package_id: str
@@ -518,6 +552,20 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.DENYLISTED_PACKAGE,
         notes="Ultralytics AGPL family alias; banned for cascade person-detection.",
     ),
+    # Darknet-era lineage (not Ultralytics). Own seeds so they stop inheriting
+    # the false Ultralytics-AGPL note from bare ``yolo`` compact remainder
+    # (FIR-7-B6-02). Denied as a deliberate fail-closed posture on ambiguous
+    # identity / GPL-family channel.
+    "yolov2": PackageDenylistEntry(
+        package_id="yolov2",
+        display_name="YOLOv2 (Darknet-era)",
+        spdx_id="GPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes=(
+            "Darknet-era lineage, not Ultralytics; denied as a deliberate "
+            "fail-closed posture on ambiguous identity/GPL-family channel."
+        ),
+    ),
     # Darknet origin; Ultralytics fork is one common identity. Fail-closed on
     # ambiguous identity / AGPL-distribution channel (FIR-7-B3-02).
     "yolov3": PackageDenylistEntry(
@@ -528,6 +576,18 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         notes=(
             "Darknet origin; Ultralytics fork is one identity. Fail-closed on "
             "ambiguous identity / AGPL-distribution channel."
+        ),
+    ),
+    # Darknet-era lineage (not Ultralytics). Own seed so compact remainder on
+    # bare ``yolo`` cannot attach the false Ultralytics-AGPL note (FIR-7-B6-02).
+    "yolov4": PackageDenylistEntry(
+        package_id="yolov4",
+        display_name="YOLOv4 (Darknet-era)",
+        spdx_id="GPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes=(
+            "Darknet-era lineage, not Ultralytics; denied as a deliberate "
+            "fail-closed posture on ambiguous identity/GPL-family channel."
         ),
     ),
     "yolov5": PackageDenylistEntry(
@@ -686,6 +746,22 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         reason=RejectionReason.NC_MODEL_DERIVED,
         notes="Buffalo weights and any output-derived data fail the audit.",
     ),
+    # Deci YOLO-NAS — code is Apache-2.0, but pretrained weights are
+    # non-commercial (super-gradients LICENSE.YOLONAS.md). Denied on the
+    # NC-weights axis like buffalo_l (FIR-7-A6-03 deliberate policy correction;
+    # previously mis-listed as an exception allowlist seed claiming Apache-2.0).
+    # Post-canonical seed: canonical("yolo-nas") == "yolo_nas"; compact
+    # "yolonas" is indexed automatically by the family matcher.
+    "yolo_nas": PackageDenylistEntry(
+        package_id="yolo_nas",
+        display_name="YOLO-NAS (Deci)",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "Deci YOLO-NAS: code Apache-2.0, pretrained weights non-commercial "
+            "(Deci licence) — denied on the NC-weights axis like buffalo_l"
+        ),
+    ),
     # WongKinYiu YOLOR — GPL-3.0 (not Apache). Not an exception allowlist
     # entry: GPL-3.0 is a deny-axis licence. Own seed for honest lineage notes
     # (compact remainder on bare ``yolo`` would also hit ``yolor``).
@@ -703,25 +779,15 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
 
 
 # Distinct-lineage packages whose names overlap the YOLO surface but are NOT
-# Ultralytics/AGPL. Matched with the same structural family rules as deny
-# seeds, with **admit** semantics (FIR-7 Wave F). Exception-family hit →
-# ``_package_denylist_hit`` returns None so other floors continue. Size /
-# task / export variants of an exception seed also admit
-# (``yolo_nas_s``, ``yolox_s``) — exceptions are family seeds, not bare exact
-# pins.
+# Ultralytics/AGPL and are not on an NC-weights deny axis. Matched with the
+# same structural family rules as deny seeds, with **bounded admit** semantics
+# (FIR-7 Wave F3): exception-family hit → strip seed → residual DENY re-scan;
+# residual deny → component DENIES; empty/clean residual → admit so other
+# floors continue. Size / task / export variants of an exception seed with a
+# clean residual also admit (``yolox_s``, ``yolos_tiny``) — exceptions are
+# family seeds, not bare exact pins. Compounds that glue a deny seed after an
+# exception seed (``yolox_ultralytics``) DENY via residual re-scan.
 PACKAGE_EXCEPTION_ALLOWLIST: dict[str, PackageExceptionEntry] = {
-    # Post-canonical seed: canonical("yolo-nas") == "yolo_nas"; compact
-    # "yolonas" is indexed automatically by the family matcher.
-    "yolo_nas": PackageExceptionEntry(
-        package_id="yolo_nas",
-        display_name="YOLO-NAS (Deci)",
-        spdx_id="Apache-2.0",
-        notes=(
-            "Deci YOLO-NAS; Apache-2.0-class licence; distinct lineage from "
-            "Ultralytics AGPL. Exception-family seed (exact + boundary + "
-            "bounded compact remainder admit yolo_nas_s / yolonas)."
-        ),
-    ),
     "yolox": PackageExceptionEntry(
         package_id="yolox",
         display_name="YOLOX (Megvii)",
@@ -736,11 +802,22 @@ PACKAGE_EXCEPTION_ALLOWLIST: dict[str, PackageExceptionEntry] = {
     ),
     "yolof": PackageExceptionEntry(
         package_id="yolof",
-        display_name="YOLOF (Megvii Research)",
-        spdx_id="Apache-2.0",
+        display_name="YOLOF (megvii-model)",
+        spdx_id="MIT",
         notes=(
-            "megvii-research YOLOF, Apache-2.0; distinct lineage from "
-            "Ultralytics AGPL."
+            "megvii-model/YOLOF, MIT; distinct lineage from Ultralytics AGPL."
+        ),
+    ),
+    # hustvl YOLOP (github.com/hustvl/YOLOP), BSD-3-Clause — same org family as
+    # YOLOS. Without this seed, bare ``yolo`` compact remainder falsely denied
+    # yolop/yolopv2 under an Ultralytics-AGPL note (FIR-7-B6-02).
+    "yolop": PackageExceptionEntry(
+        package_id="yolop",
+        display_name="YOLOP (hustvl)",
+        spdx_id="BSD-3-Clause",
+        notes=(
+            "hustvl/YOLOP, BSD-3-Clause; distinct lineage from Ultralytics AGPL "
+            "(same org family as YOLOS)."
         ),
     ),
 }
@@ -2112,10 +2189,12 @@ def _reject_non_string(
 
 # Branch enable flags (always True in production). Tests red-prove each branch
 # by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
-# admit; disable (c) → yolov9t admits; disable (d) → yolov9t-seg admits.
+# admit; disable (c) → yolov9t admits; disable (d) → yolov9t-seg admits;
+# disable residual re-scan → yolox_ultralytics admits (exception short-circuit).
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
+_EXCEPTION_RESIDUAL_RESCAN_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
@@ -2233,12 +2312,96 @@ def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
     return best
 
 
-def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F).
+def _strip_exception_seed_residual(
+    token: str,
+    seed_c: str,
+    seed_k: str,
+) -> str:
+    """Strip a matched exception seed from ``token``; return residual.
 
-    Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space)
-    then match each path component against exception-family seeds first
-    (admit → skip component) and deny-family seeds second. A component hits a
+    Empty residual means exact seed match (admit, no re-scan). Non-empty
+    residual is a whole token (canonical segments rejoined) for deny rules
+    (a)-(d). Prefer canonical boundary strip; fall back to compact-prefix
+    strip, then head-segment strip.
+    """
+    if not token or not seed_c:
+        return ""
+    token_compact = _compact_canonical(token)
+
+    # (a) exact match → empty residual.
+    if token == seed_c or token_compact == seed_k:
+        return ""
+    if token == seed_k or token_compact == seed_c:
+        return ""
+
+    # (b) separator-boundary: strip ``seed_c + '_'``.
+    boundary = seed_c + "_"
+    if token.startswith(boundary) and len(token) > len(boundary):
+        return token[len(boundary) :]
+
+    # (c) bounded compact remainder: residual is the compact rem as a token.
+    if seed_k and token_compact.startswith(seed_k):
+        rem = token_compact[len(seed_k) :]
+        if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+            return rem
+
+    # (d) head-segment: strip the matched head; rejoin rem + trailing rest.
+    if _FAMILY_HEAD_SEGMENT_ENABLED and "_" in token:
+        head, rest = token.split("_", 1)
+        if head:
+            head_compact = _compact_canonical(head)
+            if (
+                head == seed_c
+                or head_compact == seed_k
+                or head == seed_k
+                or head_compact == seed_c
+            ):
+                return rest
+            if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_k:
+                if head_compact.startswith(seed_k):
+                    rem = head_compact[len(seed_k) :]
+                    if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                        return f"{rem}_{rest}" if rest else rem
+
+    # Compact-prefix fallback for any remaining compact-matched form.
+    if seed_k and token_compact.startswith(seed_k):
+        rem = token_compact[len(seed_k) :]
+        if rem:
+            return rem
+    return ""
+
+
+def _best_exception_hit_with_residual(
+    token: str,
+) -> tuple[Any, str] | None:
+    """Longest exception-family seed hit and its residual, or None."""
+    best_entry: Any | None = None
+    best_key: tuple[int, int] = (-1, -1)
+    best_seed_c = ""
+    best_seed_k = ""
+    for seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_EXCEPTION_ALLOWLIST):
+        if not _family_match_seed(token, seed_c, seed_k):
+            continue
+        rank = (len(seed_k), len(seed_c))
+        if rank > best_key:
+            best_key = rank
+            best_entry = entry
+            best_seed_c = seed_c
+            best_seed_k = seed_k
+    if best_entry is None:
+        return None
+    residual = _strip_exception_seed_residual(token, best_seed_c, best_seed_k)
+    return best_entry, residual
+
+
+def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
+    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F3).
+
+    Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space).
+    When ``/`` is present, test **only** slash components (never the joined
+    full token — FIR-7-A6-02). Each component is matched against
+    exception-family seeds first (bounded admit: strip seed, re-scan residual
+    against DENY — FIR-7-B6-01) then deny-family seeds. A component hits a
     family seed under any of:
 
       (a) exact folded/compact match;
@@ -2246,26 +2409,39 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
       (c) bounded compact remainder (1–3 alnum after seed compact form);
       (d) head-segment (leading segment hits via (a) or (c)).
 
-    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` deny;
-    ``yolodummy`` / ``myyolo`` / exception-family tokens (``yolo_nas``,
-    ``yolox``) do not. Empty / None canonical → no denylist hit (doors treat
-    empty/None as ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
+    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` /
+    ``yolox_ultralytics`` deny; ``yolodummy`` / ``myyolo`` / pure
+    exception-family tokens (``yolox``, ``yolos``) do not. Empty / None
+    canonical → no denylist hit (doors treat empty/None as ``invalid_row``
+    separately — FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:
         return None
-    candidates = [c]
+    # FIR-7-A6-02: component-split-first — never family-test the joined
+    # full token when '/' is present (bare-seed (b) would otherwise bridge
+    # across the path separator).
     if "/" in c:
-        candidates.extend(p for p in c.split("/") if p)
+        candidates = [p for p in c.split("/") if p]
+    else:
+        candidates = [c]
 
     seen: set[str] = set()
     for cand in candidates:
         if cand in seen:
             continue
         seen.add(cand)
-        # Exception-family hit → this component is admitted; keep scanning
-        # other path components (ultralytics/yolox still denies on ultralytics).
-        if _best_family_hit(cand, PACKAGE_EXCEPTION_ALLOWLIST) is not None:
+        # Bounded exception: strip seed → residual deny re-scan (FIR-7-B6-01).
+        # Residual deny hit → component DENIES with that residual seed's entry.
+        # Empty residual / no residual deny → admit this component; keep
+        # scanning other path components (ultralytics/yolox still denies).
+        exc = _best_exception_hit_with_residual(cand)
+        if exc is not None:
+            _exc_entry, residual = exc
+            if residual and _EXCEPTION_RESIDUAL_RESCAN_ENABLED:
+                residual_deny = _best_family_hit(residual, PACKAGE_DENYLIST)
+                if residual_deny is not None:
+                    return residual_deny  # type: ignore[no-any-return]
             continue
         hit = _best_family_hit(cand, PACKAGE_DENYLIST)
         if hit is not None:

@@ -1020,7 +1020,7 @@
     },
     "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. See eval_harness/README.md § Corpus coverage boundary.",
     "predictions_source": "ground_truth_derived_fixture",
-    "started_at": "2026-08-11T00:00:00Z"
+    "started_at": null
   },
   "schema": "acx-eval/v1"
 }

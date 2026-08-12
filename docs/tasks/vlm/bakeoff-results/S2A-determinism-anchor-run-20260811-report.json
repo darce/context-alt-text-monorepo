@@ -212,46 +212,8 @@
       ]
     },
     "identity_ordering": {
-      "degraded_images": 37,
-      "degraded_paths": [
-        "mock_images/Breiðamerkurjökull.jpg",
-        "mock_images/bea-nye.jpg",
-        "mock_images/ccqw-antartica.jpg",
-        "mock_images/ccqw-bar.jpg",
-        "mock_images/ccqw-erika.jpg",
-        "mock_images/ccqw-flowers.jpg",
-        "mock_images/ccqw-hair.jpg",
-        "mock_images/ccqw-occlusion-2.jpg",
-        "mock_images/ccqw-occlusion.jpg",
-        "mock_images/ccqw-purple.jpg",
-        "mock_images/ccqw-running-2.jpg",
-        "mock_images/ccqw-running.jpg",
-        "mock_images/ccqw-sunglasses-flowers.jpg",
-        "mock_images/ccqw-sunglasses.jpg",
-        "mock_images/ccqw-underexposed.jpg",
-        "mock_images/ccqw.blurry.jpg",
-        "mock_images/cristina-1.jpg",
-        "mock_images/example-ellynheald-goldleaf.jpeg",
-        "mock_images/k.mcc-1.jpg",
-        "mock_images/kirstie-1.jpeg",
-        "mock_images/kirstie-boat.jpg",
-        "mock_images/kirstie-daniel-sunglasses.jpg",
-        "mock_images/kirstie-pool.jpg",
-        "mock_images/liam-maloney-2.jpg",
-        "mock_images/liam-maloney-home.jpg",
-        "mock_images/liam-maloney-painting.jpg",
-        "mock_images/maria-cocktail.jpg",
-        "mock_images/maria-party.jpg",
-        "mock_images/maria-pool.jpg",
-        "mock_images/mcm-eye-blocked.jpg",
-        "mock_images/mcm-icecave.jpg",
-        "mock_images/mcm-planecrash.jpg",
-        "mock_images/nina-machiavelli.jpeg",
-        "mock_images/rrw-mirror.jpg",
-        "mock_images/ryann-bar.jpg",
-        "mock_images/ryann-group-party.jpg",
-        "mock_images/ryann-party.jpg"
-      ],
+      "degraded_images": 0,
+      "degraded_paths": [],
       "order_unknown_excluded": 37,
       "positional_images": 0
     }
@@ -1819,7 +1781,7 @@
     "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. See eval_harness/README.md § Corpus coverage boundary.",
     "predictions_source": "ground_truth_derived_fixture",
     "score_manifest_sha256": "83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737",
-    "started_at": "2026-08-11T00:00:00Z"
+    "started_at": null
   },
   "quality": {
     "first_sentence_gist_ok_rate": 1.0,
@@ -1978,9 +1940,10 @@
     "must_right_failed_images": 34,
     "reasons": [
       "wrong_name_rate=0.1081 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=37)",
-      "category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False degraded_images=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)",
+      "category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False order_unknown_excluded=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)",
       "category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=37 (π=0 on spatial_facts; AUDIT-07)",
-      "category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07)"
+      "category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)",
+      "category-vacuity: identity_ordering — positional_images=0 (order metric non-observable; AUDIT-07 / S2-06)"
     ],
     "rubric_gate": "skip",
     "verdict": "fail",

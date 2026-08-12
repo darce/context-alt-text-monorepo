@@ -2,7 +2,7 @@
 
 - schema: `acx-eval/v1` kind: `report` report_kind: `face_bakeoff`
 - model_ids: `synthetic-face-anchor` embedding_dims: `[8]` leg: `candidate`
-- head_sha: `None`
+- head_sha: `null`
 - fetch manifest_sha256: `19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4`
 - score manifest_sha256: `19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4` (matches fetch: True)
 - canon_version: `0.11.0` protocol_id: `fir-5-face-bakeoff-v0.11.0`

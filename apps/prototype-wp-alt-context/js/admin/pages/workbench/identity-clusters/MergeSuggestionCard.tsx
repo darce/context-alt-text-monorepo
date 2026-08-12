@@ -4,6 +4,7 @@ import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+import { isHumanLabeledTarget } from './suggestionProjection';
 
 export interface MergeSuggestionCardProps {
   suggestion: PendingMergeSuggestion;
@@ -73,8 +74,20 @@ export const MergeSuggestionCard = ({
   accentPrimary = false,
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
-  const clusterALabel = suggestion.cluster_a_label ?? __('Unnamed cluster', 'alt-context');
-  const clusterBLabel = suggestion.cluster_b_label ?? __('Unnamed cluster', 'alt-context');
+  // WHY (A11Y-02 / HAI-01): cluster_*_label is the raw cluster.label column — no
+  // confirmation gate — so auto `cluster-*` must not name a face on screen or in alt.
+  // Use trimming isHumanLabeledTarget (not isMeaningfulMergeLabel) so whitespace-padded
+  // auto-labels are gated the same as bare ones.
+  const humanLabelA = isHumanLabeledTarget(suggestion.cluster_a_label)
+    ? suggestion.cluster_a_label
+    : null;
+  const humanLabelB = isHumanLabeledTarget(suggestion.cluster_b_label)
+    ? suggestion.cluster_b_label
+    : null;
+  const clusterALabel = humanLabelA ?? __('Unnamed cluster', 'alt-context');
+  const clusterBLabel = humanLabelB ?? __('Unnamed cluster', 'alt-context');
+  const clusterAAlt = humanLabelA ?? __('Detected face', 'alt-context');
+  const clusterBAlt = humanLabelB ?? __('Detected face', 'alt-context');
   const hasClusterAFace = Boolean(
     suggestion.cluster_a_representative_media_url && suggestion.cluster_a_representative_bbox,
   );
@@ -96,7 +109,7 @@ export const MergeSuggestionCard = ({
             <FaceCropControl
               mediaUrl={suggestion.cluster_a_representative_media_url!}
               bbox={suggestion.cluster_a_representative_bbox!}
-              alt={clusterALabel}
+              alt={clusterAAlt}
               onOpen={onOpenOriginal}
             />
           ) : (
@@ -112,7 +125,7 @@ export const MergeSuggestionCard = ({
             <FaceCropControl
               mediaUrl={suggestion.cluster_b_representative_media_url!}
               bbox={suggestion.cluster_b_representative_bbox!}
-              alt={clusterBLabel}
+              alt={clusterBAlt}
               onOpen={onOpenOriginal}
             />
           ) : (

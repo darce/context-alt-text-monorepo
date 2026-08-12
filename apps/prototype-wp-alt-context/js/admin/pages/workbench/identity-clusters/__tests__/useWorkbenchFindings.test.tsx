@@ -928,6 +928,32 @@ describe('buildWorkbenchFindings', () => {
     });
   });
 
+  // FIX-2 / BR-26 / A11Y-02 / HAI-01: assignments provenance — upstream isHumanLabeledTarget
+  // is the single gate; findings layer must not surface auto-label rows that slip past it.
+  it('produces no assignment preview for auto cluster_* labels (upstream gate provenance)', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'assign-auto',
+            cluster_label: 'cluster-7',
+            identity_thumb_url: 'http://example.test/assign-auto.jpg',
+            identity_media_url: 'http://example.test/assign-auto-media.jpg',
+            identity_bbox: { x: 12, y: 24, width: 80, height: 96 },
+          }),
+        ),
+        assignmentTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.filter((preview) => preview.key.startsWith('assignment-'))).toHaveLength(0);
+    // Findings-layer stand-in for rendered alt: no preview label may carry the auto-id.
+    expect(model.previews.every((preview) => !String(preview.label ?? '').includes('cluster-7'))).toBe(
+      true,
+    );
+  });
+
   it('ignores cluster.label placeholder and only surfaces suggested_label for cluster previews', () => {
     const model = buildWorkbenchFindings(
       makeQueues({

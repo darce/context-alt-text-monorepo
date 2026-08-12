@@ -1977,20 +1977,39 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
 _SPDX_EXPRESSION_JOINERS = re.compile(r"\s+(?:OR|AND|WITH)\s+", re.IGNORECASE)
 
 
+def _spdx_base_token(tok: str) -> str:
+    """Map a single SPDX component to its base id (FIR-7-RV-12).
+
+    Strips a trailing ``+`` (SPDX "or later" shorthand) and a trailing
+    ``-or-later`` / ``-only`` is **not** stripped for ``-only`` (those are
+    distinct SPDX ids on the denylist). Only ``+`` and ``-or-later`` map to
+    the base identifier for allowlist membership.
+    """
+    text = str.strip(tok)
+    if not text:
+        return text
+    if text.endswith("+"):
+        text = text[:-1].rstrip()
+    # Case-insensitive -or-later suffix → base id (Apache-2.0-or-later → Apache-2.0).
+    folded = str.casefold(text)
+    suffix = "-or-later"
+    if folded.endswith(suffix):
+        text = text[: -len(suffix)].rstrip()
+    return text
+
+
 def _spdx_expression_tokens(tag: str) -> list[str]:
     """Split a compound SPDX expression into licence-id tokens (GATE-10).
 
-    Handles ``OR`` / ``AND`` / ``WITH``, strips parentheses, and drops a
-    trailing ``+`` (SPDX "or later" shorthand) from each token. Does not
-    attempt to evaluate the expression — callers check each token against
-    the denylist fail-closed.
+    Handles ``OR`` / ``AND`` / ``WITH``, strips parentheses, and maps each
+    component through :func:`_spdx_base_token` (trailing ``+`` / ``-or-later``).
+    Does not attempt to evaluate the expression — callers check each token
+    against the denylist then the allowlist fail-closed.
     """
     text = str.strip(tag).replace("(", " ").replace(")", " ")
     tokens: list[str] = []
     for part in _SPDX_EXPRESSION_JOINERS.split(text):
-        tok = str.strip(part)
-        if tok.endswith("+"):
-            tok = tok[:-1].rstrip()
+        tok = _spdx_base_token(part)
         if tok:
             tokens.append(tok)
     return tokens
@@ -2011,12 +2030,12 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
     Non-string inputs FAIL ``invalid_row`` (BR-46). ``None`` / blank →
     ``missing_license_field``.
 
-    Compound SPDX expressions (``OR`` / ``AND`` / ``WITH``, trailing ``+``,
-    parentheses) are tokenised and each component is checked against the
-    denylist **before** falling back to ``unknown_spdx`` (GATE-10). A single
-    denylisted component fails the whole expression — allowlisted siblings
-    cannot launder it. An all-allowlisted compound is **not** auto-passed
-    (fail-closed; leave as ``unknown_spdx``).
+    Compound SPDX expressions (``OR`` / ``AND`` / ``WITH``, trailing ``+`` /
+    ``-or-later``, parentheses) are tokenised; denylist checks run first on
+    every component (GATE-10). A single denylisted component fails the whole
+    expression — allowlisted siblings cannot launder it. When **every**
+    component is allowlisted (and none denylisted), the expression PASSes
+    (FIR-7-RV-12). An unknown component fails closed naming that component.
     """
     type_err = _reject_non_string(spdx_id, field="license")
     if type_err is not None:
@@ -2044,8 +2063,9 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
             detail="license is PENDING-LEGAL-CLEARANCE",
         )
 
-    # GATE-10: compound / plus forms — denylist components before unknown_spdx.
-    for tok in _spdx_expression_tokens(tag):
+    tokens = _spdx_expression_tokens(tag)
+    # GATE-10: denylist components before allowlist / unknown_spdx.
+    for tok in tokens:
         tok_cf = str.casefold(tok)
         denied = _denylist_reason_for_spdx_token(tok_cf)
         if denied is not None:
@@ -2057,8 +2077,27 @@ def audit_spdx(spdx_id: str | None) -> LicenseAuditResult:
                 ),
             )
 
+    # FIR-7-RV-12: every component allowlisted (and none denylisted) → PASS.
+    if tokens and all(str.casefold(tok) in ALLOWED_SPDX_IDS_CF for tok in tokens):
+        return _pass(
+            detail=(
+                f"license {tag!r} is allowlisted "
+                f"(all components {[t for t in tokens]!r})"
+            ),
+        )
+
+    # Name the first unknown component when present (reason fidelity).
+    for tok in tokens:
+        if str.casefold(tok) not in ALLOWED_SPDX_IDS_CF:
+            return _fail(
+                RejectionReason.UNKNOWN_SPDX,
+                detail=(
+                    f"license {tag!r} contains unknown component {tok!r}; "
+                    "not on the allowlist"
+                ),
+            )
+
     # operator-cleared is NOT an SPDX value and is never an unconditional pass.
-    # All-allowlisted compounds also land here (not auto-passed — SECD-05).
     return _fail(
         RejectionReason.UNKNOWN_SPDX,
         detail=f"license {tag!r} is not on the allowlist",

@@ -11,6 +11,11 @@ per-image describe latency into a JSONL + a structured md/json report.
 Env: BASELINE_LIMIT (0=all), CHUNK (default 12), HEAD_SHA, BASELINE_UPLOADS
 (WordPress uploads root; required unless --uploads is set).
 
+``HEAD_SHA`` must be a real 40-char hex git SHA when set. There is no fabricated
+40-zero default (S4-06 / rg-015 / VLM6-F-04): unset → ``None`` in the report;
+explicit forty zeros are refused. Fixture freezes use typed
+``fixture_revision`` in the anchor generators — not this live baseline path.
+
 Fail-closed (VLM6-RH-01 / RH-02):
 - Missing corpus => non-zero exit; never overwrites a non-empty report with empty.
 - Remote write path reuses ``face_pass.assert_scratch_tenant`` (scratch tenant only).
@@ -44,12 +49,48 @@ REPORT_MD = RESULTS / "vlm-baseline-descriptions-20260716.md"
 
 CHUNK = int(os.environ.get("CHUNK", "12"))
 LIMIT = int(os.environ.get("BASELINE_LIMIT", "0"))  # 0 = all
-HEAD_SHA = os.environ.get("HEAD_SHA", "0" * 40)
+# Resolved at use time via resolve_head_sha() — never default to forty zeros (S4-06).
+# Module-level name retained so tests/callers can monkeypatch a concrete value.
+HEAD_SHA: str | None = None
 # Bake-off transport (llama.cpp /v1/chat/completions) selected when BAKEOFF_BASE_URL
 # is set; else the api.altcontext.com describe route (ACX_EVAL_*).
 BAKEOFF_BASE_URL = os.environ.get("BAKEOFF_BASE_URL", "")
 BAKEOFF_MODEL_ID = os.environ.get("BAKEOFF_MODEL_ID", "Qwen3-VL-30B-A3B-Instruct")
 BAKEOFF_MODEL_VERSION = os.environ.get("BAKEOFF_MODEL_VERSION", "Q4_K_M")
+
+_FABRICATED_ZERO_SHA = "0" * 40
+
+
+def resolve_head_sha(raw: str | None = None) -> str | None:
+    """Return an explicit real HEAD SHA, or None when unset (never forty zeros).
+
+    - Unset / empty → ``None`` (report writes null; no fabrication).
+    - Explicit ``0`` * 40 → hard refuse (S4-06 / rg-015).
+    - Any other value must be 40 lowercase hex chars.
+
+    Resolution order when *raw* is omitted: ``HEAD_SHA`` env, then the
+    module-level ``HEAD_SHA`` (tests may monkeypatch the latter).
+    """
+    if raw is None:
+        raw = os.environ.get("HEAD_SHA")
+        if raw is None:
+            raw = HEAD_SHA
+    if raw is None:
+        return None
+    sha = str(raw).strip().lower()
+    if not sha:
+        return None
+    if sha == _FABRICATED_ZERO_SHA:
+        raise SystemExit(
+            "HEAD_SHA is the fabricated 40-zero sentinel; pass a real 40-char git "
+            "SHA via HEAD_SHA or unset it to record null (S4-06 / rg-015 / VLM6-F-04)"
+        )
+    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        raise SystemExit(
+            f"HEAD_SHA must be a 40-char lowercase hex git SHA (got {raw!r}); "
+            "unset HEAD_SHA to record null rather than fabricating zeros"
+        )
+    return sha
 
 _UPLOADS_MARKERS = ("/wp-content/uploads/", "/uploads/")
 
@@ -382,7 +423,8 @@ def _write_report(
         "base_url": BAKEOFF_BASE_URL or os.environ.get("ACX_EVAL_BASE_URL"),
         "tenant_id": os.environ.get("ACX_EVAL_TENANT_ID"),
         "model_ids": models,
-        "head_sha": HEAD_SHA,
+        # Real git SHA or null — never fabricated forty zeros (S4-06 / rg-015).
+        "head_sha": resolve_head_sha(),
         "rubric_delta": rubric_delta,
     }
     payload = json.dumps({"summary": summary, "items": rows}, indent=2, sort_keys=True) + "\n"
@@ -581,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
                     manifest,
                     str(uploads),
                     client,
-                    head_sha=HEAD_SHA,
+                    head_sha=resolve_head_sha() or "",
                     started_at=started,
                     cost_per_image_usd=cost_per_image_usd,
                 )

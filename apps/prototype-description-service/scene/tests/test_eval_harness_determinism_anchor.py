@@ -24,9 +24,18 @@ from scripts.eval_harness.cli import (
 from scripts.eval_harness.generate_determinism_anchor import (
     _coverage_gaps,
     _DEFAULT_STEM,
+    _identity_rows,
+    _predicted_face_count,
+    build_run_record,
     write_anchor,
 )
-from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.manifest import (
+    FaceBox,
+    METRIC_BACKING_SLICE_THRESHOLD,
+    SHIPPED_CORPUS_COVERAGE_GAPS,
+    compute_corpus_coverage_gaps,
+    load_manifest,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]  # monorepo root
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]  # apps/prototype-description-service
@@ -213,33 +222,137 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
 def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
     """The anchor must name what the corpus leaves unscored, in the anchor itself.
 
-    An operator handed only this file gets `verdict=pass_ungated` and 37/37 scored.
-    Without this block nothing in it says placement asserted zero claims or that
-    positional identification never ran, so the pass reads as far more coverage
-    than it has.
+    Generator-side disclosure (fresh run) must include every SHIPPED registry
+    field with populated/threshold counts — not a boolean that hides under-
+    sampled fields (VLM6-C-01 / C-02).
     """
-    gaps = json.loads(_RUN.read_text())["provenance"]["coverage_gaps"]
-    assert set(gaps) == {"face_boxes", "spatial_facts", "reference_facts"}
-    assert all(g.startswith("0/37 entries") for g in gaps.values())
-    assert "right-names-on-wrong-faces" in gaps["face_boxes"]
+    # Prefer generator output over the frozen committed artifact (regen deferred).
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    gaps = compute_corpus_coverage_gaps(manifest.entries)
+    assert set(gaps) == set(SHIPPED_CORPUS_COVERAGE_GAPS)
+    assert "demographic_cohort" in gaps  # VLM6-C-02: registry-driven
+    for field, info in gaps.items():
+        assert info["populated"] == 0
+        assert info["total"] == 37
+        assert info["threshold"] == METRIC_BACKING_SLICE_THRESHOLD
+        assert info["below_threshold"] is True
+        assert info["pi_zero"] is True
+        assert "0/37" in info["reason"]
+    assert "right-names-on-wrong-faces" in gaps["face_boxes"]["reason"]
 
 
-def test_coverage_gaps_drop_a_field_once_the_corpus_populates_it():  # VLM6-R2-03 / TEST-15
-    """Discrimination control: the disclosure is derived, not a hardcoded dict.
+def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VLM6-C-01 / TEST-15
+    """One schema-valid face_boxes row must NOT silence the gap (VLM6-C-01 / C-08).
 
-    Slice 2 populates `face_boxes`. If that made no difference here, the anchor
-    would keep publishing a gap that no longer exists — the stale-lie failure mode
-    the derived form (rg-015) exists to prevent. RED against a literal dict.
+    Prior control used an invalid `{width,height}` dict via model_copy (skips
+    re-validation) and asserted the key disappeared — locking the wrong boolean
+    behaviour. A 1/N population stays below the slice threshold.
     """
     manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
-    assert "face_boxes" in _coverage_gaps(manifest.entries)
+    gaps = _coverage_gaps(manifest.entries)
+    assert gaps["face_boxes"]["pi_zero"] is True
 
+    # Schema-valid FaceBox (rg-005): centre x/y + size w/h + source.
+    valid_box = FaceBox(x=0.4, y=0.4, w=0.2, h=0.2, source="iptc", name=None)
     entries = list(manifest.entries)
-    entries[0] = entries[0].model_copy(
-        update={"face_boxes": [{"x": 0.0, "y": 0.0, "width": 0.1, "height": 0.1}]}
-    )
+    entries[0] = entries[0].model_copy(update={"face_boxes": [valid_box]})
+    # Round-trip through model so the control proves a real population path.
+    assert entries[0].face_boxes[0].source == "iptc"
+    assert entries[0].face_boxes[0].w == 0.2
+
     gaps = _coverage_gaps(entries)
-    assert "face_boxes" not in gaps
-    # The untouched fields must still be reported — a control that also fails if
-    # _coverage_gaps degenerates to returning {}.
-    assert {"spatial_facts", "reference_facts"} <= set(gaps)
+    assert "face_boxes" in gaps
+    assert gaps["face_boxes"]["populated"] == 1
+    assert gaps["face_boxes"]["total"] == 37
+    assert gaps["face_boxes"]["below_threshold"] is True  # 1 < threshold
+    assert gaps["face_boxes"]["pi_zero"] is False
+    # Untouched registry fields still reported.
+    assert gaps["spatial_facts"]["pi_zero"] is True
+    assert gaps["reference_facts"]["pi_zero"] is True
+    assert gaps["demographic_cohort"]["pi_zero"] is True
+
+
+def test_coverage_gaps_meet_threshold_when_fully_populated():  # VLM6-C-01 discrimination
+    """Only at/above the slice threshold does below_threshold flip false."""
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    box = FaceBox(x=0.4, y=0.4, w=0.2, h=0.2, source="iptc")
+    entries = [
+        e.model_copy(update={"face_boxes": [box]}) for e in manifest.entries
+    ]
+    gaps = compute_corpus_coverage_gaps(entries)
+    assert gaps["face_boxes"]["populated"] == 37
+    assert gaps["face_boxes"]["below_threshold"] is False
+    assert gaps["face_boxes"]["pi_zero"] is False
+
+
+def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / TEST-15
+    """Fixture face/identity predictions deviate from GT so metrics can go red."""
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    record = build_run_record(
+        manifest,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+        head_sha="",
+        started_at="2026-08-11T00:00:00Z",
+    )
+    assert record["provenance"]["predictions_source"] == "ground_truth_derived_fixture"
+    assert record["provenance"]["face_metrics_evidential"] is False
+    assert record["provenance"]["head_sha"] is None  # never fabricate 40 zeros (F-04)
+    assert "fixture_revision" in record["provenance"]
+
+    # At least one face_count and one identity set must differ from GT.
+    face_deviations = 0
+    id_deviations = 0
+    for index, (entry, item) in enumerate(zip(manifest.entries, record["items"], strict=True)):
+        if item["face_count"] != entry.face_count:
+            face_deviations += 1
+        pred_names = {row["name"] for row in item["identities"]}
+        gt_names = set(entry.present_identities)
+        if pred_names != gt_names:
+            id_deviations += 1
+        # C-09: no invented bboxes; always unpositioned.
+        for row in item["identities"]:
+            assert row.get("unpositioned") is True
+            assert "bbox" not in row
+    assert face_deviations > 0, "face_count must deviate on a seeded subset (TEST-15)"
+    assert id_deviations > 0, "identities must deviate on a seeded subset (TEST-15)"
+
+    # Predicted helpers themselves must be able to go red vs pure echo.
+    entry0 = manifest.entries[0]
+    assert _predicted_face_count(entry0, seed_index=0) != entry0.face_count or entry0.face_count == 0
+    # seed_index 0 with names → drop last
+    if entry0.present_identities:
+        rows = _identity_rows(entry0, seed_index=0)
+        assert {r["name"] for r in rows} != set(entry0.present_identities) or len(entry0.present_identities) == 0
+
+
+def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
+    """require_metric_backing is exercised by the generator, not only unit tests."""
+    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    record = build_run_record(
+        manifest,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+        head_sha="",
+        started_at="2026-08-11T00:00:00Z",
+    )
+    refusals = record["provenance"]["metric_backing_refusals"]
+    for field in ("face_boxes", "spatial_facts", "reference_facts", "demographic_cohort"):
+        assert field in refusals
+        assert "vacuous" in refusals[field] or "0/" in refusals[field]
+
+
+def test_generator_md_renders_coverage_gaps(tmp_path: Path):  # VLM6-E-04
+    """Scored MD must surface coverage_gaps (not only JSON provenance)."""
+    _run, _rj, report_md, _sha = write_anchor(
+        manifest_path=_GOLDEN,
+        out_dir=tmp_path,
+        stem=_STEM,
+        head_sha="0" * 40,
+        started_at="2026-08-11T00:00:00Z",
+    )
+    md = report_md.read_text()
+    assert "Coverage gaps" in md
+    assert "face_boxes" in md
+    assert "non-evidential" in md
+    assert "demographic_cohort" in md

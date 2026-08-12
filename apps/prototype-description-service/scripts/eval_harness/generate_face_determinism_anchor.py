@@ -38,7 +38,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +55,13 @@ from scripts.eval_harness.manifest import load_manifest
 from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
 
 # Fixed defaults so two generator runs on the same tree are byte-identical.
-# These are BYTE-STABILITY SENTINELS, not live git / wall-clock provenance.
-_DEFAULT_STARTED_AT = "2026-08-11T00:00:00Z"
-_DEFAULT_HEAD_SHA = "0" * 40
+# These are BYTE-STABILITY SENTINELS in fixture_* fields, not live git / wall-clock
+# provenance (VLM6-F-04 / rg-015). Never written into contract head_sha as if real.
+_DEFAULT_CANONICAL_TIMESTAMP = "2026-08-11T00:00:00Z"
+_DEFAULT_FIXTURE_REVISION = "0" * 40
+# Back-compat names used by tests / CLI.
+_DEFAULT_STARTED_AT = _DEFAULT_CANONICAL_TIMESTAMP
+_DEFAULT_HEAD_SHA = _DEFAULT_FIXTURE_REVISION
 _DEFAULT_STEM = "S2A-face-determinism-anchor-run-20260811"
 _DEFAULT_MANIFEST_STEM = "S2A-face-determinism-anchor-manifest-20260811"
 _DEFAULT_OUT_DIR = Path("../../docs/tasks/vlm/bakeoff-results")
@@ -383,7 +389,11 @@ def build_face_anchor_run_record(
     }
     provenance = {
         "manifest_sha256": manifest_sha256,
-        "head_sha": head_sha,
+        # Byte-stability sentinels — not git/wall-clock contract fields (VLM6-F-04).
+        "fixture_revision": head_sha,
+        "canonical_timestamp": started_at,
+        # Do not fabricate a 40-zero git SHA into the contract head_sha field.
+        "head_sha": None,
         "started_at": started_at,
         "leg": "candidate",
         "model_id": _MODEL_ID,
@@ -391,7 +401,8 @@ def build_face_anchor_run_record(
         "generator": "scripts.eval_harness.generate_face_determinism_anchor",
         "note": (
             "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); "
-            "head_sha/started_at are byte-stability sentinels; "
+            "fixture_revision/canonical_timestamp are byte-stability sentinels "
+            "(not git/wall-clock provenance); "
             "F7 multi-regime corpus (2 identities, FP/FN, wrong-name, "
             "occlusion twin, 2 cohorts; failures[] declared gap — score-face "
             "hard-exits on counts.failed>0)"
@@ -414,15 +425,24 @@ def _is_vacuous_occlusion_cell(cell: dict[str, Any]) -> bool:
 
 
 def _is_vacuous_id_slice(slice_doc: dict[str, Any]) -> bool:
-    """Identification-style slice vacuous when every error path is pinned at zero."""
-    wrong = slice_doc.get("wrong_names") or []
-    return (
-        int(slice_doc.get("fp") or 0) == 0
-        and int(slice_doc.get("fn") or 0) == 0
-        and int(slice_doc.get("missed_gt") or 0) == 0
-        and int(slice_doc.get("unmatched_detections") or 0) == 0
-        and len(wrong) == 0
+    """Identification slice vacuous when claim-unit sampling probability π=0 (VLM6-B-05).
+
+    Vacuity is about probe count, not perfect accuracy: a cell with
+    ``n_named_probes>0`` and zero errors still *executed* and must not be listed
+    as a coverage gap. Keying on fp/fn/wrong_names==0 confused "error path not
+    exercised" with "no sampling frame" (AUDIT-07).
+    """
+    n_probes = slice_doc.get("n_named_probes")
+    if n_probes is not None:
+        return int(n_probes) == 0
+    # Fallback when older report shapes omit n_named_probes: any activity counts.
+    activity = (
+        int(slice_doc.get("tp") or 0)
+        + int(slice_doc.get("fp") or 0)
+        + int(slice_doc.get("fn") or 0)
+        + int(slice_doc.get("missed_gt") or 0)
     )
+    return activity == 0
 
 
 def compute_coverage_gaps(report: dict[str, Any]) -> list[str]:
@@ -430,7 +450,8 @@ def compute_coverage_gaps(report: dict[str, Any]) -> list[str]:
 
     A green face gate proves byte-stable re-score + that named cells execute.
     It does **not** prove ship-ready floors (UNDER-FLOOR/DIRECTIONAL is expected
-    on this tiny synthetic corpus). Gaps name cells still pinned at empty/null.
+    on this tiny synthetic corpus). Gaps name cells with π=0 sampling frame —
+    not cells whose error counters happen to be zero (VLM6-B-05).
     """
     gaps: list[str] = []
     slices = report.get("slices") or {}
@@ -455,16 +476,50 @@ def compute_coverage_gaps(report: dict[str, Any]) -> list[str]:
         if isinstance(cell, dict) and _is_vacuous_id_slice(cell):
             gaps.append(key)
 
+    # Detection is vacuous only when no face was compared (tp+fp+fn==0), not when
+    # a perfect detector posts fp=0 / fn=0 (VLM6-B-05).
     detection = report.get("detection") or {}
-    if int(detection.get("fp") or 0) == 0:
-        gaps.append("detection.fp")
-    if int(detection.get("fn") or 0) == 0:
-        gaps.append("detection.fn")
+    det_n = (
+        int(detection.get("tp") or 0)
+        + int(detection.get("fp") or 0)
+        + int(detection.get("fn") or 0)
+    )
+    if det_n == 0:
+        gaps.append("detection")
 
     if not (report.get("failures") or []):
         gaps.append("failures")
 
     return sorted(gaps)
+
+
+class CoverageGapsUnderDeclaredError(RuntimeError):
+    """Declared provenance.coverage_gaps omits a still-vacuous computed gap (VLM6-B-04)."""
+
+
+def validate_coverage_gaps(
+    report: dict[str, Any],
+    *,
+    declared: list[str] | None = None,
+) -> list[str]:
+    """Runtime guard: declared gaps must cover every still-vacuous computed cell.
+
+    Under-declaring (dropping a still-vacuous gap) raises
+    ``CoverageGapsUnderDeclaredError``. Over-declaring a live cell also fails —
+    the freeze must not claim a live cell is empty.
+    """
+    computed = compute_coverage_gaps(report)
+    if declared is None:
+        declared = list((report.get("provenance") or {}).get("coverage_gaps") or [])
+    declared_list = list(declared)
+    missing = sorted(set(computed) - set(declared_list))
+    extra = sorted(set(declared_list) - set(computed))
+    if missing or extra:
+        raise CoverageGapsUnderDeclaredError(
+            f"coverage_gaps mismatch: missing_declared={missing} extra_declared={extra} "
+            f"computed={computed} declared={declared_list}"
+        )
+    return computed
 
 
 def _score_face_like_cli(
@@ -489,6 +544,17 @@ def _dumps(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+def _atomic_promote(src_dir: Path, dest_dir: Path, names: list[str]) -> None:
+    """Promote verified artifacts with same-directory atomic replacements (rg-002)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        src = src_dir / name
+        dest = dest_dir / name
+        tmp = dest_dir / f".{name}.tmp"
+        tmp.write_bytes(src.read_bytes())
+        os.replace(tmp, dest)
+
+
 def write_face_anchor(
     *,
     out_dir: Path,
@@ -499,41 +565,73 @@ def write_face_anchor(
 ) -> tuple[Path, Path, Path, Path, str]:
     """Generate manifest + run-record + scored face-report pair.
 
+    Builds the full set in a temporary directory, validates coverage_gaps and
+    cross-file hashes, then promotes with atomic replacements (VLM6-F-05 /
+    VLM6-B-04 / rg-002). Never leaves a new manifest paired with stale reports.
+
     Returns (manifest_path, run_path, report_json, report_md, manifest_sha).
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = out_dir / f"{manifest_stem}.json"
-    run_path = out_dir / f"{stem}.json"
-    report_json_path = out_dir / f"{stem}-face-report.json"
-    report_md_path = out_dir / f"{stem}-face-report.md"
+    man_name = f"{manifest_stem}.json"
+    run_name = f"{stem}.json"
+    report_json_name = f"{stem}-face-report.json"
+    report_md_name = f"{stem}-face-report.md"
 
-    raw_manifest = build_synthetic_face_manifest()
-    manifest_path.write_text(_dumps(raw_manifest))
+    with tempfile.TemporaryDirectory(prefix="vlm-face-anchor-") as tmp:
+        tmp_dir = Path(tmp)
+        raw_manifest = build_synthetic_face_manifest()
+        (tmp_dir / man_name).write_text(_dumps(raw_manifest))
 
-    # Load through the real loader so sha matches score-time computation (rg-015).
-    # Metadata-only: synthetic anchor has no image files; scoring uses roster/face_count/tags only.
-    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
-    # Computed at generation time from the loaded manifest — never hand-stamped.
-    manifest_sha = _manifest_sha(manifest)
+        # Load through the real loader so sha matches score-time computation (rg-015).
+        # Metadata-only: synthetic anchor has no image files; scoring uses roster/face_count/tags only.
+        manifest = load_manifest(str(tmp_dir / man_name), skip_hash_verification=True)
+        # Computed at generation time from the loaded manifest — never hand-stamped.
+        manifest_sha = _manifest_sha(manifest)
 
-    record = build_face_anchor_run_record(
-        manifest_sha256=manifest_sha,
-        head_sha=head_sha,
-        started_at=started_at,
+        record = build_face_anchor_run_record(
+            manifest_sha256=manifest_sha,
+            head_sha=head_sha,
+            started_at=started_at,
+        )
+
+        # Score once to discover still-vacuous cells, then stamp coverage_gaps into
+        # run-record provenance and re-score so the freeze matches score-face (rg-015).
+        probe_json, _ = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
+        probe_report = json.loads(probe_json)
+        gaps = compute_coverage_gaps(probe_report)
+        record.setdefault("provenance", {})["coverage_gaps"] = gaps
+        record = validate_face_run_record(record)
+        (tmp_dir / run_name).write_text(_dumps(record))
+
+        json_doc, md_doc = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
+        final_report = json.loads(json_doc)
+        # Runtime guard: declared gaps must match computed (VLM6-B-04 / TEST-15).
+        validate_coverage_gaps(final_report, declared=gaps)
+        # Ensure the scored report also carries the declared list.
+        final_report.setdefault("provenance", {})["coverage_gaps"] = gaps
+        json_doc = _dumps(final_report) if "coverage_gaps" not in json.loads(json_doc).get("provenance", {}) else json_doc
+        # Re-serialize if we had to stamp gaps onto the report.
+        if (json.loads(json_doc).get("provenance") or {}).get("coverage_gaps") != gaps:
+            final_report["provenance"]["coverage_gaps"] = gaps
+            json_doc = json.dumps(final_report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+        (tmp_dir / report_json_name).write_text(json_doc)
+        (tmp_dir / report_md_name).write_text(md_doc)
+
+        # Integrity: re-load and confirm sha + gap agreement before promote.
+        reloaded = json.loads((tmp_dir / run_name).read_text())
+        if reloaded["provenance"]["manifest_sha256"] != manifest_sha:
+            raise RuntimeError("face anchor integrity check failed: manifest_sha256 drift")
+        validate_coverage_gaps(json.loads((tmp_dir / report_json_name).read_text()))
+
+        _atomic_promote(tmp_dir, out_dir, [man_name, run_name, report_json_name, report_md_name])
+
+    return (
+        out_dir / man_name,
+        out_dir / run_name,
+        out_dir / report_json_name,
+        out_dir / report_md_name,
+        manifest_sha,
     )
-
-    # Score once to discover still-vacuous cells, then stamp coverage_gaps into
-    # run-record provenance and re-score so the freeze matches score-face (rg-015).
-    probe_json, _ = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
-    gaps = compute_coverage_gaps(json.loads(probe_json))
-    record.setdefault("provenance", {})["coverage_gaps"] = gaps
-    record = validate_face_run_record(record)
-    run_path.write_text(_dumps(record))
-
-    json_doc, md_doc = _score_face_like_cli(record, manifest, manifest_sha=manifest_sha)
-    report_json_path.write_text(json_doc)
-    report_md_path.write_text(md_doc)
-    return manifest_path, run_path, report_json_path, report_md_path, manifest_sha
 
 
 def main(argv: list[str] | None = None) -> int:

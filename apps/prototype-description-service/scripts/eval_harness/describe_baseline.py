@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -201,10 +202,130 @@ def _refuse_empty_clobber(path: Path, *, new_empty: bool) -> None:
         )
 
 
+# Default golden corpus for offline Δ reporting (EVAL-01 / VLM6-C-06).
+_DEFAULT_GOLDEN = HERE.parent.parent / "scene" / "tests" / "seed" / "golden.json"
+
+
+def score_rows_against_golden(
+    rows: list[dict[str, object]],
+    *,
+    golden_path: Path | None = None,
+    caption_of: Callable[[dict[str, object]], str] | None = None,
+) -> dict[str, object]:
+    """Score baseline JSONL rows against the real golden rubric (EVAL-01).
+
+    Returns absolute metrics plus Δ versus a zero-rule (empty-caption) reference
+    arm on the same matched media_ids. Fail-closed: when zero rows match the
+    golden corpus the delta block is ``status=undefined`` — never a green
+    absolute-only report dressed as an improvement claim (VLM6-C-06).
+    """
+    from scripts.eval_harness.caption_metrics import (
+        insertion_rate,
+        mean_gated_score,
+        score_caption,
+    )
+    from scripts.eval_harness.manifest import load_manifest
+
+    path = golden_path if golden_path is not None else _DEFAULT_GOLDEN
+    if not path.is_file():
+        return {
+            "status": "undefined",
+            "reason": f"golden corpus missing at {path}",
+            "matched": 0,
+            "candidate": None,
+            "zero_rule": None,
+            "delta": None,
+        }
+
+    manifest = load_manifest(str(path), skip_hash_verification=True)
+    by_media = {int(e.media_id): e for e in manifest.entries}
+    roster = list(manifest.roster)
+
+    def _cap(row: dict[str, object]) -> str:
+        if caption_of is not None:
+            return str(caption_of(row) or "")
+        describe = row.get("describe") if isinstance(row.get("describe"), dict) else {}
+        return str((describe or {}).get("alt_text_draft") or "")
+
+    candidate_scores = []
+    zero_scores = []
+    matched = 0
+    for row in rows:
+        if row.get("error"):
+            continue
+        mid = row.get("media_id")
+        try:
+            mid_int = int(mid)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        entry = by_media.get(mid_int)
+        if entry is None:
+            continue
+        matched += 1
+        policy = entry.policy
+        recognition = bool(policy.recognition_enabled) if policy is not None else True
+        kwargs = dict(
+            present_identities=list(entry.present_identities),
+            must_right=list(entry.must_right),
+            easy_wrong=list(entry.easy_wrong),
+            recognition_enabled=recognition,
+            roster=roster,
+        )
+        candidate_scores.append(score_caption(_cap(row), **kwargs))
+        zero_scores.append(score_caption("", **kwargs))
+
+    if matched == 0:
+        return {
+            "status": "undefined",
+            "reason": "no baseline rows matched golden media_ids; cannot compute Δ (EVAL-01)",
+            "matched": 0,
+            "candidate": None,
+            "zero_rule": None,
+            "delta": None,
+        }
+
+    def _arm(scores: list) -> dict[str, object]:
+        must_failed = sum(1 for s in scores if s.must_right_failures)
+        wrong = sum(1 for s in scores if s.named_wrong_person)
+        return {
+            "n": len(scores),
+            "insertion_rate": insertion_rate(scores),
+            "mean_gated_score": mean_gated_score(scores),
+            "must_right_failed_images": must_failed,
+            "wrong_name_images": wrong,
+        }
+
+    cand = _arm(candidate_scores)
+    zero = _arm(zero_scores)
+
+    def _delta(key: str) -> float | None:
+        c, z = cand.get(key), zero.get(key)
+        if c is None or z is None:
+            return None
+        return float(c) - float(z)  # type: ignore[arg-type]
+
+    return {
+        "status": "ok",
+        "reason": None,
+        "matched": matched,
+        "reference_arm": "zero_rule_empty_caption",
+        "candidate": cand,
+        "zero_rule": zero,
+        "delta": {
+            # Positive Δ on gated score / negative Δ on failure rates = improvement.
+            "mean_gated_score": _delta("mean_gated_score"),
+            "insertion_rate": _delta("insertion_rate"),
+            "must_right_failed_images": _delta("must_right_failed_images"),
+            "wrong_name_images": _delta("wrong_name_images"),
+        },
+    }
+
+
 def _write_report(
     *,
     cost_per_image_usd: float | None = None,
     uploads: Path | None = None,
+    golden_path: Path | None = None,
 ) -> None:
     # Import from report, not cli: report owns the single definition (VLM6-RH-07).
     # Going via cli would pull the whole argparse entrypoint in for one normalizer.
@@ -235,6 +356,8 @@ def _write_report(
         cost_per_image_usd=cost_per_image_usd,
         paid_describe_calls=paid_describe_calls,
     )
+    # Offline Δ vs zero-rule captioner on the real golden rubric (EVAL-01 / VLM6-C-06).
+    rubric_delta = score_rows_against_golden(rows, golden_path=golden_path)
     summary = {
         "total": len(rows),
         "described_ok": len(ok),
@@ -260,6 +383,7 @@ def _write_report(
         "tenant_id": os.environ.get("ACX_EVAL_TENANT_ID"),
         "model_ids": models,
         "head_sha": HEAD_SHA,
+        "rubric_delta": rubric_delta,
     }
     payload = json.dumps({"summary": summary, "items": rows}, indent=2, sort_keys=True) + "\n"
     _atomic_write_text(REPORT_JSON, payload)
@@ -275,6 +399,23 @@ def _write_report(
             f"per-image=${summary['cost_per_image_usd']} "
             f"({paid_describe_calls} paid describe calls)"
         )
+    # Δ surface (EVAL-01): never imply improvement from absolute counts alone.
+    if rubric_delta.get("status") != "ok":
+        delta_line = (
+            f"- rubric Δ vs zero-rule: **undefined** "
+            f"(matched={rubric_delta.get('matched', 0)}; {rubric_delta.get('reason')})"
+        )
+    else:
+        d = rubric_delta["delta"] or {}
+        c = rubric_delta["candidate"] or {}
+        delta_line = (
+            f"- rubric Δ vs zero-rule empty caption (matched={rubric_delta['matched']}): "
+            f"mean_gated_score={c.get('mean_gated_score')} (Δ={d.get('mean_gated_score')}) · "
+            f"must_right_failed={c.get('must_right_failed_images')} "
+            f"(Δ={d.get('must_right_failed_images')}) · "
+            f"insertion_rate={c.get('insertion_rate')} (Δ={d.get('insertion_rate')}) · "
+            f"wrong_name_images={c.get('wrong_name_images')} (Δ={d.get('wrong_name_images')})"
+        )
     uploads_display = uploads if uploads is not None else Path("(uploads unset)")
     lines = [
         f"# VLM-6 baseline descriptions — `{', '.join(models) or 'model'}` @ `{summary['base_url']}`",
@@ -286,6 +427,7 @@ def _write_report(
         f"distinct named identities: {summary['distinct_named_identities']}",
         _latency_line(summary["latency"]),
         cost_line,
+        delta_line,
         f"- caption-derived flags (first-pass; operator tags = ground truth): "
         f"**mask={summary['images_with_mask']}**, **sunglasses={summary['images_with_sunglasses']}**",
         "",

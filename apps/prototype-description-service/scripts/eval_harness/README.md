@@ -109,9 +109,10 @@ uv run python -m scripts.eval_harness.cli run \
 ## Corpus coverage boundary — what a green gate does *not* prove
 
 Every gate below scores only what the corpus authored. Where the corpus is
-silent the metric is not "passing"; it is **undefined and reported as a pass**.
-Read this section before quoting any number from a green run as evidence
-(VLM6-R2-03 / VLM6-GATE-04 / VLM6-S2A-F6-02).
+silent the metric is **undefined** (`None` / `not_ready` / listed under
+`provenance.coverage_gaps`) — it must not be read as a clean pass. Read this
+section before quoting any number from a green determinism run as quality
+evidence (VLM6-R2-03 / VLM6-GATE-04 / VLM6-S2A-F6-02).
 
 **Caption corpus** (`scene/tests/seed/golden.json`) — inventory as shipped:
 
@@ -126,7 +127,8 @@ Read this section before quoting any number from a green run as evidence
 | `tags` | 7/37 | tag-scoped slicing |
 | `face_boxes` | **0/37** | `labeled_order_known` is false everywhere, so `positional_identification` **never runs** |
 | `spatial_facts` | **0/37** | placement accuracy is **vacuous** (0 asserted claims) |
-| `reference_facts` | **0/37** | the fabricated-fact denominator |
+| `reference_facts` | **0/37** | fabricated-fact rate is **undefined** (`None`) — no trap coverage (EVAL-19) |
+| `demographic_cohort` | **0/37** | cohort fairness slices have no sampling frame (owner=FIR-5) |
 
 The two consequences worth stating outright:
 
@@ -193,8 +195,13 @@ Do not re-stamp their `provenance.manifest_sha256` to force a green gate
 
 **Working — committed S2A determinism anchor (exit 0).** Offline seeded stub over
 the full golden corpus (37 items); dict identity rows; `provenance.manifest_sha256`
-computed at generation time (`859a083e…`). Seeded-stub scoring requires
-`--rubric-gate skip` (vacuity exemption → `verdict=pass_ungated`).
+computed at generation time (read it from the artifact — do not hardcode the
+digest here; it moves whenever the generator or golden schema changes).
+Seeded-stub scoring requires `--rubric-gate skip` (vacuity exemption). Face and
+identity predictions in the freeze are **ground-truth-derived fixtures** with a
+fixed seeded deviation (`predictions_source=ground_truth_derived_fixture`,
+`face_metrics_evidential=false`) — they prove scoring-path byte-stability, not
+recognition quality.
 
 Seed-stability alone (`--check-determinism` without a freeze) proves the scorer
 is hash-stable; it does **not** detect a corrupted run-record or report (parent
@@ -213,9 +220,10 @@ $ uv run --extra dev python -m scripts.eval_harness.cli score \
     --check-determinism \
     --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
 determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-determinism-anchor-run-20260811-report.json
-../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md
-scored=37/37 insertion_rate=0.0 wrong_names=0 verdict=pass_ungated wrong_name_rate=0.0 wrong_name_rate_floor=0.0 rubric_gate=skip
 # EXIT_CODE:0
+# Note: "determinism check passed" certifies scoring-path BYTE-STABILITY only.
+# It is not an adoption gate. Face P/R and fabricated-fact numbers in the freeze
+# are non-evidential / may be undefined (see provenance.coverage_gaps).
 ```
 
 Frozen triple (run-record + report JSON + report MD) lives under
@@ -300,7 +308,7 @@ three remedies — do not treat them as synonyms:
 
 | Line shape | Meaning | Operator action |
 | --- | --- | --- |
-| `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. With `--expect-report`, the line also says `matches --expect-report <path>`. | None — certified. |
+| `determinism check passed [label]: … (baseline=…; child_seeds=…)` | Cross-process re-score bit-identical under the named child seeds. With `--expect-report`, the line also says `matches --expect-report <path>`. **This certifies scoring-path byte-stability only** — not caption quality, not face recognition, not adoption readiness. | None for the scoring path. Do **not** read this as model adoption or as face/caption quality evidence. |
 | `determinism check ERROR [label]: …` | Child could not run, timed out, payload missing/unreadable/unparseable, bound a different `build_reports` module, or `--expect-report` path missing/unreadable (**environment / path drift**). | Fix environment / import root / PYTHONPATH / path; re-run. **Not** a caption-model regression. |
 | `determinism check FAILED [label]: …` | Genuine byte mismatch across seeds (**build regression**). Writes `determinism-mismatch-<label>-seed<n>.diff.txt` under gitignored `scripts/eval_harness/out/` (absolute path in the message); artifact carries the same `baseline=…; child_seeds=…` regime. | Investigate scoring code / non-determinism in the build. |
 | `determinism check ANCHOR_MISMATCH [label]: …` | Seed-stable re-score does **not** match `--expect-report` (**external reference diverge**). Neither FAILED nor ERROR. Message names both legitimate causes, the regen command, and the absolute path of `determinism-anchor-mismatch-<label>.diff.txt` under `scripts/eval_harness/out/` (never beside a committed freeze). | **(1)** Frozen report or run-record corrupted → investigate; **do not regenerate** (destroys evidence). **(2)** Scoring deliberately changed → regenerate on purpose via `python -m scripts.eval_harness.generate_determinism_anchor` (or `generate_face_determinism_anchor`) and commit the new freeze. |
@@ -358,10 +366,13 @@ produced by the model-free `seeded` stub adapter (`adapter=seeded`,
 markdown header say so explicitly. They are **not** a caption-model baseline; a
 real-model baseline must be captured with a live run before the §12 bake-off gate.
 
-**Rubric caveat (MVP):** the golden corpus currently ships with empty `must_right`
-/ `easy_wrong` for every entry, so the Must-Right hard gate and Easy-Wrong rubric
-are vacuous. The loader emits a `RubricEmptyWarning` and the report surfaces
-`must_right_defined_images: 0`, so this is disclosed, not silent.
+**Rubric status (measured on shipped golden-37):** `must_right` is populated on
+**34/37** entries and `easy_wrong` on **37/37**. The Must-Right hard gate and
+Easy-Wrong trap are **not** vacuous corpus-wide. `RubricEmptyWarning` does **not**
+fire on the seed corpus (`test_seed_corpus_caption_fixtures_populated`). A live
+report on this corpus shows `must_right_defined_images=34` /
+`easy_wrong_defined_images=37`. The three entries without `must_right` are
+per-image gaps, not a corpus-wide empty rubric.
 
 ## Failure semantics (rg-007)
 

@@ -120,16 +120,15 @@ apps/prototype-description-service/.venv/bin/python -m pytest \
 
 ## 3. `git diff --stat` against fork point
 
-Fork point = `feature/vlm-6` @ `2b0fe633` (same as branch tip before this lane's commit).
+Fork point = `feature/vlm-6` @ `2b0fe633`. Lane commit: `09b0836a`.
 New files only (production / hx1-owned surfaces untouched):
 
 ```
- .s2a/vlm6-hx2-report.md                                           | (new)
- apps/prototype-description-service/scene/tests/test_describe_baseline_pin_provenance.py | (new)
- apps/prototype-description-service/scene/tests/test_vlm_promote_atomicity.py             | (new)
+ .s2a/vlm6-hx2-report.md                            | 146 ++++++++++++++
+ .../tests/test_describe_baseline_pin_provenance.py | 116 +++++++++++
+ .../scene/tests/test_vlm_promote_atomicity.py      | 216 +++++++++++++++++++++
+ 3 files changed, 478 insertions(+)
 ```
-
-Post-commit `git diff --stat feature/vlm-6...HEAD` should show only these three paths.
 
 ## 4. What you could not verify
 

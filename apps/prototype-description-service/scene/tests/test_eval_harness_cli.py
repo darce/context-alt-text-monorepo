@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.eval_harness.report import ScoreVerdict
+
 from scripts.eval_harness.cli import (
     BoundedStallError,
     MaxCostExceededError,
@@ -859,7 +861,7 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
     local_json = (tmp_path / "run-x-report.json").read_text()
     assert _W1_LOCAL_PATH in local_json
     assert "redaction" not in json.loads(local_json)
-    assert json.loads(local_json)["verdict"]["verdict"] == "pass"
+    assert json.loads(local_json)["verdict"]["verdict"] == ScoreVerdict.PASS.value
 
 
 def test_cmd_score_public_audience_redacts_wrong_names(tmp_path, monkeypatch):  # VLM6-S2A-A-06
@@ -900,7 +902,7 @@ def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch)
     assert not (tmp_path / "run-x-report.public.json").exists()
     assert not (tmp_path / "run-x-report.public.md").exists()
     report = json.loads((tmp_path / "run-x-report.json").read_text())
-    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["verdict"] == ScoreVerdict.PASS.value
     assert "redaction" not in report
 
 
@@ -1091,146 +1093,130 @@ def test_cmd_score_exits_nonzero_when_wrong_name_rate_breaches_floor(tmp_path, m
     # Distinct from the failed-items gate message.
     assert "not scored" not in msg
     report = json.loads((tmp_path / "run-wrong-report.json").read_text())
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert report["verdict"]["wrong_name_rate"] > WRONG_NAME_RATE_FLOOR
     assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
     assert report["verdict"]["reasons"]
+
+
+def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
+    """Minimal clean caption run-record + manifest for score green-path tests.
+
+    Includes face_boxes + spatial_facts + reference_facts trap + asserted
+    placement so score exits 0 with verdict=pass (OBS-04 / VLM6-A-05 —
+    vacuous fixtures are not_ready). Two scored images clear the S2-05
+    sample-size floor (SCORE_PASS_MIN_SCORED_IMAGES=2).
+    """
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+            **_single_name_measurable_fields("Alice Example"),
+        },
+        {
+            "path": "mock_images/bob.jpg",
+            "sha256": "b" * 64,
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob Builder"],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": ["Bob Builder"],
+            "easy_wrong": ["Alice Example"],
+            "policy": {"recognition_enabled": True},
+            **_single_name_measurable_fields("Bob Builder", x=0.5),
+        },
+    ]
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
+    )
+    record_path = tmp_path / f"{stem}.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "kind": DocKind.RUN_RECORD.value,
+                "provenance": {
+                    "manifest_sha256": manifest_sha,
+                    "base_url": "https://example.test",
+                    "head_sha": "f" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": "mock_images/alice.jpg",
+                        "describe": {
+                            "alt_text_draft": "Alice Example in the foreground outdoors.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 2,
+                        "path": "mock_images/bob.jpg",
+                        "describe": {
+                            "alt_text_draft": "Bob Builder in the foreground outdoors.",
+                            "visual_facts": {"objects": []},
+                        },
+                        "identities": [
+                            {
+                                "name": "Bob Builder",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
+                        "face_count": 1,
+                        "identity_ordering": "positional",
+                        "image_width": 200,
+                        "image_height": 200,
+                        "error": None,
+                    },
+                ],
+            }
+        )
+    )
+    return manifest_path, record_path
 
 
 def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monkeypatch):
     """Complementary green path: clean identities + measurable categories → exit 0 / pass.
 
     Fixture supplies face_boxes + spatial_facts + reference_facts trap (π>0)
-    so the honest verdict is pass, not not_ready (VLM6-A-05 / OBS-04).
+    so the honest verdict is pass, not not_ready (VLM6-A-05 / OBS-04). S2-05:
+    two scored images clear the sample-size floor.
     """
-    from scripts.eval_harness.schema import SCHEMA, DocKind
-
-    entries = [
-        {
-            "path": "mock_images/alice.jpg",
-            "sha256": "a" * 64,
-            "media_id": 1,
-            "face_count": 1,
-            "present_identities": ["Alice Example"],
-            "context_pack": {},
-            "base_caption": "",
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Bob Builder"],
-            "policy": {"recognition_enabled": True},
-            **_single_name_measurable_fields("Alice Example"),
-        }
-    ]
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
-    record_path = tmp_path / "run-clean.json"
-    record_path.write_text(
-        json.dumps(
-            {
-                "schema": SCHEMA,
-                "kind": DocKind.RUN_RECORD.value,
-                "provenance": {
-                    "manifest_sha256": manifest_sha,
-                    "base_url": "https://example.test",
-                    "head_sha": "f" * 40,
-                    "started_at": "t",
-                },
-                "items": [
-                    {
-                        "media_id": 1,
-                        "path": "mock_images/alice.jpg",
-                        "describe": {
-                            "alt_text_draft": "Alice Example in the foreground outdoors.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": "Alice Example",
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    }
-                ],
-            }
-        )
-    )
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-clean")
     monkeypatch.chdir(tmp_path)
     main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
     report = json.loads((tmp_path / "run-clean-report.json").read_text())
-    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["verdict"] == ScoreVerdict.PASS.value
     assert report["verdict"]["wrong_name_rate"] == 0.0
     assert report["verdict"]["reasons"] == []
     assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert report["placement"]["claims"] >= 1
-
-
-def _clean_score_manifest_and_record(tmp_path):
-    """Minimal clean caption run-record + manifest for score determinism tests.
-
-    Includes face_boxes + spatial_facts + reference_facts trap + asserted
-    placement so score exits 0 with verdict=pass (OBS-04 / VLM6-A-05 —
-    vacuous fixtures are not_ready).
-    """
-    from scripts.eval_harness.schema import SCHEMA, DocKind
-
-    entries = [
-        {
-            "path": "mock_images/alice.jpg",
-            "sha256": "a" * 64,
-            "media_id": 1,
-            "face_count": 1,
-            "present_identities": ["Alice Example"],
-            "context_pack": {},
-            "base_caption": "",
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Bob Builder"],
-            "policy": {"recognition_enabled": True},
-            **_single_name_measurable_fields("Alice Example"),
-        }
-    ]
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
-    record_path = tmp_path / "run-det.json"
-    record_path.write_text(
-        json.dumps(
-            {
-                "schema": SCHEMA,
-                "kind": DocKind.RUN_RECORD.value,
-                "provenance": {
-                    "manifest_sha256": manifest_sha,
-                    "base_url": "https://example.test",
-                    "head_sha": "f" * 40,
-                    "started_at": "t",
-                },
-                "items": [
-                    {
-                        "media_id": 1,
-                        "path": "mock_images/alice.jpg",
-                        "describe": {
-                            "alt_text_draft": "Alice Example in the foreground outdoors.",
-                            "visual_facts": {"objects": []},
-                        },
-                        "identities": [
-                            {
-                                "name": "Alice Example",
-                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                                "unpositioned": False,
-                            }
-                        ],
-                        "face_count": 1,
-                        "identity_ordering": "positional",
-                        "image_width": 200,
-                        "image_height": 200,
-                        "error": None,
-                    }
-                ],
-            }
-        )
-    )
-    return manifest_path, record_path
+    assert report["counts"]["scored"] >= 2
 
 
 def test_cli_score_check_determinism_runs_cross_process_guard(tmp_path, monkeypatch, capsys):
@@ -2424,7 +2410,7 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     report = json.loads(record_path.with_name("run-seeded-shape-report.json").read_text())
     assert report["verdict"]["rubric_gate"] == "skip"
     # F1d-1: skip must not persist a bare gated pass (OBS-04 overclaim).
-    assert report["verdict"]["verdict"] == "pass_ungated"
+    assert report["verdict"]["verdict"] == ScoreVerdict.PASS_UNGATED.value
     assert report["verdict"]["must_right_failed_images"] > 0
     assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert report["placement"]["claims"] >= 1
@@ -2448,7 +2434,7 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
     report = json.loads(record_path.with_name("run-rubric-flag-report.json").read_text())
     assert report["verdict"]["rubric_gate"] == "enforce"
-    assert report["verdict"]["verdict"] == "pass"
+    assert report["verdict"]["verdict"] == ScoreVerdict.PASS.value
     md = record_path.with_name("run-rubric-flag-report.md").read_text()
     assert "rubric_gate" in md
     assert "enforce" in md
@@ -2879,7 +2865,7 @@ def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch)
     assert ident["wrong_names"] == []
     assert len(ident["ignored_wrong_names"]) == 37
     assert report["verdict"]["wrong_name_rate"] > WRONG_NAME_RATE_FLOOR
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert report["verdict"]["wrong_name_rate"] == pytest.approx(1.0)
 
 
@@ -2977,7 +2963,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
     assert len(ident["excluded_images"]) == 37
     assert ident["wrong_names"] == []
     # F1d-1: vacuity must persist fail (pre-fix left verdict=pass while exit 1).
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert any("wrong-name floor vacuity" in r for r in report["verdict"]["reasons"])
 
 
@@ -2986,7 +2972,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
 
 def _assert_on_disk_fail_reason(report: dict, *, must_contain: str, must_not: tuple[str, ...]) -> None:
     """On-disk artifact (not stdout) is the contract: fail + class-unique reason."""
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     reasons = report["verdict"]["reasons"]
     assert reasons, "fail verdict must list reasons"
     blob = " | ".join(reasons).lower()
@@ -3012,7 +2998,7 @@ def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch)
     assert excinfo.value.code != 0
     assert "category-vacuity" in str(excinfo.value).lower() or "not_ready" in str(excinfo.value).lower()
     report = json.loads(record_path.with_name("run-control-not-ready-report.json").read_text())
-    assert report["verdict"]["verdict"] == "not_ready"
+    assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
     assert "positional" in reasons_blob
     assert "placement" in reasons_blob
@@ -3293,7 +3279,7 @@ def test_score_persisted_verdict_skip_still_not_ready_on_real_golden(tmp_path, m
         )
     assert excinfo.value.code != 0
     report = json.loads(record_path.with_name("run-ungated-report.json").read_text())
-    assert report["verdict"]["verdict"] == "not_ready"
+    assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     assert report["verdict"]["rubric_gate"] == "skip"
     assert report["verdict"]["must_right_failed_images"] > 0
     reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
@@ -3350,7 +3336,7 @@ def test_score_one_wrong_name_real_golden_exits_nonzero(tmp_path, monkeypatch):
     assert "must-right failures" not in msg.lower()
     assert "truncation" not in msg.lower()
     report = json.loads(record_path.with_name("run-one-wrong-report.json").read_text())
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
     live = report["faces"]["identification"]["wrong_names"]
     ignored = report["faces"]["identification"]["ignored_wrong_names"]
@@ -3440,7 +3426,7 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
     # Display rate rounds to 0.0 — that must NOT silence the gate (F1-7).
     assert report["verdict"]["wrong_name_rate"] == 0.0
     assert report["verdict"]["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     live = report["faces"]["identification"]["wrong_names"]
     ignored = report["faces"]["identification"]["ignored_wrong_names"]
     assert len(live) + len(ignored) == 1
@@ -3479,7 +3465,7 @@ def test_score_empty_rubric_keys_on_scored_set_not_manifest(tmp_path, monkeypatc
     assert report["caption"]["must_right_defined_images"] == 0
     assert report["caption"]["easy_wrong_defined_images"] == 3
     assert report["counts"]["scored"] == 3
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
     assert "empty-rubric" in reasons_blob
     assert "must_right" in reasons_blob
@@ -3504,7 +3490,7 @@ def test_score_f1d2_control_clean_real_golden_not_ready(tmp_path, monkeypatch):
         main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
     assert excinfo.value.code != 0
     report = json.loads(record_path.with_name("run-f1d2-control-report.json").read_text())
-    assert report["verdict"]["verdict"] == "not_ready"
+    assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     assert report["verdict"]["reasons"]  # non-empty vacuity reasons
     assert report["caption"]["must_right_defined_images"] == 34
     assert report["counts"]["scored"] == 37
@@ -4038,7 +4024,7 @@ def test_score_aborted_record_exits_nonzero(tmp_path, monkeypatch):
     msg = str(excinfo.value).lower()
     assert "aborted-record" in msg
     report = json.loads(record_path.with_name("run-aborted-report.json").read_text())
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert any("aborted" in r.lower() for r in report["verdict"]["reasons"])
 
 
@@ -4084,7 +4070,7 @@ def test_score_zero_scored_exits_nonzero(tmp_path, monkeypatch):
     assert "failed-items" not in msg
     report = json.loads(record_path.with_name("run-empty-report.json").read_text())
     assert report["counts"]["scored"] == 0
-    assert report["verdict"]["verdict"] == "fail"
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
 
 
 def test_cli_determinism_guard_errors_on_child_timeout(tmp_path, monkeypatch):
@@ -4492,7 +4478,7 @@ def test_cmd_score_allow_manifest_relabel_marks_non_comparable(tmp_path, monkeyp
     assert exc.value.code != 0
     assert "non_comparable" in str(exc.value) or "manifest-relabel" in str(exc.value)
     report = json.loads((tmp_path / "run-x-report.json").read_text())
-    assert report["verdict"]["verdict"] == "non_comparable"
+    assert report["verdict"]["verdict"] == ScoreVerdict.NON_COMPARABLE.value
     assert report["provenance"].get("manifest_matches_fetch") is False
 
 

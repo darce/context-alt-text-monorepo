@@ -12,11 +12,15 @@ use AltContext\Tests\TestCase;
  *
  * Both sides are derived independently (TEST-15):
  *  - DDL columns from LifeCycleManager::build_projection_schema_statements()
- *  - SQL column refs from prepare_query string units AND $wpdb->insert/update/delete
- *    array keys in sovereign repository sources
+ *  - SQL column refs from prepare_query / prepare_projection_read_query string
+ *    units AND $wpdb->insert/update/delete array keys in sovereign repository
+ *    sources
  *
- * Coverage is per-query-site, not per-table (OBS-08 / PT-05): every prepare_query
- * and every insert/update/delete site is either scanned or explicitly allowlisted.
+ * Coverage is per-query-site, not per-table (OBS-08 / PT-05): every prepare-family
+ * call site and every insert/update/delete site is either scanned (yielded ≥1
+ * bound column ref), visited-but-unresolved (explicit allowlist), or unscanned
+ * (explicit allowlist). The site census is computed independently of the
+ * extractor so invisible call sites surface as unscanned gaps, not as silence.
  * Unresolved references fail loudly — never silent drops (OBS-08).
  *
  * @coversNothing
@@ -32,7 +36,7 @@ class ProjectionQueryColumnParityTest extends TestCase
     private const ALLOWED_SKIPS = [];
 
     /**
-     * prepare_query call sites that cannot yield a string-literal unit.
+     * prepare-family call sites that cannot yield a string-literal unit.
      * Keyed by "basename:signature". Stale entries fail (OBS-08).
      *
      * @var array<string, string>
@@ -40,25 +44,53 @@ class ProjectionQueryColumnParityTest extends TestCase
     private const ALLOWED_DROPPED_CALLS = [];
 
     /**
-     * Query sites (prepare_query / insert / update / delete) that cannot be
-     * column-scanned. Keyed by "basename:kind:signature". Stale entries fail.
+     * Census query sites the extractor cannot visit at all.
+     * Keyed by "basename:line:kind". Stale entries fail.
      *
      * @var array<string, string>
      */
     private const ALLOWED_UNSCANNED_SITES = [];
 
     /**
+     * Sites the extractor visits but that yield zero bound column refs.
+     * Silence is not coverage (OBS-08): each entry must justify why zero yield
+     * is correct. Keyed by "basename:line:kind". Stale entries fail.
+     *
+     * @var array<string, string>
+     */
+    private const ALLOWED_VISITED_UNRESOLVED = [];
+
+    /**
      * Legitimate direct $wpdb->prepare|get_results|get_var|get_row|query call
-     * sites that do not carry projection SQL through prepare_query. Keyed by
-     * "basename:line". Stale entries fail (OBS-08 / PT-01).
+     * sites that do not carry projection SQL through prepare_query /
+     * prepare_projection_read_query. This list is intentionally non-empty:
+     * four justified bypasses (transaction control + prepare implementation).
+     * Keyed by "basename:line". Stale entries fail (OBS-08 / PT-01).
      *
      * @var array<string, string>
      */
     private const ALLOWED_WPDB_BYPASSES = [
-        'class-batch-run-repository.php:597' => 'transaction control: START TRANSACTION',
-        'class-batch-run-repository.php:600' => 'transaction control: COMMIT',
-        'class-batch-run-repository.php:602' => 'transaction control: ROLLBACK',
-        'trait-prepares-sql-queries.php:57' => 'prepare_query implementation delegates to $wpdb->prepare',
+        // Transaction control — string-literal SQL with no projection columns.
+        'class-batch-run-repository.php:597' => 'justified: $wpdb->query(START TRANSACTION) — no projection columns',
+        'class-batch-run-repository.php:600' => 'justified: $wpdb->query(COMMIT) — no projection columns',
+        'class-batch-run-repository.php:602' => 'justified: $wpdb->query(ROLLBACK) — no projection columns',
+        // Trait implementation of prepare_query — delegates to $wpdb->prepare;
+        // SQL string units are scanned at the prepare_query / prepare_projection_read_query call sites.
+        'trait-prepares-sql-queries.php:57' => 'justified: prepare_query implementation delegates to $wpdb->prepare',
+    ];
+
+    /**
+     * SQL prepare-family method names that must appear in the independent
+     * census. The extractor must visit every call site of each name; a name
+     * present here but not handled by extractPrepareQueryUnits surfaces as
+     * unscanned (FIX-2). Non-SQL methods named prepare_* (e.g.
+     * prepare_snapshot_merge_for_tenant) are intentionally excluded.
+     *
+     * @var list<string>
+     */
+    private const PREPARE_FAMILY_METHODS = [
+        'prepare_query',
+        'prepare_projection_read_query',
     ];
 
     /** Bare SQL keywords — never treated as column names. */
@@ -145,14 +177,19 @@ class ProjectionQueryColumnParityTest extends TestCase
             . 'Skipped (allowlisted unbound): ' . $skipDiagnostic . "\n"
             . 'bound=' . count($bound) . ' skipped=' . count($skipped)
             . ' calls=' . $callCount . ' extracted=' . $extractedCount
-            . ' sites=' . count($scan['sites'])
+            . ' census=' . count($scan['sites'])
+            . ' scanned=' . $scan['site_counts']['scanned']
+            . ' visited_unresolved=' . $scan['site_counts']['visited_unresolved']
+            . ' unscanned=' . $scan['site_counts']['unscanned']
         );
     }
 
     /**
-     * Every prepare_query / insert / update / delete site is either scanned
-     * (contributes bound refs or was fully processed) or explicitly allowlisted.
-     * Table-shaped allowlists alone are not schema coverage (PT-05 / OBS-08).
+     * Every prepare-family / insert / update / delete census site is either
+     * scanned (yielded ≥1 bound column ref) or explicitly allowlisted.
+     * Visited-but-zero-yield sites are a distinct failure bucket (OBS-08).
+     * The denominator is the independent census, not the extractor's own
+     * match set — invisible sites must surface as unscanned (PT-05).
      */
     public function testEveryQuerySiteIsScannedOrAllowlisted(): void
     {
@@ -160,10 +197,22 @@ class ProjectionQueryColumnParityTest extends TestCase
         $sites = $scan['sites'];
 
         $this->assertNotEmpty($sites, 'no query sites discovered in sovereign repositories');
+        $this->assertSame(
+            count($sites),
+            $scan['census_count'],
+            'site list must be the independent census denominator (not extractor self-count)'
+        );
 
         $unscanned = [];
+        $visitedUnresolved = [];
         foreach ($sites as $site) {
             if ($site['scanned']) {
+                continue;
+            }
+            if (($site['bucket'] ?? '') === 'visited_unresolved') {
+                if (! array_key_exists($site['key'], self::ALLOWED_VISITED_UNRESOLVED)) {
+                    $visitedUnresolved[] = $site['key'] . ' (' . $site['detail'] . ')';
+                }
                 continue;
             }
             if (! array_key_exists($site['key'], self::ALLOWED_UNSCANNED_SITES)) {
@@ -184,19 +233,133 @@ class ProjectionQueryColumnParityTest extends TestCase
                 }
             }
         }
+        foreach (array_keys(self::ALLOWED_VISITED_UNRESOLVED) as $key) {
+            if (! in_array($key, $siteKeys, true)) {
+                $stale[] = 'visited_unresolved:' . $key . ' (site gone)';
+                continue;
+            }
+            foreach ($sites as $site) {
+                if ($site['key'] === $key && $site['scanned']) {
+                    $stale[] = 'visited_unresolved:' . $key . ' (now scanned)';
+                }
+                if (
+                    $site['key'] === $key
+                    && ($site['bucket'] ?? '') !== 'visited_unresolved'
+                    && ! $site['scanned']
+                ) {
+                    $stale[] = 'visited_unresolved:' . $key . ' (bucket is '
+                        . ($site['bucket'] ?? '?') . ', not visited_unresolved)';
+                }
+            }
+        }
 
         $this->assertSame(
             [],
             $unscanned,
-            'Query sites not scanned and not on ALLOWED_UNSCANNED_SITES (PT-05 / OBS-08): '
+            'Query sites not visited by extractor and not on ALLOWED_UNSCANNED_SITES (PT-05 / OBS-08): '
             . implode(' | ', $unscanned)
-            . '. site_count=' . count($sites)
-            . ' scanned=' . count(array_filter($sites, static fn (array $s): bool => $s['scanned']))
+            . '. census=' . count($sites)
+            . ' scanned=' . $scan['site_counts']['scanned']
+            . ' visited_unresolved=' . $scan['site_counts']['visited_unresolved']
+            . ' unscanned=' . $scan['site_counts']['unscanned']
+        );
+        $this->assertSame(
+            [],
+            $visitedUnresolved,
+            'Query sites visited but yielding zero bound columns, not on ALLOWED_VISITED_UNRESOLVED (OBS-08): '
+            . implode(' | ', $visitedUnresolved)
         );
         $this->assertSame(
             [],
             $stale,
-            'ALLOWED_UNSCANNED_SITES dead instrumentation (OBS-08): ' . implode(' | ', $stale)
+            'Allowlist dead instrumentation (OBS-08): ' . implode(' | ', $stale)
+        );
+    }
+
+    /**
+     * FIX-4 / PT-02 production: the list_labels derived-table query in
+     * class-clusters-read-repository.php must reach the scanner through
+     * prepare_projection_read_query, and its interior columns must bind.
+     */
+    public function testProductionDerivedTableListLabelsIsScanned(): void
+    {
+        $path = dirname(__DIR__, 2)
+            . '/src/sovereign/repositories/class-clusters-read-repository.php';
+        $this->assertFileExists($path);
+        $source = (string) file_get_contents($path);
+        $basename = 'class-clusters-read-repository.php';
+
+        $extraction = $this->extractPrepareQueryUnits($source, $basename);
+        $derivedUnits = [];
+        foreach ($extraction['units'] as $unit) {
+            if (
+                str_contains($unit['sql'], 'FROM (SELECT DISTINCT')
+                && str_contains($unit['sql'], 'filtered')
+            ) {
+                $this->assertSame(
+                    'prepare_projection_read_query',
+                    $unit['method'],
+                    'list_labels derived-table SQL must arrive via prepare_projection_read_query'
+                );
+                $derivedUnits[] = $unit;
+            }
+        }
+
+        $this->assertNotEmpty(
+            $derivedUnits,
+            'production list_labels derived-table SQL must be present in the extracted corpus (FIX-4)'
+        );
+
+        $interiorLabels = 0;
+        $interiorTenantIds = 0;
+        foreach ($derivedUnits as $unit) {
+            $aliasMap = $this->bindAliasesToTables($unit['sql'], $unit['args'], $basename);
+            $primaryTable = $this->resolvePrimaryTable($unit['sql'], $unit['args'], $basename);
+            $items = $this->collectAllColumnRefs(
+                $unit['sql'],
+                $unit['args'],
+                $aliasMap,
+                $primaryTable,
+                $basename
+            );
+            foreach ($items['bound'] as $ref) {
+                $this->assertSame('acx_clusters', $ref['table'], 'list_labels binds to acx_clusters');
+                if ($ref['column'] === 'label') {
+                    $interiorLabels++;
+                }
+                if ($ref['column'] === 'tenant_id') {
+                    $interiorTenantIds++;
+                }
+            }
+        }
+
+        $this->assertGreaterThan(
+            0,
+            $interiorLabels,
+            'derived-table interior column label must be resolved from production list_labels SQL (FIX-4)'
+        );
+        $this->assertGreaterThan(
+            0,
+            $interiorTenantIds,
+            'derived-table interior column tenant_id must be resolved from production list_labels SQL (FIX-4)'
+        );
+
+        // Also prove the main scan corpus carries the same production refs.
+        $scan = $this->scanRepositorySqlColumnRefs();
+        $prodLabels = 0;
+        foreach ($scan['bound'] as $ref) {
+            if (
+                $ref['file'] === $basename
+                && $ref['table'] === 'acx_clusters'
+                && $ref['column'] === 'label'
+            ) {
+                $prodLabels++;
+            }
+        }
+        $this->assertGreaterThan(
+            0,
+            $prodLabels,
+            'scanRepositorySqlColumnRefs must include clusters-read label refs from production SQL'
         );
     }
 
@@ -352,7 +515,7 @@ PHP;
         $this->assertGreaterThan(
             0,
             $callCount,
-            'no prepare_query call sites found in sovereign repositories'
+            'no prepare_query / prepare_projection_read_query call sites found in sovereign repositories'
         );
 
         $allowedKeys = array_keys(self::ALLOWED_DROPPED_CALLS);
@@ -379,7 +542,7 @@ PHP;
         $this->assertSame(
             [],
             $unexpected,
-            'prepare_query call sites dropped without extraction and not on ALLOWED_DROPPED_CALLS (BR-07 / OBS-08): '
+            'prepare-family call sites dropped without extraction and not on ALLOWED_DROPPED_CALLS (BR-07 / OBS-08): '
             . implode(' | ', $unexpected)
         );
         $this->assertSame(
@@ -392,7 +555,7 @@ PHP;
         $this->assertSame(
             $callCount,
             $extractedCount + count($dropped),
-            'prepare_query call_count must equal extracted + dropped'
+            'prepare-family call_count must equal extracted + dropped'
         );
     }
 
@@ -553,6 +716,10 @@ PHP;
     /**
      * Scan repository sources for column refs bound to projection tables.
      *
+     * Site denominator comes from censusRepositoryQuerySites (independent of
+     * the extractor). A site is scanned only when extraction yields ≥1 bound
+     * column reference — visit alone is not coverage.
+     *
      * @return array{
      *     bound: list<array{file:string,table:string,column:string,alias:string}>,
      *     skipped: list<string>,
@@ -560,7 +727,9 @@ PHP;
      *     call_count: int,
      *     extracted_count: int,
      *     write_columns: list<array{file:string,table:string,column:string,alias:string}>,
-     *     sites: list<array{key:string,scanned:bool,detail:string}>,
+     *     sites: list<array{key:string,scanned:bool,visited:bool,yield:int,bucket:string,detail:string}>,
+     *     site_counts: array{scanned:int,visited_unresolved:int,unscanned:int},
+     *     census_count: int,
      *     bypasses: list<array{key:string,file:string,line:int,detail:string}>
      * }
      */
@@ -579,6 +748,7 @@ PHP;
         $bypasses = [];
         $callCount = 0;
         $extractedCount = 0;
+        $censusCount = 0;
 
         foreach ($files as $path) {
             $basename = basename($path);
@@ -588,6 +758,18 @@ PHP;
                 $bypasses[] = $bypass;
             }
 
+            // Independent census first (denominator). Trait file is implementation
+            // only — its prepare_* self-calls are not production query sites.
+            $census = [];
+            if ($basename !== 'trait-prepares-sql-queries.php') {
+                $census = $this->censusRepositoryQuerySites($source, $basename);
+            }
+            $censusCount += count($census);
+
+            // yieldByKey: null = never visited; int = bound-column yield after visit.
+            $yieldByKey = [];
+            $detailByKey = [];
+
             if ($basename === 'trait-prepares-sql-queries.php') {
                 continue;
             }
@@ -595,13 +777,15 @@ PHP;
             $extraction = $this->extractPrepareQueryUnits($source, $basename);
             $callCount += $extraction['call_count'];
             $extractedCount += count($extraction['units']);
+
             foreach ($extraction['dropped'] as $d) {
                 $dropped[] = $d;
-                $sites[] = [
-                    'key' => 'prepare:' . preg_replace('/\s+—.*$/', '', $d),
-                    'scanned' => false,
-                    'detail' => $d,
-                ];
+            }
+            // Dropped calls are still "visited" — extractor saw them but could
+            // not extract a unit (zero yield unless allowlisted).
+            foreach ($extraction['dropped_keys'] as $dropKey => $dropDetail) {
+                $yieldByKey[$dropKey] = 0;
+                $detailByKey[$dropKey] = $dropDetail;
             }
 
             foreach ($extraction['units'] as $unit) {
@@ -631,20 +815,17 @@ PHP;
                     $bound[] = $ref;
                 }
 
-                $sites[] = [
-                    'key' => 'prepare:' . $unit['label'],
-                    'scanned' => true,
-                    'detail' => 'prepare_query unit',
-                ];
+                $yield = count($items['bound']) + count($items['writes']);
+                $siteKey = $unit['site_key'];
+                $yieldByKey[$siteKey] = $yield;
+                $detailByKey[$siteKey] = $unit['method'] . ' unit yield=' . $yield;
             }
 
             foreach ($this->extractWpdbArrayWriteUnits($source, $basename) as $writeUnit) {
+                $siteKey = $writeUnit['site_key'];
                 if ($writeUnit['table'] === null) {
-                    $sites[] = [
-                        'key' => $writeUnit['site_key'],
-                        'scanned' => false,
-                        'detail' => 'unresolved table for ' . $writeUnit['kind'],
-                    ];
+                    $yieldByKey[$siteKey] = 0;
+                    $detailByKey[$siteKey] = 'unresolved table for ' . $writeUnit['kind'];
                     continue;
                 }
                 foreach ($writeUnit['columns'] as $column) {
@@ -656,11 +837,57 @@ PHP;
                     ];
                     $bound[] = $ref;
                 }
-                $sites[] = [
-                    'key' => $writeUnit['site_key'],
-                    'scanned' => true,
-                    'detail' => $writeUnit['kind'] . ' array keys',
-                ];
+                $yield = count($writeUnit['columns']);
+                $yieldByKey[$siteKey] = $yield;
+                $detailByKey[$siteKey] = $writeUnit['kind'] . ' array keys yield=' . $yield;
+            }
+
+            // Materialise sites from the independent census denominator.
+            foreach ($census as $cSite) {
+                $key = $cSite['key'];
+                if (! array_key_exists($key, $yieldByKey)) {
+                    $sites[] = [
+                        'key' => $key,
+                        'scanned' => false,
+                        'visited' => false,
+                        'yield' => 0,
+                        'bucket' => 'unscanned',
+                        'detail' => 'census site not visited by extractor: ' . $cSite['kind'],
+                    ];
+                    continue;
+                }
+                $yield = $yieldByKey[$key];
+                if ($yield > 0) {
+                    $sites[] = [
+                        'key' => $key,
+                        'scanned' => true,
+                        'visited' => true,
+                        'yield' => $yield,
+                        'bucket' => 'scanned',
+                        'detail' => $detailByKey[$key] ?? ('yield=' . $yield),
+                    ];
+                } else {
+                    $sites[] = [
+                        'key' => $key,
+                        'scanned' => false,
+                        'visited' => true,
+                        'yield' => 0,
+                        'bucket' => 'visited_unresolved',
+                        'detail' => $detailByKey[$key] ?? 'visited but zero bound column refs',
+                    ];
+                }
+            }
+        }
+
+        $siteCounts = [
+            'scanned' => 0,
+            'visited_unresolved' => 0,
+            'unscanned' => 0,
+        ];
+        foreach ($sites as $site) {
+            $bucket = $site['bucket'];
+            if (isset($siteCounts[$bucket])) {
+                $siteCounts[$bucket]++;
             }
         }
 
@@ -672,8 +899,108 @@ PHP;
             'extracted_count' => $extractedCount,
             'write_columns' => $writeColumns,
             'sites' => $sites,
+            'site_counts' => $siteCounts,
+            'census_count' => $censusCount,
             'bypasses' => $bypasses,
         ];
+    }
+
+    /**
+     * Independent census of prepare-family and $wpdb write call sites.
+     * Does not extract SQL — only locates sites so the denominator is not
+     * the extractor's own match set (FIX-2 / OBS-08).
+     *
+     * @return list<array{key:string,file:string,line:int,kind:string}>
+     */
+    private function censusRepositoryQuerySites(string $source, string $basename): array
+    {
+        $sites = [];
+        $offset = 0;
+
+        // Prepare-family census: match only SQL prepare helpers listed in
+        // PREPARE_FAMILY_METHODS (not domain methods like prepare_snapshot_*).
+        // Built independently of extractPrepareQueryUnits so a method the
+        // extractor forgets still appears as unscanned.
+        $prepareAlternation = implode(
+            '|',
+            array_map(
+                static fn (string $m): string => preg_quote($m, '/'),
+                self::PREPARE_FAMILY_METHODS
+            )
+        );
+        while (preg_match(
+            '/->(' . $prepareAlternation . ')\s*\(/',
+            $source,
+            $match,
+            PREG_OFFSET_CAPTURE,
+            $offset
+        )) {
+            $method = $match[1][0];
+            $pos = $match[0][1];
+            $line = substr_count(substr($source, 0, $pos), "\n") + 1;
+            if (! $this->isOffsetInCommentOrString($source, $pos)) {
+                $sites[] = [
+                    'key' => $basename . ':' . $line . ':' . $method,
+                    'file' => $basename,
+                    'line' => $line,
+                    'kind' => $method,
+                ];
+            }
+            $offset = $pos + strlen($match[0][0]);
+        }
+
+        $offset = 0;
+        while (preg_match(
+            '/\$wpdb->(insert|update|delete)\s*\(/',
+            $source,
+            $match,
+            PREG_OFFSET_CAPTURE,
+            $offset
+        )) {
+            $kind = $match[1][0];
+            $pos = $match[0][1];
+            $line = substr_count(substr($source, 0, $pos), "\n") + 1;
+            if (! $this->isOffsetInCommentOrString($source, $pos)) {
+                $sites[] = [
+                    'key' => $basename . ':' . $line . ':' . $kind,
+                    'file' => $basename,
+                    'line' => $line,
+                    'kind' => $kind,
+                ];
+            }
+            $offset = $pos + strlen($match[0][0]);
+        }
+
+        // Stable order by line for diagnostics.
+        usort(
+            $sites,
+            static function (array $a, array $b): int {
+                return $a['line'] <=> $b['line'];
+            }
+        );
+
+        return $sites;
+    }
+
+    /**
+     * Cheap guard: skip matches that sit on a line whose trim starts with a
+     * comment marker (docblocks / line comments mentioning $wpdb->update etc.).
+     */
+    private function isOffsetInCommentOrString(string $source, int $pos): bool
+    {
+        $lineStart = strrpos(substr($source, 0, $pos), "\n");
+        $lineStart = $lineStart === false ? 0 : $lineStart + 1;
+        $lineEnd = strpos($source, "\n", $pos);
+        $line = $lineEnd === false
+            ? substr($source, $lineStart)
+            : substr($source, $lineStart, $lineEnd - $lineStart);
+        $trimmed = ltrim($line);
+
+        return $trimmed === ''
+            || str_starts_with($trimmed, '//')
+            || str_starts_with($trimmed, '#')
+            || str_starts_with($trimmed, '*')
+            || str_starts_with($trimmed, '/*');
     }
 
     /**
@@ -1002,7 +1329,8 @@ PHP;
             $offset = $i;
             $lineNo = substr_count(substr($source, 0, $callStart), "\n") + 1;
             $signature = $this->callSignature($callBody);
-            $siteKey = $basename . ':' . $kind . ':' . $signature;
+            // Line-keyed to match independent census (basename:line:kind).
+            $siteKey = $basename . ':' . $lineNo . ':' . $kind;
 
             $args = $this->splitTopLevelArgs($callBody);
             $tableExpr = $args[0] ?? '';
@@ -1657,8 +1985,9 @@ PHP;
 
     /**
      * @return array{
-     *     units: list<array{sql:string,args:string[],label:string}>,
+     *     units: list<array{sql:string,args:string[],label:string,method:string,line:int,site_key:string}>,
      *     dropped: list<string>,
+     *     dropped_keys: array<string, string>,
      *     call_count: int
      * }
      */
@@ -1666,13 +1995,31 @@ PHP;
     {
         $units = [];
         $dropped = [];
+        $droppedKeys = [];
         $callCount = 0;
         $offset = 0;
         $length = strlen($source);
 
-        while (preg_match('/->prepare_query\s*\(/', $source, $match, PREG_OFFSET_CAPTURE, $offset)) {
+        // Match every PREPARE_FAMILY_METHODS name. Order longer names first so
+        // prepare_query never steals a prepare_projection_read_query site.
+        $methods = self::PREPARE_FAMILY_METHODS;
+        usort($methods, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+        $prepareAlternation = implode(
+            '|',
+            array_map(static fn (string $m): string => preg_quote($m, '/'), $methods)
+        );
+        while (preg_match(
+            '/->(' . $prepareAlternation . ')\s*\(/',
+            $source,
+            $match,
+            PREG_OFFSET_CAPTURE,
+            $offset
+        )) {
             $callCount++;
+            $methodName = $match[1][0];
             $callStart = $match[0][1];
+            $lineNo = substr_count(substr($source, 0, $callStart), "\n") + 1;
+            $siteKey = $basename . ':' . $lineNo . ':' . $methodName;
             $start = $match[0][1] + strlen($match[0][0]);
             $depth = 1;
             $i = $start;
@@ -1711,11 +2058,13 @@ PHP;
                 $callBody,
                 $parts
             )) {
-                $dropped[] = sprintf(
+                $detail = sprintf(
                     '%s:%s — first argument is not a string literal',
                     $basename,
                     $signature
                 );
+                $dropped[] = $detail;
+                $droppedKeys[$siteKey] = $detail;
                 continue;
             }
 
@@ -1761,11 +2110,13 @@ PHP;
                     $args = [];
                 }
             } else {
-                $dropped[] = sprintf(
+                $detail = sprintf(
                     '%s:%s — arguments are neither array(...), array_merge(...), nor a simple variable',
                     $basename,
                     $signature
                 );
+                $dropped[] = $detail;
+                $droppedKeys[$siteKey] = $detail;
                 continue;
             }
 
@@ -1773,12 +2124,16 @@ PHP;
                 'sql' => $sql,
                 'args' => $args,
                 'label' => $basename . ':' . $signature,
+                'method' => $methodName,
+                'line' => $lineNo,
+                'site_key' => $siteKey,
             ];
         }
 
         return [
             'units' => $units,
             'dropped' => $dropped,
+            'dropped_keys' => $droppedKeys,
             'call_count' => $callCount,
         ];
     }

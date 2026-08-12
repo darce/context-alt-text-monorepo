@@ -12,10 +12,12 @@ use AltContext\Sovereign\Sync\OutboxDrain;
 use function array_keys;
 use function defined;
 use function function_exists;
+use function get_debug_type;
 use function get_option;
 use function is_object;
 use function is_readable;
 use function is_string;
+use function max;
 use function method_exists;
 use function sprintf;
 use function time;
@@ -1065,12 +1067,18 @@ class LifecycleManager {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned identifiers.
 		$rows  = $wpdb->get_results( $query, ARRAY_A );
 		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
-		if ( '' !== $error ) {
+		// Mirror PreparesSqlQueries::guard_query_error: null from get_results is a
+		// failed probe (query did not execute), not an empty result set. Conflating
+		// the two would leave legacy idx_name in place while reporting success.
+		if ( '' !== $error || null === $rows ) {
 			if ( property_exists( $wpdb, 'last_error' ) ) {
 				$wpdb->last_error = '';
 			}
+			$message = '' !== $error
+				? $error
+				: 'query did not execute (wpdb not ready or query filtered)';
 			Telemetry::log_line(
-				sprintf( '[acx] schema legacy-index probe failed for %s.%s: %s', $persons_table, $index_name, $error )
+				sprintf( '[acx] schema legacy-index probe failed for %s.%s: %s', $persons_table, $index_name, $message )
 			);
 			return false;
 		}
@@ -1126,7 +1134,12 @@ class LifecycleManager {
 	 * assigned_at was added keep a sane ORDER BY until the next recognition
 	 * sync overwrites them. Not a migration framework (Greenfield Policy).
 	 *
-	 * @return bool False when the UPDATE fails or the environment cannot query.
+	 * Pre-counts sentinel rows, runs the UPDATE, and requires the affected-row
+	 * count to match. A zero-row UPDATE against a non-zero sentinel population
+	 * is a silent-success trap (wrong sentinel literals, filtered query) and
+	 * must refuse the stamp so the next request retries.
+	 *
+	 * @return bool False when the UPDATE fails, the row counts disagree, or the environment cannot query.
 	 */
 	private function seed_assigned_at_from_created_at( string $members_table ): bool {
 		global $wpdb;
@@ -1135,13 +1148,19 @@ class LifecycleManager {
 			return false;
 		}
 
+		$fallback        = self::ASSIGNED_AT_FALLBACK_UTC;
+		$fallback_second = '1970-01-01 00:00:00';
+
+		$expected = $this->count_assigned_at_sentinel_rows( $members_table, $fallback, $fallback_second );
+		if ( null === $expected ) {
+			return false;
+		}
+
 		if ( property_exists( $wpdb, 'last_error' ) ) {
 			$wpdb->last_error = '';
 		}
 
-		$fallback        = self::ASSIGNED_AT_FALLBACK_UTC;
-		$fallback_second = '1970-01-01 00:00:00';
-		$result          = null;
+		$result = null;
 
 		if ( method_exists( $wpdb, 'prepare' ) ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
@@ -1165,6 +1184,7 @@ class LifecycleManager {
 		}
 
 		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		// false = MySQL error; 0 = successful UPDATE that matched nothing. Distinct outcomes.
 		if ( false === $result || '' !== $error ) {
 			if ( property_exists( $wpdb, 'last_error' ) ) {
 				$wpdb->last_error = '';
@@ -1176,6 +1196,89 @@ class LifecycleManager {
 			return false;
 		}
 
+		// Real wpdb returns int rows-affected on UPDATE success (never boolean true).
+		if ( ! is_int( $result ) ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema seed assigned_at failed for %s: UPDATE returned non-integer success (%s)',
+					$members_table,
+					get_debug_type( $result )
+				)
+			);
+			return false;
+		}
+
+		if ( $result !== $expected ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema seed assigned_at row-count mismatch for %s: expected %d, affected %d',
+					$members_table,
+					$expected,
+					$result
+				)
+			);
+			return false;
+		}
+
 		return true;
+	}
+
+	/**
+	 * Count identity_members rows still holding an assigned_at sentinel.
+	 *
+	 * @return int|null Null when the COUNT cannot run or MySQL errors (fail the repair).
+	 */
+	private function count_assigned_at_sentinel_rows( string $members_table, string $fallback, string $fallback_second ): ?int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: wpdb get_var unavailable for sentinel pre-count', $members_table )
+			);
+			return null;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$count = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
+			$sql = $wpdb->prepare(
+				'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+				$members_table,
+				$fallback,
+				$fallback_second
+			);
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+				$count = $wpdb->get_var( $sql );
+			}
+		}
+
+		if ( null === $count ) {
+			$count = $wpdb->get_var(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
+				"SELECT COUNT(*) FROM `{$members_table}` WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
+			);
+		}
+
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		// Mirror PreparesSqlQueries::guard_query_error with null_is_failure for COUNT.
+		if ( '' !== $error || null === $count ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error
+				? $error
+				: 'query did not execute (wpdb not ready or query filtered)';
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: sentinel pre-count: %s', $members_table, $message )
+			);
+			return null;
+		}
+
+		return max( 0, (int) $count );
 	}
 }

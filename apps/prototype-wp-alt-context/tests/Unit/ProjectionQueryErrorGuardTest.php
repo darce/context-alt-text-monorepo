@@ -171,6 +171,49 @@ class ProjectionQueryErrorGuardTest extends TestCase
         $this->assertStringContainsString('list_cluster_labels', $response->get_error_message());
     }
 
+    /**
+     * Service-level regression guard for every local-projection catch that must
+     * return acx_projection_query_failed (HTTP 500), not an empty 200 payload.
+     * TEST-15: mutating any catch to return empty clusters@200 goes red here.
+     *
+     * @dataProvider localProjectionReadSurfaces
+     */
+    public function testLocalProjectionQueryFailureReturnsTypedErrorNotEmptyPayload(
+        string $method,
+        array $params
+    ): void {
+        $clustersRepo = $this->makeThrowingClustersRepoForSurface($method);
+        $membersRepo = $this->makeThrowingMembersRepoForSurface($method);
+        $service = $this->makeService($clustersRepo, $membersRepo);
+
+        $request = new WP_REST_Request('GET', '/clusters');
+        foreach ($params as $key => $value) {
+            $request->set_param($key, $value);
+        }
+
+        $response = $service->{$method}($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response, $method . ' must not return a 200 empty payload');
+        $this->assertNotInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame('acx_projection_query_failed', $response->get_error_code());
+        $this->assertSame(500, (int) ($response->get_error_data()['status'] ?? 0));
+        $this->assertStringContainsString($method, $response->get_error_message());
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: array<string, string>}>
+     */
+    public static function localProjectionReadSurfaces(): array
+    {
+        return [
+            'list clusters' => ['list_clusters', []],
+            'top unlabeled' => ['list_top_unlabeled_clusters', []],
+            'labels' => ['list_cluster_labels', []],
+            'detail' => ['get_cluster_detail', ['cluster_id' => 'cluster-1']],
+            'members' => ['get_cluster_members', ['cluster_id' => 'cluster-1']],
+        ];
+    }
+
     public function testPrepareFailureThrowsInsteadOfReturningEmpty(): void
     {
         // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Test harness installs a wpdb stub.
@@ -190,23 +233,50 @@ class ProjectionQueryErrorGuardTest extends TestCase
         $this->repository->list_for_cluster('cluster-1', 10, 0, self::currentTenantId());
     }
 
-    public function testSuccessfulQueryIgnoresStaleLastError(): void
+    /**
+     * clear_query_error() must run before every repository read so a leftover
+     * $wpdb->last_error from an unrelated query does not poison a successful read.
+     *
+     * @dataProvider repositoryReadMethods
+     */
+    public function testSuccessfulQueryIgnoresStaleLastError(callable $read): void
     {
         global $wpdb;
         $wpdb->last_error = 'stale unrelated error';
         $wpdb->mockResults = [];
+        $wpdb->mockRow = null;
+        $wpdb->get_row_returns_null = true;
+        $wpdb->get_results_returns_null = false;
+        $wpdb->get_var_returns_null = false;
+        $wpdb->mockVar = null;
 
-        $this->assertSame([], $this->repository->list_for_cluster('cluster-1', 10, 0, self::currentTenantId()));
+        // Must not throw ProjectionQueryException on a successful empty/zero/null result.
+        $result = $read();
+
+        $this->assertTrue(
+            is_array($result) || is_bool($result) || is_int($result) || null === $result,
+            'successful projection read must return a normal result type'
+        );
     }
 
-    /** @dataProvider readEndpointMethods */
-    public function testProjectionAvailabilityFailureDegradesEveryReadEndpoint(string $method, array $params): void
+    /**
+     * Availability-probe failure (has_projection_rows throws) must log and fall
+     * through to the proxy path — not hard-fail the read as acx_projection_query_failed.
+     * Loud degradation of local-projection catch blocks is covered by
+     * testLocalProjectionQueryFailureReturnsTypedErrorNotEmptyPayload.
+     *
+     * @dataProvider readEndpointMethods
+     */
+    public function testAvailabilityProbeFailureLogsAndFallsBackToProxy(string $method, array $params): void
     {
         $host = new class() implements ClustersHostInterface {
+            public int $proxy_calls = 0;
+
             public function get_tenant_id(): string {
 				return 'tenant-1'; }
             public function proxy_recognition_request(string $method, string $path, array $body = [], array $query = [], string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null): WP_REST_Response|WP_Error
             {
+                $this->proxy_calls++;
                 return new WP_REST_Response([], 200);
             }
             public function host_should_use_local_projection_gate(SyncStateRepositoryInterface $sync_state_repository, string $tenant_id): bool {
@@ -239,8 +309,16 @@ class ProjectionQueryErrorGuardTest extends TestCase
 
         $response = $service->{$method}($request);
 
-        $this->assertTrue($response instanceof WP_REST_Response || $response instanceof WP_Error);
-        $this->assertNotEmpty($this->getErrorLog(), 'degrade must emit telemetry');
+        $this->assertGreaterThan(0, $host->proxy_calls, 'availability probe failure must fall through to proxy');
+        $log = implode("\n", $this->getErrorLog());
+        $this->assertStringContainsString('Local projection availability check failed', $log);
+        if ($response instanceof WP_Error) {
+            $this->assertNotSame(
+                'acx_projection_query_failed',
+                $response->get_error_code(),
+                'availability-probe failure must not surface as a hard projection query failure'
+            );
+        }
     }
 
     public static function readEndpointMethods(): array
@@ -424,6 +502,69 @@ class ProjectionQueryErrorGuardTest extends TestCase
         $this->assertInstanceOf(WP_Error::class, $response, 'Must not return a 200 empty members envelope');
         $this->assertNotInstanceOf(WP_REST_Response::class, $response);
         $this->assertSame('acx_projection_query_failed', $response->get_error_code());
+    }
+
+    private function makeThrowingClustersRepoForSurface(string $method): NullClustersRepository
+    {
+        return match ($method) {
+            'list_clusters' => new class() extends NullClustersRepository {
+                public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array()): array
+                {
+                    throw new ProjectionQueryException('Projection query failed [clusters.list_for_tenant]: broken');
+                }
+            },
+            'list_top_unlabeled_clusters' => new class() extends NullClustersRepository {
+                public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+                {
+                    throw new ProjectionQueryException('Projection query failed [clusters.list_top_unlabeled]: broken');
+                }
+            },
+            'list_cluster_labels' => new class() extends NullClustersRepository {
+                public function list_labels(string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT): array
+                {
+                    throw new ProjectionQueryException('Projection query failed [clusters.list_labels]: broken');
+                }
+            },
+            'get_cluster_detail' => new class() extends NullClustersRepository {
+                public function find_by_uuid(string $cluster_uuid): ?array
+                {
+                    throw new ProjectionQueryException('Projection query failed [clusters.find_by_uuid]: broken');
+                }
+            },
+            'get_cluster_members' => new class() extends NullClustersRepository {
+                public function find_by_uuid(string $cluster_uuid): ?array
+                {
+                    return [
+                        'cluster_uuid' => $cluster_uuid,
+                        'identity_count' => 5,
+                        'label' => 'Broken',
+                    ];
+                }
+            },
+            default => new NullClustersRepository(),
+        };
+    }
+
+    private function makeThrowingMembersRepoForSurface(string $method): IdentityMembersRepositoryInterface
+    {
+        if ('get_cluster_members' === $method) {
+            return new class() extends NullIdentityMembersRepository {
+                public function list_for_cluster(
+                    string $cluster_uuid,
+                    int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT,
+                    int $offset = 0,
+                    ?string $tenant_id = null
+                ): array {
+                    $message = 'Projection query failed [identity_members.list_for_cluster]: '
+                        . ProjectionQueryErrorGuardTest::MYSQL_ASSIGNED_AT_ERROR;
+
+                    // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal diagnostic message; never rendered as output.
+                    throw new ProjectionQueryException($message);
+                }
+            };
+        }
+
+        return new NullIdentityMembersRepository();
     }
 
     /**

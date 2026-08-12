@@ -35,8 +35,17 @@ class ClusterReadService {
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
 	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
 	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
+	/**
+	 * Per-cluster sample size for list / top-unlabeled cards. Single source for
+	 * both the members fetch and the mapper preview_limit so truncation logic
+	 * cannot desynchronise (sr-007).
+	 */
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
-	private const CLUSTER_DETAIL_MEMBER_LIMIT = 500;
+	/**
+	 * Cluster detail member page size. Canonical value lives on the repository
+	 * interface (DEFAULT_CLUSTER_MEMBER_LIMIT); do not re-state the magnitude.
+	 */
+	private const CLUSTER_DETAIL_MEMBER_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
 
 	private ClustersHostInterface $host;
 	private ClusterReadDependencies $dependencies;
@@ -66,8 +75,9 @@ class ClusterReadService {
 					)
 				);
 
-				$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_PER_CLUSTER );
-				$clusters = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, self::PREVIEW_IDENTITIES_PER_CLUSTER );
+				$preview_limit      = self::PREVIEW_IDENTITIES_PER_CLUSTER;
+				$members_by_cluster = $this->load_members_by_cluster( $rows, $preview_limit );
+				$clusters           = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, $preview_limit );
 
 				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 			} catch ( ProjectionQueryException $exception ) {
@@ -117,12 +127,11 @@ class ClusterReadService {
 					return $normalized;
 				}
 
-				if ( $normalized instanceof WP_REST_Response ) {
-					$data = $normalized->get_data();
-					if ( is_array( $data ) ) {
-						$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
-						return new WP_REST_Response( $data, 200 );
-					}
+				// After the WP_Error branch, normalize_top_unlabeled_response yields WP_REST_Response.
+				$data = $normalized->get_data();
+				if ( is_array( $data ) ) {
+					$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
+					return new WP_REST_Response( $data, 200 );
 				}
 			}
 
@@ -156,12 +165,13 @@ class ClusterReadService {
 				$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
 			}
 
-			$has_clusters = $this->dependencies->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
-			$unlabeled_items = $this->dependencies->cluster_mapper->map_top_unlabeled_clusters(
+			$has_clusters     = $this->dependencies->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
+			$preview_limit    = self::PREVIEW_IDENTITIES_PER_CLUSTER;
+			$unlabeled_items  = $this->dependencies->cluster_mapper->map_top_unlabeled_clusters(
 				$sovereign_data['clusters'],
 				$sovereign_data['members'],
 				$tenant_id,
-				self::PREVIEW_IDENTITIES_PER_CLUSTER
+				$preview_limit
 			);
 			$total = count( $unlabeled_items );
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
@@ -231,8 +241,9 @@ class ClusterReadService {
 			try {
 				$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 				if ( is_array( $cluster_row ) ) {
-					$members = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::CLUSTER_DETAIL_MEMBER_LIMIT, 0, $tenant_id );
-					$payload = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, self::CLUSTER_DETAIL_MEMBER_LIMIT );
+					$member_limit = self::CLUSTER_DETAIL_MEMBER_LIMIT;
+					$members      = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $member_limit, 0, $tenant_id );
+					$payload      = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
 					return new WP_REST_Response( $payload, 200 );
 				}
 

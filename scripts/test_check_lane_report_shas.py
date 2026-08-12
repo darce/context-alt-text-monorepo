@@ -541,8 +541,12 @@ def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
     assert "_rv4_nested" in proc.stderr or "lane-report" in proc.stderr
 
 
-def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
-    """RV4-04 / rg-006: default walk filters through the shared path predicate."""
+def test_default_walk_and_staged_predicate_agree_on_nested_paths(tmp_path: Path) -> None:
+    """RV4-04 / rg-006 / RF-12: default walk filters through the shared path predicate.
+
+    Fixture tree lives under ``tmp_path`` so the assertion does not depend on
+    ambient repo content or leave residue under REPO_ROOT.
+    """
     mod = _load_guard_module()
 
     # Nested and shallow paths must both be accepted by the shared predicate.
@@ -552,53 +556,38 @@ def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
     assert mod._is_lane_report_relpath("docs/tasks/note.md") is False
     assert mod._is_lane_report_relpath(".s2a/notes.txt") is False
 
-    # Default collector must include nested paths under .s2a/.
-    nested_dir = REPO_ROOT / ".s2a" / "_fx3_walk_parity"
+    nested_dir = tmp_path / ".s2a" / "_fx3_walk_parity"
     nested_dir.mkdir(parents=True, exist_ok=True)
     nested_file = nested_dir / "deep.md"
     nested_file.write_text("no tokens here\n", encoding="utf-8")
-    try:
-        defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
-        assert nested_file.resolve() in defaults, (
-            f"default walk missed nested path {nested_file}; sample={sorted(defaults)[:5]}"
-        )
-    finally:
-        nested_file.unlink(missing_ok=True)
-        nested_dir.rmdir()
+    defaults = {p.resolve() for p in mod._default_report_paths(tmp_path)}
+    assert nested_file.resolve() in defaults, (
+        f"default walk missed nested path {nested_file}; sample={sorted(defaults)[:5]}"
+    )
 
 
 def test_default_walk_sees_s2a_at_arbitrary_depth_above_star(tmp_path: Path) -> None:
-    """VLM6-R2-G-04 / rg-006: depth above ``*/.s2a`` is not missed by a hand-maintained glob.
+    """VLM6-R2-G-04 / rg-006 / RF-12: depth above ``*/.s2a`` is not missed.
 
     ``*`` does not cross path separators, so a parallel glob list drifts from the
     predicate. The collector must walk the tree and filter through
     ``_is_lane_report_relpath`` so e.g. ``a/b/c/.s2a/report.md`` is included.
+
+    RF-12: build the fixture under ``tmp_path`` — never mkdir inside REPO_ROOT or
+    rglob the real checkout (ambient content / pollution / cross-run bleed).
     """
     mod = _load_guard_module()
-    # Build a synthetic mini-tree under the real repo so relative_to(repo) works,
-    # at a depth ``*/.s2a/**`` cannot reach (three path segments before .s2a).
-    deep_dir = (
-        REPO_ROOT
-        / "apps"
-        / "prototype-description-service"
-        / "scene"
-        / ".s2a"
-        / "_cx5_depth_parity"
-    )
+    deep_dir = tmp_path / "a" / "b" / "c" / ".s2a" / "_cx5_depth_parity"
     deep_dir.mkdir(parents=True, exist_ok=True)
     deep_file = deep_dir / "report.md"
     deep_file.write_text("no tokens here\n", encoding="utf-8")
-    try:
-        rel = deep_file.relative_to(REPO_ROOT).as_posix()
-        assert mod._is_lane_report_relpath(rel) is True
-        defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
-        assert deep_file.resolve() in defaults, (
-            f"default walk missed arbitrary-depth .s2a path {deep_file}; "
-            f"predicate={mod._is_lane_report_relpath(rel)}"
-        )
-    finally:
-        deep_file.unlink(missing_ok=True)
-        deep_dir.rmdir()
+    rel = deep_file.relative_to(tmp_path).as_posix()
+    assert mod._is_lane_report_relpath(rel) is True
+    defaults = {p.resolve() for p in mod._default_report_paths(tmp_path)}
+    assert deep_file.resolve() in defaults, (
+        f"default walk missed arbitrary-depth .s2a path {deep_file}; "
+        f"predicate={mod._is_lane_report_relpath(rel)} defaults={sorted(defaults)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -729,3 +718,132 @@ def test_ignore_next_block_blank_lines_still_adjacent(report_dir: Path) -> None:
     assert proc.returncode == 0, (
         f"blank lines must keep adjacency; stdout={proc.stdout!r} stderr={proc.stderr!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# RF-07..RF-12 — Wave E guard-evasion closures (wE6)
+# ---------------------------------------------------------------------------
+
+
+def test_homoglyph_respects_sha_guard_ignore(report_dir: Path) -> None:
+    """RF-07 / TEST-15: ``sha-guard:ignore`` must suppress homoglyph violations too.
+
+    Pre-fix: the ASCII path honours ignore; the homoglyph loop does not, so the
+    remediation the guard itself prints does not work for the class it names.
+    """
+    # с = U+0441, е = U+0435  → renders like c9f7c6e
+    sha = "\u04419f7\u04416\u0435"
+    path = _write(
+        report_dir / "rf07_homoglyph_ignore.md",
+        f"Foreign lookalike `{sha}` sha-guard:ignore for documentation.\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode == 0, (
+        f"homoglyph + sha-guard:ignore must pass; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "homoglyph" not in (proc.stdout + proc.stderr).lower()
+
+
+def test_homoglyph_without_ignore_still_fails(report_dir: Path) -> None:
+    """RF-07 control: lookalike without ignore remains a hard violation."""
+    sha = "\u04419f7\u04416\u0435"
+    path = _write(
+        report_dir / "rf07_homoglyph_no_ignore.md",
+        f"Foreign lookalike `{sha}` for documentation.\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"homoglyph without ignore must fail; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "homoglyph" in combined or "lookalike" in combined
+
+
+def test_unclosed_fence_after_ignore_next_block_fails_closed(report_dir: Path) -> None:
+    """RF-08 / TEST-15: ignore-next-block + unclosed fence must not silence the rest.
+
+    Pre-fix: ignore_this_fence stays true to EOF, every subsequent line is
+    skipped, and the guard exits 0 with '0 citations found'.
+    """
+    path = _write(
+        report_dir / "rf08_unclosed_fence.md",
+        "\n".join(
+            [
+                "<!-- sha-guard:ignore-next-block -->",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "After the unclosed fence, unresolvable beef001 must still surface.",
+                "Landed at commit beef001.",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"unclosed ignored fence must fail closed; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    combined = (proc.stdout + proc.stderr).lower()
+    assert "all resolve" not in combined
+    assert "unclosed" in combined or "beef001" in combined
+
+
+def test_default_walk_prunes_vendored_trees(tmp_path: Path) -> None:
+    """RF-09 / TEST-15: default walk must not harvest .s2a reports under .venv etc."""
+    mod = _load_guard_module()
+    (tmp_path / ".venv" / "lib" / ".s2a").mkdir(parents=True)
+    (tmp_path / ".venv" / "lib" / ".s2a" / "venv_report.md").write_text(
+        "commit deadbee\n", encoding="utf-8"
+    )
+    (tmp_path / "node_modules" / "pkg" / ".s2a").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / ".s2a" / "nm_report.md").write_text(
+        "commit cafebab\n", encoding="utf-8"
+    )
+    real_dir = tmp_path / ".s2a"
+    real_dir.mkdir()
+    real_file = real_dir / "real.md"
+    real_file.write_text("no tokens here\n", encoding="utf-8")
+
+    defaults = {p.resolve() for p in mod._default_report_paths(tmp_path)}
+    assert real_file.resolve() in defaults
+    vendored = [p for p in defaults if ".venv" in p.parts or "node_modules" in p.parts]
+    assert vendored == [], f"default walk entered vendored trees: {vendored}"
+
+
+def test_default_walk_zero_targets_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RF-10 / TEST-15: default walk with zero targets must not exit 0 silently.
+
+    Pre-fix: empty target list falls through to '0 file(s), 0 citations found'
+    and return 0 — CI green having checked nothing.
+    """
+    mod = _load_guard_module()
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path)
+    # tmp_path has no .s2a reports → default walk is empty.
+    proc_rc = mod.main([])
+    assert proc_rc != 0, (
+        f"empty default walk must exit non-zero; rc={proc_rc}"
+    )
+
+
+def test_markdown_emphasis_interior_hex_is_visible_and_flagged(report_dir: Path) -> None:
+    """RF-11 / TEST-15: ``dead*beef*…`` must not evade the tokenizer.
+
+    Pre-fix: ``\\b`` hex matching sees three fragments; rendered form is one SHA.
+    """
+    path = _write(
+        report_dir / "rf11_md_emphasis.md",
+        "Landed at commit dead*beef*1234567 in the sandbox.\n",
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"emphasis-interior hex must fail closed; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    err = proc.stderr.lower()
+    assert "deadbeef1234567" in err or "does not resolve" in err
+    assert "0 citations found" not in proc.stdout

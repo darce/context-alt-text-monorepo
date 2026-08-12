@@ -4,7 +4,7 @@
 **Task:** `VLM-6`  
 **Branch:** `feature/vlm-6`  
 **Commit:** `9c08464d28d01955e0d891b69b740a2344fad10f`  
-<!-- Corrected (VLM6-S2A-F2D-01): the lane wrote `ac2740b`, its own sandbox-clone SHA,
+<!-- Corrected (VLM6-S2A-F2D-01): the lane wrote its own sandbox-clone SHA,
      which does not exist here. This is the commit that landed this report locally. -->
 
 **Scope:** `scripts/eval_harness/cli.py` + `scene/tests/test_eval_harness_cli.py` only.  

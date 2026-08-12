@@ -175,7 +175,7 @@ cd apps/prototype-description-service && .venv/bin/python -m pytest \
 ### VLM6-F-06 / VLM6-E-06 (low/medium) — no hardcoded manifest digest
 
 - **Files:** `README.md`
-- **Behaviour:** Removed `859a083e…` literal; operators must read digest from the artifact. Inventory adds `demographic_cohort` 0/37 and fabricated-fact = undefined.
+- **Behaviour:** Removed the hardcoded truncated manifest digest literal; operators must read digest from the artifact. Inventory adds `demographic_cohort` 0/37 and fabricated-fact = undefined.
 
 ### VLM6-E-08 (medium) — “certified” means byte-stability only
 

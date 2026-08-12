@@ -116,7 +116,7 @@ Updated `_FROZEN_DIGESTS` in both anchor test modules.
 | --- | --- |
 | `provenance.head_sha` | 40 zeros → **`null`**; `fixture_revision` added |
 | `coverage_gaps` list | still `failures`, `occlusion.occlusion_other`, `occlusion.sunglasses` (perfect ID/detection not falsely listed — B-05) |
-| manifest digest | **unchanged** `1209733e…` (corpus body byte-identical) |
+| manifest digest | **unchanged** (truncated prefix omitted; corpus body byte-identical) |
 | run / report / md digests | all moved |
 
 ### New frozen digests

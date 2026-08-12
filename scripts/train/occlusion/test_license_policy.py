@@ -5741,39 +5741,102 @@ class TestB401PackageIdentityCanonicalNoneFailClosed:
 
 
 # ---------------------------------------------------------------------------
-# FIR-7-B4-02 — Ultralytics size/task-tag family folding
+# FIR-7-B5-01 / B5-02 / B5-03 / A5-01 — structural family-boundary matching
 # ---------------------------------------------------------------------------
 
 
-class TestB402UltralyticsFamilyTagFolding:
-    """FIR-7-B4-02: bounded size/task-tag strip re-probes the folded denylist.
+class TestB501StructuralFamilyBoundary:
+    """FIR-7 Wave F: structural family-boundary rule replaces tag-strip.
 
-    Measured pre-fix ADMITs: yolov8n-seg, yolo11n, yolo-world-s, yolov5n,
-    yolov9c, etc. Folding strips at most two fixed-tag layers; a hit counts
-    only when the residual is itself a denylisted seed (BR-50/52: yolodummy
-    still admits).
+    A folded token hits a deny seed on (a) exact, (b) separator-boundary
+    prefix, or (c) bounded compact remainder. Exception-family seeds
+    (yolo_nas / yolox / yolos / yolof) admit under the same rules; yolor
+    is GPL-3.0 and stays on the deny axis.
 
-    Red-proven: disabling the suffix-strip re-probe re-admits the witnesses.
+    Red-proven: disable boundary-prefix → compound witnesses admit;
+    disable compact-remainder → yolov9t admits; restore both.
     """
 
-    FAMILY_TAG_WITNESSES: ClassVar[tuple[str, ...]] = (
+    # (b) separator-boundary prefix witnesses + raw spellings that fold to them.
+    BOUNDARY_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolov8n_oiv7",
+        "yolov8n_world",
+        "yolov8s_worldv2",
+        "yolo_worldv2_s",
+        "yolov8n_p2",
+        "yolov8n_p6",
+        "yolov7_tiny",
+        "yolov3_tiny",
+        "yolov8n_engine",
+        "yolov8n_torchscript",
+        "yolov8n_mlpackage",
+        "yolov9_t",
+        "yolov9_e",
+        # hyphen / dot / space raw spellings
+        "yolov8n-oiv7",
+        "yolov8n.engine",
+        "yolo-worldv2-s",
+        # prior B4-02 size/task compounds still denied under structural rule
         "yolov8n-seg",
         "yolov8s-seg",
         "yolov8m-pose",
         "yolov8l-obb",
         "yolov8x-cls",
+        "yolo-world-s",
+    )
+
+    # (c) bounded compact remainder witnesses + cased / extension forms.
+    COMPACT_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolov9t",
+        "yolov9e",
+        "yolov5n6",
+        "yolov5nu",
+        "yolov5s6",
+        "fastsamx",
+        "yolov8nn",  # fantasy; fail-closed is the secure direction
         "yolo11n",
         "yolo11s",
         "yolo12n",
-        "yolo-world-s",
         "yolov5n",
         "yolov9c",
+        "fastsamx.pt",
+        "YOLOv9T",
+        "yolor",  # GPL-3.0 deny-axis seed (not an exception)
+        "yolor_s",
     )
 
-    @pytest.mark.parametrize("token", FAMILY_TAG_WITNESSES)
-    def test_family_tag_token_denylisted_package(self, token: str) -> None:
+    ADMIT_COUNTEREXAMPLES: ClassVar[tuple[str, ...]] = (
+        "yolodummy",  # remainder 'dummy' is 5 chars
+        "myyolo",  # no prefix
+        "sam",
+        "timm",
+        "numba",
+    )
+
+    EXCEPTION_ALLOWLIST: ClassVar[tuple[str, ...]] = (
+        "yolo-nas",
+        "yolo_nas",
+        "YOLO-NAS",
+        "yolo-nas-s",
+        "yolo_nas_s",
+        "yolonas",
+        "yolox",
+        "yolox_s",
+        "yolos",
+        "yolos-tiny",
+        "yolof",
+        "yolof_r50",
+    )
+
+    @pytest.mark.parametrize(
+        "token",
+        BOUNDARY_WITNESSES + COMPACT_WITNESSES,
+    )
+    def test_structural_family_token_denylisted_package(self, token: str) -> None:
         hit = policy._package_denylist_hit(token)
-        assert hit is not None, f"{token!r} must hit package denylist after tag fold"
+        assert hit is not None, (
+            f"{token!r} must hit package denylist under structural family rule"
+        )
         row = {
             "source": "self-generated",
             "license": "MIT",
@@ -5783,18 +5846,15 @@ class TestB402UltralyticsFamilyTagFolding:
         result = policy.audit_provenance_row(
             row, category=policy.PolicyCategory.TRAINING_DATA
         )
-        assert result.ok is False, f"family-tag token {token!r} admitted"
+        assert result.ok is False, f"structural-family token {token!r} admitted"
         assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
             f"{token!r}: expected denylisted_package, got {result.reason} "
             f"({result.detail})"
         )
 
-    @pytest.mark.parametrize(
-        "token",
-        ("yolodummy", "myyolo", "yolo-nas", "sam", "fastsamx", "timm"),
-    )
-    def test_family_tag_negatives_do_not_hit(self, token: str) -> None:
-        """BR-50/52 + bounded tags: unknown residuals and non-seeds admit."""
+    @pytest.mark.parametrize("token", ADMIT_COUNTEREXAMPLES)
+    def test_structural_family_admit_counterexamples(self, token: str) -> None:
+        """Remainders >3 chars / non-prefix tokens do not hit any deny seed."""
         assert policy._package_denylist_hit(token) is None, (
             f"{token!r} must NOT hit package denylist"
         )
@@ -5811,5 +5871,249 @@ class TestB402UltralyticsFamilyTagFolding:
             assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
                 f"{token!r} incorrectly denylisted: {result.detail}"
             )
+
+    @pytest.mark.parametrize("token", EXCEPTION_ALLOWLIST)
+    def test_exception_family_admits(self, token: str) -> None:
+        """Exception-family seeds (and their structural variants) admit."""
+        assert policy._package_denylist_hit(token) is None, (
+            f"exception-family {token!r} must NOT hit package denylist"
+        )
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        if not result.ok:
+            assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"exception-family {token!r} incorrectly denylisted: {result.detail}"
+            )
+
+    def test_deny_and_exception_seed_sets_are_disjoint(self) -> None:
+        deny_keys = policy._folded_family_seed_keys(policy.PACKAGE_DENYLIST)
+        exc_keys = policy._folded_family_seed_keys(
+            policy.PACKAGE_EXCEPTION_ALLOWLIST
+        )
+        overlap = deny_keys & exc_keys
+        assert not overlap, f"seed sets overlap: {sorted(overlap)!r}"
+
+    def test_red_proof_boundary_prefix_branch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable (b) → pure boundary-prefix compounds admit (TEST-15)."""
+        # Witnesses that need (b) and do NOT also hit via (a) or (c).
+        # yolov8n_oiv7: compact rem 'oiv7' is 4 chars → only boundary hits.
+        pure_boundary = ("yolov8n_oiv7", "yolov7_tiny", "yolov8n_torchscript")
+        for token in pure_boundary:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with both branches on"
+            )
+        monkeypatch.setattr(policy, "_FAMILY_BOUNDARY_PREFIX_ENABLED", False)
+        for token in pure_boundary:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with boundary disabled, {token!r} must admit"
+            )
+        # Compact-remainder witnesses still deny without boundary.
+        assert policy._package_denylist_hit("yolov9t") is not None
+        assert policy._package_denylist_hit("fastsamx") is not None
+
+    def test_red_proof_compact_remainder_branch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable (c) → pure compact-remainder tokens admit (TEST-15)."""
+        pure_compact = ("yolov9t", "yolov9e", "fastsamx", "yolov8nn")
+        for token in pure_compact:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with both branches on"
+            )
+        monkeypatch.setattr(policy, "_FAMILY_COMPACT_REMAINDER_ENABLED", False)
+        for token in pure_compact:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with compact-remainder disabled, {token!r} must admit"
+            )
+        # Boundary witnesses still deny without compact remainder.
+        assert policy._package_denylist_hit("yolov8n_oiv7") is not None
+        assert policy._package_denylist_hit("yolov7_tiny") is not None
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-B5-04 — Cf-format-only package-identity → invalid_row
+# ---------------------------------------------------------------------------
+
+
+class TestB504PackageIdentityCanonicalEmptyFailClosed:
+    """FIR-7-B5-04: non-empty pre-canonical that folds to '' is invalid_row.
+
+    Cf-format-only values (ZWSP, BOM, word-joiner) survive str.strip but
+    :func:`canonical` returns the empty string. Same fail-closed treatment
+    as canonical-None on row doors and both scalar doors.
+
+    Red-proven: restoring silent floor skip on empty-canonical re-admits a
+    TRAINING_DATA package witness (tests go red).
+    """
+
+    EMPTY_CANONICAL_TOKENS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("zwsp", "\u200b"),
+        ("bom", "\ufeff"),
+        ("word_joiner", "\u2060"),
+    )
+    IDENTITY_FIELDS: ClassVar[tuple[str, ...]] = (
+        "package",
+        "package_name",
+        "model_id",
+    )
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        EMPTY_CANONICAL_TOKENS,
+        ids=[t[0] for t in EMPTY_CANONICAL_TOKENS],
+    )
+    @pytest.mark.parametrize("field", IDENTITY_FIELDS)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_row_format_only_package_identity_invalid_row(
+        self,
+        token_id: str,
+        token: str,
+        field: str,
+        category: policy.PolicyCategory,
+    ) -> None:
+        assert policy.canonical(token) == "", (
+            f"precondition: {token_id} must yield canonical empty string, "
+            f"got {policy.canonical(token)!r}"
+        )
+        assert token  # non-empty pre-canonical
+        if category is policy.PolicyCategory.TRAINING_DATA:
+            row: dict[str, Any] = {
+                "source": "self-generated",
+                "license": "MIT",
+                "derived_from_model": "",
+                field: token,
+            }
+        else:
+            row = {
+                "package": "llvmlite" if field != "package" else token,
+                "license": "BSD-2-Clause",
+                "derived_from_model": "",
+            }
+            if field != "package":
+                row[field] = token
+            else:
+                row["package"] = token
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{category.value} admitted format-only {field}={token!r} "
+            f"({token_id}); detail={result.detail!r}"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"{category.value}/{field}/{token_id}: expected invalid_row, "
+            f"got {result.reason} ({result.detail})"
+        )
+        detail_cf = result.detail.casefold()
+        assert "empty" in detail_cf or "format-only" in detail_cf, (
+            f"detail must name empty/format-only; got {result.detail!r}"
+        )
+        assert field in result.detail or token in result.detail, (
+            f"detail must name field or value; got {result.detail!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        EMPTY_CANONICAL_TOKENS,
+        ids=[t[0] for t in EMPTY_CANONICAL_TOKENS],
+    )
+    def test_tooling_scalar_format_only_invalid_row(
+        self, token_id: str, token: str
+    ) -> None:
+        result = policy.audit_tooling_dependency(token)
+        assert result.ok is False, f"tooling scalar admitted {token!r}"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"tooling scalar {token_id}: expected invalid_row (not "
+            f"unknown_source), got {result.reason} ({result.detail})"
+        )
+        detail_cf = result.detail.casefold()
+        assert "empty" in detail_cf or "format-only" in detail_cf, (
+            f"detail must name empty/format-only; got {result.detail!r}"
+        )
+        assert result.reason is not policy.RejectionReason.UNKNOWN_SOURCE
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        EMPTY_CANONICAL_TOKENS,
+        ids=[t[0] for t in EMPTY_CANONICAL_TOKENS],
+    )
+    def test_model_ingest_scalar_format_only_invalid_row(
+        self, token_id: str, token: str
+    ) -> None:
+        result = policy.audit_model_ingest(token)
+        assert result.ok is False, f"model_ingest scalar admitted {token!r}"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"model_ingest scalar {token_id}: expected invalid_row (not "
+            f"missing_ingest_entry), got {result.reason} ({result.detail})"
+        )
+        detail_cf = result.detail.casefold()
+        assert "empty" in detail_cf or "format-only" in detail_cf, (
+            f"detail must name empty/format-only; got {result.detail!r}"
+        )
+        assert result.reason is not policy.RejectionReason.MISSING_INGEST_ENTRY
+
+    def test_red_proof_empty_canonical_floor_skip(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Red-proof one path: silent skip on empty-canonical re-admits ZWSP."""
+        token = "\u200b"
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        # Precondition: production path rejects.
+        baseline = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert baseline.ok is False
+        assert baseline.reason is policy.RejectionReason.INVALID_ROW
+
+        real_floor = policy._floor_package_identity_denylist
+
+        def _skip_empty_canonical(r, *, category):
+            # Replicate floor but treat empty-canonical like a miss (old bug).
+            # Use the real floor for type/disagree checks by temporarily
+            # normalising the format-only value out, then restore.
+            # Surgical: if only fault is empty-canonical package, return None.
+            for key in ("package", "package_name", "model_id", "source"):
+                raw = r.get(key)
+                if isinstance(raw, str) and raw.strip() and policy.canonical(raw.strip()) == "":
+                    # Old buggy behaviour: skip this field, continue scan.
+                    # Build a scrubbed row without that field for the real floor.
+                    scrubbed = {k: v for k, v in r.items() if k != key}
+                    return real_floor(scrubbed, category=category)
+            return real_floor(r, category=category)
+
+        monkeypatch.setattr(
+            policy, "_floor_package_identity_denylist", _skip_empty_canonical
+        )
+        mutated = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert mutated.ok is True or (
+            mutated.reason is not policy.RejectionReason.INVALID_ROW
+            or "empty" not in mutated.detail.casefold()
+        ), "red-proof: empty-canonical skip must stop reporting empty invalid_row"
+        # Strong form: TRAINING_DATA clean row with only ZWSP package admits.
+        assert mutated.ok is True, (
+            f"red-proof: expected admit under skip, got {mutated.reason} "
+            f"({mutated.detail})"
+        )
 
 

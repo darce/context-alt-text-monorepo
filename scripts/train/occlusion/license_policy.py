@@ -10,6 +10,41 @@ and tooling dependencies (diagnostic, not training data).
 Operator clearance: ``dcface_operator_clearance_20260723`` flips DCFace to
 commercial-allowed; residual FFHQ/CASIA generator lineage is disclosed in the
 informational ``generator_lineage`` field (exempt from research-source rejection).
+
+Package-identity family matching (FIR-7 Wave F / structural rule)
+-----------------------------------------------------------------
+``PACKAGE_DENYLIST`` seeds are matched by a **structural family-boundary**
+rule (replaces the Wave-E size/task tag-strip treadmill, which could not
+close an open-ended distribution-spelling space — decision
+``cc_fir7_regate4_r0812_30c24d_verdict_fail_wave_f_structural``).
+
+A folded token HITS a family seed when ANY of:
+
+  (a) **exact match** on the folded (underscore-separated) or compact form;
+  (b) **separator-boundary prefix**: canonical token == ``seed + '_' + rest``
+      with non-empty ``rest`` (e.g. ``yolov8n_oiv7``, ``yolov7_tiny``,
+      ``yolo_worldv2_s``);
+  (c) **bounded compact remainder**: compact token starts with the seed's
+      compact form and the remainder is ``[a-z0-9]{1,3}`` (e.g. ``yolov9t``,
+      ``fastsamx``, ``yolo11n``). Longer remainders (``yolodummy``) and
+      non-prefix tokens (``myyolo``) do **not** hit.
+
+**Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
+packages whose names overlap the YOLO naming surface (Deci YOLO-NAS, Megvii
+YOLOX / YOLOF, hustvl YOLOS). Exception seeds use the **same** structural
+rules with **admit** semantics — so ``yolo_nas_s`` / ``yolonas`` admit as
+Deci size variants, while bare ``yolo`` + compact-remainder would otherwise
+fail-closed on those spellings. YOLOR (WongKinYiu, GPL-3.0) is **not** an
+exception; it is a deny-axis seed with an honest lineage note.
+
+Precedence: exception-family hit → no denylist hit (admit path continues to
+other floors); deny-family hit → ``denylisted_package``; neither → no hit.
+The two seed sets are asserted **disjoint** at import (fail loudly if not).
+
+Package-identity values that are non-empty pre-canonical but whose
+:func:`canonical` is ``None`` (confusable / non-ASCII residue) or the empty
+string (Cf-format-only: ZWSP, BOM, word-joiner) are fail-closed
+``invalid_row`` on row doors and both scalar doors (FIR-7-B4-01 / B5-04).
 """
 
 from __future__ import annotations
@@ -343,6 +378,22 @@ class PackageDenylistEntry:
     notes: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class PackageExceptionEntry:
+    """Distinct-lineage package admitted despite overlapping YOLO naming.
+
+    Exception seeds use the same structural family-boundary rules as deny
+    seeds (exact / separator-boundary prefix / bounded compact remainder)
+    but with **admit** semantics. An exception hit short-circuits the
+    package denylist for that token only; other floors still apply.
+    """
+
+    package_id: str
+    display_name: str
+    spdx_id: str
+    notes: str = ""
+
+
 # Detector A/B (face detectors) + person→face cascade person-detectors.
 # Each candidate has a named entry verified at ingest — not QA-doc prose alone.
 MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
@@ -440,11 +491,11 @@ MODEL_INGEST_ENTRIES: dict[str, ModelIngestEntry] = {
     ),
 }
 
-# Ultralytics and other AGPL / NC frameworks — route cascade around these.
-# Matching is exact on the *folded* form (FIR-7-B3-01): canonical (case +
-# separator unify) then compact (drop underscores). ``yolo-v5`` / ``yolo_v5`` /
-# ``yolov5`` therefore share one identity without substring matching.
-# yolo-nas is Deci (Apache-2.0) and is intentionally NOT listed.
+# Ultralytics and other AGPL / NC / GPL frameworks — route cascade around these.
+# Matching uses the structural family-boundary rule (module docstring / Wave F):
+# exact folded/compact match, separator-boundary prefix, or bounded compact
+# remainder. Distinct-lineage YOLO names live in PACKAGE_EXCEPTION_ALLOWLIST
+# (admit-family seeds), not here — the two seed sets must stay disjoint.
 PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
     "ultralytics": PackageDenylistEntry(
         package_id="ultralytics",
@@ -627,6 +678,63 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         spdx_id="Non-Commercial",
         reason=RejectionReason.NC_MODEL_DERIVED,
         notes="Buffalo weights and any output-derived data fail the audit.",
+    ),
+    # WongKinYiu YOLOR — GPL-3.0 (not Apache). Not an exception allowlist
+    # entry: GPL-3.0 is a deny-axis licence. Own seed for honest lineage notes
+    # (compact remainder on bare ``yolo`` would also hit ``yolor``).
+    "yolor": PackageDenylistEntry(
+        package_id="yolor",
+        display_name="YOLOR (WongKinYiu)",
+        spdx_id="GPL-3.0",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes=(
+            "WongKinYiu YOLOR, GPL-3.0 upstream; denied on GPL-3.0 axis. "
+            "Not an exception-family seed (licence is not Apache/MIT-class)."
+        ),
+    ),
+}
+
+
+# Distinct-lineage packages whose names overlap the YOLO surface but are NOT
+# Ultralytics/AGPL. Matched with the same structural family rules as deny
+# seeds, with **admit** semantics (FIR-7 Wave F). Exception-family hit →
+# ``_package_denylist_hit`` returns None so other floors continue. Size /
+# task / export variants of an exception seed also admit
+# (``yolo_nas_s``, ``yolox_s``) — exceptions are family seeds, not bare exact
+# pins.
+PACKAGE_EXCEPTION_ALLOWLIST: dict[str, PackageExceptionEntry] = {
+    # Post-canonical seed: canonical("yolo-nas") == "yolo_nas"; compact
+    # "yolonas" is indexed automatically by the family matcher.
+    "yolo_nas": PackageExceptionEntry(
+        package_id="yolo_nas",
+        display_name="YOLO-NAS (Deci)",
+        spdx_id="Apache-2.0",
+        notes=(
+            "Deci YOLO-NAS; Apache-2.0-class licence; distinct lineage from "
+            "Ultralytics AGPL. Exception-family seed (exact + boundary + "
+            "bounded compact remainder admit yolo_nas_s / yolonas)."
+        ),
+    ),
+    "yolox": PackageExceptionEntry(
+        package_id="yolox",
+        display_name="YOLOX (Megvii)",
+        spdx_id="Apache-2.0",
+        notes="Megvii YOLOX, Apache-2.0; distinct lineage from Ultralytics AGPL.",
+    ),
+    "yolos": PackageExceptionEntry(
+        package_id="yolos",
+        display_name="YOLOS (hustvl)",
+        spdx_id="Apache-2.0",
+        notes="hustvl/ViT YOLOS, Apache-2.0; distinct lineage from Ultralytics AGPL.",
+    ),
+    "yolof": PackageExceptionEntry(
+        package_id="yolof",
+        display_name="YOLOF (Megvii Research)",
+        spdx_id="Apache-2.0",
+        notes=(
+            "megvii-research YOLOF, Apache-2.0; distinct lineage from "
+            "Ultralytics AGPL."
+        ),
     ),
 }
 
@@ -1988,88 +2096,133 @@ def _reject_non_string(
     )
 
 
-def _package_denylist_folded_index() -> dict[str, PackageDenylistEntry]:
-    """Index PACKAGE_DENYLIST under separator-folded + compact keys (FIR-7-B3-01).
+# ---------------------------------------------------------------------------
+# Package-identity structural family matching (FIR-7 Wave F)
+# ---------------------------------------------------------------------------
+# Replaces the Wave-E size/task tag-strip treadmill. Module docstring owns the
+# design narrative; helpers below implement (a) exact, (b) separator-boundary
+# prefix, (c) bounded compact remainder — for both deny and exception seeds.
 
-    Same fold the row doors use via :func:`_resolve_model_key` / :func:`canonical`
-    (case + ``-``/``_`` unify), plus compact form (drop underscores) so
-    ``yolo-v5`` / ``yolo_v5`` / ``yolov5`` share one exact-match identity.
-    Rebuilt per call so monkeypatched ``PACKAGE_DENYLIST`` stays honest.
-    """
-    index: dict[str, PackageDenylistEntry] = {}
-    for key, entry in PACKAGE_DENYLIST.items():
-        kc = canonical(key)
+# Branch enable flags (always True in production). Tests red-prove each branch
+# by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
+# admit; disable (c) → yolov9t admits.
+_FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
+_FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
+
+# Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
+_BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
+
+
+def _folded_family_seed_keys(mapping: Mapping[str, Any]) -> set[str]:
+    """Folded + compact identity keys for every seed in a family mapping."""
+    keys: set[str] = set()
+    for key in mapping:
+        kc = canonical(str(key))
         if kc is None or not kc:
-            # Fallback for odd seeds: resolve_model_key-style fold.
-            kc = _resolve_model_key(key)
+            kc = _resolve_model_key(str(key))
         if not kc:
             continue
-        index.setdefault(kc, entry)
+        keys.add(kc)
         compact = _compact_canonical(kc)
         if compact:
-            index.setdefault(compact, entry)
-    return index
+            keys.add(compact)
+    return keys
 
 
-# FIR-7-B4-02: bounded Ultralytics family size / task tags stripped from a
-# folded token before re-probing the denylist index. Size tags include the
-# common n/s/m/l/x ladder plus YOLOv9's ``c`` (compact). Task tags are the
-# fixed Ultralytics task suffixes. Matching remains exact on the *residual*
-# (BR-50/52): stripping only helps when the residual is itself a seed.
-_FAMILY_SIZE_TAGS: frozenset[str] = frozenset({"n", "s", "m", "l", "x", "c"})
-_FAMILY_TASK_TAGS: frozenset[str] = frozenset({"seg", "pose", "obb", "cls", "det"})
-# Longest-first so ``pose`` is preferred over a trailing size letter if both
-# could apply on a compact form (defensive; task tags do not end in size tags).
-_FAMILY_TASK_TAGS_LONGEST_FIRST: tuple[str, ...] = tuple(
-    sorted(_FAMILY_TASK_TAGS, key=len, reverse=True)
-)
-_FAMILY_TAG_MAX_STRIPS: int = 2  # one size layer + one task layer
+def _assert_package_family_seed_sets_disjoint() -> None:
+    """Import-time guard: deny and exception family seeds must not overlap."""
+    deny_keys = _folded_family_seed_keys(PACKAGE_DENYLIST)
+    exc_keys = _folded_family_seed_keys(PACKAGE_EXCEPTION_ALLOWLIST)
+    overlap = deny_keys & exc_keys
+    if overlap:
+        raise RuntimeError(
+            "PACKAGE_DENYLIST and PACKAGE_EXCEPTION_ALLOWLIST seed sets must "
+            f"be disjoint; overlapping folded keys: {sorted(overlap)!r}"
+        )
 
 
-def _strip_one_family_tag(token: str) -> str | None:
-    """Strip one size or task suffix layer from a folded token (FIR-7-B4-02).
+def _iter_family_seeds(
+    mapping: Mapping[str, Any],
+) -> list[tuple[str, str, Any]]:
+    """Unique (canonical_seed, compact_seed, entry) triples for a family map.
 
-    Underscore-separated tails (canonical form) are preferred so
-    ``yolo_world_s`` → ``yolo_world`` and ``yolov8n_seg`` → ``yolov8n``.
-    On compact forms, task tags strip as whole suffixes; single-letter size
-    tags strip only when preceded by a digit (``yolo11n`` → ``yolo11``, but
-    ``fastsamx`` does not strip — residual would be confusable with size
-    creep on non-version tokens).
+    Rebuilt per call so monkeypatched ``PACKAGE_DENYLIST`` /
+    ``PACKAGE_EXCEPTION_ALLOWLIST`` stay honest under tests.
     """
-    if not token:
-        return None
-    # Prefer underscore-separated trailing tag (post-canonical form).
-    if "_" in token:
-        head, _sep, tail = token.rpartition("_")
-        if tail in _FAMILY_TASK_TAGS or tail in _FAMILY_SIZE_TAGS:
-            return head or None
-    # Compact / no-separator form.
-    compact = token.replace("_", "")
-    for task in _FAMILY_TASK_TAGS_LONGEST_FIRST:
-        if compact.endswith(task) and len(compact) > len(task):
-            return compact[: -len(task)]
-    # Size tag only when the preceding character is a digit (version ladder).
-    if (
-        len(compact) >= 2
-        and compact[-1] in _FAMILY_SIZE_TAGS
-        and compact[-2].isdigit()
-    ):
-        return compact[:-1]
-    return None
+    out: list[tuple[str, str, Any]] = []
+    seen: set[str] = set()
+    for key, entry in mapping.items():
+        kc = canonical(str(key))
+        if kc is None or not kc:
+            kc = _resolve_model_key(str(key))
+        if not kc or kc in seen:
+            continue
+        seen.add(kc)
+        out.append((kc, _compact_canonical(kc), entry))
+    return out
+
+
+def _family_match_seed(
+    token: str,
+    seed_canonical: str,
+    seed_compact: str,
+) -> bool:
+    """True if folded ``token`` hits one family seed under rules (a)(b)(c)."""
+    if not token or not seed_canonical:
+        return False
+    token_compact = _compact_canonical(token)
+
+    # (a) exact match on folded or compact form.
+    if token == seed_canonical or token_compact == seed_compact:
+        return True
+    if token == seed_compact or token_compact == seed_canonical:
+        return True
+
+    # (b) separator-boundary prefix: token == seed + '_' + non-empty rest.
+    if _FAMILY_BOUNDARY_PREFIX_ENABLED:
+        boundary = seed_canonical + "_"
+        if token.startswith(boundary) and len(token) > len(boundary):
+            return True
+
+    # (c) bounded compact remainder: compact starts with seed, rem ∈ [a-z0-9]{1,3}.
+    if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_compact:
+        if token_compact.startswith(seed_compact):
+            rem = token_compact[len(seed_compact) :]
+            if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                return True
+    return False
+
+
+def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
+    """Longest-matching family seed entry for ``token``, or None."""
+    best: Any | None = None
+    best_key: tuple[int, int] = (-1, -1)
+    for seed_c, seed_k, entry in _iter_family_seeds(mapping):
+        if not _family_match_seed(token, seed_c, seed_k):
+            continue
+        rank = (len(seed_k), len(seed_c))
+        if rank > best_key:
+            best_key = rank
+            best = entry
+    return best
 
 
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Exact PACKAGE_DENYLIST lookup after separator/case fold (BR-51 / FIR-7-B3-01).
+    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F).
 
-    Matching is exact on the *folded* form only (BR-50/52): :func:`canonical`
-    (NFKC, casefold, unify ``-``/``_``/``.``/space) then compact (drop
-    underscores). ``yolo-v5`` hits the ``yolov5`` seed; ``yolodummy`` /
-    ``myyolo`` do **not** hit ``yolo`` (no substring matching).
+    Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space)
+    then match each path component against exception-family seeds first
+    (admit → skip component) and deny-family seeds second. A component hits a
+    family seed under any of:
 
-    FIR-7-B4-02: after the exact folded probe, at most two family-tag strips
-    (size tag and/or task tag from a fixed set) re-probe the residual against
-    the same folded index. A hit counts only when the residual is itself a
-    denylisted seed.
+      (a) exact folded/compact match;
+      (b) separator-boundary prefix (``seed_`` + rest);
+      (c) bounded compact remainder (1–3 alnum after seed compact form).
+
+    ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` deny; ``yolodummy`` /
+    ``myyolo`` / exception-family tokens (``yolo_nas``, ``yolox``) do not.
+    Empty / None canonical → no denylist hit (doors treat empty/None as
+    ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:
@@ -2077,37 +2230,24 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
     candidates = [c]
     if "/" in c:
         candidates.extend(p for p in c.split("/") if p)
-    index = _package_denylist_folded_index()
-
-    def _probe(token: str) -> PackageDenylistEntry | None:
-        probes = (token, _compact_canonical(token), _resolve_model_key(token))
-        for probe in probes:
-            if not probe:
-                continue
-            deny = index.get(probe) or index.get(_compact_canonical(probe))
-            if deny is not None:
-                return deny
-        return None
 
     seen: set[str] = set()
     for cand in candidates:
         if cand in seen:
             continue
         seen.add(cand)
-        hit = _probe(cand)
+        # Exception-family hit → this component is admitted; keep scanning
+        # other path components (ultralytics/yolox still denies on ultralytics).
+        if _best_family_hit(cand, PACKAGE_EXCEPTION_ALLOWLIST) is not None:
+            continue
+        hit = _best_family_hit(cand, PACKAGE_DENYLIST)
         if hit is not None:
-            return hit
-        # Bounded family-tag folding: strip ≤2 size/task layers, re-probe.
-        residual = cand
-        for _ in range(_FAMILY_TAG_MAX_STRIPS):
-            stripped = _strip_one_family_tag(residual)
-            if stripped is None or stripped == residual:
-                break
-            residual = stripped
-            hit = _probe(residual)
-            if hit is not None:
-                return hit
+            return hit  # type: ignore[no-any-return]
     return None
+
+
+# Fail loudly at import if a reviewer adds the same seed to both tables.
+_assert_package_family_seed_sets_disjoint()
 
 
 
@@ -2210,8 +2350,10 @@ def _floor_package_identity_denylist(
     # Emit against the raw key so detail names what the row author wrote.
     # FIR-7-B4-01 / BR-21: a present value whose :func:`canonical` is None
     # (non-ASCII residue after NFKC/Cf — unicode dashes, confusable scripts)
-    # is fail-closed ``invalid_row``. Never treat that miss as "no denylist
-    # hit" and silently skip the floor.
+    # is fail-closed ``invalid_row``. FIR-7-B5-04: non-empty pre-canonical
+    # that folds to the empty string (Cf-format-only: ZWSP, BOM, word-joiner)
+    # is the same fail-closed treatment. Never treat either miss as "no
+    # denylist hit" and silently skip the floor.
     for canonical_key in _PACKAGE_IDENTITY_FIELD_KEYS:
         for raw_key, raw in by_canonical[canonical_key]:
             text = str.strip(raw)
@@ -2224,6 +2366,15 @@ def _floor_package_identity_denylist(
                     detail=(
                         f"{raw_key}={text!r} contains non-ASCII residue after "
                         "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                    ),
+                    category=category,
+                )
+            if folded == "":
+                return _fail(
+                    RejectionReason.INVALID_ROW,
+                    detail=(
+                        f"{raw_key}={text!r} is empty after NFKC/Cf "
+                        "normalisation; format-only characters are fail-closed"
                     ),
                     category=category,
                 )
@@ -2610,6 +2761,8 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
     text = str.strip(model_id)
     # FIR-7-B4-01 / BR-21: non-ASCII residue is invalid identity, not a
     # missing registry entry (do not imply the token is merely unregistered).
+    # FIR-7-B5-04: Cf-format-only (canonical → "") is the same fail-closed
+    # invalid_row treatment.
     folded = canonical(text)
     if folded is None:
         return _fail(
@@ -2617,6 +2770,15 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
             detail=(
                 f"model_id={text!r} contains non-ASCII residue after "
                 "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.MODEL_INGEST,
+        )
+    if folded == "":
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"model_id={text!r} is empty after NFKC/Cf normalisation; "
+                "format-only characters are fail-closed"
             ),
             category=PolicyCategory.MODEL_INGEST,
         )
@@ -2697,7 +2859,8 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
     text = str.strip(package_name)
     # FIR-7-B4-01 / BR-21: non-ASCII residue is invalid identity, not an
     # unregistered tooling package (do not imply the token is merely missing
-    # from the allowlist).
+    # from the allowlist). FIR-7-B5-04: Cf-format-only (canonical → "") is
+    # the same fail-closed invalid_row treatment.
     folded = canonical(text)
     if folded is None:
         return _fail(
@@ -2705,6 +2868,15 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
             detail=(
                 f"package_name={text!r} contains non-ASCII residue after "
                 "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.TOOLING,
+        )
+    if folded == "":
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"package_name={text!r} is empty after NFKC/Cf normalisation; "
+                "format-only characters are fail-closed"
             ),
             category=PolicyCategory.TOOLING,
         )

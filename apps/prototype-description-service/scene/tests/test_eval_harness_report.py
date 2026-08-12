@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1530,41 +1531,114 @@ def test_publishability_named_private_source_redacted():
 def test_face_public_redaction_drops_operator_paths_base_url_identity_text():  # VLM6-R2-A-02
     """Face PUBLIC must use the shared provenance allow-list + path/identity scrub.
 
-    Reviewer probe: score_face copies full run-record provenance, and
-    redact_face_report_for_public only stripped decision/wrong_names/labels/failures —
-    never _public_provenance / _redact_public_paths / _scrub_identity_names. Assert
-    on concrete leak strings (TEST-15), not on whether a helper was called.
+    RE-01 / RB-07: plants must exercise path redaction and identity scrub as
+    *load-bearing* — secrets live inside allow-listed free text, list[str]
+    leaves, demographic wrong_names, preserved denominators, and publishable
+    predicted_name — not only in deny-listed provenance keys that the
+    allow-list alone would drop. Whole-document absence is the contract.
     """
+    private = "Jane Doe Private"
+    private_slug = "JaneDoePrivate"
     face_run, manifest = _face_fixture_corpus()
     face_run["provenance"].update(
         {
-            "cache_dir": "/home/ubuntu/private/JaneDoePrivate/cache",
+            "cache_dir": f"/home/ubuntu/private/{private_slug}/cache",
             "base_url": "http://127.0.0.1:8765/v1",
-            "operator_note": "local scoring for Jane Doe Private",
+            "operator_note": f"local scoring for {private}",
             "run_record_path": "/home/ubuntu/secret/face-run.json",
         }
     )
     scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
     # Control: LOCAL/full scored report still carries the operator fields.
     pre = json.dumps(scored)
-    assert "/home/ubuntu/private/JaneDoePrivate/cache" in pre
+    assert f"/home/ubuntu/private/{private_slug}/cache" in pre
     assert "http://127.0.0.1:8765/v1" in pre
-    assert "local scoring for Jane Doe Private" in pre
+    assert f"local scoring for {private}" in pre
     assert "/home/ubuntu/secret/face-run.json" in pre
+
+    # Plant leaks that only path-redaction / free-text scrub / recursive wrong_names
+    # clear can catch (RE-01: delete those helpers → these plants must RED the test).
+    # Score overwrites tau_fit_status/sampling_frames from protocol constants — plant
+    # hostile allow-listed free text on the scored report (the PUBLIC boundary input).
+    scored = json.loads(json.dumps(scored))  # deep-copy via JSON for mutation
+    scored.setdefault("provenance", {})["tau_fit_status"] = (
+        f"status for /var/op/{private_slug}/cache"
+    )
+    scored.setdefault("provenance", {})["sampling_frames"] = {
+        "face_id": f"eval of {private} at /home/ubuntu/secret/notes",
+    }
+    scored["protocol_disclosures"] = [f"mean_prototype; exclude {private}"]
+    scored.setdefault("gate_proposal", {})["scope_amendments_for_operator_ack"] = [
+        f"ack {private} enrollment"
+    ]
+    scored.setdefault("gate_proposal", {})["error_context"] = "/home/ubuntu/secret/face-run.json"
+    # RF-01: demographic wrong_names not cleared by the two-key enumeration.
+    scored.setdefault("slices", {}).setdefault("demographic", {}).setdefault("by_cohort", {})[
+        "adult_f"
+    ] = {
+        "wrong_names": [[99, 0, private, "Alice Example"]],
+        "ignored_wrong_names": [],
+        "precision": 0.0,
+    }
+    # RB-02: sampling_frame free text will be copied into preserved_* if unfixed.
+    hl = scored.setdefault("slices", {}).setdefault("headline_identification", {})
+    hl["sampling_frame"] = f"ops: {private} @ /home/ubuntu/secret/notes"
+    hl.setdefault("precision_numerator", 0)
+    hl.setdefault("precision_denominator", 1)
+    # CDX-01 / RB-04: publishable decision carrying a private gallery identity.
+    scored.setdefault("decisions", []).append(
+        {
+            "media_id": 9001,
+            "publishable": True,
+            "true_name": "Ada Lovelace",
+            "predicted_name": private,
+            "name_star": private,
+            "path": "/public/ada.jpg",
+            "decision": "accept",
+        }
+    )
+    # Ensure private name is present pre-redaction (fixture live).
+    assert private in json.dumps(scored)
 
     redacted = redact_face_report_for_public(scored)
     blob = json.dumps(redacted)
     md = __import__("scripts.eval_harness.report", fromlist=["_markdown_face"])._markdown_face(redacted)
 
     for surface in (blob, md):
-        assert "/home/ubuntu/private" not in surface
-        assert "JaneDoePrivate" not in surface
-        assert "Jane Doe Private" not in surface
+        assert "/home/ubuntu/private" not in surface, surface[:500]
+        assert private_slug not in surface
+        assert private not in surface
+        assert "Jane Doe" not in surface
         assert "http://127.0.0.1" not in surface
-        assert "http://127.0.0.1:8765/v1" not in surface
         assert "/home/ubuntu/secret" not in surface
+        assert "/var/op" not in surface
         assert "face-run.json" not in surface
         assert "local scoring for" not in surface
+
+    # Recursive whole-document contract (acceptance bar).
+    assert private not in blob
+    assert private_slug not in blob
+    assert "/home/ubuntu" not in blob
+    assert "/var/op" not in blob
+
+    # Demographic wrong_names cleared (RF-01).
+    demo = (redacted.get("slices") or {}).get("demographic") or {}
+    for cohort in (demo.get("by_cohort") or {}).values():
+        if isinstance(cohort, dict):
+            assert cohort.get("wrong_names") in (None, [])
+            assert private not in json.dumps(cohort)
+
+    # preserved_* must not re-inject pre-scrub free text (RB-02).
+    preserved = (redacted.get("redaction") or {}).get("preserved_aggregate_denominators") or {}
+    assert private not in json.dumps(preserved)
+    assert "/home/ubuntu" not in json.dumps(preserved)
+
+    # Publishable row may keep true_name; private predicted/name_star must not ship (CDX-01).
+    for d in redacted.get("decisions") or []:
+        if d.get("true_name") == "Ada Lovelace":
+            assert d.get("predicted_name") != private
+            assert d.get("name_star") != private
+            assert private not in json.dumps(d)
 
     prov = redacted["provenance"]
     for key in ("cache_dir", "base_url", "operator_note", "run_record_path"):
@@ -3875,3 +3949,406 @@ def test_face_detection_carries_sampling_frame():  # VLM6-R2-C-02 / wd-A
     frame = det["sampling_frame"].casefold()
     assert "gt" in frame or "box" in frame
     assert "associat" in frame or "scoreable" in frame or "media" in frame
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 Wave E / lane wE1 — face PUBLIC redaction fail-closed + order_degraded
+# ---------------------------------------------------------------------------
+
+
+def test_face_public_export_no_private_name_or_operator_path_anywhere():  # wE1 acceptance
+    """Single acceptance bar: no private name / operator path in serialised PUBLIC.
+
+    Plants exercise every known leak vector (RF-01/02, RB-01..06, CDX-01) and
+    assert recursively over the whole document (not per known key). Must go RED
+    on unfixed redactor (TEST-15 / RE-01 / RB-07).
+    """
+    private = "Jane Roster Private"
+    private_slug = "JaneRosterPrivate"
+    abs_path = f"/home/ubuntu/secret/{private_slug}/face-run.json"
+    report = {
+        "schema": "acx-eval/v1",
+        "kind": "report",
+        "report_kind": "face_bakeoff",
+        "provenance": {
+            "head_sha": "0" * 40,
+            "manifest_sha256": "m" * 64,
+            "score_manifest_sha256": "s" * 64,
+            "started_at": "2026-08-12T00:00:00Z",
+            "canon_version": "v1",
+            "protocol_id": "face-bakeoff",
+            "zero_box_corpus": False,
+            "total_gt_boxes": 1,
+            "k_folds": {"requested": 5, "effective": 5, "clamped": False},
+            # Allow-listed free text carrying secrets (RB-06).
+            "tau_fit_status": f"fitted under {abs_path}",
+            "sampling_frames": {"face_id": f"eval of {private}"},
+            # Deny-listed (allow-list alone drops these).
+            "cache_dir": f"/home/ubuntu/private/{private_slug}/cache",
+            "operator_note": f"do not ship {private}",
+        },
+        "protocol_disclosures": [f"mean_prototype; exclude {private}"],  # RB-01 list[str]
+        "gate_proposal": {
+            "role": None,
+            "excluded_directional": None,
+            "p95_scan_latency": None,
+            "scope_amendments_for_operator_ack": [f"ack {private}"],
+            "error_context": abs_path,  # RB-03 non-path free text
+            "identification_detection_coupling": {
+                "detection_recall_coupling_flag": False,
+                "missed_gt": None,
+                "unmatched_detections": None,
+            },
+        },
+        "decisions": [
+            # Misidentified non-publishable named identity → wrong_names source (RF-01).
+            {
+                "media_id": 1,
+                "publishable": False,
+                "true_name": private,
+                "predicted_name": "Alice Celeb",
+                "name_star": "Alice Celeb",
+                "path": f"/ops/localwp/{private_slug}.jpg",
+                "decision": "accept",
+            },
+            # Publishable image referencing private gallery identity (CDX-01 / RB-04).
+            {
+                "media_id": 2,
+                "publishable": True,
+                "true_name": "Ada Lovelace",
+                "predicted_name": private,
+                "name_star": private,
+                "path": "/public/ada.jpg",
+                "decision": "reject",
+            },
+        ],
+        "slices": {
+            "headline_identification": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "precision_numerator": 0,
+                "precision_denominator": 1,
+                "recall_numerator": 0,
+                "recall_denominator": 1,
+                "n_named_probes": 1,
+                "n_recall_eligible": 1,
+                "sampling_frame": f"ops: {private} @ {abs_path}",  # RB-02
+                "wrong_names": [[1, 0, private, "Alice Celeb"]],
+                "ignored_wrong_names": [],
+            },
+            "full_corpus_identification": {
+                "wrong_names": [[1, 0, private, "Alice Celeb"]],
+                "ignored_wrong_names": [],
+            },
+            # RF-01: demographic copy never cleared by two-key enumeration.
+            "demographic": {
+                "by_cohort": {
+                    "adult_f": {
+                        "wrong_names": [[1, 0, private, "Alice Celeb"]],
+                        "ignored_wrong_names": [],
+                        "precision": 0.0,
+                    }
+                }
+            },
+            "unknown_rejection": {
+                "rate": 1.0,
+                "n": 1,
+                "correct_rejects": 1,
+                "rate_numerator": 1,
+                "rate_denominator": 1,
+                "sampling_frame": "strangers",
+            },
+            "clustering": {"labels": [0], "purity": 1.0},
+        },
+        "failures": [
+            {"media_id": 1, "path": abs_path, "error": f"timeout involving {private}"},
+        ],
+        "counts": {"total": 2, "scored": 2, "failed": 1, "matched_faces": 1},
+        "detection": {"precision": 1.0, "recall": 1.0, "tp": 1, "fp": 0, "fn": 0},
+    }
+
+    # Control: private material is live in the LOCAL-shaped report.
+    pre = json.dumps(report)
+    assert private in pre
+    assert abs_path in pre
+
+    redacted = redact_face_report_for_public(report)
+    blob = json.dumps(redacted, sort_keys=True)
+    md = __import__("scripts.eval_harness.report", fromlist=["_markdown_face"])._markdown_face(
+        redacted
+    )
+
+    for token in (
+        private,
+        private_slug,
+        "Jane Roster",
+        "/home/ubuntu",
+        "/ops/localwp",
+        "/var/op",
+        "face-run.json",
+        abs_path,
+    ):
+        assert token not in blob, f"PUBLIC JSON leaked {token!r}"
+        assert token not in md, f"PUBLIC MD leaked {token!r}"
+
+    # Structure: wrong_names cleared everywhere including demographic.
+    demo_rows = (
+        ((redacted.get("slices") or {}).get("demographic") or {}).get("by_cohort") or {}
+    )
+    for cohort in demo_rows.values():
+        if isinstance(cohort, dict):
+            assert list(cohort.get("wrong_names") or []) == []
+
+    # CDX-01: publishable Ada row may survive, but not with private predicted names.
+    ada = [d for d in (redacted.get("decisions") or []) if d.get("true_name") == "Ada Lovelace"]
+    assert ada, "publishable named decision should be retained"
+    assert all(d.get("predicted_name") != private for d in ada)
+    assert all(d.get("name_star") != private for d in ada)
+
+    # RB-05: raw Python None/True/False must not appear in face markdown.
+    assert re.search(r"\bNone\b", md) is None, md
+    assert re.search(r"\bTrue\b", md) is None, md
+    assert re.search(r"\bFalse\b", md) is None, md
+
+
+def test_scrub_face_public_free_text_scrubs_list_str_elements():  # RB-01 / RF-02
+    from scripts.eval_harness.report import _scrub_face_public_free_text
+
+    names = ["Jane Doe Private"]
+    obj = {
+        "protocol_disclosures": ["mean_prototype; exclude Jane Doe Private"],
+        "gate_proposal": {
+            "scope_amendments_for_operator_ack": ["ack Jane Doe Private"],
+            "flag_dict": {"msg": "dict path Jane Doe Private"},
+        },
+    }
+    out = _scrub_face_public_free_text(obj, names)
+    blob = json.dumps(out)
+    assert "Jane Doe Private" not in blob
+    assert out["gate_proposal"]["flag_dict"]["msg"] == "<redacted>"
+    assert out["protocol_disclosures"][0] == "<redacted>"
+    assert out["gate_proposal"]["scope_amendments_for_operator_ack"][0] == "<redacted>"
+
+
+def test_order_degraded_excluded_from_positional_scoring():  # RA-01
+    """Degraded L→R (missing y) must not score as full spatial ground truth.
+
+    Invented alphabetical order on identical-x / no-y boxes previously produced
+    position_accuracy=1.0 when the model emitted the same alpha order. Exclude
+    order_degraded images from positional scoring; disclose via labeled_y_missing_*.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "celebs01/alpha-invented.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice and Bob stand together.",
+                    "visual_facts": {"caption": "people", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "Alice",
+                        "bbox": {"x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Bob",
+                        "bbox": {"x": 50.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "error": None,
+                "image_width": 100,
+                "image_height": 100,
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/full-coords.jpg",
+                "describe": {
+                    "alt_text_draft": "Carol stands alone.",
+                    "visual_facts": {"caption": "person", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "Carol",
+                        "bbox": {"x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "identity_ordering": "positional",
+                "error": None,
+                "image_width": 100,
+                "image_height": 100,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "celebs01/alpha-invented.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Alice", "Bob"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            # identical x, no y → order_degraded + alphabetical invent
+            "face_boxes": [
+                {"name": "Bob", "x": 0.5},
+                {"name": "Alice", "x": 0.5},
+            ],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        },
+        {
+            "path": "celebs01/full-coords.jpg",
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Carol"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [{"name": "Carol", "x": 0.2, "y": 0.4, "w": 0.1, "h": 0.1}],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        },
+    ]
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    ordering = scored["faces"]["identity_ordering"]
+    assert ordering["labeled_y_missing_images"] == 1
+    # Degraded image excluded from positional — only the fully-coordinated sibling.
+    assert pos["compared_images"] == 1
+    assert "celebs01/alpha-invented.jpg" in (pos.get("excluded_images") or [])
+    # Must NOT report perfect accuracy from invented alphabetical order.
+    assert pos["position_accuracy"] == pytest.approx(1.0)  # sibling exact match only
+    assert pos["exact_order_images"] == 1
+
+
+def test_empty_string_y_normalized_before_labeled_order_in_report():  # RA-04 boundary
+    """Empty-string y must take the missing-y branch, not crash score_run_record.
+
+    Source fix lives in face_metrics (cross-lane); report normalizes at the boundary.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "celebs01/empty-y.jpg",
+                "describe": {
+                    "alt_text_draft": "A person.",
+                    "visual_facts": {"caption": "person", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "Ada",
+                        "bbox": {"x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "identity_ordering": "positional",
+                "error": None,
+            }
+        ],
+    }
+    entries = [
+        {
+            "path": "celebs01/empty-y.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Ada"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [{"name": "Ada", "x": 0.5, "y": ""}],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        }
+    ]
+    scored = score_run_record(record, entries)  # must not raise
+    assert scored["faces"]["identity_ordering"]["labeled_y_missing_images"] == 1
+
+
+def test_low_sample_warning_surfaced_in_provenance():  # RF-15
+    """Operator-facing low-sample caveat when scored < SCORE_PASS_MIN_SCORED_IMAGES.
+
+    Constants stay at 5 / 0.5 — only disclosure is added (not an sr-001 loosen).
+    """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
+    assert SCORE_PASS_MIN_SCORED_IMAGES == 5
+    record, entries = _two_image_measurable_pass_pair()
+    record["items"] = record["items"][:2]
+    entries = entries[:2]
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == 2
+    warn = scored["provenance"].get("low_sample_warning")
+    assert warn, "low_sample_warning must be present for n<min"
+    assert "scored=2" in str(warn) or "2" in str(warn)
+    assert str(SCORE_PASS_MIN_SCORED_IMAGES) in str(warn)
+    # Rendered surfaces must also show the caveat (comment rewrites alone fail RF-15).
+    md = __import__("scripts.eval_harness.report", fromlist=["_markdown"])._markdown(scored)
+    assert "low_sample" in md.casefold() or "sample" in md.casefold() and "warning" in md.casefold()
+
+
+def test_path_basename_stems_not_over_scrubbed():  # RF-13
+    """Harvest must not add short path basenames that corrupt unrelated free text."""
+    from scripts.eval_harness.report import (
+        _face_private_identity_names_for_public_scrub,
+        redact_face_report_for_public,
+    )
+
+    report = {
+        "provenance": {
+            "head_sha": "0" * 40,
+            "sampling_frames": {"detection": "alignment image_count check"},
+        },
+        "decisions": [
+            {
+                "media_id": 1,
+                "publishable": False,
+                "true_name": None,
+                "predicted_name": None,
+                "name_star": None,
+                "path": "/ops/al.jpg",  # stem "al" must NOT become a scrub target
+            }
+        ],
+        "slices": {},
+        "failures": [],
+        "protocol_disclosures": ["alignment image_count check"],
+    }
+    harvested = _face_private_identity_names_for_public_scrub(report)
+    assert "al" not in harvested
+    assert "img" not in harvested
+    red = redact_face_report_for_public(report)
+    # Unrelated protocol free text must survive (not collapsed by stem over-scrub).
+    assert red["protocol_disclosures"] == ["alignment image_count check"]

@@ -6583,14 +6583,16 @@ class TestB504PackageIdentityCanonicalEmptyFailClosed:
 
 
 class TestB701ResidualSuffixDenyScan:
-    """FIR-7-B7-01 / B7-02 / B7-03 / B7-06: residual segment-suffix re-scan.
+    """FIR-7-B7-01 / B7-02 / B7-03 / B7-06 (+ F5 uniform scan): suffix deny.
 
-    After stripping an exception seed, residual re-scan iterates separator-
-    aligned suffixes longest-first (not whole-token only). Size/task/export
-    tags that shield a trailing deny/NC seed no longer admit
+    Wave F4 introduced residual segment-suffix re-scan after exception strip.
+    Wave F5 folds that into the **uniform component scanner** (rules (d') /
+    (e) on every component, iterative multi-strip) so path-split and compact
+    glue cannot bypass the same suffix logic. Size/task/export tags that
+    shield a trailing deny/NC seed no longer admit
     (``yolox_s_ultralytics``, ``yolox_s_buffalo_l``). NC residual hits keep
     ``nc_model_derived``. Double-exception compounds ``yolop_yolox`` /
-    ``yolox_yolop`` admit after recursive exception strip (policy correction:
+    ``yolox_yolop`` admit after iterative exception strip (policy correction:
     both are hustvl/Megvii permissive lineages; Wave F3 false-denied via
     bare-yolo compact on the residual).
 
@@ -6895,7 +6897,12 @@ class TestA701YoloNasVariantNcPins:
     def test_red_proof_yolo_nas_m_pin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Remove yolo_nas_m pin → derived_from_model passes (TEST-15)."""
+        """Remove yolo_nas_m pin + structural NC → derived passes (TEST-15).
+
+        FIR-7-B8-06 structural NC matching makes the bare ``yolo_nas`` package
+        seed cover size variants without the pin; the pin remains load-bearing
+        only when structural matching is also disabled (exact-set path).
+        """
         token = "yolo_nas_m"
         assert policy.audit_derived_from_model(token).ok is False, (
             f"precondition: {token!r} must reject with pin present"
@@ -6904,7 +6911,8 @@ class TestA701YoloNasVariantNcPins:
             x for x in policy._PINNED_NC_MODEL_IDS if x != "yolo_nas_m"
         )
         # Rebuild NC_MODEL_IDS without the pin (keep package-deny yolo_nas seed
-        # so bare yolo_nas still rejects; only the m-variant pin is load-bearing).
+        # so bare yolo_nas still rejects; only the m-variant pin is load-bearing
+        # on the exact-set path).
         ids = set(stripped)
         ids.update(policy._NC_EXPLICIT_VARIANTS)
         for entry in policy.PACKAGE_DENYLIST.values():
@@ -6925,8 +6933,10 @@ class TestA701YoloNasVariantNcPins:
                 out.add(c)
         # Drop any expanded form that only the m-pin would have introduced;
         # monkeypatch NC_MODEL_IDS and let _live_nc_expanded re-expand.
+        # Also disable structural NC so the pin is the sole load-bearing path.
         monkeypatch.setattr(policy, "_PINNED_NC_MODEL_IDS", stripped)
         monkeypatch.setattr(policy, "NC_MODEL_IDS", frozenset(out))
+        monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
         result = policy.audit_derived_from_model(token)
         assert result.ok is True, (
             f"red-proof: with yolo_nas_m pin removed, {token!r} must admit; "
@@ -6935,4 +6945,532 @@ class TestA701YoloNasVariantNcPins:
         # Sibling pins still reject.
         assert policy.audit_derived_from_model("yolo_nas").ok is False
         assert policy.audit_derived_from_model("buffalo_l").ok is False
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F5 — uniform suffix scan, iterative bounds, NC structural doors
+# ---------------------------------------------------------------------------
+
+
+class TestB801UniformSuffixScan:
+    """FIR-7-B8-01 / B8-03: uniform (d')/(e) deny scan on every component.
+
+    Path-split and compact-glue witnesses bypassed the F4 residual-only
+    suffix scan. (d') generalised separator-aligned suffix + (e) compact
+    segment-suffix (seed ≥ 5 compact chars) close them on the same code
+    path used for post-exception residuals.
+
+    Red-proven independently: disable (d') → path-split/size-tag witnesses
+    admit; disable (e) → compact-glue witnesses admit; ``myyolo`` stays
+    admitted under (e) (4-char seed floor).
+    """
+
+    # Path-split: second component is size-tag + deny seed (F4 residual-only
+    # path never saw these — exception lives on a different slash component).
+    PATH_SPLIT_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox/s_ultralytics",
+        "yolox/s_buffalo_l",
+        "yolox/s_yolo_nas",
+        "yolox/tiny_ultralytics",
+        "yolos/tiny_yolov8n",
+    )
+
+    # Compact glue / mid-segment: no residual is built under head-only rules.
+    COMPACT_GLUE_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox_xultralytics",
+        "yolox_xultralytics_yolox",
+        "yoloxultralytics",
+        "yoloxsultralytics",
+    )
+
+    # (d')-only cells: multi-segment size-tag shields (not compact-glue).
+    D_PRIME_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox/s_ultralytics",
+        "yolox/s_buffalo_l",
+        "yolox_s_ultralytics",
+        "yolox/tiny_ultralytics",
+    )
+
+    # (e)-only cells: compact segment ends with deny seed ≥ 5 chars.
+    # (Exclude yolox_xultralytics_yolox — with (e) off it can still hit bare
+    # yolo compact on a residual path; still pinned as a deny witness above.)
+    E_RULE_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox_xultralytics",
+        "yoloxultralytics",
+        "yoloxsultralytics",
+    )
+
+    ADMIT_PINS: ClassVar[tuple[str, ...]] = (
+        "yolox_s",
+        "yolox",
+        "yoloxs",
+        "yolof_r50",
+        "yolos-tiny",
+        "yolopv2",
+        "yolop",
+        "yolop_yolox",
+        "yolox_yolop",
+        "yolodummy",
+        "myyolo",
+        "sam",
+        "timm",
+        "numba",
+        "vendor/yolox",
+    )
+
+    @pytest.mark.parametrize(
+        "token", PATH_SPLIT_WITNESSES + COMPACT_GLUE_WITNESSES
+    )
+    def test_uniform_bypass_hits_package_denylist(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY under uniform (d')/(e) component scan"
+        )
+
+    @pytest.mark.parametrize(
+        "token", PATH_SPLIT_WITNESSES + COMPACT_GLUE_WITNESSES
+    )
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_uniform_bypass_denies_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{token!r} admitted on {category.value}; uniform scan missed"
+        )
+        assert result.reason in (
+            policy.RejectionReason.DENYLISTED_PACKAGE,
+            policy.RejectionReason.NC_MODEL_DERIVED,
+        ), (
+            f"{token!r}/{category.value}: expected package-floor fail, got "
+            f"{result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize(
+        "token", PATH_SPLIT_WITNESSES + COMPACT_GLUE_WITNESSES
+    )
+    def test_uniform_bypass_denies_on_scalar_doors(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        expected = hit.reason
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.ok is False, f"tooling scalar admitted {token!r}"
+        assert tooling.reason is expected
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.ok is False, f"model_ingest scalar admitted {token!r}"
+        assert ingest.reason is expected
+
+    @pytest.mark.parametrize(
+        "token",
+        (
+            "yolox/s_ultralytics",
+            "yolox/tiny_ultralytics",
+            "yolos/tiny_yolov8n",
+            "yolox_xultralytics",
+            "yoloxultralytics",
+            "yoloxsultralytics",
+            "yolox_xultralytics_yolox",
+        ),
+    )
+    def test_agpl_uniform_bypass_is_denylisted_package(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert (
+            policy.audit_tooling_dependency(token).reason
+            is policy.RejectionReason.DENYLISTED_PACKAGE
+        )
+
+    @pytest.mark.parametrize(
+        "token,expected_id",
+        (
+            ("yolox/s_buffalo_l", "buffalo_l"),
+            ("yolox/s_yolo_nas", "yolo_nas"),
+        ),
+    )
+    def test_nc_uniform_bypass_is_nc_model_derived(
+        self, token: str, expected_id: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_id
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", ADMIT_PINS)
+    def test_admit_pins_still_hold(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"admit pin {token!r} must NOT hit package denylist"
+        )
+
+    def test_deci_yolo_nas_l_still_denies_nc(self) -> None:
+        hit = policy._package_denylist_hit("deci/yolo-nas-l")
+        assert hit is not None
+        assert hit.package_id == "yolo_nas"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_myyolo_admits_under_compact_suffix_floor(self) -> None:
+        """(e) ≥5 floor: myyolo ends with 4-char seed yolo — must ADMIT."""
+        assert policy._package_denylist_hit("myyolo") is None
+
+    def test_red_proof_generalized_suffix_d_prime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable (d') → path-split / size-tag shields admit (TEST-15)."""
+        for token in self.D_PRIME_WITNESSES:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with (d') on"
+            )
+        monkeypatch.setattr(policy, "_FAMILY_GENERALIZED_SUFFIX_ENABLED", False)
+        # Also neuter the F4 residual-suffix gate (coupled to (d') in match).
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED", False
+        )
+        for token in self.D_PRIME_WITNESSES:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with (d') disabled, {token!r} must admit"
+            )
+        # Compact-glue (e) cells still deny without (d').
+        assert policy._package_denylist_hit("yoloxultralytics") is not None
+        assert policy._package_denylist_hit("ultralytics") is not None
+        assert policy._package_denylist_hit("yolox") is None
+
+    def test_red_proof_compact_suffix_rule_e(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable (e) → compact-glue witnesses admit (TEST-15)."""
+        for token in self.E_RULE_WITNESSES:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with (e) on"
+            )
+        monkeypatch.setattr(policy, "_FAMILY_COMPACT_SUFFIX_ENABLED", False)
+        for token in self.E_RULE_WITNESSES:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with (e) disabled, {token!r} must admit"
+            )
+        # (d') path-split cells still deny without (e).
+        assert policy._package_denylist_hit("yolox/s_ultralytics") is not None
+        assert policy._package_denylist_hit("yolox_s_ultralytics") is not None
+        assert policy._package_denylist_hit("myyolo") is None
+
+
+class TestB802IterativeFailClosedBounds:
+    """FIR-7-B8-02 / B8-05: iterative scan, hard bound, non-shrink denies.
+
+    A 1200-exception-chain token must DENY (not raise RecursionError) on all
+    four package-floor doors. A deliberately non-shrinking strip must DENY
+    with denylisted_package (invariant detail). Red-proven: disable
+    fail-closed bounds → non-shrinking strip admits; neuter iterative bound
+    via zero max_steps path is covered by the non-shrink flag.
+    """
+
+    @staticmethod
+    def _deep_chain() -> str:
+        return "yolox_" + ("yolop_" * 1200) + "ultralytics"
+
+    def test_deep_chain_denies_without_recursion_error(self) -> None:
+        token = self._deep_chain()
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, "deep chain must DENY (not admit, not crash)"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_deep_chain_denies_on_all_four_doors(self) -> None:
+        token = self._deep_chain()
+        for category in (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ):
+            row = {
+                "source": "self-generated",
+                "license": "MIT",
+                "derived_from_model": "",
+                "package": token,
+            }
+            result = policy.audit_provenance_row(row, category=category)
+            assert result.ok is False, f"deep chain admitted on {category.value}"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.ok is False
+        assert tooling.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.ok is False
+        assert ingest.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_non_shrinking_strip_denies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Monkeypatched non-shrinking strip → invariant DENY (not admit)."""
+        orig = policy._strip_exception_seed_residual
+
+        def _noshrink(token: str, seed_c: str, seed_k: str) -> str:
+            residual = orig(token, seed_c, seed_k)
+            if residual:
+                return token  # deliberately non-shrinking
+            return residual
+
+        monkeypatch.setattr(policy, "_strip_exception_seed_residual", _noshrink)
+        hit = policy._package_denylist_hit("yolox_ultralytics")
+        assert hit is not None, "non-shrinking strip must DENY fail-closed"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert "shrink" in hit.notes.casefold() or "invariant" in (
+            hit.notes.casefold()
+        )
+
+    def test_red_proof_fail_closed_bounds_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable fail-closed bounds → non-shrinking strip admits (TEST-15).
+
+        True neuter of the invariant path: with bounds off, a non-shrinking
+        strip returns None (admit) instead of denylisted_package.
+        """
+        orig = policy._strip_exception_seed_residual
+
+        def _noshrink(token: str, seed_c: str, seed_k: str) -> str:
+            residual = orig(token, seed_c, seed_k)
+            if residual:
+                return token
+            return residual
+
+        monkeypatch.setattr(policy, "_strip_exception_seed_residual", _noshrink)
+        assert policy._package_denylist_hit("yolox_ultralytics") is not None, (
+            "precondition: non-shrink must deny with bounds on"
+        )
+        monkeypatch.setattr(policy, "_SCAN_FAIL_CLOSED_BOUNDS_ENABLED", False)
+        assert policy._package_denylist_hit("yolox_ultralytics") is None, (
+            "red-proof: with bounds disabled, non-shrinking strip must admit"
+        )
+        # Pure deny still works without the bound path.
+        assert policy._package_denylist_hit("ultralytics") is not None
+
+
+class TestB804MultiStripContinuationPins:
+    """FIR-7-B8-04 / A8-01: pin multi-strip residual deny paths.
+
+    These deny today under nested exception strip → residual deny, but had
+    no tests. Mutating multi-strip continuation to return None flips them
+    to ADMIT while leaving the suite otherwise green.
+
+    Red-proven: disable ``_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED``
+    (not the single-strip residual re-scan flag) → these cells admit;
+    single-strip ``yolox_ultralytics`` still denies.
+    """
+
+    # All four are pinned as deny witnesses. MULTI_STRIP_DEPENDENT are those
+    # whose deny requires a nested exception strip (with (d') alone on the
+    # first residual, a leading size-tag can still expose ultralytics without
+    # multi-strip — e.g. yolox_s_yolop_ultralytics).
+    MULTI_STRIP_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolox_yolop_ultralytics",
+        "yolox_yolop_s_ultralytics",
+        "yolox_s_yolop_ultralytics",
+        "yolop_yolox_yolov8",
+    )
+    MULTI_STRIP_DEPENDENT: ClassVar[tuple[str, ...]] = (
+        "yolox_yolop_ultralytics",
+        "yolox_yolop_s_ultralytics",
+        "yolop_yolox_yolov8",
+    )
+
+    @pytest.mark.parametrize("token", MULTI_STRIP_WITNESSES)
+    def test_multi_strip_hits_package_denylist(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY via multi-strip continuation"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", MULTI_STRIP_WITNESSES)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_multi_strip_denies_on_row_doors(
+        self, token: str, category: policy.PolicyCategory
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", MULTI_STRIP_WITNESSES)
+    def test_multi_strip_denies_on_scalar_doors(self, token: str) -> None:
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.ok is False
+        assert tooling.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.ok is False
+        assert ingest.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_red_proof_multi_strip_continuation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable multi-strip only → nested-dependent witnesses admit (TEST-15)."""
+        for token in self.MULTI_STRIP_DEPENDENT:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny with multi-strip on"
+            )
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED", False
+        )
+        for token in self.MULTI_STRIP_DEPENDENT:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with multi-strip disabled, {token!r} must admit"
+            )
+        # Single-strip residual re-scan still denies (flag is independent).
+        assert policy._package_denylist_hit("yolox_ultralytics") is not None
+        assert policy._package_denylist_hit("yolox_s_ultralytics") is not None
+        assert policy._package_denylist_hit("yolox") is None
+
+
+class TestB806StructuralNcDoors:
+    """FIR-7-B8-06: structural NC matching on weights-lineage doors.
+
+    Export/quant/size tags must not shield an NC seed on
+    ``audit_derived_from_model`` / ``audit_source``. Non-NC counter-pins
+    still pass. Red-proven: disable structural NC → export-tag cell admits.
+    """
+
+    EXPORT_TAG_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolo_nas_l_int8",
+        "yolo_nas_l_onnx",
+        "yolo_nas_pose_n_onnx",
+        "buffalo_l_int8",
+    )
+
+    COUNTER_PINS: ClassVar[tuple[str, ...]] = (
+        "notdcface/x",
+        "dcface/gen1",
+        "mediapipe/blazeface",
+        "sam",
+        "timm",
+    )
+
+    @pytest.mark.parametrize("token", EXPORT_TAG_WITNESSES)
+    def test_export_tag_rejects_derived_from_model(self, token: str) -> None:
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, f"derived_from_model({token!r}) must reject"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", EXPORT_TAG_WITNESSES)
+    def test_export_tag_rejects_source(self, token: str) -> None:
+        result = policy.audit_source(token)
+        assert result.ok is False, f"audit_source({token!r}) must reject"
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", COUNTER_PINS)
+    def test_non_nc_counter_pins_pass_derived(self, token: str) -> None:
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"counter-pin {token!r} must pass derived_from_model; "
+            f"got {result.reason} ({result.detail})"
+        )
+
+    def test_red_proof_structural_nc_export_tag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable structural NC → yolo_nas_l_int8 admits (TEST-15)."""
+        token = "yolo_nas_l_int8"
+        assert policy.audit_derived_from_model(token).ok is False, (
+            f"precondition: {token!r} must reject with structural NC on"
+        )
+        monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
+        assert policy.audit_derived_from_model(token).ok is True, (
+            f"red-proof: with structural NC off, {token!r} must admit"
+        )
+        # Bare pinned NC seed still rejects via exact membership.
+        assert policy.audit_derived_from_model("yolo_nas_l").ok is False
+        assert policy.audit_derived_from_model("buffalo_l").ok is False
+
+
+class TestB807DerivedDoorResidualNcParity:
+    """FIR-7-B8-07: derived door rejects residual NC compounds.
+
+    ``yolox_s_buffalo_l`` / ``yolox_s_yolo_nas`` are package-floor NC hits;
+    with structural NC (B8-06) the derived door must also report
+    ``nc_model_derived``. Tooling/ingest doors unchanged (still package-floor).
+    """
+
+    RESIDUAL_NC: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox_s_buffalo_l", "buffalo_l"),
+        ("yolox_s_yolo_nas", "yolo_nas"),
+    )
+
+    @pytest.mark.parametrize(
+        "token,expected_id",
+        RESIDUAL_NC,
+        ids=[t[0] for t in RESIDUAL_NC],
+    )
+    def test_derived_rejects_residual_nc_compound(
+        self, token: str, expected_id: str
+    ) -> None:
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, (
+            f"derived_from_model({token!r}) must reject nc_model_derived"
+        )
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert expected_id in (policy.match_nc_model_pattern(token) or "")
+
+    @pytest.mark.parametrize(
+        "token,expected_id",
+        RESIDUAL_NC,
+        ids=[t[0] for t in RESIDUAL_NC],
+    )
+    def test_tooling_ingest_still_nc_package_floor(
+        self, token: str, expected_id: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_id
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        tooling = policy.audit_tooling_dependency(token)
+        assert tooling.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        ingest = policy.audit_model_ingest(token)
+        assert ingest.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+class TestA804NcDetailNoteCleanup:
+    """FIR-7-A8-04: NC detail notes via shared ranking fold + vec2face entry."""
+
+    def test_vec2face_detail_names_lineage(self) -> None:
+        result = policy.audit_derived_from_model("vec2face")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert "vec2face" in result.detail.casefold()
+
+    def test_yolo_nas_variant_uses_prefix_note(self) -> None:
+        """Collapsed variant notes still resolve via yolo_nas prefix seed."""
+        result = policy.audit_derived_from_model("yolo_nas_l")
+        assert result.ok is False
+        assert "deci" in result.detail.casefold()
+        assert "buffalo" not in result.detail.casefold()
+
+    def test_no_redundant_yolo_nas_variant_note_keys(self) -> None:
+        variant_keys = [
+            k
+            for k in policy._NC_MODEL_DETAIL_NOTES
+            if k.startswith("yolo_nas_")
+        ]
+        assert variant_keys == [], (
+            f"yolo_nas variant note keys should be collapsed; got {variant_keys}"
+        )
 

@@ -11,14 +11,14 @@ Operator clearance: ``dcface_operator_clearance_20260723`` flips DCFace to
 commercial-allowed; residual FFHQ/CASIA generator lineage is disclosed in the
 informational ``generator_lineage`` field (exempt from research-source rejection).
 
-Package-identity family matching (FIR-7 Wave F / F3 / structural rule)
-----------------------------------------------------------------------
+Package-identity family matching (FIR-7 Wave F / F3 / F5 structural rule)
+------------------------------------------------------------------------
 ``PACKAGE_DENYLIST`` seeds are matched by a **structural family-boundary**
 rule (replaces the Wave-E size/task tag-strip treadmill, which could not
 close an open-ended distribution-spelling space — decision
 ``cc_fir7_regate4_r0812_30c24d_verdict_fail_wave_f_structural``).
 
-A folded token HITS a family seed when ANY of:
+Core head-aligned rules on a token:
 
   (a) **exact match** on the folded (underscore-separated) or compact form;
   (b) **separator-boundary prefix**: canonical token == ``seed + '_' + rest``
@@ -27,14 +27,31 @@ A folded token HITS a family seed when ANY of:
   (c) **bounded compact remainder**: compact token starts with the seed's
       compact form and the remainder is ``[a-z0-9]{1,3}`` (e.g. ``yolov9t``,
       ``fastsamx``, ``yolo11n``). Longer remainders (``yolodummy``) and
-      non-prefix tokens (``myyolo``) do **not** hit;
-  (d) **head-segment**: if the canonical token contains ``_``, the leading
-      segment (up to the first ``_``) hits the seed via (a) exact or (c)
-      bounded compact remainder (not (b) — the head has no separator).
-      Closes compact+task compounds such as ``yolov9t-seg`` / ``yolo11n-pose``
-      where whole-token (c) remainder (``tseg`` / ``npose``) exceeds 3 chars.
-      Longer head remainders (``yolodummy-seg``) and non-prefix heads
-      (``myyolo-seg``) still do **not** hit.
+      non-prefix tokens (``myyolo``) do **not** hit.
+
+Deny-family matching adds two generalisations (FIR-7-B8-01 / B8-03) that
+replace the old head-only rule (d):
+
+  (d') **generalised suffix rule**: a token hits a deny seed when **any**
+      separator-aligned suffix of the token hits (a)/(b)/(c) at its head,
+      or the local head-segment of that suffix hits via (a)/(c). This is
+      the single deny scanner used for both direct component checks and
+      post-exception residual checks — one code path, no mirrored logic.
+      Closes path-split shields (``yolox/s_ultralytics`` → component
+      ``s_ultralytics``) and size-tag shields (``s_ultralytics`` residual)
+      that head-only (d) missed.
+  (e) **compact segment-suffix rule** (gated by
+      ``_FAMILY_COMPACT_SUFFIX_ENABLED``): a single segment (or a whole
+      one-segment compact token) whose compact form **ends with** a deny
+      seed of ≥ 5 compact chars, with a non-empty leading remainder, hits
+      that seed. Catches compact glue (``xultralytics``,
+      ``yoloxultralytics``, ``yoloxsultralytics``). The ≥ 5 floor protects
+      short seeds: ``myyolo`` ends with the 4-char seed ``yolo`` and must
+      still ADMIT.
+
+Exception-family matching keeps (a)/(b)/(c) plus local head-segment (the
+legacy (d) shape) for strip targeting — exception seeds are not matched
+via (d')/(e).
 
 **Component-split-first** (FIR-7-A6-02): when the canonical form contains
 ``/``, family matching runs **only** on the individual slash components —
@@ -43,49 +60,36 @@ never on the joined full token. Testing the joined form first let bare
 ``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
 disagreeing with component-level exception/deny outcomes.
 
-**Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
-packages whose names overlap the YOLO naming surface (Megvii YOLOX, hustvl
-YOLOS / YOLOP, megvii-model YOLOF). Exception seeds use the **same**
-structural rules with **bounded admit** semantics (FIR-7-B6-01 / B7-01):
+**Uniform component scanner** (FIR-7 Wave F5): every slash component is
+scanned by one iterative exception-first suffix walker:
 
-  1. longest exception-family seed hit on the component;
-  2. strip that seed (canonical boundary form or compact prefix; exact →
-     empty residual);
-  3. re-scan the residual for DENY via **segment-aligned suffixes**
-     longest-first (FIR-7-B7-01; see below);
-  4. residual deny hit → component DENIES with the residual seed's entry
-     (NC-weights entries keep ``nc_model_derived`` — FIR-7-B7-03);
-     empty residual or no residual deny → component admitted.
+  1. For each separator-aligned suffix S of the current token (longest
+     first): exception-family hit → strip seed; pure-exception (empty
+     residual) only continues to later suffixes — it never early-returns
+     admit past un-scanned deny content (fixes
+     ``yolox_xultralytics_yolox``); non-empty residual is queued for
+     multi-strip continuation. Else DENY-family hit on S via (a)/(b)/(c)/
+     (d')/(e) → component DENIES with that entry.
+  2. Queued residuals are scanned by the **same** walker (multi-strip
+     continuation). Double-exception compounds ``yolop_yolox`` /
+     ``yolox_yolop`` ADMIT after successive pure-exception strips
+     (FIR-7-B7-06).
+
+**Iterative fail-closed bounds** (FIR-7-B8-02 / B8-05): the walker is an
+iterative loop, not recursion. Each successful strip must strictly shrink
+total canonical length; the hard step cap equals the **initial segment
+count** of the component. Exceeding the cap or a non-shrinking strip is
+an invariant violation that DENIES with ``denylisted_package`` (detail
+names the invariant) — never admit, never raise. Compact-remainder strips
+shrink length, not necessarily segment count (``yolos_yoloxs``); the
+bound is therefore step-count ≤ initial segments, not "recursion depth ≤
+segment count".
 
 So ``yolox`` / ``yolox_s`` / ``yolos`` admit (empty or clean residual), while
-``yolox_ultralytics`` / ``yolos_yolov8`` / ``yolox_s_ultralytics`` DENY
-(residual suffix hits ultralytics / yolov8). An unbounded exception
+``yolox_ultralytics`` / ``yolos_yolov8`` / ``yolox_s_ultralytics`` /
+``yolox/s_ultralytics`` / ``yoloxultralytics`` DENY. An unbounded exception
 short-circuit that admitted the whole component without residual re-scan
-was an admit bypass — fail-closed. Whole-residual-only re-scan (Wave F3)
-still missed size/task/export tags that shield a trailing deny seed
-(``s_ultralytics`` after stripping ``yolox``); suffix scan closes that.
-
-**Residual segment-suffix scan** (FIR-7-B7-01): given residual R
-(canonical, underscore-separated), iterate separator-aligned **suffixes**
-from longest to shortest (R itself, then drop the leading segment,
-repeat). For each suffix S, apply the same component precedence as the
-outer path:
-
-  * **exception-family hit on S** → strip that exception seed from S and
-    **recurse** on the new residual (bounded: each strip consumes ≥1
-    segment or a compact remainder, so residual length strictly shrinks
-    and recursion depth ≤ segment count; no infinite loop). Empty residual
-    after strip → admit (do not fall through to bare-``yolo`` compact deny
-    on names like ``yolox`` / ``yolop``);
-  * else **DENY family hit on S** (rules (a)-(d)) → component DENIES with
-    S's entry;
-  * no hit on any suffix → residual clean → component admitted.
-
-Double-exception compounds ``yolop_yolox`` / ``yolox_yolop`` therefore
-ADMIT: strip the first exception, residual is itself an exception seed,
-strip → empty. Both are genuinely permissive hustvl/Megvii lineages;
-Wave F3 falsely denied them via bare-``yolo`` compact remainder on the
-residual (policy correction FIR-7-B7-06).
+was an admit bypass — fail-closed.
 
 **NC-weights deny axis** (FIR-7-A6-03): Deci YOLO-NAS (``yolo_nas`` /
 ``yolonas``) is a **deny** seed, not an exception. Code is Apache-2.0 but
@@ -93,17 +97,23 @@ pretrained weights are non-commercial (Deci ``LICENSE.YOLONAS.md``) — the
 same NC-weights axis already enforced for ``insightface`` / ``buffalo_l``.
 Previously listing it as an Apache-2.0 exception was a policy error.
 
+**Structural NC door matching** (FIR-7-B8-06): ``audit_derived_from_model``
+and ``audit_source`` match NC model ids with the **same** structural family
+rules (a)/(b)/(c)/(d')/(e) used by the package floor, so export/quant/size
+tags (``yolo_nas_l_int8``, ``buffalo_l_onnx``) cannot shield an NC seed on
+those doors. Exact-set membership alone was a treadmill.
+
 **Honest lineage notes** (FIR-7-B6-02): ``yolop`` is hustvl BSD-3-Clause
 (exception); ``yolov2`` / ``yolov4`` are Darknet-era deny seeds with their
 own notes so they stop inheriting the false Ultralytics-AGPL text from bare
 ``yolo``. YOLOR (WongKinYiu, GPL-3.0) remains a deny-axis seed.
 
-Precedence per component: exception-family hit → residual deny re-scan →
-residual deny or direct deny-family hit → ``denylisted_package`` (or the
-entry's reason, e.g. ``nc_model_derived`` for NC-weights); clean exception
-or neither → no hit (admit path continues to other floors). The two seed
-sets are asserted **disjoint** at import on exact folded/compact keys
-(fail loudly if not).
+Precedence per component: exception-family strip → residual / suffix deny
+re-scan → residual deny or direct deny-family hit → ``denylisted_package``
+(or the entry's reason, e.g. ``nc_model_derived`` for NC-weights); clean
+exception or neither → no hit (admit path continues to other floors). The
+two seed sets are asserted **disjoint** at import on exact folded/compact
+keys (fail loudly if not).
 
 Package-identity values that are non-empty pre-canonical but whose
 :func:`canonical` is ``None`` (confusable / non-ASCII residue) or the empty
@@ -394,37 +404,15 @@ _NC_MODEL_DETAIL_NOTES: dict[str, str] = {
     "antelopev2": (
         "InsightFace antelopev2 weights and output-derived data are banned"
     ),
+    # Prefix rule covers yolo_nas_* size/pose/export variants (FIR-7-A8-04).
     "yolo_nas": (
         "Deci YOLO-NAS pretrained weights are non-commercial "
         "(Deci licence); NC-weights and output-derived data are banned"
     ),
-    "yolo_nas_s": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_m": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_l": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_pose_n": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_pose_s": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_pose_m": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
-    ),
-    "yolo_nas_pose_l": (
-        "Deci YOLO-NAS pretrained weights are non-commercial "
-        "(Deci licence); NC-weights and output-derived data are banned"
+    # vec2face NC synthetic-face lineage (FIR-7-A8-04) — was falling through
+    # to the generic fallback despite being a first-class NC seed.
+    "vec2face": (
+        "vec2face synthetic-face weights and output-derived data are banned"
     ),
 }
 
@@ -509,14 +497,13 @@ class PackageDenylistEntry:
 class PackageExceptionEntry:
     """Distinct-lineage package admitted despite overlapping YOLO naming.
 
-    Exception seeds use the same structural family-boundary rules as deny
-    seeds (exact / separator-boundary prefix / bounded compact remainder /
-    head-segment) but with **bounded admit** semantics: an exception hit
-    strips the exception seed and re-scans the residual via separator-
-    aligned suffixes (exception-first recurse, then DENY rules (a)-(d) —
-    FIR-7-B6-01 / B7-01). A residual deny hit DENIES the component; an
-    empty residual or residual with no deny hit admits. Other floors still
-    apply after an admit.
+    Exception seeds use structural family-boundary rules (a)/(b)/(c) plus
+    local head-segment for strip targeting, with **bounded admit**
+    semantics: an exception hit strips the exception seed and re-scans the
+    residual via the uniform iterative suffix walker (exception-first, then
+    DENY rules (a)/(b)/(c)/(d')/(e) — FIR-7-B6-01 / B7-01 / B8-01). A
+    residual deny hit DENIES the component; an empty residual or residual
+    with no deny hit admits. Other floors still apply after an admit.
     """
 
     package_id: str
@@ -1456,61 +1443,141 @@ def _live_nc_expanded() -> frozenset[str]:
     return _expand_ids(NC_MODEL_IDS)
 
 
+# Trailing export / quant / runtime tags that must not shield an NC seed on
+# the weights-lineage doors (FIR-7-B8-06). Progressive strip + exact
+# re-membership keeps BR-28 precision controls (``not-insightface``,
+# ``buffalo_bill_detector``) green — full family (b)/(d')/(e) on short NC
+# seeds would over-block them.
+_NC_TRAILING_SHIELD_TAGS: frozenset[str] = frozenset(
+    {
+        "int8",
+        "int4",
+        "fp16",
+        "fp32",
+        "bf16",
+        "onnx",
+        "engine",
+        "torchscript",
+        "mlpackage",
+        "tflite",
+        "openvino",
+        "tensorrt",
+        "weights",
+        "pretrained",
+        "pt",
+        "pth",
+        "bin",
+        "safetensors",
+    }
+)
+
+
+def _nc_strip_trailing_shield_tags(token: str) -> str:
+    """Drop trailing export/quant tags; return the longest shielded head."""
+    if not token or "_" not in token:
+        return token
+    parts = token.split("_")
+    while len(parts) > 1 and parts[-1] in _NC_TRAILING_SHIELD_TAGS:
+        parts.pop()
+    return "_".join(parts)
+
+
+def _token_has_exception_family(token: str) -> bool:
+    """True when any slash component hits an exception-family seed."""
+    c = canonical(token) if token else None
+    if not c:
+        return False
+    parts = [p for p in c.split("/") if p] if "/" in c else [c]
+    for part in parts:
+        if _best_exception_hit_with_residual(part) is not None:
+            return True
+    return False
+
+
 def match_nc_model_pattern(derived_from_model: str) -> str | None:
     """Return the pinned NC id that matches ``derived_from_model``, or None.
 
     Exact set membership against ``NC_MODEL_IDS_EXPANDED`` after
-    :func:`canonical` (B4b / WEB-24). Non-ASCII residue yields ``None``;
-    callers must treat that as ``invalid_row`` via their own canonical check.
+    :func:`canonical` (B4b / WEB-24) is always tried first so the existing
+    pin set and BR-28 precision controls stay load-bearing.
+
+    FIR-7-B8-06 structural NC (when ``_NC_STRUCTURAL_MATCH_ENABLED``):
+
+      1. Progressive strip of trailing export/quant/runtime shield tags
+         (``int8``, ``onnx``, …) then re-check exact membership — closes
+         ``yolo_nas_l_int8`` / ``buffalo_l_onnx`` without prefix-overmatch
+         on ``buffalo_bill_detector`` / ``not-insightface``.
+      2. Package-floor NC hit (``_package_denylist_hit`` reason
+         ``nc_model_derived``) when the token also carries an exception-
+         family component — residual NC compounds like
+         ``yolox_s_buffalo_l`` (FIR-7-B8-07). Bare BR-28 controls have no
+         exception family and stay clean.
+
+    Non-ASCII residue yields ``None``; callers must treat that as
+    ``invalid_row`` via their own canonical check.
     """
     if not derived_from_model or not str.strip(str(derived_from_model)):
         return None
     c = canonical(str(derived_from_model))
     if c is None:
         return None
-    return _membership_hit(c, _live_nc_expanded())
+    expanded = _live_nc_expanded()
+    exact = _membership_hit(c, expanded)
+    if exact is not None:
+        return exact
+    if not _NC_STRUCTURAL_MATCH_ENABLED:
+        return None
+
+    # (1) Trailing export/quant shield strip → exact re-membership.
+    if "/" in c:
+        tag_candidates = [p for p in c.split("/") if p]
+    else:
+        tag_candidates = [c]
+    for cand in tag_candidates:
+        stripped = _nc_strip_trailing_shield_tags(cand)
+        if stripped and stripped != cand:
+            hit = _membership_hit(stripped, expanded)
+            if hit is not None:
+                return hit
+            # Also accept package-floor NC seed as the stripped head
+            # (yolo_nas_l may be pinned; yolo_nas_l_int8_onnx double strip).
+            while True:
+                nxt = _nc_strip_trailing_shield_tags(stripped)
+                if not nxt or nxt == stripped:
+                    break
+                stripped = nxt
+                hit = _membership_hit(stripped, expanded)
+                if hit is not None:
+                    return hit
+
+    # (2) Exception-residual NC compounds (B8-07): package floor already
+    # denies ``yolox_s_buffalo_l`` with nc_model_derived; promote that hit
+    # onto the weights door only when an exception-family seed is present
+    # so BR-28 controls without exception lineage stay admitted.
+    if _token_has_exception_family(c):
+        deny = _package_denylist_hit(c)
+        if (
+            deny is not None
+            and deny.reason is RejectionReason.NC_MODEL_DERIVED
+        ):
+            return deny.package_id
+    return None
 
 
 def _nc_detail_lineage_note(matched: str) -> str:
-    """Per-entry NC lineage note for audit detail (FIR-7-B7-04).
+    """Per-entry NC lineage note for audit detail (FIR-7-B7-04 / A8-04).
 
     Resolves ``matched`` (from :func:`match_nc_model_pattern`) to the longest
-    covering seed in ``_NC_MODEL_DETAIL_NOTES`` so buffalo rejections keep
+    covering seed in ``_NC_MODEL_DETAIL_NOTES`` via the shared
+    :func:`_best_family_seed_match` ranking fold so buffalo rejections keep
     their historical wording and yolo_nas rejections carry Deci NC-weights
     text — never another entry's boilerplate.
     """
     if not matched:
         return "non-commercial weights and output-derived data are banned"
-    c = canonical(matched) or matched
-    compact = _compact_canonical(c)
-    best_key = ""
-    best_note = ""
-    for seed, note in _NC_MODEL_DETAIL_NOTES.items():
-        seed_c = canonical(seed) or seed
-        seed_k = _compact_canonical(seed_c)
-        if c == seed_c or compact == seed_k:
-            if len(seed_k) >= len(_compact_canonical(best_key) if best_key else ""):
-                best_key = seed_c
-                best_note = note
-            continue
-        # Separated or compact prefix covering (yolo_nas_m → yolo_nas).
-        if c.startswith(seed_c + "_") or (
-            seed_k and compact.startswith(seed_k) and len(compact) > len(seed_k)
-        ):
-            if len(seed_k) > len(_compact_canonical(best_key) if best_key else ""):
-                best_key = seed_c
-                best_note = note
-    if best_note:
-        return best_note
-    # PACKAGE_DENYLIST NC entry notes as a secondary source (package_id seeds).
-    for key, entry in PACKAGE_DENYLIST.items():
-        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
-            continue
-        seed_c = canonical(key) or key
-        seed_k = _compact_canonical(seed_c)
-        if c == seed_c or compact == seed_k or c.startswith(seed_c + "_"):
-            if entry.notes:
-                return entry.notes
+    hit = _best_family_seed_match(matched, _NC_MODEL_DETAIL_NOTES, for_deny=True)
+    if hit is not None:
+        return str(hit[2])
     return "non-commercial weights and output-derived data are banned"
 
 
@@ -2317,26 +2384,38 @@ def _reject_non_string(
 
 
 # ---------------------------------------------------------------------------
-# Package-identity structural family matching (FIR-7 Wave F)
+# Package-identity structural family matching (FIR-7 Wave F / F5)
 # ---------------------------------------------------------------------------
 # Replaces the Wave-E size/task tag-strip treadmill. Module docstring owns the
-# design narrative; helpers below implement (a) exact, (b) separator-boundary
-# prefix, (c) bounded compact remainder — for both deny and exception seeds.
+# design narrative; helpers below implement (a)/(b)/(c) for both deny and
+# exception seeds, plus deny-only (d') generalised suffix and (e) compact
+# segment-suffix, behind a uniform iterative component scanner.
 
 # Branch enable flags (always True in production). Tests red-prove each branch
 # by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
-# admit; disable (c) → yolov9t admits; disable (d) → yolov9t-seg admits;
-# disable residual re-scan → yolox_ultralytics admits (exception short-circuit);
-# disable residual suffix scan → yolox_s_ultralytics / yolox_s_buffalo_l admit
-# (size-tag shield class; Wave F3 only covered residual-leading deny seeds).
+# admit; disable (c) → yolov9t admits; disable head-segment → yolov9t-seg
+# admits; disable (d') → path-split / size-tag suffix shields admit; disable
+# (e) → compact glue (xultralytics / yoloxultralytics) admits; disable residual
+# re-scan → yolox_ultralytics admits (exception short-circuit); disable
+# multi-strip continuation → yolox_yolop_ultralytics admits; disable fail-closed
+# scan bounds → non-shrinking strip admits; disable NC structural match →
+# yolo_nas_l_int8 admits on weights doors.
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
+_FAMILY_GENERALIZED_SUFFIX_ENABLED: bool = True  # (d')
+_FAMILY_COMPACT_SUFFIX_ENABLED: bool = True  # (e)
 _EXCEPTION_RESIDUAL_RESCAN_ENABLED: bool = True
 _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED: bool = True
+_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED: bool = True
+_SCAN_FAIL_CLOSED_BOUNDS_ENABLED: bool = True
+_NC_STRUCTURAL_MATCH_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
+# Compact segment-suffix (e): seed must be at least this many compact chars so
+# short seeds like ``yolo`` (4) cannot false-deny ``myyolo``.
+_COMPACT_SUFFIX_MIN_SEED_LEN: int = 5
 
 
 def _folded_family_seed_keys(mapping: Mapping[str, Any]) -> set[str]:
@@ -2388,12 +2467,12 @@ def _iter_family_seeds(
     return out
 
 
-def _family_match_seed(
+def _family_match_abc(
     token: str,
     seed_canonical: str,
     seed_compact: str,
 ) -> bool:
-    """True if folded ``token`` hits one family seed under rules (a)(b)(c)(d)."""
+    """True if folded ``token`` hits seed under head-aligned rules (a)(b)(c)."""
     if not token or not seed_canonical:
         return False
     token_compact = _compact_canonical(token)
@@ -2416,40 +2495,143 @@ def _family_match_seed(
             rem = token_compact[len(seed_compact) :]
             if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                 return True
+    return False
 
-    # (d) head-segment: leading segment before first '_' hits via (a) or (c).
-    # Do not apply (b) to the head (it has no separator). Not recursive on (d).
-    if _FAMILY_HEAD_SEGMENT_ENABLED and "_" in token:
-        head = token.split("_", 1)[0]
-        if head:
-            head_compact = _compact_canonical(head)
-            # (a) on head alone.
-            if head == seed_canonical or head_compact == seed_compact:
+
+def _family_match_head_segment(
+    token: str,
+    seed_canonical: str,
+    seed_compact: str,
+) -> bool:
+    """Legacy (d) head-segment: leading segment hits via (a) or (c)."""
+    if not _FAMILY_HEAD_SEGMENT_ENABLED or "_" not in token:
+        return False
+    head = token.split("_", 1)[0]
+    if not head:
+        return False
+    # (a)/(c) on head alone (head has no separator — not (b)).
+    return _family_match_abc(head, seed_canonical, seed_compact)
+
+
+def _family_match_compact_suffix(
+    token: str,
+    seed_canonical: str,
+    seed_compact: str,
+) -> bool:
+    """Rule (e): segment compact form ends with deny seed of >= 5 chars.
+
+    Only individual segments are tested (a one-segment token is its own
+    segment). Multi-segment compact-join is intentionally NOT tested — that
+    would shadow (d') and break independent red-proofs. Leading remainder
+    must be non-empty; seeds shorter than ``_COMPACT_SUFFIX_MIN_SEED_LEN``
+    never match (``myyolo`` / ``yolo`` admit pin).
+    """
+    if not _FAMILY_COMPACT_SUFFIX_ENABLED:
+        return False
+    if not seed_compact or len(seed_compact) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+        return False
+    for seg in token.split("_"):
+        if not seg:
+            continue
+        seg_k = _compact_canonical(seg)
+        if not seg_k or len(seg_k) <= len(seed_compact):
+            continue
+        if seg_k.endswith(seed_compact):
+            # Non-empty leading remainder is implied by len check above.
+            return True
+        # Also allow seed_canonical as an endswith target when it differs
+        # from compact (underscore-bearing seeds already compact-equal).
+        if seed_canonical and seg_k.endswith(seed_canonical.replace("_", "")):
+            if len(seg_k) > len(seed_canonical.replace("_", "")):
                 return True
-            if head == seed_compact or head_compact == seed_canonical:
+    return False
+
+
+def _family_match_seed(
+    token: str,
+    seed_canonical: str,
+    seed_compact: str,
+    *,
+    for_deny: bool = False,
+    allow_rule_e: bool = True,
+) -> bool:
+    """True if folded ``token`` hits one family seed.
+
+    Exception path (``for_deny=False``): rules (a)(b)(c) + head-segment (d).
+    Deny path (``for_deny=True``): (d') generalised suffix over (a)(b)(c) +
+    local head-segment on each suffix, plus (e) compact segment-suffix when
+    ``allow_rule_e`` is True. When (d') is disabled, deny falls back to
+    whole-token (a)(b)(c)+(d). NC doors pass ``allow_rule_e=False`` so
+    BR-28 controls like ``not-insightface`` stay clean (FIR-7-B8-06).
+    """
+    if not token or not seed_canonical:
+        return False
+
+    # (d') requires the generalised-suffix flag; the F4 residual-suffix flag
+    # is kept as a second gate so existing red-proofs still neuter size-tag
+    # shields independently of (e).
+    d_prime = (
+        for_deny
+        and _FAMILY_GENERALIZED_SUFFIX_ENABLED
+        and _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED
+    )
+    if d_prime:
+        # (d'): any separator-aligned suffix hits (a)(b)(c) or local head (d).
+        segments = token.split("_")
+        for i in range(len(segments)):
+            suffix = "_".join(segments[i:])
+            if not suffix:
+                continue
+            if _family_match_abc(suffix, seed_canonical, seed_compact):
                 return True
-            # (c) on head alone (respects the compact-remainder branch flag).
-            if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_compact:
-                if head_compact.startswith(seed_compact):
-                    rem = head_compact[len(seed_compact) :]
-                    if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
-                        return True
+            if _family_match_head_segment(suffix, seed_canonical, seed_compact):
+                return True
+        # (e) compact segment-suffix on the whole token's segments.
+        if allow_rule_e and _family_match_compact_suffix(
+            token, seed_canonical, seed_compact
+        ):
+            return True
+        return False
+
+    # Exception path, or deny path with (d') disabled (red-proof fallback).
+    if _family_match_abc(token, seed_canonical, seed_compact):
+        return True
+    if _family_match_head_segment(token, seed_canonical, seed_compact):
+        return True
+    # Even with (d') off, (e) still applies on the deny path when enabled
+    # so compact-glue red-proofs stay independent of (d').
+    if (
+        for_deny
+        and allow_rule_e
+        and _family_match_compact_suffix(token, seed_canonical, seed_compact)
+    ):
+        return True
     return False
 
 
 def _best_family_seed_match(
     token: str,
     mapping: Mapping[str, Any],
+    *,
+    for_deny: bool = False,
+    allow_rule_e: bool = True,
 ) -> tuple[str, str, Any] | None:
     """Longest-matching family seed triple ``(seed_c, seed_k, entry)``, or None.
 
-    Shared ranking fold for deny hits and exception residual strips
-    (FIR-7-A7-04): rank by ``(len(compact), len(canonical))`` descending.
+    Shared ranking fold for deny hits, exception residual strips, and NC
+    detail notes (FIR-7-A7-04 / A8-04): rank by
+    ``(len(compact), len(canonical))`` descending.
     """
     best: tuple[str, str, Any] | None = None
     best_key: tuple[int, int] = (-1, -1)
     for seed_c, seed_k, entry in _iter_family_seeds(mapping):
-        if not _family_match_seed(token, seed_c, seed_k):
+        if not _family_match_seed(
+            token,
+            seed_c,
+            seed_k,
+            for_deny=for_deny,
+            allow_rule_e=allow_rule_e,
+        ):
             continue
         rank = (len(seed_k), len(seed_c))
         if rank > best_key:
@@ -2458,9 +2640,17 @@ def _best_family_seed_match(
     return best
 
 
-def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
+def _best_family_hit(
+    token: str,
+    mapping: Mapping[str, Any],
+    *,
+    for_deny: bool = False,
+    allow_rule_e: bool = True,
+) -> Any | None:
     """Longest-matching family seed entry for ``token``, or None."""
-    matched = _best_family_seed_match(token, mapping)
+    matched = _best_family_seed_match(
+        token, mapping, for_deny=for_deny, allow_rule_e=allow_rule_e
+    )
     if matched is None:
         return None
     return matched[2]
@@ -2525,7 +2715,9 @@ def _best_exception_hit_with_residual(
     token: str,
 ) -> tuple[Any, str] | None:
     """Longest exception-family seed hit and its residual, or None."""
-    matched = _best_family_seed_match(token, PACKAGE_EXCEPTION_ALLOWLIST)
+    matched = _best_family_seed_match(
+        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
+    )
     if matched is None:
         return None
     seed_c, seed_k, entry = matched
@@ -2533,80 +2725,143 @@ def _best_exception_hit_with_residual(
     return entry, residual
 
 
-def _residual_suffix_deny_scan(residual: str) -> PackageDenylistEntry | None:
-    """Scan residual via separator-aligned suffixes + recursive exception strip.
+def _scan_invariant_deny(detail: str) -> PackageDenylistEntry:
+    """Fail-closed denylist entry for scanner invariant violations."""
+    return PackageDenylistEntry(
+        package_id="scan_invariant",
+        display_name="package-identity scan invariant",
+        spdx_id="FAIL-CLOSED",
+        reason=RejectionReason.DENYLISTED_PACKAGE,
+        notes=detail,
+    )
 
-    FIR-7-B7-01: after an exception seed is stripped, the residual may still
-    carry a leading size/task/export tag that shields a trailing deny seed
-    under whole-token rules (a)-(d) (e.g. ``s_ultralytics``). Iterate
-    suffixes longest-first; on each suffix apply component precedence
-    (exception-family first, then DENY). Exception strip recurses with a
-    strict length shrink bound (depth ≤ segment count).
 
-    Double-exception residuals (``yolox`` after stripping ``yolop`` from
-    ``yolop_yolox``) admit after recursive strip → empty, rather than
-    falling through to bare-``yolo`` compact deny (FIR-7-B7-06).
+def _uniform_component_scan(
+    token: str,
+    *,
+    max_steps: int | None = None,
+) -> PackageDenylistEntry | None:
+    """Uniform iterative exception-first suffix scan on one component.
+
+    FIR-7-B8-01 / B8-02 / B8-05: one code path for direct component checks
+    and post-exception residual re-scans. Separator-aligned suffixes are
+    walked longest-first; exception hits strip and continue (never pure-
+    exception early-return past un-scanned deny content); DENY uses
+    (a)/(b)/(c)/(d')/(e). Iterative loop with hard step bound = initial
+    segment count of the component; non-shrinking strip or bound overflow
+    DENIES (``denylisted_package``, detail names the invariant).
+
+    Bound is step-count ≤ initial segment count. Compact-remainder strips
+    shrink total canonical length, not necessarily segment count, so the
+    historical "recursion depth ≤ segment count" claim is false — this
+    walker states the real bound (FIR-7-A8-03).
+
+    ``strip_depth`` tracks how many exception strips have already been
+    applied. The first strip (depth 0→1) is the single-strip residual path
+    (B6-01); further strips require
+    ``_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED`` (B8-04 / A8-01) so
+    multi-strip can be red-proven independently of single-strip re-scan.
     """
-    if not residual:
+    if not token:
         return None
-    segments = residual.split("_")
-    for i in range(len(segments)):
-        suffix = "_".join(segments[i:])
-        if not suffix:
+    if max_steps is None:
+        max_steps = max(1, token.count("_") + 1)
+
+    # Iterative work stack of (token, strips_already_applied). Bound counts
+    # exception strips only (not every suffix pass): a compact-remainder
+    # strip on a 1-segment token (``yoloxs`` → ``s``) is one strip against
+    # a bound of 1 and must still admit (FIR-7-A8-03).
+    stack: list[tuple[str, int]] = [(token, 0)]
+    strips_done = 0
+    while stack:
+        current, strip_depth = stack.pop()
+        if not current:
             continue
-        # Exception-first (same precedence as the outer component path).
-        exc = _best_exception_hit_with_residual(suffix)
-        if exc is not None:
-            _entry, new_residual = exc
-            if not new_residual:
-                # Pure exception seed → admit this residual path.
-                return None
-            # Bound: each strip must strictly shrink the token.
-            if len(new_residual) >= len(suffix):
-                return None
-            return _residual_suffix_deny_scan(new_residual)
-        deny = _best_family_hit(suffix, PACKAGE_DENYLIST)
-        if deny is not None:
-            return deny  # type: ignore[no-any-return]
+
+        segments = current.split("_")
+        queued: tuple[str, int] | None = None
+
+        # When residual-suffix scan is disabled (F4 red-proof path), only the
+        # whole current token is considered — size-tag shields admit unless
+        # residual-leading deny seeds still hit whole-token (a)/(b)/(c)/(d).
+        suffix_starts = (
+            range(len(segments))
+            if _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED
+            else range(0, 1)
+        )
+
+        for i in suffix_starts:
+            suffix = "_".join(segments[i:])
+            if not suffix:
+                continue
+
+            # Exception-first (same precedence as historical component path).
+            exc = _best_exception_hit_with_residual(suffix)
+            if exc is not None:
+                _entry, new_residual = exc
+                if not new_residual:
+                    # Pure exception seed: do NOT early-return admit — keep
+                    # scanning shorter suffixes for deny content (B8-01
+                    # ordering: deny scan completes before exception admit).
+                    continue
+                # Non-empty residual after strip.
+                if len(new_residual) >= len(suffix):
+                    if _SCAN_FAIL_CLOSED_BOUNDS_ENABLED:
+                        return _scan_invariant_deny(
+                            "package-identity exception strip did not shrink "
+                            "canonical length; invariant violation fail-closed"
+                        )
+                    # Fail-open red-proof path: treat as clean admit.
+                    return None
+                strips_done += 1
+                if _SCAN_FAIL_CLOSED_BOUNDS_ENABLED and strips_done > max_steps:
+                    return _scan_invariant_deny(
+                        f"package-identity scan exceeded segment-count bound "
+                        f"({max_steps}); invariant violation fail-closed"
+                    )
+                # Nested strip (already stripped once) requires multi-strip
+                # continuation; single-strip residual re-scan is depth 0 only.
+                if (
+                    strip_depth >= 1
+                    and not _EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED
+                ):
+                    return None
+                queued = (new_residual, strip_depth + 1)
+                break
+
+            deny = _best_family_hit(suffix, PACKAGE_DENYLIST, for_deny=True)
+            if deny is not None:
+                return deny  # type: ignore[no-any-return]
+
+        if queued is not None:
+            stack.append(queued)
+            continue
+        # No deny on any suffix and no residual to continue → current clean.
     return None
 
 
-def _residual_deny_scan(residual: str) -> PackageDenylistEntry | None:
-    """DENY re-scan on an exception residual (Wave F3 / F4).
-
-    When ``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED`` is True (production),
-    use segment-aligned suffix scan (FIR-7-B7-01). When False, whole-token
-    residual only (Wave F3 behaviour) so red-proofs can neuter the suffix
-    branch independently — size-tag shields then admit.
-    """
-    if not residual:
-        return None
-    if _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED:
-        return _residual_suffix_deny_scan(residual)
-    return _best_family_hit(residual, PACKAGE_DENYLIST)  # type: ignore[no-any-return]
-
-
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F4).
+    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F5).
 
     Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space).
     When ``/`` is present, test **only** slash components (never the joined
-    full token — FIR-7-A6-02). Each component is matched against
-    exception-family seeds first (bounded admit: strip seed, re-scan residual
-    via segment-aligned suffixes — FIR-7-B6-01 / B7-01) then deny-family
-    seeds. A component hits a family seed under any of:
+    full token — FIR-7-A6-02). Each component is matched by the **uniform
+    iterative scanner** (FIR-7-B8-01 / B8-02): exception-family strip with
+    residual re-scan, then deny-family via (a)/(b)/(c)/(d')/(e). A component
+    hits a deny family seed under any of:
 
       (a) exact folded/compact match;
       (b) separator-boundary prefix (``seed_`` + rest);
       (c) bounded compact remainder (1–3 alnum after seed compact form);
-      (d) head-segment (leading segment hits via (a) or (c)).
+      (d') generalised separator-aligned suffix of (a)/(b)/(c) + local head;
+      (e) compact segment-suffix (seed ≥ 5 compact chars, non-empty lead).
 
     ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` /
-    ``yolox_ultralytics`` / ``yolox_s_ultralytics`` deny; ``yolodummy`` /
-    ``myyolo`` / pure exception-family tokens (``yolox``, ``yolos``,
-    ``yolop_yolox``) do not. Empty / None canonical → no denylist hit
-    (doors treat empty/None as ``invalid_row`` separately —
-    FIR-7-B4-01 / B5-04).
+    ``yolox_ultralytics`` / ``yolox_s_ultralytics`` / ``yolox/s_ultralytics`` /
+    ``yoloxultralytics`` deny; ``yolodummy`` / ``myyolo`` / pure exception-
+    family tokens (``yolox``, ``yolos``, ``yolop_yolox``) do not. Empty /
+    None canonical → no denylist hit (doors treat empty/None as
+    ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:
@@ -2624,22 +2879,24 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
         if cand in seen:
             continue
         seen.add(cand)
-        # Bounded exception: strip seed → residual deny re-scan (FIR-7-B6-01
-        # / B7-01). Residual deny hit → component DENIES with that residual
-        # seed's entry (NC axis preserved — B7-03). Empty residual / no
-        # residual deny → admit this component; keep scanning other path
-        # components (ultralytics/yolox still denies).
-        exc = _best_exception_hit_with_residual(cand)
-        if exc is not None:
-            _exc_entry, residual = exc
-            if residual and _EXCEPTION_RESIDUAL_RESCAN_ENABLED:
-                residual_deny = _residual_deny_scan(residual)
-                if residual_deny is not None:
-                    return residual_deny
+        bound = max(1, cand.count("_") + 1)
+
+        # Bounded exception short-circuit gate (FIR-7-B6-01 red-proof): when
+        # residual re-scan is disabled, any exception-family hit admits the
+        # component without residual deny scan. Production keeps re-scan on
+        # and routes every component through the uniform scanner.
+        if not _EXCEPTION_RESIDUAL_RESCAN_ENABLED:
+            exc = _best_exception_hit_with_residual(cand)
+            if exc is not None:
+                continue
+            hit = _best_family_hit(cand, PACKAGE_DENYLIST, for_deny=True)
+            if hit is not None:
+                return hit  # type: ignore[no-any-return]
             continue
-        hit = _best_family_hit(cand, PACKAGE_DENYLIST)
+
+        hit = _uniform_component_scan(cand, max_steps=bound)
         if hit is not None:
-            return hit  # type: ignore[no-any-return]
+            return hit
     return None
 
 

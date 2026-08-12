@@ -10,7 +10,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scripts.eval_harness.face_assignment import FaceDecision, collect_matched_faces, score_face_assignment
+from scripts.eval_harness.face_assignment import (
+    FaceDecision,
+    collect_matched_faces,
+    gt_box_name,
+    score_face_assignment,
+)
 from scripts.eval_harness import face_metrics as face_metrics_mod
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
@@ -30,6 +35,7 @@ from scripts.eval_harness.face_metrics import (
     face_unknown_rejection,
     identification_pr,
     labeled_left_to_right,
+    labeled_order,
     latency_summary,
     nearest_rank_percentile,
     normalized_centre_order_key,
@@ -907,32 +913,168 @@ def test_labeled_left_to_right_tie_stable_across_input_order():
 
     Pre-fix: stable sort on x alone → input order wins on pure ties.
     Post-fix: (x, y, name) matches predicted path → same sequence either way.
-    HARM-07: never invent y=0.0; missing-y path sorts by (x, name) only.
+    HARM-07: never invent y=0.0 for a missing secondary coordinate.
     """
     order_a = [{"name": "Bob", "x": 0.5, "y": 0.1}, {"name": "Alice", "x": 0.5, "y": 0.1}]
     order_b = [{"name": "Alice", "x": 0.5, "y": 0.1}, {"name": "Bob", "x": 0.5, "y": 0.1}]
     assert labeled_left_to_right(order_a) == labeled_left_to_right(order_b)
     assert labeled_left_to_right(order_a) == ["Alice", "Bob"]  # name tie-break
-    # Pure-x tie without y: no fabricated y=0.0 — name secondary only (HARM-07).
-    bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
-    bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
-    assert labeled_left_to_right(bare_a) == labeled_left_to_right(bare_b) == ["Alice", "Bob"]
     # Different y at same x must NOT collapse via invented 0.0.
     y_order = [
         {"name": "High", "x": 0.5, "y": 0.9},
         {"name": "Low", "x": 0.5, "y": 0.1},
     ]
     assert labeled_left_to_right(y_order) == ["Low", "High"]
+    assert labeled_order(y_order).order_degraded is False
+
+
+def test_labeled_order_per_box_missing_y_preserves_real_y(  # VLM6-R2-G-01
+):
+    """Per-box fallback: one missing y must not discard every other box's y.
+
+    Reviewer repro: A(0.5,0.9), B(0.5,0.1), C(0.2, y=None).
+    Whole-image (x,name) fallback yields C,A,B (A before B by name).
+    Per-box: C by x alone, then B,A by real y → C,B,A. order_degraded=True.
+    TEST-15: pre-fix whole-image path must go red on this fixture.
+    """
+    boxes = [
+        {"name": "A", "x": 0.5, "y": 0.9, "w": 0.1, "h": 0.1},
+        {"name": "B", "x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1},
+        {"name": "C", "x": 0.2, "w": 0.1, "h": 0.1},  # no y
+    ]
+    result = labeled_order(boxes)
+    assert result.names == ["C", "B", "A"]
+    assert result.order_degraded is True
+    assert result.y_missing_count == 1
+    # Convenience wrapper agrees.
+    assert labeled_left_to_right(boxes) == ["C", "B", "A"]
+
+
+def test_labeled_order_identical_x_no_y_discloses_degraded_not_spatial(  # VLM6-R2-G-01
+):
+    """Identical x, no y: order is unknown spatially — disclose degraded.
+
+    Do not treat alphabetical name order as a spatial claim (HARM-07 / AUDIT-07).
+    Deterministic stability across input order is required; invented L→R is not.
+    """
+    bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
+    bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
+    ra, rb = labeled_order(bare_a), labeled_order(bare_b)
+    assert ra.names == rb.names  # deterministic, input-order independent
+    assert ra.order_degraded is True
+    assert rb.order_degraded is True
+    assert ra.y_missing_count == 2
+    assert rb.y_missing_count == 2
+
+
+def test_labeled_order_identical_centre_x_distinct_y():  # VLM6-R2-G-01
+    """Same centre-x, distinct y → y decides; not degraded."""
+    boxes = [
+        {"name": "A", "x": 0.5, "y": 0.9, "w": 0.1, "h": 0.1},
+        {"name": "B", "x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1},
+    ]
+    result = labeled_order(boxes)
+    assert result.names == ["B", "A"]
+    assert result.order_degraded is False
+    assert result.y_missing_count == 0
+
+
+def test_namedness_predicate_shared_across_sites():  # VLM6-R2-A-01
+    """One namedness predicate: strip; empty/whitespace → anonymous.
+
+    Pre-fix: gt_box_name stripped but L→R gated on ``name is None or == ''``
+    only — whitespace-only counted as named; padded names kept unstripped.
+    Cross-site: association / labeled L→R / predicted L→R / identification_pr
+    must agree. TEST-15: self-certifying gt_box_name-only green is not enough.
+    """
+    ws = "   "
+    padded = " Alice "
+    # Predicate itself.
+    assert gt_box_name({"name": ws}) is None
+    assert gt_box_name({"name": padded}) == "Alice"
+    assert gt_box_name({"name": ""}) is None
+    assert gt_box_name({"name": None}) is None
+
+    # Labeled L→R: whitespace-only skipped; padded stripped.
+    assert labeled_left_to_right(
+        [{"name": ws, "x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}]
+    ) == []
+    boxes = [
+        {"name": "  ", "x": 0.3, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "Bob", "x": 0.7, "y": 0.5, "w": 0.1, "h": 0.1},
+    ]
+    assert labeled_left_to_right(boxes) == ["Bob"]
+    assert [gt_box_name(b) for b in boxes] == [None, "Bob"]
+
+    # identification_pr: model naming Bob only is a clean TP (no FN on '  ').
+    pr = identification_pr(
+        [ImageIdentities(image="x.jpg", predicted=["Bob"], labeled=labeled_left_to_right(boxes))]
+    )
+    assert (pr.true_positives, pr.false_positives, pr.false_negatives) == (1, 0, 0)
+    assert pr.wrong_names == []
+
+    # Padded GT name strips so model "Alice" is TP, not wrong-name.
+    boxes3 = [{"name": padded, "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1}]
+    assert labeled_left_to_right(boxes3) == ["Alice"]
+    pr3 = identification_pr(
+        [
+            ImageIdentities(
+                image="y.jpg",
+                predicted=["Alice"],
+                labeled=labeled_left_to_right(boxes3),
+            )
+        ]
+    )
+    assert (pr3.true_positives, pr3.false_positives, pr3.false_negatives) == (1, 0, 0)
+    assert pr3.wrong_names == []
+
+    # Predicted L→R: same predicate (whitespace skipped; padded stripped).
+    assert predicted_left_to_right(
+        [
+            {"name": "  ", "bbox": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+            {"name": "Bob", "bbox": {"x": 0.8, "y": 0.2, "w": 0.1, "h": 0.1}},
+        ],
+        image_width=100,
+        image_height=100,
+    ) == ["Bob"]
+    assert predicted_left_to_right(
+        [{"name": padded, "bbox": {"x": 10, "y": 10, "width": 20, "height": 20}}],
+        image_width=100,
+        image_height=100,
+    ) == ["Alice"]
+
+    # Association / collect_matched_faces: whitespace-only is stranger miss.
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": ""},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+            {"x": 0.3, "y": 0.3, "w": 0.1, "h": 0.1, "name": "   "},
+            {"x": 0.4, "y": 0.4, "w": 0.1, "h": 0.1, "name": " Alice "},
+        ]
+    }
+    _matched, _assoc, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert false_det == 0
+    assert missed_named == 1  # only stripped "Alice"
+    assert missed_stranger == 3  # "", None, whitespace
 
 
 def test_gt_box_name_empty_string_is_anonymous():
     """HARM-06 / rg-005: empty-string name is anonymous, not named.
 
-    Pre-fix: report._gt_box_name treated name='' as named (str('')) while
-    labeled_left_to_right skipped it. One predicate: gt_box_name.
+    Strengthened cross-site coverage lives in
+    test_namedness_predicate_shared_across_sites (VLM6-R2-A-01). Kept as a
+    thin direct unit for gt_box_name + stranger-miss routing.
     """
-    from scripts.eval_harness.face_assignment import gt_box_name
-
     assert gt_box_name({"name": None, "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
     assert gt_box_name({"name": "", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None
     assert gt_box_name({"name": "   ", "x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}) is None

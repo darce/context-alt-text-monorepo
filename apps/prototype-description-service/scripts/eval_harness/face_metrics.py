@@ -34,6 +34,8 @@ from typing import Any
 
 import numpy as np
 
+from scripts.eval_harness.face_assignment import gt_box_name
+
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
 # Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
@@ -246,6 +248,11 @@ def predicted_left_to_right(
     rg-005). **Leftmost-wins duplicate-name dedup** mirrors
     ``labeled_left_to_right`` (VLM6-R4-08).
 
+    Namedness (VLM6-R2-A-01 / HARM-06): routes every row through ``gt_box_name``
+    — the single strip/empty→None predicate also used by association and
+    ``labeled_left_to_right``. Whitespace-only names are anonymous (skipped);
+    padded names are stripped before ordering.
+
     Returns:
     - ``None`` when ``identities`` is None (unknown).
     - Ordered unique names when rows are present. Unpositioned / unnormalizable
@@ -259,19 +266,18 @@ def predicted_left_to_right(
     positioned: list[tuple[float, float, str]] = []
     unpositioned: list[str] = []
     for entry in identities:
+        name = gt_box_name(entry)
+        if name is None:
+            continue
         if isinstance(entry, Mapping):
-            name = entry.get("name")
             bbox = entry.get("bbox")
         else:
-            name = getattr(entry, "name", None)
             bbox = getattr(entry, "bbox", None)
-        if name is None or name == "":
-            continue
         centre = wire_bbox_normalized_centre(bbox, image_width=image_width, image_height=image_height)
         if centre is None:
-            unpositioned.append(str(name))
+            unpositioned.append(name)
         else:
-            positioned.append((centre[0], centre[1], str(name)))
+            positioned.append((centre[0], centre[1], name))
     positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
     unpositioned.sort()
     return _leftmost_unique_names([name for _, _, name in positioned] + unpositioned)
@@ -325,6 +331,78 @@ def sort_identity_rows_by_normalized_centre(
     return [t[-1] for t in positioned] + [t[1] for t in unpositioned]
 
 
+@dataclass(frozen=True)
+class LabeledOrderResult:
+    """Labeled L→R names plus degradation disclosure (VLM6-R2-G-01 / HARM-07).
+
+    ``order_degraded`` is True when any named box used the per-box x-only
+    fallback (missing ``y``). Report consumers should aggregate image-level
+    counts into ``faces.identity_ordering`` — suggested field
+    ``labeled_y_missing_images`` (do not overload ``degraded_images``, which
+    means predicted identity_ordering stamp == DEGRADED; S2-07 / rg-015).
+    """
+
+    names: list[str] | None
+    y_missing_count: int = 0
+    order_degraded: bool = False
+
+
+def _labeled_box_order_key(x: float, y: float | None, name: str) -> tuple:
+    """Per-box L→R sort key — never invents y=0.0 (HARM-07 / VLM6-R2-G-01).
+
+    - y present: ``(x, 0, y, name)`` — equivalent to ``normalized_centre_order_key``
+      (x, y, name) with a constant present-flag.
+    - y absent:  ``(x, 1, 0.0, name)`` — primary x only for spatial placement;
+      the missing-flag separates these from a real top-of-frame y=0.0 box at
+      the same x. Name is a determinism tertiary, not a spatial claim; when
+      any box takes this branch the image is ``order_degraded``.
+    """
+    if y is not None:
+        return (float(x), 0, float(y), str(name))
+    return (float(x), 1, 0.0, str(name))
+
+
+def labeled_order(face_boxes: Sequence[Any] | None) -> LabeledOrderResult:
+    """Named L→R with per-box missing-y fallback + degradation counter.
+
+    See ``labeled_left_to_right`` for order semantics. Prefer this entry when
+    the caller must surface ``order_degraded`` / ``y_missing_count`` (anchor
+    report disclosure; VLM6-R2-G-01).
+    """
+    if not face_boxes:
+        return LabeledOrderResult(names=None)
+    # (x, y|None, name)
+    named: list[tuple[float, float | None, str]] = []
+    named_missing_x = 0
+    for box in face_boxes:
+        # Single namedness predicate (VLM6-R2-A-01 / HARM-06): strip; empty → None.
+        name = gt_box_name(box)
+        if name is None:
+            continue
+        if isinstance(box, Mapping):
+            x = box.get("x")
+            y = box.get("y")
+        else:
+            x = getattr(box, "x", None)
+            y = getattr(box, "y", None)
+        if x is None:
+            named_missing_x += 1
+            continue
+        y_val: float | None = None if y is None else float(y)
+        named.append((float(x), y_val, name))
+    # Named boxes exist but none carry x → manifest defect, not empty order.
+    if not named and named_missing_x > 0:
+        return LabeledOrderResult(names=None)
+    # Boxes present but none named (all strangers): established empty order.
+    y_missing = sum(1 for _, y, _ in named if y is None)
+    named.sort(key=lambda t: _labeled_box_order_key(t[0], t[1], t[2]))
+    return LabeledOrderResult(
+        names=_leftmost_unique_names([name for _, _, name in named]),
+        y_missing_count=y_missing,
+        order_degraded=y_missing > 0,
+    )
+
+
 def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
     """Named identities left-to-right by face-box centre, or None if unknown.
 
@@ -343,49 +421,21 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
       empty labeled order. Scoring as ``[]`` would charge every predicted name
       as a positional miss (VLM6-R4-08).
     - Ordered unique names when boxes are present. Anonymous boxes (``name``
-      None/empty) are skipped. **Duplicate names keep the leftmost occurrence
-      only** so the sequence cardinality matches what ``predicted`` can hold
-      (one slot per distinct identity, as ``present_identities`` is a set-like
-      list). Later same-name boxes are ignored, not multi-counted.
+      None/empty/whitespace — via ``gt_box_name``) are skipped. **Duplicate
+      names keep the leftmost occurrence only** so the sequence cardinality
+      matches what ``predicted`` can hold (one slot per distinct identity, as
+      ``present_identities`` is a set-like list). Later same-name boxes are
+      ignored, not multi-counted.
     - ``[]`` when boxes are present but all anonymous (order established, nobody
       named) — distinct from the malformed-GT ``None`` case above.
 
-    HARM-07 / rg-015: never invent ``y=0.0``. When every named box with ``x``
-    also carries ``y``, sort by the shared ``normalized_centre_order_key``
-    (x, y, name). When any named box is missing ``y``, sort by ``(x, name)``
-    only — real primary + name tertiary, no fabricated secondary coordinate.
+    HARM-07 / rg-015 / VLM6-R2-G-01: never invent ``y=0.0``. Fallback is
+    **per-box**: boxes with ``y`` keep the centre key; boxes missing ``y`` sort
+    by ``x`` alone in the same pass (missing-flag secondary — not a whole-image
+    collapse to ``(x, name)`` that discards real y on sibling boxes). Use
+    ``labeled_order`` when the degradation counter is required.
     """
-    if not face_boxes:
-        return None
-    # (x, y|None, name)
-    named: list[tuple[float, float | None, str]] = []
-    named_missing_x = 0
-    for box in face_boxes:
-        if isinstance(box, Mapping):
-            name = box.get("name")
-            x = box.get("x")
-            y = box.get("y")
-        else:
-            name = getattr(box, "name", None)
-            x = getattr(box, "x", None)
-            y = getattr(box, "y", None)
-        if name is None or name == "":
-            continue
-        if x is None:
-            named_missing_x += 1
-            continue
-        y_val: float | None = None if y is None else float(y)
-        named.append((float(x), y_val, str(name)))
-    # Named boxes exist but none carry x → manifest defect, not empty order.
-    if not named and named_missing_x > 0:
-        return None
-    # Boxes present but none named (all strangers): established empty order.
-    if named and all(y is not None for _, y, _ in named):
-        named.sort(key=lambda t: normalized_centre_order_key(t[0], float(t[1]), t[2]))
-    else:
-        # Missing y on at least one box: never invent y=0.0 (HARM-07).
-        named.sort(key=lambda t: (t[0], t[2]))
-    return _leftmost_unique_names([name for _, _, name in named])
+    return labeled_order(face_boxes).names
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:

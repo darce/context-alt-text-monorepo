@@ -3,7 +3,9 @@
 **Lane:** `vlm6-s2a-fix-gates`  
 **Task:** `VLM-6`  
 **Scope:** F1-1 + F1-2 only (assignment #517)  
-**Sandbox base:** `c9f7c6e` (history-stripped; parent base `6b50ddde` not present as a git object)
+**Sandbox base:** history-stripped clone (sandbox-only object; not present here).
+<!-- sandbox base was `c9f7c6e` — unresolvable at destination; do not cite as a commit -->
+**Destination-reachable parent base:** `6b50ddde`
 
 ## Verdict
 

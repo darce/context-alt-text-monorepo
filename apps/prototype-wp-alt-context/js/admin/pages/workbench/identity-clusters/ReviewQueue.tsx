@@ -82,6 +82,12 @@ import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
  */
 const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
 
+/** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
+const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled clusters.';
+
+/** Empty-queue position copy when the projection outage makes the count unmeasurable. */
+const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
+
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
   switch (item.kind) {
@@ -556,8 +562,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         previousItemKeyRef.current = null;
         // UI-04: drain copy is for a successful empty only — projection failure
         // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+        // [rg-003] the outage must not silence the filtered-empty announcement:
+        // when filters hide real work, AT hears both the failure and the hint
+        // that an escape hatch exists, matching the visual (both are rendered).
         if (data.isTopUnlabeledError) {
-          setLiveMessage(__('Unable to load unlabeled clusters.', 'alt-context'));
+          const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
+          setLiveMessage(
+            filteredEmptyWithWork
+              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+              : errorCopy,
+          );
         } else {
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
           setLiveMessage(
@@ -912,7 +926,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
                 ? data.isTopUnlabeledError
-                  ? __('—', 'alt-context')
+                  ? // [A11Y] a bare em dash announces as punctuation and loses the
+                    // position entirely; state the unmeasurable count explicitly.
+                    __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
                     /* translators: 1: current 1-based position, 2: total */
@@ -1149,42 +1165,48 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
             />
           ) : length === 0 || !currentItem ? (
-            data.isTopUnlabeledError ? (
-              // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
-              <div
-                className="acx-review-queue__error"
-                role="alert"
-                data-testid="acx-review-queue-top-unlabeled-error"
-              >
-                <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => void data.refetchTopUnlabeled()}
+            // [rg-003] the outage and the Clear-filters escape hatch coexist: a
+            // top-unlabeled 500 must never remove a primary control that reaches
+            // real pending work. Only the true-drain copy is suppressed by it.
+            <>
+              {data.isTopUnlabeledError ? (
+                // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  {__('Retry', 'alt-context')}
-                </button>
-              </div>
-            ) : filteredEmptyWithWork ? (
-              // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
-              <div className="acx-review-queue__empty">
-                <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => {
-                    onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                    onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-                  }}
-                >
-                  {__('Clear filters', 'alt-context')}
-                </button>
-              </div>
-            ) : (
-              <p className="acx-review-queue__empty">
-                {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-              </p>
-            )
+                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
+              {filteredEmptyWithWork ? (
+                // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
+                <div className="acx-review-queue__empty">
+                  <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
+                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                    }}
+                  >
+                    {__('Clear filters', 'alt-context')}
+                  </button>
+                </div>
+              ) : data.isTopUnlabeledError ? null : (
+                <p className="acx-review-queue__empty">
+                  {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                </p>
+              )}
+            </>
           ) : suppressRetiredHead ? (
             <p className="acx-review-queue__retired" data-testid="acx-review-queue-retired-head">
               {liveMessage ?? __('This review target is no longer available.', 'alt-context')}
@@ -1201,7 +1223,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
+                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1755,7 +1777,7 @@ const CurrentCard = ({
               role="alert"
               data-testid="acx-review-queue-top-unlabeled-error"
             >
-              <p>{__('Unable to load unlabeled clusters.', 'alt-context')}</p>
+              <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
               <button type="button" className="button" onClick={onRetryTopUnlabeled}>
                 {__('Retry', 'alt-context')}
               </button>

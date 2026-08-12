@@ -106,9 +106,9 @@ export interface WorkbenchFindingsViewModel {
   /**
    * True when the top-unlabeled query failed. Must not be laundered into empty
    * findings or a measured unlabeled count of 0 (UI-03 / UI-06, RLSE-05).
-   * Optional on partial view-model fixtures; production hook always sets it.
+   * Required: an omitted flag silently restores the laundered-empty behaviour.
    */
-  isTopUnlabeledError?: boolean;
+  isTopUnlabeledError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
   /**

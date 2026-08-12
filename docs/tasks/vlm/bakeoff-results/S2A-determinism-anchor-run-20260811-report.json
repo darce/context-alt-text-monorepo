@@ -2,7 +2,7 @@
   "caption": {
     "easy_wrong_defined_images": 37,
     "gated_score_excluded": 3,
-    "gated_score_scored": 34,
+    "gated_score_scored": 35,
     "insertion_rate": 0.0,
     "mean_gated_score": 0.0,
     "must_right_defined_images": 34,
@@ -13,44 +13,44 @@
     "wrong_name_images": 0
   },
   "corpus": {
-    "manifest_entries": 37,
+    "manifest_entries": 38,
     "media_id_extra": 0,
     "media_id_missing": 0
   },
   "counts": {
     "failed": 0,
-    "scored": 37,
-    "total": 37
+    "scored": 38,
+    "total": 38
   },
   "eval_mode": "standard",
   "faces": {
     "detection": {
       "fn": 6,
       "fp": 3,
-      "precision": 0.9444444444444444,
-      "recall": 0.8947368421052632,
-      "tp": 51
+      "precision": 0.9464285714285714,
+      "recall": 0.8983050847457628,
+      "tp": 53
     },
     "identification": {
-      "evaluated_images": 37,
+      "evaluated_images": 38,
       "excluded_images": [],
       "ignored_wrong_names": [],
       "macro_precision": 0.7142857142857143,
-      "macro_recall": 0.8966666666666667,
+      "macro_recall": 0.8980952380952381,
       "per_identity": {
         "Bea Burke": {
           "fn": 0,
           "fp": 0,
           "precision": 1.0,
           "recall": 1.0,
-          "tp": 1
+          "tp": 2
         },
         "Caitlin Weaver": {
           "fn": 3,
           "fp": 0,
           "precision": 1.0,
-          "recall": 0.7857142857142857,
-          "tp": 11
+          "recall": 0.8,
+          "tp": 12
         },
         "Cristina Quintana": {
           "fn": 0,
@@ -179,7 +179,8 @@
           "mock_images/rrw-mirror.jpg",
           "mock_images/ryann-bar.jpg",
           "mock_images/ryann-group-party.jpg",
-          "mock_images/ryann-party.jpg"
+          "mock_images/ryann-party.jpg",
+          "mock_images/y-missing-mixed-order.jpg"
         ],
         "position_accuracy": null,
         "position_hits": 0,
@@ -189,8 +190,8 @@
         "swap_images": 0,
         "vacuity_signal": "positional identification not evaluable on this corpus, π=0 for box-grounded identity claims"
       },
-      "precision": 0.8787878787878788,
-      "recall": 0.8055555555555556,
+      "precision": 0.8857142857142857,
+      "recall": 0.8157894736842105,
       "true_rejections": 7,
       "wrong_names": [
         [
@@ -214,7 +215,11 @@
     "identity_ordering": {
       "degraded_images": 0,
       "degraded_paths": [],
-      "order_unknown_excluded": 37,
+      "labeled_y_missing_images": 1,
+      "labeled_y_missing_paths": [
+        "mock_images/y-missing-mixed-order.jpg"
+      ],
+      "order_unknown_excluded": 38,
       "positional_images": 0
     }
   },
@@ -1703,6 +1708,45 @@
       "sentence_count": 1,
       "tag_coverage": 1.0,
       "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.0,
+      "first_sentence_gist_ok": true,
+      "fkre": 92.97,
+      "gated_score": 0.0,
+      "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
+      "inserted_identities": [],
+      "media_id": 39,
+      "meta_framing_hits": [],
+      "missing_identities": [
+        "Bea Burke",
+        "Caitlin Weaver"
+      ],
+      "must_right_failures": [],
+      "name_front_loaded": false,
+      "path": "mock_images/y-missing-mixed-order.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
+      "policy_violation": false,
+      "repetition_ratio": 0.125,
+      "sentence_count": 1,
+      "tag_coverage": 1.0,
+      "wrong_name_hits": []
     }
   ],
   "placement": {
@@ -1710,49 +1754,58 @@
     "accuracy": null,
     "claims": 0,
     "correct": 0,
-    "images_scored": 37,
+    "images_scored": 38,
     "wrong": 0
   },
   "provenance": {
     "adapter": "seeded",
     "base_url": "seeded-stub://offline",
     "canonical_timestamp": "2026-08-11T00:00:00Z",
+    "corpus_traps": [
+      {
+        "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
+        "media_id": 39,
+        "note": "named box missing y alongside sibling named box with y; order_degraded observable so the caption freeze counter cannot stay at structural 0. Golden seed stays 0/37 face_boxes; this trap is freeze-corpus-only.",
+        "path": "mock_images/y-missing-mixed-order.jpg",
+        "trips": "labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual / wG3 caption corpus)"
+      }
+    ],
     "coverage_gaps": {
       "demographic_cohort": {
         "below_threshold": true,
         "pi_zero": true,
         "populated": 0,
-        "reason": "0/37 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame",
+        "reason": "0/38 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame",
         "registry": "owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet",
         "threshold": 5,
-        "total": 37
+        "total": 38
       },
       "face_boxes": {
         "below_threshold": true,
-        "pi_zero": true,
-        "populated": 0,
-        "reason": "0/37 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces",
+        "pi_zero": false,
+        "populated": 1,
+        "reason": "1/38 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces",
         "registry": "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute",
         "threshold": 5,
-        "total": 37
+        "total": 38
       },
       "reference_facts": {
         "below_threshold": true,
         "pi_zero": true,
         "populated": 0,
-        "reason": "0/37 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)",
+        "reason": "0/38 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)",
         "registry": "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone",
         "threshold": 5,
-        "total": 37
+        "total": 38
       },
       "spatial_facts": {
         "below_threshold": true,
         "pi_zero": true,
         "populated": 0,
-        "reason": "0/37 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)",
+        "reason": "0/38 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)",
         "registry": "owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus",
         "threshold": 5,
-        "total": 37
+        "total": 38
       }
     },
     "face_metrics_evidential": false,
@@ -1760,12 +1813,11 @@
     "generator": "scripts.eval_harness.generate_determinism_anchor",
     "head_sha": null,
     "manifest_matches_fetch": true,
-    "manifest_sha256": "83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737",
+    "manifest_sha256": "7462d3259f068aa187cd5f2dc3cd934eaa3b4b2a71e441f9e362f7e6cbfc9fd3",
     "metric_backing_refusals": {
-      "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
-      "face_boxes": "cannot certify metric backed by 'face_boxes': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute.",
-      "reference_facts": "cannot certify metric backed by 'reference_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
-      "spatial_facts": "cannot certify metric backed by 'spatial_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus."
+      "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/38 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
+      "reference_facts": "cannot certify metric backed by 'reference_facts': 0/38 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
+      "spatial_facts": "cannot certify metric backed by 'spatial_facts': 0/38 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus."
     },
     "model": {
       "adapters": [
@@ -1778,17 +1830,18 @@
         "1"
       ]
     },
-    "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. See eval_harness/README.md § Corpus coverage boundary.",
+    "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. Freeze corpus is golden.json + media 39 mixed-y order_degraded trap (VLM6-R2-G-01 / wG3) so labeled_y_missing_images is freeze-observable; see provenance.corpus_traps. See eval_harness/README.md § Corpus coverage boundary.",
     "predictions_source": "ground_truth_derived_fixture",
-    "score_manifest_sha256": "83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737",
+    "quality_floor_caveat": "position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate",
+    "score_manifest_sha256": "7462d3259f068aa187cd5f2dc3cd934eaa3b4b2a71e441f9e362f7e6cbfc9fd3",
     "started_at": null
   },
   "quality": {
     "first_sentence_gist_ok_rate": 1.0,
     "mean_context_duplication": 0.0,
-    "mean_fkre": 64.9,
-    "mean_repetition_ratio": 0.0563,
-    "mean_tag_coverage": 0.6847,
+    "mean_fkre": 65.63,
+    "mean_repetition_ratio": 0.0581,
+    "mean_tag_coverage": 0.693,
     "meta_framing_images": 0,
     "name_front_loaded_rate": 0.0,
     "sentence_band": [
@@ -1802,12 +1855,12 @@
     "by_difficulty": {
       "easy": {
         "mean_gated_score": 0.0,
-        "n": 16,
+        "n": 17,
         "placement_accuracy": null,
         "positional": {
           "compared_images": 0,
           "exact_order_rate": null,
-          "excluded_images": 16,
+          "excluded_images": 17,
           "position_accuracy": null,
           "swap_images": 0
         },
@@ -1869,12 +1922,12 @@
       },
       "faces": {
         "mean_gated_score": 0.0,
-        "n": 19,
+        "n": 20,
         "placement_accuracy": null,
         "positional": {
           "compared_images": 0,
           "exact_order_rate": null,
-          "excluded_images": 19,
+          "excluded_images": 20,
           "position_accuracy": null,
           "swap_images": 0
         },
@@ -1939,9 +1992,9 @@
     "mean_gated_score": 0.0,
     "must_right_failed_images": 34,
     "reasons": [
-      "wrong_name_rate=0.1081 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=37)",
-      "category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False order_unknown_excluded=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)",
-      "category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=37 (π=0 on spatial_facts; AUDIT-07)",
+      "wrong_name_rate=0.1053 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=38)",
+      "category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False order_unknown_excluded=38 excluded_images=38 (π=0 on face_boxes; AUDIT-07)",
+      "category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=38 (π=0 on spatial_facts; AUDIT-07)",
       "category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)",
       "category-vacuity: identity_ordering — positional_images=0 (order metric non-observable; AUDIT-07 / S2-06)"
     ],
@@ -1949,7 +2002,7 @@
     "verdict": "fail",
     "wrong_name_assertions": 4,
     "wrong_name_images": 4,
-    "wrong_name_rate": 0.1081,
+    "wrong_name_rate": 0.1053,
     "wrong_name_rate_floor": 0.0
   }
 }

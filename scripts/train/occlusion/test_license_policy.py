@@ -6253,8 +6253,13 @@ class TestA602ComponentSplitFirst:
         """After A6-03, yolo_nas components DENY on the NC-weights axis."""
         hit = policy._package_denylist_hit(token)
         assert hit is not None, f"{token!r} must deny via yolo_nas component"
-        assert hit.package_id == "yolo_nas", (
-            f"{token!r}: expected package_id yolo_nas (not bare yolo bridging "
+        # F7 derived floor may report a size-specific seed (yolo_nas_l).
+        assert (
+            hit.package_id == "yolo_nas"
+            or hit.package_id.startswith("yolo_nas")
+            or hit.package_id.startswith("yolonas")
+        ), (
+            f"{token!r}: expected package_id yolo_nas* (not bare yolo bridging "
             f"'/'), got {hit.package_id!r}"
         )
         assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
@@ -6339,11 +6344,17 @@ class TestA603YoloNasNcWeightsAndYolofNote:
         assert hit is not None, (
             f"{token!r} must DENY on NC-weights axis (policy correction)"
         )
-        assert hit.package_id == "yolo_nas"
+        # F7 derived floor may report a more-specific size seed (yolo_nas_s)
+        # when one exists; the base stem yolo_nas still covers unsplit forms.
+        assert hit.package_id == "yolo_nas" or hit.package_id.startswith(
+            "yolo_nas"
+        ) or hit.package_id.startswith("yolonas"), (
+            f"{token!r}: expected yolo_nas* package_id, got {hit.package_id!r}"
+        )
         assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
         notes_cf = hit.notes.casefold()
         assert "non-commercial" in notes_cf or "nc-weights" in notes_cf
-        assert "buffalo" in notes_cf  # axis parallel named in note
+        assert "deci" in notes_cf or "buffalo" in notes_cf
 
     @pytest.mark.parametrize("token", YOLO_NAS_DENY_PINS)
     @pytest.mark.parametrize(
@@ -6393,34 +6404,47 @@ class TestA603YoloNasNcWeightsAndYolofNote:
     def test_red_proof_yolo_nas_deny_entry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Undo the NC-weights deny listing → yolo-nas admits (TEST-15).
+        """Strip yolo_nas* NC floor → reason flips off NC axis (TEST-15).
 
-        Bare ``yolo`` compact remainder (``nas``) would re-deny if the entry
-        were only deleted, so the red-proof restores the pre-correction
-        exception listing: remove deny seed + restore exception seed → admit.
-        That proves the policy flip (not bare-yolo fallthrough) is load-bearing.
+        F7 deny-first folded (a)/(b) means bare ``yolo`` separator-boundary
+        still claims ``yolo_nas`` even if an exception seed is restored —
+        admit-via-exception is no longer reachable for ``yolo_*`` forms
+        (and must not be: that is the A10-02 fix). Load-bearing proof for
+        the NC-axis entry is therefore the **reason flip**: with every
+        yolo_nas*/yolonas* NC floor key removed, ``yolo-nas`` is still
+        denied but via bare ``yolo`` ``denylisted_package`` (AGPL), not
+        ``nc_model_derived``. Sibling AGPL seeds still deny.
         """
         token = "yolo-nas"
-        assert policy._package_denylist_hit(token) is not None, (
+        pre = policy._package_denylist_hit(token)
+        assert pre is not None, (
             f"precondition: {token!r} must deny with yolo_nas entry present"
         )
+        assert pre.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"precondition: {token!r} must be NC-axis, got {pre.reason}"
+        )
+
+        def _is_yolo_nas_floor_key(k: str) -> bool:
+            kc = (policy.canonical(k) or k).replace("_", "")
+            return kc.startswith("yolonas")
+
         stripped = {
             k: v
             for k, v in policy.PACKAGE_DENYLIST.items()
-            if k != "yolo_nas"
+            if not _is_yolo_nas_floor_key(k)
         }
-        restored_exc = dict(policy.PACKAGE_EXCEPTION_ALLOWLIST)
-        restored_exc["yolo_nas"] = policy.PackageExceptionEntry(
-            package_id="yolo_nas",
-            display_name="YOLO-NAS (Deci)",
-            spdx_id="Apache-2.0",
-            notes="temporary red-proof restore of pre-A6-03 exception",
-        )
         monkeypatch.setattr(policy, "PACKAGE_DENYLIST", stripped)
-        monkeypatch.setattr(policy, "PACKAGE_EXCEPTION_ALLOWLIST", restored_exc)
-        assert policy._package_denylist_hit(token) is None, (
-            f"red-proof: with deny entry removed and exception restored, "
-            f"{token!r} must admit"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"red-proof: {token!r} must still deny via bare yolo after NC "
+            "floor strip"
+        )
+        assert hit.package_id == "yolo", (
+            f"red-proof: expected bare yolo fallthrough, got {hit.package_id!r}"
+        )
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"red-proof: expected denylisted_package after NC strip, got "
+            f"{hit.reason}"
         )
         # Sibling deny seeds still deny.
         assert policy._package_denylist_hit("ultralytics") is not None
@@ -6925,25 +6949,38 @@ class TestA701YoloNasVariantNcPins:
     def test_red_proof_yolo_nas_m_pin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Remove yolo_nas_m pin + structural NC → derived passes (TEST-15).
+        """Strip yolo_nas_m pin + yolo_nas* floor → reason leaves NC (TEST-15).
 
-        FIR-7-B8-06 structural NC matching makes the bare ``yolo_nas`` package
-        seed cover size variants without the pin; the pin remains load-bearing
-        only when structural matching is also disabled (exact-set path).
+        F7 deny-first folded (a)/(b) means bare ``yolo`` still claims
+        ``yolo_nas_m`` after NC floor strip, so the door cannot admit.
+        Load-bearing proof: with the m-pin and every yolo_nas*/yolonas*
+        floor key removed (and structural NC off so membership strip
+        cannot re-resolve), the derived door rejects via bare ``yolo``
+        ``denylisted_package`` rather than ``nc_model_derived``. Sibling
+        ``buffalo_l`` stays NC.
         """
         token = "yolo_nas_m"
-        assert policy.audit_derived_from_model(token).ok is False, (
+        pre = policy.audit_derived_from_model(token)
+        assert pre.ok is False, (
             f"precondition: {token!r} must reject with pin present"
         )
-        stripped = frozenset(
+        assert pre.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        stripped_pins = frozenset(
             x for x in policy._PINNED_NC_MODEL_IDS if x != "yolo_nas_m"
         )
-        # Rebuild NC_MODEL_IDS without the pin (keep package-deny yolo_nas seed
-        # so bare yolo_nas still rejects; only the m-variant pin is load-bearing
-        # on the exact-set path).
-        ids = set(stripped)
+
+        def _is_yolo_nas_floor_key(k: str) -> bool:
+            kc = (policy.canonical(k) or k).replace("_", "")
+            return kc.startswith("yolonas")
+
+        stripped_deny = {
+            k: v
+            for k, v in policy.PACKAGE_DENYLIST.items()
+            if not _is_yolo_nas_floor_key(k)
+        }
+        ids = set(stripped_pins)
         ids.update(policy._NC_EXPLICIT_VARIANTS)
-        for entry in policy.PACKAGE_DENYLIST.values():
+        for entry in stripped_deny.values():
             if entry.reason is policy.RejectionReason.NC_MODEL_DERIVED:
                 ids.add(entry.package_id)
         for pattern in policy.NC_MODEL_PATTERNS:
@@ -6957,22 +6994,26 @@ class TestA701YoloNasVariantNcPins:
         out: set[str] = set()
         for i in ids:
             c = policy.canonical(i)
-            if c:
+            if c and not c.replace("_", "").startswith("yolonas"):
                 out.add(c)
-        # Drop any expanded form that only the m-pin would have introduced;
-        # monkeypatch NC_MODEL_IDS and let _live_nc_expanded re-expand.
-        # Also disable structural NC so the pin is the sole load-bearing path.
-        monkeypatch.setattr(policy, "_PINNED_NC_MODEL_IDS", stripped)
+        monkeypatch.setattr(policy, "_PINNED_NC_MODEL_IDS", stripped_pins)
+        monkeypatch.setattr(policy, "PACKAGE_DENYLIST", stripped_deny)
         monkeypatch.setattr(policy, "NC_MODEL_IDS", frozenset(out))
         monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
         result = policy.audit_derived_from_model(token)
-        assert result.ok is True, (
-            f"red-proof: with yolo_nas_m pin removed, {token!r} must admit; "
-            f"got {result.reason} ({result.detail})"
+        assert result.ok is False, (
+            f"red-proof: {token!r} must still reject via bare yolo fallthrough"
         )
-        # Sibling pins still reject.
-        assert policy.audit_derived_from_model("yolo_nas").ok is False
-        assert policy.audit_derived_from_model("buffalo_l").ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"red-proof: expected denylisted_package after NC strip, got "
+            f"{result.reason} ({result.detail})"
+        )
+        assert "yolo" in result.detail.casefold()
+        assert "nc_model_derived" not in (result.reason or "")
+        # Sibling non-NAS pins still reject on NC axis.
+        buffalo = policy.audit_derived_from_model("buffalo_l")
+        assert buffalo.ok is False
+        assert buffalo.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
 
 # ---------------------------------------------------------------------------
@@ -7163,7 +7204,12 @@ class TestB801UniformSuffixScan:
     def test_deci_yolo_nas_l_still_denies_nc(self) -> None:
         hit = policy._package_denylist_hit("deci/yolo-nas-l")
         assert hit is not None
-        assert hit.package_id == "yolo_nas"
+        # F7: size-specific floor seed yolo_nas_l may rank over base yolo_nas.
+        assert (
+            hit.package_id == "yolo_nas"
+            or hit.package_id.startswith("yolo_nas")
+            or hit.package_id.startswith("yolonas")
+        )
         assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     def test_myyolo_admits_under_compact_suffix_floor(self) -> None:
@@ -7372,9 +7418,16 @@ class TestB802IterativeFailClosedBounds:
         """
         orig = policy._uniform_component_scan
 
-        def _bounded(token: str, *, max_steps: int | None = None):
-            # Force overflow on any multi-strip residual path.
-            return orig(token, max_steps=1)
+        def _bounded(
+            token: str,
+            *,
+            max_steps: int | None = None,
+            reasons: frozenset | None = None,
+        ):
+            # Force overflow on any multi-strip residual path; forward reasons
+            # so multi-axis door scans (FIR-7-A10-01) stay honest under this
+            # probe.
+            return orig(token, max_steps=1, reasons=reasons)
 
         monkeypatch.setattr(policy, "_uniform_component_scan", _bounded)
         # yolox_yolop_ultralytics needs >1 strip against a real bound; with
@@ -7580,13 +7633,17 @@ class TestB806StructuralNcDoors:
     def test_red_proof_structural_nc_export_tag(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Disable structural NC alone → export-tag cells admit (TEST-15)."""
-        # Size-tagged Deci cells are strip-only: whole-component does not
-        # promote ``yolo_nas`` + ``l_trt`` (rest is not pure export-shaped).
-        # Bare ``antelopev2_trt`` now rejects via B9-02 package-floor
-        # whole-component (a)/(b) even with structural NC off — same class
-        # as insightface_trt.
-        tokens = ("yolo_nas_l_int8", "yolo_nas_l_trt")
+        """Disable structural NC alone → structural-only cells admit (TEST-15).
+
+        F7 package-floor promotion covers known export-tag residuals
+        (``yolo_nas_l_trt`` / ``*_int8``) even with structural NC off, so
+        those are no longer sole-path witnesses. Structural strip remains
+        load-bearing for pure-alpha 4-char tags on multi-segment heads that
+        are **not** export-shaped and exceed rule (c)'s 3-char rem cap
+        (``yolo_nas_l_free`` / ``yolo_nas_l_blah``): membership after strip
+        rejects; floor (b)/(c) miss; with structural off the door admits.
+        """
+        tokens = ("yolo_nas_l_free", "yolo_nas_l_blah")
         for token in tokens:
             assert policy.audit_derived_from_model(token).ok is False, (
                 f"precondition: {token!r} must reject with structural NC on"
@@ -7603,6 +7660,7 @@ class TestB806StructuralNcDoors:
         # (includes antelopev2 after B9-02 follow-up floor backstop).
         assert policy.audit_derived_from_model("insightface_trt").ok is False
         assert policy.audit_derived_from_model("antelopev2_trt").ok is False
+        assert policy.audit_derived_from_model("yolo_nas_l_trt").ok is False
 
 
 class TestB902PrefixShieldedNcFloor:
@@ -8014,8 +8072,11 @@ class TestA901FlagIndependence:
             "megvii_yolox",  # vendor-prefix admit
         )
         derived_pins = (
-            "yolo_nas_l_int8",
-            "yolo_nas_l_trt",
+            # Structural-only 4-char pure-alpha tag (F7: known export tags also
+            # reject via package-floor promotion, so they no longer sole-prove
+            # _NC_STRUCTURAL_MATCH_ENABLED).
+            "yolo_nas_l_free",
+            "yolo_nas_l_trt",  # floor promotion path
             "buffalo_l",
             # B9-02 follow-up: prefix-shield cell gated by component-suffix walk.
             "myprefix_antelopev2",
@@ -8075,3 +8136,415 @@ class TestA901FlagIndependence:
         for f in self.SURVIVING_FLAGS:
             monkeypatch.setattr(policy, f, True)
 
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F7 — deny-first ordering, AGPL-aware promotion, derived NC surface
+# ---------------------------------------------------------------------------
+
+
+class TestA1002DenyFirstOrdering:
+    """FIR-7-A10-02: folded deny (a)/(b) before exception absorption.
+
+    Exception compact seeds (yolos/yolof/yolop/yolox) must not absorb bare-
+    yolo Ultralytics artifact forms (yolo_seg / yolo_free / yolo_pose /
+    yolo_x / yolo_s_v8). Pure exception identities and vendor-prefix forms
+    still admit.
+    """
+
+    DENY_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "checkpoints_yolo_seg",
+        "checkpoints_yolo_free",
+        "weights_yolo_pose",
+        "org_yolo_seg",
+        "hub_yolo_x",
+        "repo_yolo_s_v8",
+        "yolo_seg",
+        "yolo_free",
+        "yolo_pose",
+        "yolo_x",
+        "yolo_s",
+        "yolo_s_v8",
+    )
+
+    ADMIT_PINS: ClassVar[tuple[str, ...]] = (
+        "yolox_s",
+        "yoloxs",
+        "yolos-tiny",
+        "yolof_r50",
+        "yolop",
+        "yolopv2",
+        "yolop_yolox",
+        "yolox_yolop",
+        "megvii_yolox",
+        "hustvl_yolos",
+        "hustvl_yolop",
+        "megvii_model_yolof",
+        "ppyolov2",
+        "myyolo",
+        "yolodummy",
+    )
+
+    @pytest.mark.parametrize("token", DENY_WITNESSES)
+    def test_ultralytics_artifact_forms_deny(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (deny-first A10-02)"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert hit.package_id == "yolo" or hit.package_id.startswith("yolo"), (
+            f"{token!r}: expected yolo* AGPL seed, got {hit.package_id!r}"
+        )
+
+    @pytest.mark.parametrize("token", DENY_WITNESSES)
+    def test_ultralytics_artifact_forms_deny_on_training_data_row(
+        self, token: str
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", ADMIT_PINS)
+    def test_exception_admit_pins_survive(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"admit pin {token!r} must survive deny-first ordering"
+        )
+
+
+class TestA1001MultiAxisDoorPromotion:
+    """FIR-7-A10-01: doors consider ALL floor hits; AGPL precedes NC.
+
+    Dual-axis compounds (NC seed + Ultralytics residue) must not admit and
+    must not attribute one lineage's residue to the other's note.
+    Precedence: denylisted_package (AGPL) first when both present.
+    """
+
+    DUAL_AXIS: ClassVar[tuple[str, ...]] = (
+        "buffalo_l_ultralytics",
+        "arcface_ultralytics",
+        "antelopev2_ultralytics",
+        "yolo_nas_l_ultralytics",
+        "retinaface_yolov8",
+    )
+
+    @pytest.mark.parametrize("token", DUAL_AXIS)
+    def test_dual_axis_rejects_both_doors_with_agpl_precedence(
+        self, token: str
+    ) -> None:
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False, f"derived_from_model({token!r}) must reject"
+        assert derived.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}: AGPL precedence expected denylisted_package, got "
+            f"{derived.reason} ({derived.detail})"
+        )
+        # Honest AGPL lineage note — not an NC note on the AGPL residue.
+        detail_cf = derived.detail.casefold()
+        assert (
+            "ultralytics" in detail_cf
+            or "yolov8" in detail_cf
+            or "agpl" in detail_cf
+        ), f"{token!r}: AGPL detail missing: {derived.detail!r}"
+        # Must not attribute Ultralytics residue solely to buffalo/insightface
+        # wording without naming the AGPL package id.
+        assert "package_denylist entry" in detail_cf or "hits package" in detail_cf
+
+        source = policy.audit_source(token)
+        assert source.ok is False, f"audit_source({token!r}) must reject"
+        assert source.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", DUAL_AXIS)
+    def test_package_floor_still_sees_nc_axis(self, token: str) -> None:
+        """Row/package floor may report the ranked NC winner; either axis is
+        fail-closed. Doors use AGPL precedence (tested above)."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit package floor"
+
+
+class TestB1001DerivedNcFloorSurface:
+    """FIR-7-B10-01/B10-02/B10-05: NC floor derived from pinned surface.
+
+    Anti-drift invariant: every non-excluded pinned NC id hits the floor
+    bare, with one export tag, and with a junk leading prefix — both
+    underscore and compact spellings.
+    """
+
+    MEASURED_DENY: ClassVar[tuple[str, ...]] = (
+        "buffalo_l2_trt",
+        "org_buffalo_l2_int8",
+        "myprefix_buffalo_l2_trt",
+        "antelope_v2_int8",
+        "myprefix_antelope_v2_int8",
+        "buffalo_trt",
+        "buffalo_int8",
+    )
+
+    @pytest.mark.parametrize("token", MEASURED_DENY)
+    def test_measured_admits_now_fail_closed_on_rows_and_doors(
+        self, token: str
+    ) -> None:
+        floor = policy._package_denylist_hit(token)
+        assert floor is not None, f"{token!r} must hit package floor"
+        assert floor.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        source = policy.audit_source(token)
+        assert source.ok is False
+        assert source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_bare_buffalo_excluded_from_floor(self) -> None:
+        assert "buffalo" not in policy.PACKAGE_DENYLIST
+        assert "buffalo" in policy._NC_PACKAGE_FLOOR_EXCLUSIONS
+        assert policy._package_denylist_hit("buffalo_bill_detector") is None
+
+    def test_cosface_magface_deliberately_excluded(self) -> None:
+        assert "cosface" in policy._NC_SURFACE_DELIBERATE_EXCLUSIONS
+        assert "magface" in policy._NC_SURFACE_DELIBERATE_EXCLUSIONS
+        assert "cosface" not in policy._PINNED_NC_MODEL_IDS
+        assert "magface" not in policy._PINNED_NC_MODEL_IDS
+        assert policy.audit_derived_from_model("cosface").ok is True
+        assert policy.audit_derived_from_model("magface").ok is True
+
+    def test_anti_drift_pinned_nc_floor_sweep(self) -> None:
+        """Every non-excluded pinned NC id: bare + export tag + junk prefix.
+
+        Both underscore and compact spellings. Adding a pinned id without
+        floor coverage fails this sweep automatically.
+        """
+        excluded = (
+            policy._NC_PACKAGE_FLOOR_EXCLUSIONS
+            | policy._NC_SURFACE_DELIBERATE_EXCLUSIONS
+        )
+        seeds: list[str] = []
+        for raw in policy._PINNED_NC_MODEL_IDS:
+            if raw in excluded:
+                continue
+            c = policy.canonical(raw)
+            if not c or c in excluded:
+                continue
+            seeds.append(c)
+            compact = policy._compact_canonical(c)
+            if compact and compact != c:
+                seeds.append(compact)
+        assert seeds, "pinned NC surface produced zero floor seeds"
+        for seed in seeds:
+            bare = policy._package_denylist_hit(seed)
+            assert bare is not None, f"bare {seed!r} must hit NC floor"
+            assert bare.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            tagged = policy._package_denylist_hit(f"{seed}_trt")
+            assert tagged is not None, f"{seed!r}_trt must hit NC floor"
+            assert tagged.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            # Junk prefix: multi-segment seeds need separator-aligned suffix.
+            prefixed = policy._package_denylist_hit(f"myprefix_{seed}")
+            assert prefixed is not None, (
+                f"myprefix_{seed!r} must hit NC floor (suffix walk)"
+            )
+            assert prefixed.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+class TestB1003MembershipOutranksCoveringGate:
+    """FIR-7-B10-03 / A10-03: membership after strip is never vetoed."""
+
+    MEMBERSHIP_PINS: ClassVar[tuple[str, ...]] = (
+        "yolonasl_trt",
+        "buffalol2_trt",
+        "yolonas_int8",
+        "yolonas_onnx",
+        "yolonasl",
+        "buffalol2",
+    )
+
+    BR28_ADMIT: ClassVar[tuple[str, ...]] = (
+        "not_insightface",
+        "not-insightface",
+        "notdcface/x",
+        "buffalo_bill_detector",
+    )
+
+    @pytest.mark.parametrize("token", MEMBERSHIP_PINS)
+    def test_compact_head_membership_rejects_both_doors(
+        self, token: str
+    ) -> None:
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False, f"derived_from_model({token!r}) must reject"
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        source = policy.audit_source(token)
+        assert source.ok is False
+        assert source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", BR28_ADMIT)
+    def test_br28_counter_pins_still_admit_on_doors(self, token: str) -> None:
+        assert policy.audit_derived_from_model(token).ok is True, (
+            f"BR-28 counter-pin {token!r} must admit on derived door"
+        )
+        assert policy.audit_source(token).ok is True
+
+
+class TestB1004DoorPromotionShapes:
+    """FIR-7-B10-04 / A10-04 / A10-05: (c)-shaped, multi-segment, tag-flood."""
+
+    MULTI_SEGMENT_PREFIX: ClassVar[tuple[str, ...]] = (
+        "myprefix_buffalo_l2",
+        "myprefix_yolo_nas_l",
+        "myprefix_yolo_nas_pose_l",
+        "myprefix_arcface_glint360k_r100",
+    )
+
+    TAG_FLOOD: ClassVar[str] = (
+        "buffalo_l_onnx_int8_fp16_trt_ncnn_tflite_pt"
+    )
+
+    @pytest.mark.parametrize("token", MULTI_SEGMENT_PREFIX)
+    def test_multi_segment_under_junk_prefix_rejects_rows_and_doors(
+        self, token: str
+    ) -> None:
+        floor = policy._package_denylist_hit(token)
+        assert floor is not None, f"{token!r} must hit package floor"
+        assert floor.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert policy.audit_derived_from_model(token).ok is False
+        assert (
+            policy.audit_derived_from_model(token).reason
+            is policy.RejectionReason.NC_MODEL_DERIVED
+        )
+        assert policy.audit_source(token).ok is False
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_tag_flood_seven_tags_rejects_rows_and_doors(self) -> None:
+        """7 trailing known tags: floor promotion catches NC base (A10-05).
+
+        Membership strip bound is 3, so strip alone cannot fully unwrap;
+        package-floor export-shaped (b) has no length cap on known tags,
+        so the door claim 'admits only if base truly is not NC' holds.
+        """
+        token = self.TAG_FLOOD
+        heads = policy._nc_iter_stripped_heads(policy.canonical(token) or token)
+        assert len(heads) <= policy._NC_MAX_TRAILING_TAG_STRIPS
+        # Strip alone may leave debris; floor promotion must still reject.
+        assert policy._package_denylist_hit(token) is not None
+        assert policy.audit_derived_from_model(token).ok is False
+        assert (
+            policy.audit_derived_from_model(token).reason
+            is policy.RejectionReason.NC_MODEL_DERIVED
+        )
+        assert policy.audit_source(token).ok is False
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": token,
+        }
+        assert policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        ).ok is False
+
+    def test_c_shaped_door_promotion_via_monkeypatch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(c)-shaped floor hit promotes on doors independently of seed set.
+
+        Inject a synthetic NC floor seed ``zzymodel`` and a compact token
+        ``zzymodelx`` (rem=x, digit-free but we use digit rem ``zzymodel2``)
+        so promotion path is pinned without depending on production seeds.
+        """
+        seed = "zzymodel"
+        entry = policy.PackageDenylistEntry(
+            package_id=seed,
+            display_name="synthetic NC seed",
+            spdx_id="Non-Commercial",
+            reason=policy.RejectionReason.NC_MODEL_DERIVED,
+            notes="synthetic NC floor seed for (c)-promotion pin",
+        )
+        patched = dict(policy.PACKAGE_DENYLIST)
+        patched[seed] = entry
+        monkeypatch.setattr(policy, "PACKAGE_DENYLIST", patched)
+        # Digit-bearing compact rem: zzymodel + "2".
+        token = "zzymodel2"
+        assert policy._package_denylist_hit(token) is not None
+        whole = policy._whole_component_nc_package_hit(token)
+        assert whole is not None, (
+            f"(c)-shaped {token!r} must promote on whole-component NC path"
+        )
+        assert whole.package_id == seed
+        assert policy.audit_derived_from_model(token).ok is False
+        assert (
+            policy.audit_derived_from_model(token).reason
+            is policy.RejectionReason.NC_MODEL_DERIVED
+        )
+
+    def test_not_insightface_door_admit_is_deliberate(self) -> None:
+        """BR-28: not_insightface admits on doors; floor still rejects.
+
+        The seed sits as a pure suffix with leading alpha glue ``not_`` at
+        a separator. Door promotion carves out a single leading ``not``
+        segment — deliberate precision posture, not a silent gap.
+        """
+        assert policy.audit_derived_from_model("not_insightface").ok is True
+        assert policy.audit_source("not_insightface").ok is True
+        floor = policy._package_denylist_hit("not_insightface")
+        assert floor is not None
+        assert floor.package_id == "insightface"
+
+
+class TestB1005ScrfdNcSurface:
+    """FIR-7-B10-05 / A10-07: scrfd on NC surface; cosface/magface excluded."""
+
+    SCRFD_PINS: ClassVar[tuple[str, ...]] = (
+        "scrfd_10g_kps",
+        "scrfd_2.5g",
+        "myprefix_scrfd_10g_kps",
+        "scrfd",
+    )
+
+    @pytest.mark.parametrize("token", SCRFD_PINS)
+    def test_scrfd_rejects_rows_and_doors(self, token: str) -> None:
+        assert "scrfd" in policy._PINNED_NC_MODEL_IDS
+        floor = policy._package_denylist_hit(token)
+        assert floor is not None, f"{token!r} must hit package floor"
+        assert floor.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        detail_note = floor.notes.casefold()
+        assert "scrfd" in detail_note or "insightface" in detail_note
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert "scrfd" in derived.detail.casefold() or "insightface" in (
+            derived.detail.casefold()
+        )
+        assert policy.audit_source(token).ok is False
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED

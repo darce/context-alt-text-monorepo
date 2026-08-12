@@ -29,16 +29,20 @@ require a digest **shape**, not just an adjacent label (RV4-02):
 * A bare 7–12 hex token after ``golden sha is`` / ``fetch sha`` / ``manifest
   sha`` / ``freeze … sha`` is a **commit citation** and must resolve (RV4-02).
 
-Unicode evasion (RV4-03): each line is NFKC-normalised and Cf (format) characters
-(soft hyphen, ZWSP, …) are stripped before scanning. Homoglyph / confusable
-hex-lookalike runs next to commit vocabulary fail closed rather than vanishing.
+Unicode evasion (RV4-03 / VLM6-R2-G-03): each line is NFKC-normalised and Cf
+(format) characters (soft hyphen, ZWSP, …) are stripped before scanning.
+Homoglyph / confusable hex-lookalike runs are examined on **every** line
+unconditionally — commit vocabulary may annotate context but never gates
+whether a lookalike SHA is reported.
 
 HTML comments are **not** a skip channel (S5-01). Unresolvable hex inside
 ``<!-- ... -->`` fails the same way as visible prose. Foreign SHAs that
 genuinely must be shown belong in **visible** prose with ``sha-guard:ignore``
 scoped to the nearest token (S5-07), or — for fenced verbatim output — an
-adjacent ``sha-guard:ignore-next-block`` directive **outside** the fence
-(HARM-08). An unclosed ``<!--`` is a hard violation (S5-02).
+``sha-guard:ignore-next-block`` directive on the line **immediately before**
+the fence opener (blank lines allowed; intervening non-blank content resets
+pending suppression — VLM6-R2-G-05 / HARM-08). An unclosed ``<!--`` is a hard
+violation (S5-02).
 
 Usage:
     scripts/check_lane_report_shas.py [path ...]   # default: **/.s2a/**/*.md
@@ -91,7 +95,8 @@ _SHA256SUM_LISTING_AFTER = re.compile(r"^(?:…|\.\.\.)\s+\S")
 # Minimum hex length treated as a content-digest shape when a digest label is present.
 _DIGEST_MIN_HEX_LEN = 16
 
-# Commit / SHA vocabulary — homoglyph runs next to these fail closed (RV4-03).
+# Commit / SHA vocabulary — optional annotation context only (VLM6-R2-G-03).
+# Homoglyph detection is unconditional; this pattern must never gate reporting.
 _COMMIT_VOCAB = re.compile(
     r"(?i)\b(?:"
     r"commit|sha(?:256)?|sandbox|landing|history-stripped|"
@@ -268,8 +273,10 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
     Raises OSError on unreadable paths — callers treat that as a hard failure.
     HTML comments are scanned (S5-01); an unclosed comment is itself a violation
     (S5-02). Lines are NFKC-normalised and Cf-stripped before token extraction
-    (RV4-03). Fenced blocks preceded by ``sha-guard:ignore-next-block`` are
-    skipped as a whole (HARM-08).
+    (RV4-03). Fenced blocks are skipped as a whole only when
+    ``sha-guard:ignore-next-block`` appears on the line immediately before the
+    fence opener (blank lines allowed; VLM6-R2-G-05 / HARM-08). Homoglyph
+    lookalikes are examined on every line (VLM6-R2-G-03).
     """
     violations: list[str] = []
     tokens_checked = 0
@@ -294,11 +301,14 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
             in_block_comment = _comment_state_after_line(raw_line, in_block_comment)
             continue
 
-        if not in_fence and _IGNORE_NEXT_BLOCK_RE.search(raw_line):
-            ignore_next_fence = True
-            # The directive line may also carry other content; still scan it below
-            # after stripping the directive so a citation on the same line is seen.
-            # (Directive-only lines typically have no hex tokens.)
+        if not in_fence:
+            if _IGNORE_NEXT_BLOCK_RE.search(raw_line):
+                # Pending suppression applies only to the next fence; adjacency
+                # is "immediately before" with blank lines allowed (VLM6-R2-G-05).
+                ignore_next_fence = True
+            elif ignore_next_fence and raw_line.strip():
+                # Intervening non-blank content severs adjacency.
+                ignore_next_fence = False
 
         if ignore_this_fence:
             # Verbatim capture block marked foreign — do not resolve interior tokens.
@@ -309,7 +319,6 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
         in_block_comment = _comment_state_after_line(line, in_block_comment)
 
         ignored = _ignored_token_spans(line)
-        ascii_tokens_on_line = 0
         for match in _HEX.finditer(line):
             token = match.group(1)
             start, end = match.start(1), match.end(1)
@@ -319,7 +328,6 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
                 continue
             if _is_content_digest(line, start, end):
                 continue
-            ascii_tokens_on_line += 1
             tokens_checked += 1
             if _resolves(repo, token):
                 continue
@@ -329,16 +337,20 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
                 f"(or add `{_IGNORE_MARKER}` on the nearest token if it is deliberately foreign)"
             )
 
-        # Homoglyph SHAs: fail loudly when commit vocabulary is present and the
-        # lookalike did not yield a normal ASCII hex token (RV4-03).
-        if _COMMIT_VOCAB.search(line):
-            for run in _homoglyph_sha_runs(line):
-                violations.append(
-                    f"{rel}:{lineno}: homoglyph / non-ASCII hex-lookalike `{run}` "
-                    f"adjacent to commit vocabulary — refuse to treat lookalike SHAs "
-                    f"as invisible; use ASCII hex or mark deliberately foreign tokens "
-                    f"with `{_IGNORE_MARKER}`"
-                )
+        # Homoglyph SHAs: examine every line unconditionally (VLM6-R2-G-03).
+        # Commit vocabulary annotates context only — never gates detection.
+        for run in _homoglyph_sha_runs(line):
+            vocab_note = (
+                " adjacent to commit vocabulary"
+                if _COMMIT_VOCAB.search(line)
+                else ""
+            )
+            violations.append(
+                f"{rel}:{lineno}: homoglyph / non-ASCII hex-lookalike `{run}`"
+                f"{vocab_note} — refuse to treat lookalike SHAs as invisible; "
+                f"use ASCII hex or mark deliberately foreign tokens with "
+                f"`{_IGNORE_MARKER}`"
+            )
 
     if in_block_comment:
         violations.append(
@@ -369,12 +381,21 @@ def _is_lane_report_relpath(name: str) -> bool:
 
 
 def _default_report_paths(repo: Path) -> list[Path]:
-    """Recursive default targets: ``.s2a/**/*.md`` and ``*/.s2a/**/*.md`` (RV4-04)."""
-    found = list(repo.glob(".s2a/**/*.md")) + list(repo.glob("*/.s2a/**/*.md"))
-    # De-dupe while preserving a stable order.
+    """Walk the tree; keep only paths accepted by ``_is_lane_report_relpath``.
+
+    Shared implementation with ``--scan-staged`` (rg-006 / VLM6-R2-G-04): a
+    hand-maintained glob list (``.s2a/**/*.md`` + ``*/.s2a/**/*.md``) cannot
+    reach arbitrary depth above ``*`` and drifts from the staged predicate.
+    """
     seen: set[Path] = set()
     out: list[Path] = []
-    for path in sorted(found):
+    for path in sorted(repo.rglob("*.md")):
+        try:
+            rel = path.relative_to(repo).as_posix()
+        except ValueError:
+            continue
+        if not _is_lane_report_relpath(rel):
+            continue
         resolved = path.resolve()
         if resolved in seen:
             continue

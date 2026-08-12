@@ -91,6 +91,8 @@ export interface WorkbenchFindingsSourceState {
   topUnlabeledDataSource: DataSource | undefined;
   isLoading: boolean;
   isError: boolean;
+  /** Projection outage on top-unlabeled — distinct from primary-queue isError. */
+  isTopUnlabeledError: boolean;
   /** All four queue-source queries finished initial load (data or error). */
   queueSettled: boolean;
 }
@@ -101,6 +103,12 @@ export interface WorkbenchFindingsViewModel {
   hasFindings: boolean;
   isLoading: boolean;
   isError: boolean;
+  /**
+   * True when the top-unlabeled query failed. Must not be laundered into empty
+   * findings or a measured unlabeled count of 0 (UI-03 / UI-06, RLSE-05).
+   * Optional on partial view-model fixtures; production hook always sets it.
+   */
+  isTopUnlabeledError?: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
   /**
@@ -223,19 +231,24 @@ export const buildWorkbenchFindings = (
     sortedClusters,
   });
 
+  // WHY: a top-unlabeled 500 with an empty primary queue is still a failure, not
+  // an empty backlog — selectNextAction must prefer ERROR over EMPTY (UI-03).
+  const isError = state.isError || (state.isTopUnlabeledError && counts.total === 0);
+
   return {
     counts,
     previews: collectPreviews(queues, sortedClusters),
     hasFindings: counts.total > 0,
     isLoading: state.isLoading,
-    isError: state.isError,
+    isError,
+    isTopUnlabeledError: state.isTopUnlabeledError,
     isUnavailable,
     isReadOnly,
     queueSettled: state.queueSettled,
     queue,
     nextAction: selectNextAction(queue, {
       isLoading: state.isLoading,
-      isError: state.isError,
+      isError,
       isUnavailable,
     }),
   };
@@ -269,6 +282,9 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // WHY: surface a hard error only when nothing rendered at all; partial query
   // failures degrade gracefully to whatever findings did load.
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
+  // Separate flag so a top-unlabeled 500 is visible even when primary queues
+  // returned empty success (UI-03 / UI-06) without blanking partial findings.
+  const isTopUnlabeledError = topUnlabeledQuery.isError;
   // BR-06: every source must settle before clamp/index restore — partial
   // assignment+merge data must not look like a complete empty/short queue.
   const queueSettled =
@@ -300,6 +316,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       topUnlabeledDataSource,
       isLoading,
       isError,
+      isTopUnlabeledError,
       queueSettled,
     },
   );

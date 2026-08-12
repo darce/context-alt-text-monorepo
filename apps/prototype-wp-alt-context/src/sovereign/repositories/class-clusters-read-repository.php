@@ -51,7 +51,7 @@ class ClustersReadRepository {
 
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
@@ -68,7 +68,7 @@ class ClustersReadRepository {
 				)
 			);
 		} elseif ( $labeled_only ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
@@ -84,7 +84,7 @@ class ClustersReadRepository {
 				)
 			);
 		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
@@ -101,7 +101,7 @@ class ClustersReadRepository {
 				)
 			);
 		} else {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
@@ -118,10 +118,7 @@ class ClustersReadRepository {
 			);
 		}
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_for_tenant', $rows, true );
@@ -148,7 +145,7 @@ class ClustersReadRepository {
 		$normalized_limit  = max( 1, $limit );
 
 		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND label LIKE %s ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
@@ -158,7 +155,7 @@ class ClustersReadRepository {
 				)
 			);
 		} else {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
@@ -168,10 +165,7 @@ class ClustersReadRepository {
 			);
 		}
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_labels', $rows, true );
@@ -206,23 +200,19 @@ class ClustersReadRepository {
 			return false;
 		}
 
-		$sql = $this->prepare_query(
-			'SELECT 1 FROM %i WHERE tenant_id = %s LIMIT 1',
+		$sql = $this->prepare_projection_read_query(
+			'SELECT EXISTS(SELECT 1 FROM %i WHERE tenant_id = %s LIMIT 1)',
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return false;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
-		// null is a legitimate "no rows" for SELECT 1 ... LIMIT 1.
-		$this->guard_query_error( 'clusters.has_projection_rows_for_tenant', $value, false );
-		return null !== $value;
+		$this->guard_query_error( 'clusters.has_projection_rows_for_tenant', $value, true );
+		return 0 < (int) $value;
 	}
 
 	/**
@@ -243,7 +233,7 @@ class ClustersReadRepository {
 
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
@@ -262,10 +252,7 @@ class ClustersReadRepository {
 				)
 			);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_top_unlabeled', $rows, true );
@@ -285,7 +272,7 @@ class ClustersReadRepository {
 			return 0;
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			"SELECT COUNT(*)
 			FROM %i c
 			WHERE c.tenant_id = %s
@@ -299,10 +286,7 @@ class ClustersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$count = $wpdb->get_var( $sql );
 		// COUNT(*) always returns a row on success; null means the query did not run.
@@ -322,7 +306,7 @@ class ClustersReadRepository {
 		}
 
 		$persons_table = $this->resolve_persons_table_name();
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			"SELECT c.*, COALESCE(p.name, c.label) as label 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
@@ -335,10 +319,7 @@ class ClustersReadRepository {
 				)
 			);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return null;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
 		// null is a legitimate miss for get_row.
@@ -362,7 +343,7 @@ class ClustersReadRepository {
 			return array();
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			'SELECT * FROM %i WHERE tenant_id = %s AND is_user_confirmed = 1',
 			array(
 				$this->table_name,
@@ -370,10 +351,7 @@ class ClustersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.get_curated_clusters_for_tenant', $rows, true );

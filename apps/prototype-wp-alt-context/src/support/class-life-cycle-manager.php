@@ -41,6 +41,30 @@ class LifecycleManager {
 	 */
 	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
 
+	/**
+	 * Leading tokens that are table-constraint / index definitions, not columns.
+	 * Kept explicit so an unrecognised ALL-CAPS keyword fails closed (SV-06)
+	 * instead of being collected as a phantom column that can never appear in
+	 * SHOW COLUMNS (permanent non-stamp / every-request dbDelta loop).
+	 */
+	private const SCHEMA_CONSTRAINT_KEYWORDS = array(
+		'PRIMARY',
+		'KEY',
+		'UNIQUE',
+		'FULLTEXT',
+		'SPATIAL',
+		'INDEX',
+		'CONSTRAINT',
+		'FOREIGN',
+		'CHECK',
+	);
+
+	/**
+	 * Legacy UNIQUE on acx_persons.name from pre-E21-9 DDL. dbDelta never DROP
+	 * INDEXes, so this must be removed explicitly (LO-03).
+	 */
+	private const LEGACY_PERSONS_NAME_UNIQUE_INDEX = 'idx_name';
+
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
 			add_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array( $this, 'continue_legacy_roster_migration' ) );
@@ -848,6 +872,11 @@ class LifecycleManager {
 			}
 		}
 
+		// LO-03: dbDelta never DROP INDEXes; remove the pre-E21-9 UNIQUE on name.
+		if ( ! $this->drop_legacy_persons_name_unique_index( (string) $wpdb->prefix . 'acx_persons' ) ) {
+			return false;
+		}
+
 		if ( ! $this->verify_projection_schema_columns( $statements ) ) {
 			return false;
 		}
@@ -860,6 +889,69 @@ class LifecycleManager {
 	}
 
 	/**
+	 * Extract column names from a CREATE TABLE statement.
+	 *
+	 * Single grammar shared with the test dbDelta stub (SV-03) so the suite
+	 * cannot tautologically agree with a second parser. Returns null when the
+	 * body cannot be parsed, yields no columns, or contains an unrecognised
+	 * leading keyword — empty intended sets are verifier defects (SV-01), not
+	 * a perfect match against SHOW COLUMNS.
+	 *
+	 * @return list<string>|null
+	 */
+	public static function parse_create_table_column_names( string $sql ): ?array {
+		$sql = trim( $sql );
+		if ( ! preg_match( '/^CREATE TABLE\s+[^\s(]+\s*\((.*)\)\s*[^)]*;?$/si', $sql, $matches ) ) {
+			return null;
+		}
+
+		$columns = array();
+		$definitions = preg_split( '/\R/', $matches[1] );
+		if ( ! is_array( $definitions ) ) {
+			$definitions = array();
+		}
+		foreach ( $definitions as $definition ) {
+			$line = trim( $definition );
+			$line = rtrim( $line, ',' );
+			$line = trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+
+			// Plain identifier, optionally backtick-quoted, followed by type/constraint rest.
+			if ( ! preg_match( '/^`([a-zA-Z_][a-zA-Z0-9_]*)`(?:\s|$)/', $line, $column_match )
+				&& ! preg_match( '/^([a-zA-Z_][a-zA-Z0-9_]*)(?:\s|$)/', $line, $column_match ) ) {
+				// Non-empty line that is not an identifier lead-in → unrecognised structure.
+				return null;
+			}
+
+			$name       = $column_match[1];
+			$name_upper = strtoupper( $name );
+
+			if ( in_array( $name_upper, self::SCHEMA_CONSTRAINT_KEYWORDS, true ) ) {
+				continue;
+			}
+
+			// Unquoted ALL-CAPS token that is not a known constraint keyword is
+			// treated as an unrecognised leading keyword (fail closed, SV-06).
+			// Production column names are lowercase; intentional keyword-as-column
+			// would need backticks and is accepted via the backtick branch above.
+			$is_backticked = str_starts_with( ltrim( $definition ), '`' );
+			if ( ! $is_backticked && $name === $name_upper ) {
+				return null;
+			}
+
+			$columns[] = $name;
+		}
+
+		if ( array() === $columns ) {
+			return null;
+		}
+
+		return $columns;
+	}
+
+	/**
 	 * @param array<string,string> $statements
 	 */
 	private function verify_projection_schema_columns( array $statements ): bool {
@@ -869,23 +961,45 @@ class LifecycleManager {
 			return false;
 		}
 
+		$statement_count = count( $statements );
+		$parsed_count    = 0;
+
 		foreach ( $statements as $key => $sql ) {
-			$intended_columns = array();
-			if ( preg_match( '/^CREATE TABLE\s+[^\s(]+\s*\((.*)\)\s*[^)]*;?$/si', trim( $sql ), $matches ) ) {
-				foreach ( preg_split( '/\R/', $matches[1] ) ?: array() as $definition ) {
-					if ( preg_match( '/^\s*`?([a-zA-Z0-9_]+)`?\s+/', $definition, $column_match ) ) {
-						$name = $column_match[1];
-						if ( ! in_array( strtoupper( $name ), array( 'PRIMARY', 'KEY', 'UNIQUE', 'FULLTEXT', 'SPATIAL' ), true ) ) {
-							$intended_columns[] = $name;
-						}
-					}
-				}
+			$intended_columns = self::parse_create_table_column_names( $sql );
+			if ( null === $intended_columns ) {
+				Telemetry::log_line(
+					sprintf(
+						'[acx] schema verification failed for %s: could not parse intended columns (verifier defect or unrecognised DDL structure)',
+						$key
+					)
+				);
+				return false;
 			}
+			++$parsed_count;
 
 			$table = (string) $wpdb->prefix . $key;
+
+			// Match the dbDelta probe pattern: never attribute a prior query's
+			// last_error to this SHOW COLUMNS (SV-04).
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+
 			$query = method_exists( $wpdb, 'prepare' ) ? $wpdb->prepare( 'SHOW COLUMNS FROM %i', $table ) : "SHOW COLUMNS FROM `{$table}`";
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned table name.
 			$rows = $wpdb->get_results( $query, ARRAY_A );
+
+			$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+			if ( '' !== $error ) {
+				if ( property_exists( $wpdb, 'last_error' ) ) {
+					$wpdb->last_error = '';
+				}
+				Telemetry::log_line(
+					sprintf( '[acx] schema verification failed for %s: SHOW COLUMNS error: %s', $table, $error )
+				);
+				return false;
+			}
+
 			$actual_columns = array();
 			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
 				if ( is_array( $row ) && isset( $row['Field'] ) ) {
@@ -901,6 +1015,108 @@ class LifecycleManager {
 				return false;
 			}
 		}
+
+		if ( $parsed_count !== $statement_count ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema verification failed: parsed table count %d does not match statement map size %d',
+					$parsed_count,
+					$statement_count
+				)
+			);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Greenfield cleanup: drop the pre-E21-9 UNIQUE idx_name on acx_persons.name.
+	 * Idempotent — no-op when the index is absent. Verifier stays column-only
+	 * (extra indexes do not refuse the stamp; see LO-03 report rationale).
+	 *
+	 * @return bool False only when a probe/drop query errors.
+	 */
+	private function drop_legacy_persons_name_unique_index( string $persons_table ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return false;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$index_name = self::LEGACY_PERSONS_NAME_UNIQUE_INDEX;
+		$query      = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder.
+			$query = $wpdb->prepare(
+				'SHOW INDEX FROM %i WHERE Key_name = %s',
+				$persons_table,
+				$index_name
+			);
+		}
+		if ( ! is_string( $query ) || '' === $query ) {
+			$query = "SHOW INDEX FROM `{$persons_table}` WHERE Key_name = '{$index_name}'";
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned identifiers.
+		$rows  = $wpdb->get_results( $query, ARRAY_A );
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		if ( '' !== $error ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			Telemetry::log_line(
+				sprintf( '[acx] schema legacy-index probe failed for %s.%s: %s', $persons_table, $index_name, $error )
+			);
+			return false;
+		}
+
+		if ( ! is_array( $rows ) || array() === $rows ) {
+			return true;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$drop = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i identifiers.
+			$drop = $wpdb->prepare(
+				'ALTER TABLE %i DROP INDEX %i',
+				$persons_table,
+				$index_name
+			);
+		}
+		if ( ! is_string( $drop ) || '' === $drop ) {
+			$drop = "ALTER TABLE `{$persons_table}` DROP INDEX `{$index_name}`";
+		}
+
+		if ( ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned identifiers.
+		$result = $wpdb->query( $drop );
+		$error  = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		if ( false === $result || '' !== $error ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error ? $error : 'query returned false';
+			Telemetry::log_line(
+				sprintf( '[acx] schema legacy-index drop failed for %s.%s: %s', $persons_table, $index_name, $message )
+			);
+			return false;
+		}
+
+		Telemetry::log_line(
+			sprintf( '[acx] schema dropped legacy index %s on %s', $index_name, $persons_table )
+		);
 
 		return true;
 	}
@@ -942,8 +1158,8 @@ class LifecycleManager {
 		}
 
 		if ( null === $result ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
 			$result = $wpdb->query(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
 				"UPDATE `{$members_table}` SET assigned_at = created_at WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
 			);
 		}

@@ -174,6 +174,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     isExpanding,
     expandError,
     showAll,
+    refetch,
   } = useShowAllClusterMembers(clusterId);
 
   // AT affordance: when expansion completes the show-all button unmounts, so
@@ -488,7 +489,12 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           {isLoading ? (
             <p>{__('Loading faces...', 'alt-context')}</p>
           ) : isError ? (
-            <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+            <div className="acx-cluster-labeling-panel__error" role="alert" data-testid="acx-cluster-members-error">
+              <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+              <button type="button" className="button" onClick={() => refetch()}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
           ) : members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">

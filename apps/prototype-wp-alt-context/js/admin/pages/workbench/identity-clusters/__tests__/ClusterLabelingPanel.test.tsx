@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -266,6 +266,24 @@ describe('ClusterLabelingPanel', () => {
 
     expect(await screen.findByText('Unable to load cluster members.')).toBeInTheDocument();
     expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
+  });
+
+  // UI-05: members error must offer retry that re-invokes the members query.
+  it('UI-05: members error Retry re-invokes fetchClusterMembers', async () => {
+    const fetchMock = vi.mocked(fetchClusterMembers);
+    fetchMock.mockRejectedValue(new Error('acx_projection_query_failed'));
+
+    renderPanel();
+
+    const error = await screen.findByTestId('acx-cluster-members-error');
+    expect(error).toHaveTextContent('Unable to load cluster members.');
+    const callsBefore = fetchMock.mock.calls.length;
+
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
   });
 
   it('prefers dedicated face-thumb URLs before client-side crop data', async () => {

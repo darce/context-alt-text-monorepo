@@ -103,6 +103,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
   isLoading: false,
   isError: false,
+  isTopUnlabeledError: false,
   queueSettled: true,
   ...overrides,
 });
@@ -243,6 +244,32 @@ describe('buildWorkbenchFindings', () => {
 
     expect(model.isError).toBe(true);
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
+  });
+
+  // UI-03: empty primary queues + top-unlabeled 500 is ERROR, not EMPTY.
+  it('UI-03: top-unlabeled error with empty queues is isError / isTopUnlabeledError, not empty', () => {
+    const model = buildWorkbenchFindings(makeQueues(), makeState({ isTopUnlabeledError: true }));
+
+    expect(model.isTopUnlabeledError).toBe(true);
+    expect(model.isError).toBe(true);
+    expect(model.hasFindings).toBe(false);
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
+  });
+
+  // UI-06: partial findings keep loading; unlabeled outage is flagged separately.
+  it('UI-06: top-unlabeled error with other findings keeps hasFindings and flags isTopUnlabeledError', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(makeSuggestion()),
+        assignmentTotal: 1,
+      }),
+      makeState({ isTopUnlabeledError: true }),
+    );
+
+    expect(model.isTopUnlabeledError).toBe(true);
+    expect(model.isError).toBe(false);
+    expect(model.hasFindings).toBe(true);
+    expect(model.counts.unlabeledClusters).toBe(0);
   });
 
   it('reports unavailable state when the suggestion source is unavailable', () => {
@@ -453,6 +480,47 @@ describe('useWorkbenchFindings', () => {
     expect(result.current.counts.unlabeledClusters).toBe(42);
     expect(result.current.counts.total).toBe(42);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'page-head' });
+  });
+
+  // UI-03 (hook path): top-unlabeled reject with empty primary queues surfaces
+  // isTopUnlabeledError + isError so the panel cannot launder into empty.
+  it('UI-03: top-unlabeled query rejection sets isTopUnlabeledError on the view model', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('acx_projection_query_failed'));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isTopUnlabeledError).toBe(true);
+    expect(result.current.isError).toBe(true);
+    expect(result.current.hasFindings).toBe(false);
+    expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
   });
 
   // REV-A-03 (isError): Locks the !hasAnyData guard — BOTH primary queries

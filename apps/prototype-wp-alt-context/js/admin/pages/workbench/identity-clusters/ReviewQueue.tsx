@@ -554,13 +554,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
       if (!currentKey && previousItemKeyRef.current !== null) {
         previousItemKeyRef.current = null;
-        // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-        setLiveMessage(
-          __(
-            filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
-            'alt-context',
-          ),
-        );
+        // UI-04: drain copy is for a successful empty only — projection failure
+        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+        if (data.isTopUnlabeledError) {
+          setLiveMessage(__('Unable to load unlabeled clusters.', 'alt-context'));
+        } else {
+          // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
+          setLiveMessage(
+            __(
+              filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
+              'alt-context',
+            ),
+          );
+        }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => {
@@ -570,6 +576,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
     }, [
       currentKey,
+      data.isTopUnlabeledError,
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       focusPrimaryInCard,
@@ -904,7 +911,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <div className="acx-review-queue__nav">
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
-                ? __('0 of 0', 'alt-context')
+                ? data.isTopUnlabeledError
+                  ? __('—', 'alt-context')
+                  : __('0 of 0', 'alt-context')
                 : sprintf(
                     /* translators: 1: current 1-based position, 2: total */
                     __('%1$d of %2$d', 'alt-context'),

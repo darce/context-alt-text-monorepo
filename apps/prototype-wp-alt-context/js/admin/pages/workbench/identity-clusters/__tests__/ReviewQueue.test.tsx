@@ -1907,6 +1907,111 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('This cluster is no longer available.')).not.toBeInTheDocument();
   });
 
+  // UI-05: Retry must re-invoke the top-unlabeled query (not a decorative button).
+  it('UI-05: top-unlabeled error Retry re-invokes fetchTopUnlabeledClusters', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    renderQueue();
+
+    const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    const callsBefore = topMock.mock.calls.length;
+
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  // UI-04: draining the queue while top-unlabeled is in error must not announce "all caught up".
+  it('UI-04: drain announcement uses error copy when top-unlabeled failed', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-only',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 1,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sugg-only',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+    // After the only assignment is accepted, top-unlabeled stays failed so the
+    // drain path must announce the failure rather than "all caught up".
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    renderQueue();
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Yes' }));
+    await waitFor(() => {
+      expect(acceptSuggestion).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const statuses = screen.getAllByRole('status');
+      expect(
+        statuses.some((node) => within(node).queryByText('Unable to load unlabeled clusters.')),
+      ).toBe(true);
+    });
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  // UI-06: position chrome must not claim a measured "0 of 0" while top-unlabeled failed.
+  it('UI-06: empty queue position is indeterminate when top-unlabeled failed', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+  });
+
   it('E21-14-BR-16: topUnlabeledQuery sets retry:false (no automatic 500 reattempts)', async () => {
     // Client defaults intentionally omit retry:false so the per-query option is the only guard.
     const queryClient = new QueryClient({

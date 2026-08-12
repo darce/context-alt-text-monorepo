@@ -49,7 +49,7 @@ class IdentityMembersReadRepository {
 		$persons_table     = $this->resolve_persons_table_name();
 
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
@@ -67,7 +67,7 @@ class IdentityMembersReadRepository {
 				)
 			);
 		} else {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
@@ -85,10 +85,7 @@ class IdentityMembersReadRepository {
 			);
 		}
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'identity_members.list_for_cluster', $rows, true );
@@ -130,7 +127,7 @@ class IdentityMembersReadRepository {
 		$placeholders     = implode( ', ', array_fill( 0, count( $normalized_uuids ), '%s' ) );
 		$persons_table    = $this->resolve_persons_table_name();
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			"SELECT * FROM (
 				SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
 				FROM %i m
@@ -145,10 +142,7 @@ class IdentityMembersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'identity_members.list_for_cluster_uuids', $rows, true );
@@ -215,7 +209,7 @@ class IdentityMembersReadRepository {
 
 		$placeholders  = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$persons_table = $this->resolve_persons_table_name();
-		$sql           = $this->prepare_query(
+		$sql           = $this->prepare_projection_read_query(
 			"SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
@@ -233,10 +227,7 @@ class IdentityMembersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'identity_members.list_for_media_ids', $rows, true );
@@ -256,12 +247,11 @@ class IdentityMembersReadRepository {
 			return false;
 		}
 
-		$sql = $this->prepare_query(
-			"SELECT 1
+		$sql = $this->prepare_projection_read_query(
+			"SELECT EXISTS(SELECT 1
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
-			WHERE c.tenant_id = %s
-			LIMIT 1",
+			WHERE c.tenant_id = %s LIMIT 1)",
 			array(
 				$this->members_table_name,
 				$this->clusters_table_name,
@@ -269,15 +259,11 @@ class IdentityMembersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return false;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
-		// null is a legitimate "no rows" for SELECT 1 ... LIMIT 1.
-		$this->guard_query_error( 'identity_members.has_projection_rows_for_tenant', $value, false );
-		return null !== $value;
+		$this->guard_query_error( 'identity_members.has_projection_rows_for_tenant', $value, true );
+		return 0 < (int) $value;
 	}
 
 	public function count_for_cluster( string $cluster_uuid, ?string $tenant_id = null ): int {
@@ -293,7 +279,7 @@ class IdentityMembersReadRepository {
 		}
 
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s',
@@ -305,7 +291,7 @@ class IdentityMembersReadRepository {
 				)
 			);
 		} else {
-			$sql = $this->prepare_query(
+			$sql = $this->prepare_projection_read_query(
 				'SELECT COUNT(*) FROM %i WHERE cluster_uuid = %s',
 				array(
 					$this->members_table_name,
@@ -314,10 +300,7 @@ class IdentityMembersReadRepository {
 			);
 		}
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$value = $wpdb->get_var( $sql );
 		// COUNT(*) always returns a row on success; null means the query did not run.
@@ -337,7 +320,7 @@ class IdentityMembersReadRepository {
 			return null;
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			'SELECT * FROM %i WHERE identity_uuid = %s LIMIT 1',
 			array(
 				$this->members_table_name,
@@ -345,10 +328,7 @@ class IdentityMembersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return null;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
 		// null is a legitimate miss for get_row.
@@ -372,7 +352,7 @@ class IdentityMembersReadRepository {
 			return array();
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			"SELECT m.* FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s AND m.is_curated = 1",
@@ -383,10 +363,7 @@ class IdentityMembersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'identity_members.get_curated_members_for_tenant', $rows, true );

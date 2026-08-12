@@ -89,12 +89,129 @@ class ClusterResponseMapperTest extends TestCase
                     'identity_count' => 1,
                 ],
             ],
-            ['cluster-stale-count' => []]
+            ['cluster-stale-count' => []],
+            4
         );
 
         $this->assertSame(0, $payload[0]['identity_count']);
         $this->assertStringContainsString('cluster-stale-count', \implode("\n", $GLOBALS['__ac_error_log']));
         $this->assertStringContainsString('projected=1 observed=0', \implode("\n", $GLOBALS['__ac_error_log']));
+    }
+
+    /**
+     * Production repository shape: clusters with zero members have no key in the
+     * members map (sparse). With members fetched (preview limit provided), that
+     * absence must mean observed 0 — not "not loaded".
+     */
+    public function testMapClusterListTreatsSparseMissingKeyAsEmptyWhenMembersFetched(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        // Real list_for_cluster_uuids output: only clusters with rows appear.
+        $sparse_members = [
+            'cluster-with-members' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                ],
+            ],
+            // 'cluster-stale-empty' intentionally absent — zero member rows.
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-with-members',
+                    'identity_count' => 1,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-stale-empty',
+                    'identity_count' => 1,
+                ],
+            ],
+            $sparse_members,
+            4
+        );
+
+        $this->assertSame(1, $payload[0]['identity_count']);
+        $this->assertSame(0, $payload[1]['identity_count']);
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-stale-empty', $log);
+        $this->assertStringContainsString('projected=1 observed=0', $log);
+    }
+
+    public function testMapClusterListKeepsProjectedCountWhenMembersNotFetched(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-projected-only',
+                    'identity_count' => 7,
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame(7, $payload[0]['identity_count']);
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    public function testMapClusterListDoesNotLogExpectedPreviewTruncation(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-truncated' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-truncated',
+                    'identity_count' => 9,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    public function testMapClusterListLogsWhenObservedBelowPreviewLimit(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-shortfall' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-shortfall',
+                    'identity_count' => 9,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-shortfall', $log);
+        $this->assertStringContainsString('projected=9 observed=2', $log);
     }
 
     public function testMapClusterListIncludesPinnedRepresentativeState(): void

@@ -2281,6 +2281,13 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $tableRows = [];
         /** @var array<string,array<int,string>> */
         public array $tableColumns = [];
+        /**
+         * Achieved index names per table (Key_name). Used by SHOW INDEX / DROP INDEX
+         * probes in lifecycle schema tests (LO-03).
+         *
+         * @var array<string,array<int,string>>
+         */
+        public array $tableIndexes = [];
         /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
         public $onGetVar = null;
 
@@ -2288,6 +2295,21 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $sql);
             $this->queries[] = $normalizedSql;
+
+            if (preg_match(
+                '/^ALTER\s+TABLE\s+`?([^\s`]+)`?\s+DROP\s+INDEX\s+`?([^\s`]+)`?/i',
+                $normalizedSql,
+                $dropMatches
+            )) {
+                $table = $dropMatches[1];
+                $index = $dropMatches[2];
+                if (isset($this->tableIndexes[$table]) && is_array($this->tableIndexes[$table])) {
+                    $this->tableIndexes[$table] = array_values(array_filter(
+                        $this->tableIndexes[$table],
+                        static fn(string $name): bool => $name !== $index
+                    ));
+                }
+            }
 
             $result = $this->defaultQueryResult;
             if (array_key_exists($normalizedSql, $this->queryResults)) {
@@ -2304,7 +2326,7 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $result;
             }
 
-            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT)\b/i', $normalizedSql) ? 1 : 0;
+            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT|ALTER)\b/i', $normalizedSql) ? 1 : 0;
             return $result;
         }
 
@@ -2379,10 +2401,33 @@ if (!isset($GLOBALS['wpdb'])) {
             }
 
             if (preg_match('/^SHOW COLUMNS FROM\s+`?([^\s`]+)`?/i', $normalizedSql, $matches)) {
+                $tableName = $matches[1];
+                $showError = $GLOBALS['__ac_show_columns_error'] ?? null;
+                $showErrorTable = $GLOBALS['__ac_show_columns_error_table'] ?? null;
+                if (is_string($showError) && $showError !== ''
+                    && ($showErrorTable === null || $showErrorTable === $tableName)
+                ) {
+                    $this->last_error = $showError;
+                    return [];
+                }
+
                 $results = array_map(
                     static fn(string $column): array => ['Field' => $column],
-                    $this->tableColumns[$matches[1]] ?? []
+                    $this->tableColumns[$tableName] ?? []
                 );
+            } elseif (preg_match(
+                '/^SHOW INDEX FROM\s+`?([^\s`]+)`?(?:\s+WHERE\s+Key_name\s*=\s*\'([^\']*)\')?/i',
+                $normalizedSql,
+                $indexMatches
+            )) {
+                $tableName = $indexMatches[1];
+                $keyName = $indexMatches[2] ?? null;
+                $results = [];
+                foreach ($this->tableIndexes[$tableName] ?? [] as $indexName) {
+                    if ($keyName === null || $keyName === $indexName) {
+                        $results[] = ['Key_name' => $indexName];
+                    }
+                }
             } else {
                 $results = $this->mockResults;
             }
@@ -2461,6 +2506,13 @@ if (!isset($GLOBALS['wpdb'])) {
                 if (is_string($firstKey) || is_int($firstKey)) {
                     return $firstRow[$firstKey];
                 }
+            }
+
+            // A total expression always yields a row on a successful query, so
+            // "no stored rows" must model 0 rather than the null this stub uses
+            // for a failed query (GD-03).
+            if ($this->mockVar === null && preg_match('/^SELECT\s+(EXISTS\s*\(|COUNT\s*\()/i', $normalizedSql) === 1) {
+                return 0;
             }
 
             return $this->mockVar;
@@ -2789,6 +2841,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->updateResults = [];
             $this->tableRows = [];
             $this->tableColumns = [];
+            $this->tableIndexes = [];
             $this->onGetVar = null;
         }
     }
@@ -2799,6 +2852,10 @@ if (!isset($GLOBALS['wpdb'])) {
 if (!function_exists('dbDelta')) {
     /**
      * Record dbDelta invocations for lifecycle schema tests.
+     *
+     * Column extraction uses LifecycleManager::parse_create_table_column_names
+     * (SV-03 single grammar) so the stub cannot tautologically re-implement
+     * production's intended-column parse.
      *
      * @param string|array<int,string> $queries SQL string or list of SQL strings.
      * @return array<int,string>
@@ -2826,20 +2883,36 @@ if (!function_exists('dbDelta')) {
             $executed[] = $normalized;
 
             if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb']) && property_exists($GLOBALS['wpdb'], 'tableColumns')) {
-                if (preg_match('/^CREATE TABLE\s+`?([^\s`(]+)`?\s*\((.*)\)\s*[^)]*;?$/si', $normalized, $matches)) {
-                    $columns = [];
-                    foreach (preg_split('/\R/', $matches[2]) ?: [] as $definition) {
-                        if (preg_match('/^\s*`?([a-zA-Z0-9_]+)`?\s+/', $definition, $columnMatch)) {
-                            $name = $columnMatch[1];
-                            if (!in_array(strtoupper($name), ['PRIMARY', 'KEY', 'UNIQUE', 'FULLTEXT', 'SPATIAL'], true)) {
-                                $skip = $GLOBALS['__ac_dbdelta_silent_skip_column'] ?? null;
-                                if (!is_string($skip) || $skip !== $name) {
-                                    $columns[] = $name;
+                $tableName = null;
+                if (preg_match('/^CREATE TABLE\s+`?([^\s`(]+)`?/i', $normalized, $tableMatch)) {
+                    $tableName = $tableMatch[1];
+                }
+
+                $columns = null;
+                if (class_exists(\AltContext\Support\LifecycleManager::class)
+                    && method_exists(\AltContext\Support\LifecycleManager::class, 'parse_create_table_column_names')
+                ) {
+                    $columns = \AltContext\Support\LifecycleManager::parse_create_table_column_names($normalized);
+                }
+
+                if (is_array($columns) && $tableName !== null) {
+                    $skip = $GLOBALS['__ac_dbdelta_silent_skip_column'] ?? null;
+                    $skipTable = $GLOBALS['__ac_dbdelta_silent_skip_table'] ?? null;
+                    if (is_string($skip) && $skip !== '') {
+                        $columns = array_values(array_filter(
+                            $columns,
+                            static function (string $name) use ($skip, $skipTable, $tableName): bool {
+                                if ($name !== $skip) {
+                                    return true;
                                 }
+                                if ($skipTable === null || $skipTable === $tableName) {
+                                    return false;
+                                }
+                                return true;
                             }
-                        }
+                        ));
                     }
-                    $GLOBALS['wpdb']->tableColumns[$matches[1]] = $columns;
+                    $GLOBALS['wpdb']->tableColumns[$tableName] = $columns;
                 }
             }
 

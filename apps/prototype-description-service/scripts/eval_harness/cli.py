@@ -1356,6 +1356,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
     expect_report = Path(expect_report_raw) if expect_report_raw else None
     allow_manifest_relabel = bool(getattr(args, "allow_manifest_relabel", False))
     allow_overwrite_report = bool(getattr(args, "allow_overwrite_report", False))
+    # Post-cert folds that re-serialise the document (schema / evidence / relabel).
+    # When True under --freeze-certification the certified bytes are not the
+    # written bytes — refuse freeze exit (S1-03 / OBS-04).
+    degraded = False
     if args.check_determinism:
         local_json, local_md = _check_score_determinism_cross_process(
             record_path,
@@ -1463,22 +1467,11 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"wrong_name_rate_floor={verdict.get('wrong_name_rate_floor', WRONG_NAME_RATE_FLOOR)} "
         f"rubric_gate={rubric_gate}"
     )
-    # fx8 / EVAL-13 / TEST-15: under --freeze-certification the exit code means
-    # scoring-path byte-stability only (determinism + --expect-report already
-    # decided pass/fail above). Adoption gates stay computed and printed in the
-    # summary (verdict / wrong_name_rate / coverage gaps) but do not set exit
-    # status — the freeze is often a deliberately imperfect non-evidential
-    # fixture (predictions_source=ground_truth_derived_fixture). Live score
-    # without this flag keeps every gate hard (sr-001).
-    if freeze_certification:
-        print(
-            "freeze-certification passed [score]: scoring-path is byte-stable "
-            f"(matches --expect-report); nothing certified about model quality, "
-            f"face recognition, or adoption readiness "
-            f"(artifact verdict={verdict.get('verdict', 'unknown')}; "
-            "adoption gates computed above, not exit-determining)"
-        )
-        return
+    # --- Measurement-integrity gates (always exit-determining) ---
+    # S1-01 / S1-02: --freeze-certification softens adoption quality only. Schema,
+    # aborted, failed-items, zero-scored, truncation, and manifest integrity still
+    # set exit status — byte-stability of a measurement that did not run is not
+    # a certification (EVAL-13 / TEST-15 / rg-005).
     if schema_exit is not None:
         _score_gate_fail(schema_exit)
     # evidence_exit / relabel_exit are folded into the written verdict above;
@@ -1546,6 +1539,32 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score manifest-relabel gate: verdict={_VERDICT_NON_COMPARABLE} "
             f"(archival relabel only; not adoption-comparable; see {json_path})"
         )
+    # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
+    # means scoring-path byte-stability once measurement integrity has passed.
+    # Adoption gates below stay computed and printed (verdict / wrong_name_rate /
+    # coverage gaps) but do not set exit status — the freeze is often a
+    # deliberately imperfect non-evidential fixture. Live score without this flag
+    # keeps every gate hard (sr-001).
+    # S1-03: refuse freeze-cert when a post-cert fold re-serialised the document
+    # (certified bytes ≠ written bytes). Integrity gates above usually already
+    # failed for those folds; this is the explicit boundary.
+    if freeze_certification:
+        if degraded:
+            _score_gate_fail(
+                "score freeze-certification refused: post-cert fold re-serialised "
+                "the document (schema/evidence/relabel); certified bytes are not "
+                f"the written bytes (see {json_path}); not a frozen scoring path"
+            )
+        print(
+            "freeze-certification passed [score]: scoring-path is byte-stable "
+            f"(matches --expect-report); nothing certified about model quality, "
+            f"face recognition, or adoption readiness "
+            f"(artifact verdict={verdict.get('verdict', 'unknown')}; "
+            "integrity gates enforced above; adoption gates computed below, "
+            "not exit-determining)"
+        )
+        return
+    # --- Adoption-quality gates (soft under --freeze-certification) ---
     # Empty rubric: Must-Right and Easy-Wrong vacuity are independent. Emptying
     # only must_right while easy_wrong remains used to leave the OR'd counter
     # non-zero and exit 0 (F1-1 / r08116b50). A warning is not a gate.
@@ -1615,10 +1634,14 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score wrong-name floor gate: wrong_name_rate={display_rate} exceeds "
             f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
         )
-    # VLM6-OBS-04: process exit must match the persisted artifact. A corpus with
-    # vacuous critical categories writes verdict=not_ready; green-exiting over
-    # that artifact re-opens the same class of defect one layer out (EVAL-23).
-    # Adoption-eligible exits remain pass / pass_ungated only.
+    # VLM6-OBS-04 (live path): process exit must match the persisted artifact.
+    # A corpus with vacuous critical categories writes verdict=not_ready;
+    # green-exiting over that artifact re-opens the same class of defect one
+    # layer out (EVAL-23). Adoption-eligible exits remain pass / pass_ungated
+    # only. Under --freeze-certification the return above already ran after
+    # integrity gates: adoption fail/not_ready may green-exit by design when
+    # scoring-path bytes match the freeze (fx8); integrity failures still
+    # non-zero so process exit matches the integrity half of the artifact.
     verdict_value = (scored.get("verdict") or {}).get("verdict")
     if verdict_value == ScoreVerdict.NOT_READY.value:
         reasons = list((scored.get("verdict") or {}).get("reasons") or [])
@@ -1983,17 +2006,9 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={directional_excluded}"
     )
-    # fx8 / EVAL-13: under --freeze-certification the exit code means scoring-path
-    # byte-stability only (determinism + --expect-report already decided). Live
-    # score-face without the flag keeps integrity gates hard (sr-001).
-    if freeze_certification:
-        print(
-            "freeze-certification passed [score-face]: scoring-path is byte-stable "
-            "(matches --expect-report); nothing certified about model quality, "
-            "face recognition, or adoption readiness "
-            "(integrity gates not exit-determining under this flag)"
-        )
-        return
+    # --- Measurement-integrity gates (always exit-determining; S1-01) ---
+    # Face score has no adoption-quality gates today — freeze-certification only
+    # softens a future adoption surface; integrity stays hard under the flag.
     if record.get("aborted"):
         _score_gate_fail(
             f"score-face aborted-record gate: run-record is aborted "
@@ -2006,6 +2021,16 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         )
     if failed > 0:
         _score_gate_fail(f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})")
+    # fx8 / gx1 / EVAL-13: under --freeze-certification exit = scoring-path
+    # byte-stability after integrity gates above have passed.
+    if freeze_certification:
+        print(
+            "freeze-certification passed [score-face]: scoring-path is byte-stable "
+            "(matches --expect-report); nothing certified about model quality, "
+            "face recognition, or adoption readiness "
+            "(integrity gates enforced above; not an adoption softener)"
+        )
+        return
 
 
 # Adoption meet-or-beat metric tables (VLM6-E-01 / A-03 / EVAL-23).

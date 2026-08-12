@@ -4848,3 +4848,246 @@ def test_score_face_freeze_certification_requires_expect_report(tmp_path):
             ]
         )
     assert "--freeze-certification requires --expect-report" in str(exc.value)
+
+
+# --- gx1: freeze-certification must NOT skip measurement-integrity gates ---
+#
+# fx8 placed the freeze-cert return above integrity gates. A corrupt record's
+# expect-file can self-match (anchor generators capture certified build_reports
+# bytes with no post-hoc fold), so integrity failures greened under the flag.
+# Integrity still exit-determining; only adoption quality is soft (TEST-15).
+
+
+def _certified_caption_expect(
+    manifest_path, record_path, expect_path, *, rubric_gate="enforce"
+):
+    """Write certified build_reports JSON as --expect-report (anchor-generator shape).
+
+    Mirrors generate_determinism_anchor: capture pre-fold certified bytes so a
+    corrupt record can self-match the expect path. Integrity gates must still
+    fire under --freeze-certification when those bytes are byte-stable.
+    """
+    from scripts.eval_harness.cli import _load_ignore_list, _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import Audience, build_reports
+
+    record = json.loads(Path(record_path).read_text(encoding="utf-8"))
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    entries = [e.model_dump() for e in manifest.entries]
+    json_doc, _md = build_reports(
+        record,
+        entries,
+        ignore_list=_load_ignore_list(Path(record_path).parent),
+        score_manifest_sha256=_manifest_sha(manifest),
+        manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+        audience=Audience.LOCAL,
+        rubric_gate=rubric_gate,
+    )
+    Path(expect_path).write_text(json_doc, encoding="utf-8")
+    return json_doc
+
+
+def _freeze_cert_score_argv(manifest_path, record_path, expect_path, *extra):
+    return [
+        "score",
+        "--manifest",
+        str(manifest_path),
+        "--run-record",
+        str(record_path),
+        "--check-determinism",
+        "--expect-report",
+        str(expect_path),
+        "--freeze-certification",
+        *extra,
+    ]
+
+
+def test_score_freeze_certification_aborted_exits_nonzero(tmp_path, monkeypatch):
+    """TEST-15 / S1-01: aborted-record integrity still fires under freeze-cert."""
+    roster, entries = _corpus_entries(2, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} in the foreground outdoors.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        aborted=True,
+    )
+    record_path = tmp_path / "run-abort-fc.json"
+    record_path.write_text(json.dumps(record))
+    expect = tmp_path / "abort-expect.json"
+    _certified_caption_expect(manifest_path, record_path, expect)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(_freeze_cert_score_argv(manifest_path, record_path, expect))
+    assert exc.value.code != 0
+    assert "aborted-record" in str(exc.value).lower()
+    # Not a soft byte-stability green-exit.
+    assert "freeze-certification passed" not in str(exc.value).lower()
+
+
+def test_score_freeze_certification_zero_scored_exits_nonzero(tmp_path, monkeypatch):
+    """TEST-15 / S1-01: zero-scored integrity still fires under freeze-cert."""
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/img-1.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 0,
+            "present_identities": [],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
+    )
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": manifest_sha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": [],
+    }
+    record_path = tmp_path / "run-zero-fc.json"
+    record_path.write_text(json.dumps(record))
+    expect = tmp_path / "zero-expect.json"
+    _certified_caption_expect(manifest_path, record_path, expect)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(_freeze_cert_score_argv(manifest_path, record_path, expect))
+    assert exc.value.code != 0
+    assert "zero-scored" in str(exc.value).lower()
+
+
+def test_score_freeze_certification_truncated_exits_nonzero(tmp_path, monkeypatch):
+    """TEST-15 / S1-01: truncation integrity still fires under freeze-cert."""
+    roster, entries = _corpus_entries(2, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    # Only first of two media-ids present → truncation gate.
+    record = _score_run_record(
+        entries[:1],
+        caption_fn=lambda e: f"{e['present_identities'][0]} in the foreground outdoors.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+    )
+    record_path = tmp_path / "run-trunc-fc.json"
+    record_path.write_text(json.dumps(record))
+    expect = tmp_path / "trunc-expect.json"
+    _certified_caption_expect(manifest_path, record_path, expect)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(_freeze_cert_score_argv(manifest_path, record_path, expect))
+    assert exc.value.code != 0
+    assert "truncation" in str(exc.value).lower()
+
+
+def test_score_freeze_certification_manifest_mismatch_exits_nonzero(tmp_path, monkeypatch):
+    """TEST-15 / S1-01: missing fetch-time sha integrity still fires under freeze-cert."""
+    roster, entries = _corpus_entries(1, with_rubric=True)
+    manifest_path, _manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} in the foreground outdoors.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha="f" * 64,  # any non-empty; then drop the key
+    )
+    del record["provenance"]["manifest_sha256"]
+    record_path = tmp_path / "run-nosha-fc.json"
+    record_path.write_text(json.dumps(record))
+    expect = tmp_path / "nosha-expect.json"
+    _certified_caption_expect(manifest_path, record_path, expect)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(_freeze_cert_score_argv(manifest_path, record_path, expect))
+    assert exc.value.code != 0
+    assert "manifest-mismatch" in str(exc.value).lower()
+
+
+def test_score_freeze_certification_schema_invalid_exits_nonzero(tmp_path, monkeypatch):
+    """TEST-15 / S1-02: schema_exit must not be discarded under freeze-cert (rg-005).
+
+    Determinism children re-import report.py, so we cannot monkeypatch
+    build_reports without tripping environment-drift. Instead drop a hard key
+    in the post-cert fold path (same surface schema_exit is produced on) so the
+    certified expect still byte-matches while schema_exit is non-None.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    real_fold = cli_mod._fold_schema_errors_into_verdict
+
+    def _drop_then_fold(scored):
+        caption = scored.get("caption")
+        if isinstance(caption, dict):
+            caption.pop("must_right_failed_images", None)
+        return real_fold(scored)
+
+    monkeypatch.setattr(cli_mod, "_fold_schema_errors_into_verdict", _drop_then_fold)
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    expect = tmp_path / "schema-expect.json"
+    _certified_caption_expect(manifest_path, record_path, expect)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(_freeze_cert_score_argv(manifest_path, record_path, expect))
+    assert exc.value.code != 0
+    msg = str(exc.value).lower()
+    assert "schema error" in msg
+    assert "must_right_failed_images" in msg
+
+
+def test_score_face_freeze_certification_exits_zero_when_bytes_match(
+    tmp_path, monkeypatch, capsys
+):
+    """TEST-15: score-face freeze-cert green path (byte-stable + integrity clean)."""
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import build_face_reports
+
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run-fc.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "face-man-fc.json"
+    man_path.write_text(json.dumps(manifest))
+    # Certified face expect (anchor-generator shape).
+    man = load_manifest(str(man_path), skip_hash_verification=True)
+    j, _m = build_face_reports(
+        record, man, score_manifest_sha256=_manifest_sha(man), public=False
+    )
+    expect = tmp_path / "face-expect.json"
+    expect.write_text(j, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(
+        [
+            "score-face",
+            "--run-record",
+            str(rec_path),
+            "--manifest",
+            str(man_path),
+            "--check-determinism",
+            "--expect-report",
+            str(expect),
+            "--freeze-certification",
+        ]
+    )
+    assert rc is None
+    out = capsys.readouterr().out
+    assert "determinism check passed" in out
+    assert "matches --expect-report" in out
+    assert "freeze-certification" in out.lower()
+    assert "byte-stable" in out.lower() or "bit-identical" in out.lower()

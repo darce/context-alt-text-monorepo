@@ -2445,8 +2445,10 @@ def _pinned_victim_existence_errors(
     return errors
 
 
-def _require_kill_allowlist_errors(mutations: list[Mutation]) -> list[str]:
-    """FIR-7-RV-04 / FIR-7-C2-02: require_kill=False only for KNOWN_GAP_ALLOWED.
+def _require_kill_allowlist_errors(
+    mutations: list[Mutation],
+) -> tuple[list[str], list[str]]:
+    """FIR-7-RV-04 / FIR-7-C2-02 / FIR-7-C3-02: require_kill allowlist check.
 
     Startup structural alarm — fires before any pytest run so a new weak
     flag cannot ship as a silent known_gap. Iterates the **full** mutations
@@ -2457,13 +2459,19 @@ def _require_kill_allowlist_errors(mutations: list[Mutation]) -> list[str]:
     the module-level frozenset must edit this check site too (frozenset
     blocks ``.add`` but not rebind — same review-visibility bar as
     ``ABSOLUTE_NODEID_FLOOR``).
+
+    Returns ``(pin_errors, mutant_errors)`` so the FAIL footer can name
+    constant-pin failures separately from unauthorised known_gap mutants
+    (FIR-7-C3-02) — a pin-only rebind must not be mislabelled as a mutant
+    allowlist violation.
     """
-    errors: list[str] = []
+    pin_errors: list[str] = []
+    mutant_errors: list[str] = []
     # Inline literal pin (FIR-7-C2-02): rebind of KNOWN_GAP_ALLOWED alone is
     # not enough — the expected set is duplicated here on purpose.
     _KNOWN_GAP_ALLOWED_PIN = frozenset({"CONTROL", "M6"})
     if KNOWN_GAP_ALLOWED != _KNOWN_GAP_ALLOWED_PIN:
-        errors.append(
+        pin_errors.append(
             "HARNESS-ERROR: KNOWN_GAP_ALLOWED was rebound to "
             f"{sorted(KNOWN_GAP_ALLOWED)!r}; expected "
             f"{sorted(_KNOWN_GAP_ALLOWED_PIN)!r}. Update the inline pin in "
@@ -2475,13 +2483,13 @@ def _require_kill_allowlist_errors(mutations: list[Mutation]) -> list[str]:
             continue
         if mutation.name in KNOWN_GAP_ALLOWED:
             continue
-        errors.append(
+        mutant_errors.append(
             f"HARNESS-ERROR {mutation.name}: require_kill=False is not in "
             f"KNOWN_GAP_ALLOWED={{{allowed}}}; a new known_gap requires "
             "editing that named constant with a comment explaining the "
             "review bar (FIR-7-RV-04)"
         )
-    return errors
+    return pin_errors, mutant_errors
 
 
 def _resolve_victim_nodeids(
@@ -2696,19 +2704,32 @@ def main(argv: list[str] | None = None) -> int:
         else [m for m in MUTATIONS if m.name == args.mutation]
     )
 
-    # --- FIR-7-RV-04 / FIR-7-C2-02: require_kill=False ∈ KNOWN_GAP_ALLOWED -
+    # --- FIR-7-RV-04 / FIR-7-C2-02 / FIR-7-C3-02: require_kill allowlist --
     # Structural alarm at STARTUP — before any pytest / collect / baseline.
     # Walk the ENTIRE MUTATIONS table (selection-independent): require_kill
     # is a static table property. Running `--mutation CONTROL` must still
     # alarm on M15.require_kill=False if that flag is unauthorised.
-    allowlist_errors = _require_kill_allowlist_errors(MUTATIONS)
-    if allowlist_errors:
-        for line in allowlist_errors:
+    # FIR-7-C3-02: pin/rebind failures and mutant allowlist violations are
+    # counted and footered separately so a pin-only rebind is not mislabelled
+    # as an unauthorised known_gap mutant.
+    pin_errors, mutant_errors = _require_kill_allowlist_errors(MUTATIONS)
+    if pin_errors or mutant_errors:
+        for line in pin_errors + mutant_errors:
             print(line, flush=True)
+        footer_parts: list[str] = []
+        if pin_errors:
+            n = len(pin_errors)
+            footer_parts.append(
+                f"{n} constant-pin failure" if n == 1 else f"{n} constant-pin failures"
+            )
+        if mutant_errors:
+            footer_parts.append(
+                f"{len(mutant_errors)} unauthorised known_gap mutant(s)"
+            )
         print(
             f"FAIL: require_kill allowlist "
-            f"({len(allowlist_errors)} unauthorised known_gap mutant(s); "
-            "FIR-7-RV-04 / FIR-7-C2-02)",
+            f"({'; '.join(footer_parts)}; "
+            "FIR-7-RV-04 / FIR-7-C2-02 / FIR-7-C3-02)",
             flush=True,
         )
         return 2
@@ -2897,15 +2918,10 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         return 2
-    if len(live_nodeid_set) < ABSOLUTE_NODEID_FLOOR:
-        print(
-            f"HARNESS-ERROR RF-01: live collect count "
-            f"{len(live_nodeid_set)} < ABSOLUTE_NODEID_FLOOR="
-            f"{ABSOLUTE_NODEID_FLOOR}. Absolute floor violated "
-            "(FIR-7-RV-05).",
-            flush=True,
-        )
-        return 2
+    # FIR-7-C3-01: the former soft-floor branch
+    # ``len(live) < ABSOLUTE_NODEID_FLOOR`` is unreachable here — recorded⊆live
+    # + extras≤0 (or extras allowed) + floor==len(recorded) already imply
+    # live >= floor; with extras==0 they imply live==floor.
     print(
         f"NODEID-BASELINE: absolute floor ok "
         f"(ABSOLUTE_NODEID_FLOOR={ABSOLUTE_NODEID_FLOOR} == "

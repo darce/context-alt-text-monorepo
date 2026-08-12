@@ -24,6 +24,7 @@ from scripts.eval_harness.face_assignment import (
     associate_detections,
     build_loo_gallery,
     global_fold_ranks,
+    gt_box_name,
     gt_normalized_centre_to_pixel_corner,
     iou_pixel_corner,
     is_enrolled_for_probe,
@@ -34,6 +35,7 @@ from scripts.eval_harness.face_assignment import (
     select_tau_open_set_f1,
     similar_people_hungarian,
 )
+from scripts.eval_harness.face_metrics import named_box_name
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -671,3 +673,44 @@ def test_scipy_optimize_importable():
 
     assert linear_sum_assignment is not None
     assert scipy.optimize is not None
+
+
+# ---------------------------------------------------------------------------
+# Namedness: gt_box_name must share body with face_metrics.named_box_name (wF2)
+# ---------------------------------------------------------------------------
+
+
+def test_gt_box_name_agrees_with_named_box_name_on_adversarial_names() -> None:
+    """Association and face_metrics must use one namedness rule (TEST-06 / TEST-15).
+
+    Assert agreement between the two call sites across adversarial names — not
+    hardcoded expected strings. Divergence on BOM/ZWSP was the Wave E residual:
+    strip-only ``gt_box_name`` treated format-control-padded names as named while
+    ``named_box_name`` (Cf drop + strip) treated them as named under a different
+    key or as anonymous when Cf-only.
+    """
+    adversarial = [
+        "\ufeffAlice",  # BOM + name
+        "\u200bAlice",  # ZWSP + name
+        "A\u200bB",  # ZWSP mid
+        " Alice ",  # padded
+        "\u00a0Alice\u00a0",  # NBSP padded
+        "   ",  # whitespace-only
+        "\u200b",  # ZWSP-only → anonymous under Cf rule
+        "\ufeff",  # BOM-only → anonymous under Cf rule
+        "",  # empty
+        None,  # missing
+        "Alice",  # normal
+        "Bob Builder",
+    ]
+    disagreements: list[str] = []
+    for raw in adversarial:
+        box = {"name": raw}
+        left = gt_box_name(box)
+        right = named_box_name(box)
+        if left != right:
+            disagreements.append(f"raw={raw!r} gt_box_name={left!r} named_box_name={right!r}")
+    assert not disagreements, (
+        "gt_box_name must agree with face_metrics.named_box_name (single harness "
+        f"predicate); diverged on:\n  " + "\n  ".join(disagreements)
+    )

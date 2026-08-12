@@ -716,6 +716,84 @@ def test_walker_provenance_defaults_stay_candidate(tmp_path: Path) -> None:
     assert "leg_mode" not in record["provenance"]
 
 
+def test_twin_pass_skips_whitespace_and_cf_only_names_as_anonymous(tmp_path: Path) -> None:
+    """``any(box.name)`` treats whitespace/Cf-only as named — twin universe must not run.
+
+    Namedness predicate (face_metrics.named_box_name): drop Unicode Cf then strip;
+    empty → anonymous. Control-flow: entries with only anonymous boxes are skipped
+    (no detector call, no twin pairs). TEST-15: pre-fix any(box.name) is True for
+    ``\"   \"`` and ``\"\\u200b\"``, so the twin pass would enter the entry body.
+    """
+    import cv2
+
+    img_dir = tmp_path / "anon"
+    img_dir.mkdir()
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(img_dir / "x.jpg"), img)
+
+    class _BoomDetector:
+        calls = 0
+        landmark_cache_provenance = LandmarkCacheProvenance.pinned_yunet()
+
+        def detect(self, images: list[np.ndarray]) -> list[list[RawDetection]]:
+            _BoomDetector.calls += 1
+            raise AssertionError("detector must not run for anonymous-only entries")
+
+    class _BoomEmbedder:
+        embedding_dim = 8
+
+        def embed(self, crops: list[np.ndarray]) -> np.ndarray:
+            raise AssertionError("embedder must not run for anonymous-only entries")
+
+    for raw_name, label in (("   ", "whitespace-only"), ("\u200b", "ZWSP-only"), ("\ufeff", "BOM-only")):
+        _BoomDetector.calls = 0
+        manifest = GoldenManifest.model_validate(
+            {
+                "manifest_version": 2,
+                "roster": [],
+                "entries": [
+                    {
+                        "path": "anon/x.jpg",
+                        "sha256": "b" * 64,
+                        "media_id": 1,
+                        "face_count": 1,
+                        "present_identities": [],
+                        "must_right": [],
+                        "easy_wrong": [],
+                        "policy": {"recognition_enabled": True},
+                        "context_pack": {"caption": "x"},
+                        "face_boxes": [
+                            {
+                                "x": 0.5,
+                                "y": 0.5,
+                                "w": 0.2,
+                                "h": 0.2,
+                                "name": raw_name,
+                                "source": "iptc",
+                            }
+                        ],
+                        "provenance": {
+                            "source": "celeb",
+                            "license": "public_domain",
+                            "publishable": True,
+                        },
+                    }
+                ],
+            }
+        )
+        pairs_by_tag, prov = build_occlusion_twin_pairs(
+            manifest,
+            tmp_path,
+            detector=_BoomDetector(),  # type: ignore[arg-type]
+            embedder=_BoomEmbedder(),  # type: ignore[arg-type]
+        )
+        assert pairs_by_tag == {}, f"{label}: expected no twin pairs, got {pairs_by_tag!r}"
+        assert prov["n_pairs"] == 0, f"{label}: n_pairs={prov.get('n_pairs')}"
+        assert prov["n_twin_specs"] == 0, f"{label}: n_twin_specs={prov.get('n_twin_specs')}"
+        assert prov["errors"] == [], f"{label}: unexpected errors={prov.get('errors')}"
+        assert _BoomDetector.calls == 0, f"{label}: detector was invoked (truthiness gate leak)"
+
+
 def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -2,9 +2,19 @@
 
 Lane: `vlm6-lb1-cli-hash-callsites` · Task: `VLM-6` · Actor: `grok-4.5`
 
+> **fx5 correction (VLM6-D-07):** re-anchored the call-site table on
+> **function names + distinguishing kwargs** instead of line numbers. Line
+> anchors in the prior revision pointed at unrelated statements after later
+> edits (`rg-005`). Each row re-verified against `cli.py` at this lane's branch HEAD.
+
 ## Summary
 
-Classified every owned `load_manifest()` call site against default-on hash verification (VLM6-R2-05). Pixel-reading paths pass `images_dir=`; metadata-only paths pass `skip_hash_verification=True` with a one-line field/rationale comment. Added permanent TEST-15 spy that fails if face-bakeoff ever blanket-skips. Regenerated stale caption determinism freeze (pre-existing golden/schema drift unmasked once load succeeded).
+Classified every owned `load_manifest()` call site against default-on hash
+verification (VLM6-R2-05). Pixel-reading paths pass `images_dir=`;
+metadata-only paths pass `skip_hash_verification=True` with a one-line
+field/rationale comment. Added permanent TEST-15 spy that fails if
+face-bakeoff ever blanket-skips. Regenerated stale caption determinism freeze
+(pre-existing golden/schema drift unmasked once load succeeded).
 
 ## Gate counts
 
@@ -23,26 +33,28 @@ cd apps/prototype-description-service && uv run --extra dev pytest \
   -q -p no:randomly
 ```
 
-## Call-site classification table
+## Call-site classification table (function + kwargs; no line numbers)
 
-| Site | Decision | Downstream that does/does not open bytes |
-| --- | --- | --- |
-| `cli.py:631` `_cmd_fetch` | **images_dir** (pre-existing reference) | `fetch_run_record` → `image_path.read_bytes()` + `Image.open` |
-| `cli.py:1109` `_check_score_determinism_cross_process` | **skip** | `build_reports` — rubrics/roster/policy only |
-| `cli.py:1137` (embedded `python -c`) | **skip** | child re-score via `build_reports` — no image open |
-| `cli.py:1193` `_cmd_score` | **skip** | `score_run_record` / `build_reports` — must_right/easy_wrong/roster; bytes already in run-record |
-| `cli.py:1536` `_cmd_face_bakeoff` | **images_dir** | `walk_face_run_record` + `build_occlusion_twin_pairs` → `image_path.read_bytes()` / decode BGR |
-| `cli.py:1638` `_check_face_determinism_cross_process` | **skip** | `_face_score_once` → `build_face_reports` — tags/face_count/record embeddings |
-| `cli.py:1653` (embedded `python -c`) | **skip** | child face re-score — no image open |
-| `cli.py:1693` `_cmd_score_face` | **skip** | `score_face_run_record` / `build_face_reports` — metadata + record-side embeddings |
-| `generate_determinism_anchor.py:144` | **skip** | synthetic bytes from path/sha/media_id (`_synthetic_image_bytes`); module doc: no GOLDEN_IMAGES_DIR |
-| `generate_face_determinism_anchor.py:514` | **skip** | synthetic face manifest; score uses roster/face_count/tags only |
-| tests: `_write_score_manifest`, build_reports baselines, golden helpers, phrase_boxes `_seed_manifest`, face-anchor sha checks | **skip** | all metadata/sha/score fixtures; never open fixture pixels |
-| face-bakeoff fixture writers | **images_dir path** (real sha pins) | tests write images then pin `hashlib.sha256(path.read_bytes())` so bakeoff verify passes |
+| Site | Decision | Distinguishing call | Downstream that does/does not open bytes |
+| --- | --- | --- | --- |
+| `_cmd_fetch` | **images_dir** | `load_manifest(args.manifest, images_dir=images_dir)` | `fetch_run_record` → `image_path.read_bytes()` + `Image.open` |
+| `_check_score_determinism_cross_process` | **skip** | `load_manifest(str(resolved_manifest), skip_hash_verification=True)` | `build_reports` — rubrics/roster/policy only |
+| score-determinism embedded `python -c` child | **skip** | `load_manifest(sys.argv[2], skip_hash_verification=True)` inside child argv string | child re-score via `build_reports` — no image open |
+| `_cmd_score` | **skip** | `load_manifest(args.manifest, skip_hash_verification=True)` | `score_run_record` / `build_reports` — must_right/easy_wrong/roster; bytes already in run-record |
+| `_cmd_face_bakeoff` | **images_dir** | `load_manifest(args.manifest, images_dir=images_dir)` | face-bakeoff walk + occlusion twins → `image_path.read_bytes()` / decode BGR |
+| `_check_face_determinism_cross_process` | **skip** | `load_manifest(str(resolved_manifest), skip_hash_verification=True)` | `_face_score_once` → `build_face_reports` — tags/face_count/record embeddings |
+| face-determinism embedded `python -c` child | **skip** | `load_manifest(sys.argv[2], skip_hash_verification=True)` inside child argv string | child face re-score — no image open |
+| `_cmd_score_face` | **skip** | `load_manifest(args.manifest, skip_hash_verification=True)` | `score_face_run_record` / `build_face_reports` — metadata + record-side embeddings |
+| `generate_determinism_anchor` writer | **skip** | `load_manifest(str(manifest_path), skip_hash_verification=True)` | synthetic bytes from path/sha/media_id (`_synthetic_image_bytes`); module doc: no GOLDEN_IMAGES_DIR |
+| `generate_face_determinism_anchor` writer | **skip** | `load_manifest(str(manifest_path), skip_hash_verification=True)` | synthetic face manifest; score uses roster/face_count/tags only |
+| tests: `_write_score_manifest`, build_reports baselines, golden helpers, phrase_boxes `_seed_manifest`, face-anchor sha checks | **skip** | `skip_hash_verification=True` on helpers | all metadata/sha/score fixtures; never open fixture pixels |
+| face-bakeoff fixture writers | **images_dir path** (real sha pins) | tests write images then pin `hashlib.sha256(path.read_bytes())` | so bakeoff verify passes |
 
 ## TEST-15 discrimination control
 
-`test_face_bakeoff_passes_images_dir_not_skip` spies on `cli.load_manifest` kwargs from `face-bakeoff`. Asserts `images_dir=` is the resolved `GOLDEN_IMAGES_DIR` and `skip_hash_verification is False`.
+`test_face_bakeoff_passes_images_dir_not_skip` spies on `cli.load_manifest`
+kwargs from `face-bakeoff`. Asserts `images_dir=` is the resolved
+`GOLDEN_IMAGES_DIR` and `skip_hash_verification is False`.
 
 ### RED-before (temporary blanket skip on pixel path)
 

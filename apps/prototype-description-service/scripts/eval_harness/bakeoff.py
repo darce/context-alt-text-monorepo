@@ -1032,10 +1032,10 @@ def main(argv: list[str] | None = None) -> None:
             source_record, source_sha256 = _load_weave_bench_source(Path(args.weave_bench))
         except WeaveBenchRecordError as exc:
             sys.exit(f"WeaveBenchRecordError: {exc}")
-        # Text-only replay: no image bytes are sent, so the originals dir is not
-        # required and the manifest loads without image verification (as `cli score`).
+        # Text-only weave-bench: weave_bench_run_record reads roster/media_id/face_boxes
+        # pins only — never opens image files (GOLDEN_IMAGES_DIR not required).
         images_dir = ""
-        manifest = load_manifest(args.manifest)
+        manifest = load_manifest(args.manifest, skip_hash_verification=True)
     else:
         images_dir = os.environ.get("GOLDEN_IMAGES_DIR", "")
         if not images_dir:

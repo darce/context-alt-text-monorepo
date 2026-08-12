@@ -3954,6 +3954,217 @@ def test_face_detection_carries_sampling_frame():  # VLM6-R2-C-02 / wd-A
     assert "associat" in frame or "scoreable" in frame or "media" in frame
 
 
+def _face_y_missing_fixture() -> tuple[dict, dict]:
+    """Face run + manifest with one order_degraded image (mixed missing y) + clean sibling."""
+    dim = 8
+    alice = _unit([1.0] + [0.0] * (dim - 1))
+    bob = _unit([0.0, 1.0] + [0.0] * (dim - 2))
+    face_run = {
+        "schema": "acx-eval/v1",
+        "kind": DocKind.FACE_RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "/ops/private/lane-wg1/group-y-missing.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                # Zero dets: order_degraded trap must not float()-coerce null y (wF4).
+                "faces": [],
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/clean-pair.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [
+                    _face_det([10.0, 20.0, 30.0, 30.0], alice),
+                    _face_det([50.0, 20.0, 30.0, 30.0], bob),
+                ],
+            },
+        ],
+    }
+    manifest = {
+        "roster": ["Alice Example", "Bob Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a", "Bob Example": "cohort_b"},
+        "entries": [
+            {
+                "path": "/ops/private/lane-wg1/group-y-missing.jpg",
+                "media_id": 1,
+                "face_count": 2,
+                "present_identities": ["Alice Example", "Bob Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                # Mixed: Bob has y, Alice missing y, same x → order_degraded.
+                "face_boxes": [
+                    {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "name": "Bob Example"},
+                    {"x": 0.5, "w": 0.2, "h": 0.2, "name": "Alice Example"},  # no y
+                ],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            },
+            {
+                "path": "celebs01/clean-pair.jpg",
+                "media_id": 2,
+                "face_count": 2,
+                "present_identities": ["Alice Example", "Bob Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    _gt_box(0.25, 0.35, 0.3, 0.3, "Alice Example"),
+                    _gt_box(0.65, 0.35, 0.3, 0.3, "Bob Example"),
+                ],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            },
+        ],
+    }
+    return face_run, manifest
+
+
+def test_face_bakeoff_publishes_labeled_y_missing_identity_ordering():  # wG1 / VLM6-R2-G-01
+    """Face score_face_run_record must publish identity_ordering.labeled_y_missing_*.
+
+    wF4 residual: counter lived only on caption score_run_record; face freeze
+    could not pin it. Field names/semantics match caption faces.identity_ordering.
+    Denominator = counts.scored (same scoreable set).
+    """
+    from scripts.eval_harness.face_metrics import labeled_order
+
+    face_run, manifest = _face_y_missing_fixture()
+    r0 = labeled_order(manifest["entries"][0]["face_boxes"])
+    r1 = labeled_order(manifest["entries"][1]["face_boxes"])
+    assert r0.order_degraded is True
+    assert r1.order_degraded is False
+
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    assert "identity_ordering" in scored
+    ordering = scored["identity_ordering"]
+    # Same keys as caption faces.identity_ordering.
+    for key in (
+        "positional_images",
+        "degraded_images",
+        "degraded_paths",
+        "order_unknown_excluded",
+        "labeled_y_missing_images",
+        "labeled_y_missing_paths",
+    ):
+        assert key in ordering, f"missing identity_ordering.{key}"
+    assert ordering["labeled_y_missing_images"] == 1
+    assert ordering["labeled_y_missing_paths"] == ["/ops/private/lane-wg1/group-y-missing.jpg"]
+    # Predicted stamps absent on face walk items → honest 0 (not invented degraded).
+    assert ordering["degraded_images"] == 0
+    assert ordering["degraded_paths"] == []
+    assert ordering["positional_images"] == 0
+    # order_degraded image is positional-excluded (caption semantics).
+    assert ordering["order_unknown_excluded"] >= 1
+    # Denominator honesty: counter is out of scored images.
+    assert scored["counts"]["scored"] == 2
+    assert ordering["labeled_y_missing_images"] <= scored["counts"]["scored"]
+
+
+def test_face_identity_ordering_matches_caption_on_same_corpus():  # wG1
+    """Face identity_ordering GT counters must match caption aggregation on same boxes.
+
+    Two names for one quantity is the divergence this wave sequence eliminates.
+    Predicted stamp counters may differ when face items lack identity_ordering
+    stamps (face walk never stamps them) — only GT-side fields must agree.
+    """
+    face_run, manifest = _face_y_missing_fixture()
+    face_scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+
+    entries = list(manifest["entries"])
+    cap_items = [
+        {
+            "media_id": e["media_id"],
+            "path": e["path"],
+            "model_id": "x",
+            "describe": {"alt_text_draft": "placeholder"},
+            "identity_ordering": "positional",
+            "image_width": 100,
+            "image_height": 100,
+        }
+        for e in entries
+    ]
+    cap = score_run_record(
+        {
+            "kind": "run_record",
+            "schema_version": 1,
+            "items": cap_items,
+            "provenance": {
+                "manifest_sha256": "m" * 64,
+                "model_id": "x",
+                "leg": "candidate",
+            },
+        },
+        entries,
+    )
+    face_io = face_scored["identity_ordering"]
+    cap_io = cap["faces"]["identity_ordering"]
+    assert face_io["labeled_y_missing_images"] == cap_io["labeled_y_missing_images"] == 1
+    assert face_io["labeled_y_missing_paths"] == cap_io["labeled_y_missing_paths"]
+    # order_unknown_excluded: caption also excludes order_degraded; face matches GT side.
+    assert face_io["order_unknown_excluded"] == cap_io["order_unknown_excluded"]
+
+
+def test_face_labeled_y_missing_paths_public_redacted():  # wG1 / VLM6-R2-A-02
+    """Face PUBLIC export must scrub labeled_y_missing_paths (operator paths)."""
+    face_run, manifest = _face_y_missing_fixture()
+    local = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    leak = "/ops/private/lane-wg1/group-y-missing.jpg"
+    assert leak in local["identity_ordering"]["labeled_y_missing_paths"]
+
+    redacted = redact_face_report_for_public(local)
+    blob = json.dumps(redacted)
+    assert leak not in blob
+    assert "/ops/private" not in blob
+    paths = redacted["identity_ordering"]["labeled_y_missing_paths"]
+    assert all(not (isinstance(p, str) and (p.startswith("/") or "/ops/" in p)) for p in paths)
+    # Int counter survives PUBLIC.
+    assert redacted["identity_ordering"]["labeled_y_missing_images"] == 1
+
+
+def test_face_labeled_y_missing_constant_zero_mutation_diverges(
+    monkeypatch: pytest.MonkeyPatch,
+):  # wG1 TEST-15
+    """Acceptance: constant-0 aggregation of order_degraded must diverge on face path.
+
+    Same bar as wF4 caption-path control, but on score_face_run_record so the
+    face freeze can pin the counter after regeneration.
+    """
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+    import scripts.eval_harness.report as report_mod
+
+    face_run, manifest = _face_y_missing_fixture()
+    live = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    live_n = int(live["identity_ordering"]["labeled_y_missing_images"])
+    assert live_n >= 1
+
+    real_lo = labeled_order
+
+    def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(names=result.names, y_missing_count=0, order_degraded=False)
+
+    monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
+    blind = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    blind_n = int(blind["identity_ordering"]["labeled_y_missing_images"])
+    assert blind_n == 0
+    assert blind_n != live_n, (
+        f"constant-0 mutation still matches live ({live_n}) — face freeze cannot "
+        "see labeled_y_missing regressions (TEST-15 blindness not closed)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # VLM-6 Wave E / lane wE1 — face PUBLIC redaction fail-closed + order_degraded
 # ---------------------------------------------------------------------------

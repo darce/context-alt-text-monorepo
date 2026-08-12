@@ -3198,6 +3198,82 @@ def occlusion_inputs_from_record(
     return synth, build_real_occlusion_pairs(face_run_record, manifest)
 
 
+def _identity_ordering_block_for_face(
+    scoreable: Sequence[Mapping[str, Any]],
+    entry_by_id: Mapping[int, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """GT + predicted ordering disclosure for the face bakeoff report (VLM6-R2-G-01).
+
+    Field names and semantics match caption ``faces.identity_ordering`` exactly
+    so one freeze surface pins one quantity (wG1 / wF4 residual):
+
+    - ``labeled_y_missing_images`` / ``labeled_y_missing_paths`` — GT-side
+      ``labeled_order.order_degraded`` (named box missing ``y``). Source is
+      manifest ``face_boxes`` via ``labeled_order``; never re-counted at the
+      boundary from a convenience walk of raw boxes alone (rg-015).
+    - ``degraded_images`` / ``degraded_paths`` / ``positional_images`` —
+      predicted ``identity_ordering`` stamp on the run-record item (caption
+      fetch stamps these; face walk items usually omit the stamp → honest 0).
+    - ``order_unknown_excluded`` — scored images excluded from positional L→R
+      (no usable labeled order, predicted DEGRADED stamp, or recognition off).
+
+    Denominator for image-level counts is ``counts.scored`` (same scoreable set
+    this block walks — EVAL-03). Paths are manifest entry paths when present.
+    """
+    labeled_y_missing_images = 0
+    labeled_y_missing_paths: list[str] = []
+    order_unknown_excluded = 0
+    ordering_positional = 0
+    ordering_degraded = 0
+    degraded_paths: list[str] = []
+
+    for item in scoreable:
+        media_id = int(item["media_id"])
+        entry = entry_by_id.get(media_id) or {}
+        path = str(entry.get("path") or item.get("path") or f"media_id:{media_id}")
+        policy = entry.get("policy") if isinstance(entry.get("policy"), Mapping) else {}
+        recognition_enabled = bool((policy or {}).get("recognition_enabled", True))
+
+        # Same GT aggregation as score_run_record (caption path) — one quantity.
+        order_result = labeled_order(_normalize_face_boxes_for_order(entry.get("face_boxes") or []))
+        if order_result.order_degraded:
+            labeled_y_missing_images += 1
+            labeled_y_missing_paths.append(path)
+            labeled_order_known = False
+        else:
+            labeled_order_known = order_result.names is not None
+
+        ordering_stamp = item.get("identity_ordering")
+        # Caption semantics: absent stamp is legal (not counted); unknown stamp
+        # is a hard error (VLM6-RH-06). None ≠ DEGRADED → predicted_order_known.
+        if ordering_stamp is None:
+            predicted_order_known = True
+        elif ordering_stamp == IdentityOrdering.DEGRADED:
+            ordering_degraded += 1
+            degraded_paths.append(path)
+            predicted_order_known = False
+        elif ordering_stamp == IdentityOrdering.POSITIONAL:
+            ordering_positional += 1
+            predicted_order_known = True
+        else:
+            raise ReportError(
+                f"unknown identity_ordering {ordering_stamp!r} on {path}; "
+                f"expected one of {[m.value for m in IdentityOrdering]} or absent"
+            )
+
+        if not recognition_enabled or not labeled_order_known or not predicted_order_known:
+            order_unknown_excluded += 1
+
+    return {
+        "positional_images": ordering_positional,
+        "degraded_images": ordering_degraded,
+        "degraded_paths": list(degraded_paths),
+        "order_unknown_excluded": order_unknown_excluded,
+        "labeled_y_missing_images": labeled_y_missing_images,
+        "labeled_y_missing_paths": list(labeled_y_missing_paths),
+    }
+
+
 def score_face_run_record(
     face_run_record: dict[str, Any],
     manifest: Any,
@@ -3251,6 +3327,12 @@ def score_face_run_record(
             )
             continue
         scoreable.append(item)
+
+    # VLM6-R2-G-01 / wG1: publish ordering disclosure on the face freeze surface.
+    # Caption score_run_record already publishes the same block under
+    # faces.identity_ordering; face bakeoff previously never called labeled_order
+    # and the freeze could not pin labeled_y_missing_* (wF4 residual).
+    identity_ordering = _identity_ordering_block_for_face(scoreable, entry_by_id)
 
     assignment = score_face_assignment(scoreable, gt_by_media)
     detection = _detection_from_assignment(assignment)
@@ -3684,6 +3766,9 @@ def score_face_run_record(
         },
         "protocol_disclosures": list(FACE_BAKEOFF_PROTOCOL_DISCLOSURES),
         "detection": detection,
+        # Top-level (no faces.* wrapper): face bakeoff report is already face-only.
+        # Field names/semantics match caption faces.identity_ordering exactly (wG1).
+        "identity_ordering": identity_ordering,
         "slices": slices,
         "gate_proposal": gate_proposal,
         "decisions": decisions_json,
@@ -4059,6 +4144,38 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
         f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))}) "
         f"frame=`{_fmt_prov(det.get('sampling_frame'), default='')}`",
+    ]
+    # VLM6-R2-G-01 / wG1: GT-side y-missing + predicted stamp disclosure (same
+    # field names as caption faces.identity_ordering). Denominator = counts.scored.
+    ordering = scored.get("identity_ordering") if isinstance(scored.get("identity_ordering"), Mapping) else {}
+    if ordering:
+        lines += [
+            "",
+            "## Identity ordering",
+            "",
+            f"- positional_images={_fmt_prov(ordering.get('positional_images'))} "
+            f"degraded_images={_fmt_prov(ordering.get('degraded_images'))} "
+            f"order_unknown_excluded={_fmt_prov(ordering.get('order_unknown_excluded'))} "
+            f"labeled_y_missing_images={_fmt_prov(ordering.get('labeled_y_missing_images'))} "
+            f"(denominator: scored_images={_fmt_prov(counts.get('scored'))})",
+        ]
+        if ordering.get("degraded_images"):
+            lines.append(
+                f"- ⚠ predicted identity ordering degraded on {ordering['degraded_images']} image(s): "
+                + ", ".join(f"`{p}`" for p in ordering.get("degraded_paths") or [])
+            )
+        if ordering.get("labeled_y_missing_images"):
+            lines.append(
+                f"- ⚠ labeled L→R y-missing (order_degraded) on "
+                f"{ordering['labeled_y_missing_images']} image(s): "
+                + ", ".join(f"`{p}`" for p in ordering.get("labeled_y_missing_paths") or [])
+            )
+        if ordering.get("order_unknown_excluded"):
+            lines.append(
+                f"- ⚠ identity order unknown / positional-excluded on "
+                f"{ordering['order_unknown_excluded']} image(s)"
+            )
+    lines += [
         "",
         "## Floor-gated slices",
         "",

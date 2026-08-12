@@ -176,6 +176,21 @@ def latency_summary(
     return out
 
 
+def normalized_centre_order_key(
+    centre_x: float,
+    centre_y: float,
+    name: str,
+) -> tuple[float, float, str]:
+    """Canonical L→R sort key for centre-ordered identity sequences (rg-005).
+
+    One pure key shared by ``predicted_left_to_right``,
+    ``sort_identity_rows_by_normalized_centre``, and ``labeled_left_to_right``.
+    Order: increasing centre-x (viewer-left → right), then centre-y, then name.
+    Never rely on input-array stability for metric / freeze byte-stability.
+    """
+    return (float(centre_x), float(centre_y), str(name))
+
+
 def wire_bbox_normalized_centre(
     bbox: Any,
     *,
@@ -189,6 +204,8 @@ def wire_bbox_normalized_centre(
     corner bboxes (A-08). Centre-x and corner-x are not order-equivalent when face
     widths differ (VLM6-RH-03) — normalize with captured image size before sorting.
     Returns ``None`` when bbox or dimensions are unusable (never invents coords).
+    Degenerate box size (``width <= 0`` or ``height <= 0``) is unpositionable —
+    same as missing dims (S3-07).
     """
     if not isinstance(bbox, Mapping):
         return None
@@ -204,6 +221,8 @@ def wire_bbox_normalized_centre(
     except (KeyError, TypeError, ValueError):
         return None
     if width_px <= 0 or height_px <= 0:
+        return None
+    if w <= 0 or h <= 0:
         return None
     return ((x + w / 2.0) / width_px, (y + h / 2.0) / height_px)
 
@@ -221,9 +240,10 @@ def predicted_left_to_right(
     Corner-x and centre-x disagree when face widths differ; leftmost-wins name
     dedup mirrors ``labeled_left_to_right`` so sequence cardinalities match.
 
-    Sorts wire identity rows using ``wire_bbox_normalized_centre`` so both sides of
-    ``positional_identification`` share the manifest centre-point convention
-    (VLM6-RH-03). **Leftmost-wins duplicate-name dedup** mirrors
+    Sorts wire identity rows using ``wire_bbox_normalized_centre`` + the shared
+    ``normalized_centre_order_key`` (cx, cy, name) so both this API and
+    ``sort_identity_rows_by_normalized_centre`` share one centre-x rule (S3-01 /
+    rg-005). **Leftmost-wins duplicate-name dedup** mirrors
     ``labeled_left_to_right`` (VLM6-R4-08).
 
     Returns:
@@ -236,7 +256,7 @@ def predicted_left_to_right(
         return None
     if not identities:
         return []
-    positioned: list[tuple[float, str]] = []
+    positioned: list[tuple[float, float, str]] = []
     unpositioned: list[str] = []
     for entry in identities:
         if isinstance(entry, Mapping):
@@ -251,12 +271,12 @@ def predicted_left_to_right(
         if centre is None:
             unpositioned.append(str(name))
         else:
-            positioned.append((centre[0], str(name)))
-    positioned.sort(key=lambda t: (t[0], t[1]))
+            positioned.append((centre[0], centre[1], str(name)))
+    positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
     unpositioned.sort()
     ordered: list[str] = []
     seen: set[str] = set()
-    for _, name in positioned:
+    for _, _, name in positioned:
         if name in seen:
             continue
         seen.add(name)
@@ -306,10 +326,12 @@ def sort_identity_rows_by_normalized_centre(
     image_width: float | None,
     image_height: float | None,
 ) -> list[dict[str, Any]]:
-    """Re-order wire identity dict rows by normalized centre-x (no name dedup).
+    """Re-order wire identity dict rows by normalized centre (no name dedup).
 
     Used by runners that store full identity rows (face_pass). Keeps every row so
     face_count/name multiset is preserved; only sort key is corrected (VLM6-RH-03).
+    Sort key is the shared ``normalized_centre_order_key`` (cx, cy, name) — same
+    rule as ``predicted_left_to_right`` before name dedup (S3-01 / rg-005).
     Unpositioned rows follow positioned ones (stable secondary key = name).
     """
     positioned: list[tuple[float, float, str, dict[str, Any]]] = []
@@ -324,18 +346,19 @@ def sort_identity_rows_by_normalized_centre(
             unpositioned.append((name, row))
         else:
             positioned.append((centre[0], centre[1], name, row))
-    positioned.sort(key=lambda t: (t[0], t[1], t[2]))
+    positioned.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
     unpositioned.sort(key=lambda t: t[0])
     return [t[-1] for t in positioned] + [t[1] for t in unpositioned]
 
 
 def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
-    """Named identities left-to-right by face-box centre ``x``, or None if unknown.
+    """Named identities left-to-right by face-box centre, or None if unknown.
 
     ``present_identities`` is stored alphabetically (draft_labels) or in XMP
     write order (export_identities) — neither is spatial. Curated ``face_boxes``
-    carry centre-point coords; sort named boxes by ``x`` to recover L→R order
-    for the positional metric.
+    carry centre-point coords; sort named boxes by the shared
+    ``normalized_centre_order_key`` (x, y, name) so ties never depend on input
+    array order (S3-02 / EVAL-04).
 
     Returns:
     - ``None`` when ``face_boxes`` is missing/empty — order cannot be
@@ -355,29 +378,34 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
     """
     if not face_boxes:
         return None
-    named: list[tuple[float, str]] = []
+    named: list[tuple[float, float, str]] = []
     named_missing_x = 0
     for box in face_boxes:
         if isinstance(box, Mapping):
             name = box.get("name")
             x = box.get("x")
+            y = box.get("y")
         else:
             name = getattr(box, "name", None)
             x = getattr(box, "x", None)
+            y = getattr(box, "y", None)
         if name is None or name == "":
             continue
         if x is None:
             named_missing_x += 1
             continue
-        named.append((float(x), str(name)))
+        # Missing y still participates: default 0.0 so name can break pure-x ties
+        # without depending on input-array stability (S3-02).
+        y_val = 0.0 if y is None else float(y)
+        named.append((float(x), y_val, str(name)))
     # Named boxes exist but none carry x → manifest defect, not empty order.
     if not named and named_missing_x > 0:
         return None
     # Boxes present but none named (all strangers): established empty order.
-    named.sort(key=lambda t: t[0])
+    named.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
     ordered: list[str] = []
     seen: set[str] = set()
-    for _, name in named:
+    for _, _, name in named:
         if name in seen:
             continue  # leftmost wins for duplicates
         seen.add(name)
@@ -670,6 +698,13 @@ def face_identification_pr(
     - single-face confusion → FP only (excluded_single_face_recall)
     Precision/Recall use 0/0 → 0.
 
+    ``missed_gt`` is **named-only** (S3-04 / EVAL-16 / EVAL-19): count of
+    detector-missed ground-truth boxes whose ``true_name is not None``.
+    Unmatched stranger GT must not enter this FN fold-in — route those to
+    ``face_unknown_rejection(..., missed_stranger_gt=...)`` instead.
+    ``AssignmentResult.missed_gt`` and the headline association path both emit
+    named-only counts so the full-corpus and headline observation units agree.
+
     ``missed_gt`` and ``unmatched_detections`` are **required** (no fail-open
     default of 0 — REF-27 / FIR5V11-05). Pass counts scoped to the same
     sampling frame as ``decisions`` (e.g. celebs01-only for headline).
@@ -919,17 +954,22 @@ class UnknownRejectionResult:
 def face_unknown_rejection(
     decisions: Sequence[Any],
     *,
-    missed_stranger_gt: int = 0,
+    missed_stranger_gt: int,
 ) -> UnknownRejectionResult:
     """Face-level unknown-rejection over stranger probes (pooled decisions).
 
     correct-reject = reject; false-accept = accept any name.
 
-    ``missed_stranger_gt`` (EVAL-16 / VLM6-B-08): stranger ground-truth boxes the
-    detector never matched. They enter the denominator as failures — a detector
-    that skips hard strangers cannot keep unknown-rejection perfect by leaving
-    them out of the observation unit (AUDIT-07). Default 0 preserves call sites
-    that have not yet wired the count; report must pass the frame-scoped value.
+    ``missed_stranger_gt`` is **required** (S3-03 / AUDIT-07 / sr-001): no
+    fail-open default of 0. Callers must pass the frame-scoped count of
+    unmatched GT boxes with ``true_name is None`` (association ``unmatched_gt``
+    whose name is None). Omitting the kwarg is a TypeError — a production call
+    that forgets attribution cannot silently publish rate=1.0.
+
+    Missed strangers enter the denominator as failures so a detector that skips
+    hard strangers cannot keep unknown-rejection perfect by exclusion
+    (EVAL-16 / VLM6-B-08). Pass ``0`` only when the frame truly has zero
+    unmatched stranger GT.
     """
     correct = 0
     false_accept = 0

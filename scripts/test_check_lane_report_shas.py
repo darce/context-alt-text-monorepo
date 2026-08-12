@@ -471,37 +471,79 @@ def test_cyrillic_homoglyph_sha_fails_loudly(report_dir: Path) -> None:
     assert "citation(s) resolved" not in proc.stdout
 
 
+def test_homoglyph_detection_is_unconditional_not_vocab_gated(report_dir: Path) -> None:
+    """VLM6-R2-G-03 / TEST-15: homoglyph runs are examined on every line.
+
+    Vocabulary must not gate detection. The Cyrillic-с variant of c9f7c6e must
+    fail closed even when the surrounding prose has no commit vocabulary (and
+    even when the line only contains 'HEAD', which is not in the vocab set).
+    """
+    # с = U+0441, е = U+0435  → renders like c9f7c6e
+    sha = "\u04419f7\u04416\u0435"
+    cases = [
+        ("vocab.md", f"Sandbox base was {sha}."),
+        ("no_vocab.md", f"Work landed under {sha} in the throwaway clone."),
+        ("head_only.md", f"The lane worktree HEAD was {sha} at the time of the run."),
+    ]
+    for name, body in cases:
+        path = _write(report_dir / f"g03_{name}", body + "\n")
+        rel = str(path.relative_to(REPO_ROOT))
+        proc = _run_guard(rel)
+        assert proc.returncode != 0, (
+            f"homoglyph must fail closed without vocab gate; body={body!r} "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        )
+        combined = (proc.stdout + proc.stderr).lower()
+        assert (
+            "homoglyph" in combined
+            or "lookalike" in combined
+            or "non-ascii" in combined
+        ), f"expected homoglyph signal for body={body!r}; got {combined!r}"
+
+
 # ---------------------------------------------------------------------------
 # RV4-04 / RV4-06 — default walk must match staged depth (recursive)
 # ---------------------------------------------------------------------------
 
 
-def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
-    """RV4-04: default walk must see ``.s2a/**/*.md``, not only one level deep."""
-    nested = report_dir / "_rv4_nested" / "lane-report.md"
-    _write(nested, "Sandbox base was deadbee\n")
-    # Invoke with no path args so main() uses the default walk.
-    proc = subprocess.run(
-        [sys.executable, str(GUARD)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode != 0, (
-        f"nested .s2a report must fail default walk; stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    )
-    assert "deadbee" in proc.stderr
-
-
-def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
-    """RV4-04 / rg-006: default walk and --scan-staged share one path predicate."""
+def _load_guard_module():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("check_lane_report_shas", GUARD)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
+    """RV4-04 / VLM6-R2-E-02: default walk membership is checked directly (no ambient pollution).
+
+    Asserts path membership via ``_default_report_paths`` rather than a full-repo
+    default-walk exit code. Uses a unique token that cannot substring-match ambient
+    ``deadbeef`` citations in other lane reports.
+    """
+    mod = _load_guard_module()
+    # Unique token: not a substring of ambient deadbeef / cafebab noise.
+    unique_token = "f00ba12"  # 7 hex, unresolvable, no ambient substring collision
+    nested = report_dir / "_rv4_nested" / "lane-report.md"
+    _write(nested, f"Sandbox base was {unique_token}\n")
+    defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
+    assert nested.resolve() in defaults, (
+        f"default walk missed nested path {nested}; "
+        f"count={len(defaults)} sample={[str(p) for p in sorted(defaults) if '_rv4' in str(p) or '_fx3' in str(p)]}"
+    )
+    # Also confirm the file is actually scanned when targeted (path in stderr, unique token).
+    rel = str(nested.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0
+    assert unique_token in proc.stderr
+    assert "_rv4_nested" in proc.stderr or "lane-report" in proc.stderr
+
+
+def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
+    """RV4-04 / rg-006: default walk filters through the shared path predicate."""
+    mod = _load_guard_module()
 
     # Nested and shallow paths must both be accepted by the shared predicate.
     assert mod._is_lane_report_relpath(".s2a/top.md") is True
@@ -523,6 +565,40 @@ def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
     finally:
         nested_file.unlink(missing_ok=True)
         nested_dir.rmdir()
+
+
+def test_default_walk_sees_s2a_at_arbitrary_depth_above_star(tmp_path: Path) -> None:
+    """VLM6-R2-G-04 / rg-006: depth above ``*/.s2a`` is not missed by a hand-maintained glob.
+
+    ``*`` does not cross path separators, so a parallel glob list drifts from the
+    predicate. The collector must walk the tree and filter through
+    ``_is_lane_report_relpath`` so e.g. ``a/b/c/.s2a/report.md`` is included.
+    """
+    mod = _load_guard_module()
+    # Build a synthetic mini-tree under the real repo so relative_to(repo) works,
+    # at a depth ``*/.s2a/**`` cannot reach (three path segments before .s2a).
+    deep_dir = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / "scene"
+        / ".s2a"
+        / "_cx5_depth_parity"
+    )
+    deep_dir.mkdir(parents=True, exist_ok=True)
+    deep_file = deep_dir / "report.md"
+    deep_file.write_text("no tokens here\n", encoding="utf-8")
+    try:
+        rel = deep_file.relative_to(REPO_ROOT).as_posix()
+        assert mod._is_lane_report_relpath(rel) is True
+        defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
+        assert deep_file.resolve() in defaults, (
+            f"default walk missed arbitrary-depth .s2a path {deep_file}; "
+            f"predicate={mod._is_lane_report_relpath(rel)}"
+        )
+    finally:
+        deep_file.unlink(missing_ok=True)
+        deep_dir.rmdir()
 
 
 # ---------------------------------------------------------------------------
@@ -593,3 +669,63 @@ def test_ignore_next_block_alone_allows_fence_with_foreign_sha(report_dir: Path)
     rel = str(path.relative_to(REPO_ROOT))
     proc = _run_guard(rel)
     assert proc.returncode == 0, f"expected pass; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+
+
+def test_ignore_next_block_requires_immediate_adjacency(report_dir: Path) -> None:
+    """VLM6-R2-G-05 / TEST-15: directive separated from fence by prose does NOT suppress.
+
+    Docstring says 'immediately before'; blank lines are allowed, intervening
+    non-blank content resets pending suppression (not 'anywhere earlier in file').
+    """
+    # Directive on line 3, seven lines of unrelated prose, fence on line 11.
+    path = _write(
+        report_dir / "ignore_block_nonadjacent.md",
+        "\n".join(
+            [
+                "line1",
+                "line2",
+                "<!-- sha-guard:ignore-next-block -->",
+                "prose a",
+                "prose b",
+                "prose c",
+                "prose d",
+                "prose e",
+                "prose f",
+                "prose g",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0, (
+        f"non-adjacent ignore-next-block must NOT suppress fence; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in proc.stderr
+
+
+def test_ignore_next_block_blank_lines_still_adjacent(report_dir: Path) -> None:
+    """VLM6-R2-G-05: blank lines between directive and fence remain adjacent."""
+    path = _write(
+        report_dir / "ignore_block_blanks.md",
+        "\n".join(
+            [
+                "<!-- sha-guard:ignore-next-block -->",
+                "",
+                "",
+                "```",
+                "synthetic head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+                "```",
+                "",
+            ]
+        ),
+    )
+    rel = str(path.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode == 0, (
+        f"blank lines must keep adjacency; stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )

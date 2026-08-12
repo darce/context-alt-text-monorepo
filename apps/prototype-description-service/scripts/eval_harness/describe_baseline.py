@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -67,6 +68,13 @@ def resolve_head_sha(raw: str | None = None) -> str | None:
     - Unset / empty → ``None`` (report writes null; no fabrication).
     - Explicit ``0`` * 40 → hard refuse (S4-06 / rg-015).
     - Any other value must be 40 lowercase hex chars.
+    - When git is available **and** the cwd is a git work tree, the SHA must
+      resolve via ``git rev-parse --verify <sha>^{commit}`` (RV3-05 / TEST-15).
+      Arbitrary 40-hex that is not a commit is refused — closes the fabrication
+      class adjacent to forty zeros.
+    - When git is missing or the cwd is not a repo, degrade to format-only
+      validation so offline / non-repo environments still record a format-valid
+      explicit SHA rather than hard-failing.
 
     Resolution order when *raw* is omitted: ``HEAD_SHA`` env, then the
     module-level ``HEAD_SHA`` (tests may monkeypatch the latter).
@@ -90,7 +98,34 @@ def resolve_head_sha(raw: str | None = None) -> str | None:
             f"HEAD_SHA must be a 40-char lowercase hex git SHA (got {raw!r}); "
             "unset HEAD_SHA to record null rather than fabricating zeros"
         )
-    return sha
+    # RV3-05 (a): when git can answer, require the SHA to be a real commit.
+    try:
+        in_repo = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        # No git binary — format-valid only.
+        return sha
+    if in_repo.returncode != 0 or (in_repo.stdout or "").strip() != "true":
+        # Not a git work tree — format-valid only.
+        return sha
+    verified = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verified.returncode != 0:
+        raise SystemExit(
+            f"HEAD_SHA={sha!r} is not a resolvable commit in this repository "
+            f"(git rev-parse --verify failed); pass a real SHA from "
+            f"`git rev-parse HEAD` or unset HEAD_SHA to record null "
+            f"(RV3-05 / S4-06 / rg-015)"
+        )
+    return (verified.stdout or sha).strip().lower()
 
 _UPLOADS_MARKERS = ("/wp-content/uploads/", "/uploads/")
 
@@ -623,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
                     manifest,
                     str(uploads),
                     client,
-                    head_sha=resolve_head_sha() or "",
+                    head_sha=resolve_head_sha(),  # None when unset — never "" (HARM-03)
                     started_at=started,
                     cost_per_image_usd=cost_per_image_usd,
                 )

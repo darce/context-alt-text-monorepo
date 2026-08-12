@@ -1219,6 +1219,47 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     assert report["counts"]["scored"] >= 2
 
 
+def test_cmd_score_quality_floor_breach_exits_nonzero(tmp_path, monkeypatch):
+    """RV1-01 / TEST-15: quality-floor breach must exit != 0 (not green-exit over fail).
+
+    Pre-fix: report.py stamped quality-floor reasons into verdict=fail, but
+    cli.py never wired them into ``_score_gate_fail`` — process exit stayed 0.
+    Assert on SystemExit code, not a log line (TEST-15 / EVAL-23 / OBS-04).
+    """
+    import copy
+
+    import scripts.eval_harness.cli as cli_mod
+    from scripts.eval_harness.report import build_score_verdict
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-qf")
+    real = cli_mod.score_run_record
+
+    def _force_position_floor(*args, **kwargs):
+        scored = real(*args, **kwargs)
+        scored = copy.deepcopy(scored)
+        pos = scored["faces"]["identification"]["positional"]
+        # Keep compared_images > 0 so the floor is measured-and-bad, not vacuous.
+        assert int(pos.get("compared_images") or 0) > 0
+        pos["position_accuracy"] = 0.0
+        scored["verdict"] = build_score_verdict(
+            scored, rubric_gate=kwargs.get("rubric_gate", "enforce")
+        )
+        return scored
+
+    monkeypatch.setattr(cli_mod, "score_run_record", _force_position_floor)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    # Exit status is the contract — not a printed warning.
+    assert excinfo.value.code != 0, f"expected non-zero exit, got {excinfo.value.code!r}"
+    msg = str(excinfo.value).lower()
+    assert "quality-floor" in msg
+    assert "score quality-floor gate" in msg
+    report = json.loads((tmp_path / "run-qf-report.json").read_text())
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    assert any("quality-floor" in r for r in report["verdict"]["reasons"])
+
+
 def test_cli_score_check_determinism_runs_cross_process_guard(tmp_path, monkeypatch, capsys):
     """--check-determinism on score drives the SHIPPED cross-process guard (VLM-6 S2A item 3).
 
@@ -4191,7 +4232,9 @@ def _adoption_compare_report(**overrides):
             },
         },
         "verdict": {
-            "verdict": "pass",
+            # RV1-05 / sr-007: fixture verdicts from the enum — never raw literals
+            # that can forge a status the enum would reject.
+            "verdict": ScoreVerdict.PASS.value,
             "wrong_name_rate": 0.0,
             "rubric_gate": "enforce",
             "reasons": [],
@@ -4267,8 +4310,12 @@ def test_cli_compare_rejects_handwritten_four_field_json(tmp_path):
 def test_cli_compare_rejects_pass_ungated_baseline(tmp_path):
     """VLM6-A-02: baseline whose own verdict is not adoption-eligible pass is refused."""
     # Match protocol (rubric_gate) so the adoption-eligible verdict check is reached.
-    baseline = _adoption_compare_report(verdict={"verdict": "pass_ungated", "rubric_gate": "enforce"})
-    candidate = _adoption_compare_report(verdict={"verdict": "pass", "rubric_gate": "enforce"})
+    baseline = _adoption_compare_report(
+        verdict={"verdict": ScoreVerdict.PASS_UNGATED.value, "rubric_gate": "enforce"}
+    )
+    candidate = _adoption_compare_report(
+        verdict={"verdict": ScoreVerdict.PASS.value, "rubric_gate": "enforce"}
+    )
     base_path = tmp_path / "baseline.json"
     cand_path = tmp_path / "candidate.json"
     base_path.write_text(json.dumps(baseline))
@@ -4631,7 +4678,7 @@ def test_serialize_score_docs_propagates_renderer_errors(monkeypatch):
                 "caption": {"insertion_rate": 0.0},
                 "counts": {"scored": 1, "total": 1, "failed": 0},
                 "faces": {"identification": {"wrong_names": []}},
-                "verdict": {"verdict": "pass"},
+                "verdict": {"verdict": ScoreVerdict.PASS.value},
             }
         )
 

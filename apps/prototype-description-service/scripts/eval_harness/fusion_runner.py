@@ -506,7 +506,7 @@ def run_fusion_eval(
     manifest: GoldenManifest,
     *,
     mode: Mode,
-    head_sha: str,
+    head_sha: str | None,
     started_at: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
@@ -691,12 +691,22 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     ]
 
 
-def _head_sha() -> str:
+def _head_sha() -> str | None:
+    """Resolve live git HEAD, or None when unresolvable (never fabricate).
+
+    Returns ``None`` on missing git, non-repo cwd, or rev-parse failure —
+    never the fabricated forty-zero sentinel that S4-06 refuses
+    (RV2-06 / HARM-03 / rg-015).
+    """
     try:
-        out = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL)
-        return out.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "0" * 40
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    if not out or out == "0" * 40:
+        return None
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:

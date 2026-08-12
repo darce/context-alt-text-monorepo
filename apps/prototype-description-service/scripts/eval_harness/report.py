@@ -27,9 +27,13 @@ from .caption_metrics import (
     LONG_SENTENCE_BAND,
     SHORT_SENTENCE_BAND,
     CaptionScores,
+    aggregate_gated_scores,
+    fabricated_fact_rate,
+    fabrication_by_kind,
     insertion_rate,
     name_precision,
     score_caption,
+    score_hallucination,
     wrong_name_image_rate,
 )
 from .face_assignment import (
@@ -56,7 +60,8 @@ from .face_metrics import (
     labeled_left_to_right,
     positional_identification,
 )
-from .manifest import Provenance, ProvenanceSource, SliceTag
+from .manifest import Provenance, ProvenanceSource, ReferenceFact, SliceTag, SpatialFact
+from .placement_metrics import PlacementScores, placement_accuracy, score_placement
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
@@ -174,8 +179,18 @@ class ReportError(Exception):
 # (paths/names) is not enough: ``base_url`` is the live recognition endpoint, an
 # internal host on real bake-off runs (localhost curation tenant or an OCI/Tailscale
 # VM), and would leak infrastructure topology into the hub-safe surface (VLM6-S5-BR-01).
+# api_key / tenant_id / token fields are secrets or tenant identifiers that must
+# never reach a hub-safe surface even if a caller stamped them onto provenance.
 _PUBLIC_PROVENANCE_REDACTED = "redacted"
-_PUBLIC_PROVENANCE_WITHHELD_FIELDS = ("base_url",)
+_PUBLIC_PROVENANCE_WITHHELD_FIELDS = (
+    "base_url",
+    "api_key",
+    "tenant_id",
+    "authorization",
+    "token",
+    "access_token",
+    "auth_token",
+)
 
 
 def _entry_index(manifest_entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -215,6 +230,76 @@ def _filter_for_public_audience(
     filtered_entries = [e for e in manifest_entries if _entry_is_publishable(e)]
     withheld = len(run_record["items"]) - len(kept_items)
     return filtered_record, filtered_entries, withheld
+
+
+def _public_safe_path(path: str) -> str:
+    """Render-boundary path redaction for PUBLIC artifacts.
+
+    Absolute filesystem paths (POSIX or Windows drive) collapse to basename so a
+    hub-safe report never discloses operator home directories or LocalWP layout.
+    Relative corpus keys (``celebs01/…``, ``mock_images/…``) are left intact.
+    """
+    text = str(path)
+    if not text:
+        return text
+    if text.startswith("/") or (len(text) > 2 and text[1] == ":" and text[2] in "\\/"):
+        return text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return text
+
+
+def _parse_spatial_facts(raw: Any) -> list[SpatialFact]:
+    """Parse entry ``spatial_facts``; skip unparseable rows fail-open per item."""
+    if not isinstance(raw, list):
+        return []
+    facts: list[SpatialFact] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            facts.append(SpatialFact.model_validate(item))
+        except ValidationError:
+            continue
+    return facts
+
+
+def _parse_reference_facts(raw: Any) -> list[ReferenceFact]:
+    """Parse entry ``reference_facts``; skip unparseable rows fail-open per item."""
+    if not isinstance(raw, list):
+        return []
+    facts: list[ReferenceFact] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            facts.append(ReferenceFact.model_validate(item))
+        except ValidationError:
+            continue
+    return facts
+
+
+def _redact_public_paths(obj: Any) -> Any:
+    """Rewrite absolute path strings nested in a scored report (render boundary)."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, value in obj.items():
+            if key in ("path",) and isinstance(value, str):
+                out[key] = _public_safe_path(value)
+            elif key in ("excluded_images", "degraded_paths") and isinstance(value, list):
+                out[key] = [_public_safe_path(v) if isinstance(v, str) else _redact_public_paths(v) for v in value]
+            elif key in ("wrong_names", "ignored_wrong_names") and isinstance(value, list):
+                rewritten: list[Any] = []
+                for pair in value:
+                    if isinstance(pair, list | tuple) and pair and isinstance(pair[0], str):
+                        rewritten.append([_public_safe_path(str(pair[0])), *list(pair[1:])])
+                    else:
+                        rewritten.append(_redact_public_paths(pair))
+                out[key] = rewritten
+            else:
+                out[key] = _redact_public_paths(value)
+        return out
+    if isinstance(obj, list):
+        return [_redact_public_paths(v) for v in obj]
+    return obj
 
 
 def _pr_dict(precision: float | None, recall: float | None) -> dict[str, float | None]:
@@ -336,16 +421,23 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     Wall-clock per image = sum of ``describe.passes[*].latency_s`` when the item
     carries timed passes (multi-call pipelines), else the walker's single
     ``latency_s`` item field. Model calls per image = ``len(passes)`` or 1.
-    Items with an error or no timing data are skipped. Returns ``None`` when
+    Items with an error, no timing data, or a cache hit (``describe.cached`` /
+    contract field; HARM-02) are skipped — cache hits are not open-loop inference
+    measurements and must not dilute p50/p95 (VLM6-R4-04). Returns ``None`` when
     nothing is timed so untimed (pre-Slice-3 fixture) records keep their exact
     report shape (additive schema). Pure and deterministic; NO cost math here —
     $/1k images stays a memo-time formula (plan §Slice 3)."""
     wall_clock: list[float] = []
     calls: list[int] = []
+    cache_hits_excluded = 0
     for item in items:
         if item.get("error"):
             continue
         describe = item.get("describe") or {}
+        # Cache hits are not live inference timings (VLM6-R4-04).
+        if bool(describe.get("cached", False)):
+            cache_hits_excluded += 1
+            continue
         passes = describe.get("passes")
         if isinstance(passes, list) and passes:
             latencies = [
@@ -364,7 +456,7 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not wall_clock:
         return None
     ordered = sorted(wall_clock)
-    return {
+    result: dict[str, Any] = {
         "images_timed": len(wall_clock),
         "wall_clock_s": {
             "p50": round(_percentile(ordered, 0.5), 3),
@@ -375,6 +467,9 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
             "total": sum(calls),
         },
     }
+    if cache_hits_excluded:
+        result["cache_hits_excluded"] = cache_hits_excluded
+    return result
 
 
 def _total_wrong_name_count(ident: Mapping[str, Any]) -> int:
@@ -527,7 +622,8 @@ def score_run_record(
     roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
     long_scores: list[CaptionScores] = []
-    gated_values: list[float] = []
+    placement_scores: list[PlacementScores] = []
+    hallucination_scores: list[Any] = []
     per_image: list[dict[str, Any]] = []
     detections: list[ImageDetection] = []
     identifications: list[ImageIdentities] = []
@@ -606,18 +702,33 @@ def score_run_record(
         short_error = describe.get("short_error")
         scores: CaptionScores | None = None
         gated: float | None = None
+        caption_text = ""
         if short_error is None:
-            caption = str(describe.get("alt_text_draft", ""))
-            scores = score_caption(caption, **score_kwargs)
+            caption_text = str(describe.get("alt_text_draft", ""))
+            scores = score_caption(caption_text, **score_kwargs)
             caption_scores.append(scores)
             gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
-            if gated is not None:
-                gated_values.append(gated)
 
         long_text = describe.get("alt_text_long")
         long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
         if long_s is not None:
             long_scores.append(long_s)
+
+        # VLM6-R4-02 / VLM6-R2-02: placement + fabricated-fact hallucination are
+        # scored against manifest facts and MUST surface on the report (not drop).
+        spatial_facts = _parse_spatial_facts(entry.get("spatial_facts"))
+        reference_facts = _parse_reference_facts(entry.get("reference_facts"))
+        place_s = score_placement(caption_text, spatial_facts=spatial_facts) if short_error is None else None
+        if place_s is not None:
+            placement_scores.append(place_s)
+        face_count = int(entry["face_count"])
+        hall_s = (
+            score_hallucination(caption_text, reference_facts=reference_facts, face_count=face_count)
+            if short_error is None
+            else None
+        )
+        if hall_s is not None:
+            hallucination_scores.append(hall_s)
 
         # ALTQ-1 v3: titles run through the SAME closed-roster name traps as
         # captions (score_caption) — a roster name the entry's context does not
@@ -645,7 +756,6 @@ def score_run_record(
         # roster identities — otherwise every stranger face is a detection FP and
         # true_rejections is unreachable (S3-01, HARM-04). Required, not defaulted:
         # a missing face_count must fail loud, never silently re-create the bug.
-        face_count = int(entry["face_count"])
         stranger_faces = max(face_count - len(entry["present_identities"]), 0)
         detections.append(
             ImageDetection(
@@ -660,12 +770,15 @@ def score_run_record(
         # Labeled order for the positional metric must NOT use present_identities
         # (alphabetical / XMP write order). Derive L→R from face_boxes centre x;
         # when face_boxes are missing, exclude from positional scoring (FL30A-GATE-01).
+        # VLM6-R2-04: never feed alphabetical present_identities as labeled when
+        # order is unknown — that was a dead/no-op path (excluded anyway) that
+        # invited accidental re-enablement of alphabetical scoring.
         predicted_names = identity_names(item.get("identities", []))
         present = list(entry["present_identities"])
         ordered_labeled = labeled_left_to_right(entry.get("face_boxes") or [])
         order_known = ordered_labeled is not None
         # Set-based identification_pr still uses present_identities (order-blind).
-        # Positional uses face-box L→R when known; otherwise flags order unknown.
+        # Positional uses face-box L→R when known; otherwise excluded (empty labeled).
         identifications.append(
             ImageIdentities(
                 image=path,
@@ -680,7 +793,8 @@ def score_run_record(
                 image=path,
                 predicted=predicted_names,
                 # When order is known, feed spatial L→R — never sort predicted.
-                labeled=ordered_labeled if order_known else present,
+                # When unknown, labeled=[] + labeled_order_known=False (exclude).
+                labeled=list(ordered_labeled) if order_known else [],
                 recognition_enabled=recognition_enabled,
                 stranger_faces=stranger_faces,
                 labeled_order_known=order_known,
@@ -710,6 +824,27 @@ def score_run_record(
             "name_front_loaded": scores.name_front_loaded if scores is not None else None,
             "cache_hit": bool(describe.get("cached", False)),  # contract field is 'cached' (HARM-02)
         }
+        if place_s is not None:
+            row["placement"] = {
+                "accuracy": place_s.accuracy,
+                "claims": place_s.claims,
+                "correct": list(place_s.correct),
+                "wrong": [[fact, evidence] for fact, evidence in place_s.wrong],
+                "abstained": list(place_s.abstained),
+            }
+        if hall_s is not None:
+            row["hallucination"] = {
+                "fabricated": hall_s.fabricated,
+                "fabricated_facts": [
+                    {"kind": f.kind.value, "text": f.text, "matched_phrase": f.matched_phrase}
+                    for f in hall_s.fabricated_facts
+                ],
+                "covered_facts": list(hall_s.covered_facts),
+                "missing_facts": list(hall_s.missing_facts),
+                "trap_count": hall_s.trap_count,
+                "coverage": hall_s.coverage,
+                "count_advisory": hall_s.count_advisory,
+            }
         if short_error is not None:
             row["short_error"] = str(short_error)
         if long_s is not None:
@@ -800,6 +935,10 @@ def score_run_record(
     def _quality_block(scores: list[CaptionScores], band: tuple[int, int]) -> dict[str, Any]:
         duplication = [s.context_duplication_ratio for s in scores if s.context_duplication_ratio is not None]
         front = [s.name_front_loaded for s in scores if s.name_front_loaded is not None]
+        fkre_vals = [s.fkre for s in scores]
+        rep_vals = [s.repetition_ratio for s in scores]
+        tag_vals = [s.tag_coverage for s in scores if s.tag_coverage is not None]
+        gist_vals = [s.first_sentence_gist_ok for s in scores if s.first_sentence_gist_ok is not None]
         return {
             "meta_framing_images": sum(1 for s in scores if s.meta_framing_hits),
             "mean_context_duplication": (round(sum(duplication) / len(duplication), 4) if duplication else None),
@@ -810,7 +949,57 @@ def score_run_record(
                 if scores
                 else None
             ),
+            # Surface axes previously computed only on per_image then dropped
+            # from the report aggregates (dead-path group).
+            "mean_fkre": (round(sum(fkre_vals) / len(fkre_vals), 2) if fkre_vals else None),
+            "mean_repetition_ratio": (round(sum(rep_vals) / len(rep_vals), 4) if rep_vals else None),
+            "mean_tag_coverage": (round(sum(tag_vals) / len(tag_vals), 4) if tag_vals else None),
+            "first_sentence_gist_ok_rate": (
+                round(sum(1 for g in gist_vals if g) / len(gist_vals), 4) if gist_vals else None
+            ),
         }
+
+    # Use caption_metrics.aggregate_gated_scores so N/A rows (gated_score=None)
+    # are excluded from the mean and the exclusion count is surfaced (la1 wiring).
+    if eval_mode == "name_ablation":
+        ablation_gates = [_ablation_gate(s) for s in caption_scores]
+        gated_agg_values = [g for g in ablation_gates if g is not None]
+        gated_mean = (
+            round(sum(gated_agg_values) / len(gated_agg_values), 4) if gated_agg_values else None
+        )
+        gated_scored_n = len(gated_agg_values)
+        gated_excluded_n = len(caption_scores) - gated_scored_n
+    else:
+        gated_agg = aggregate_gated_scores(caption_scores)
+        gated_mean = None if gated_agg.mean is None else round(gated_agg.mean, 4)
+        gated_scored_n = gated_agg.scored
+        gated_excluded_n = gated_agg.excluded
+
+    # Hallucination headline (VLM6-R2-02) + placement (VLM6-R4-02).
+    by_kind = fabrication_by_kind(hallucination_scores)
+    hall_block = {
+        "fabricated_fact_rate": fabricated_fact_rate(hallucination_scores, over="all"),
+        "fabricated_fact_rate_trapped": fabricated_fact_rate(hallucination_scores, over="trapped"),
+        "images_with_traps": sum(1 for s in hallucination_scores if s.trap_count),
+        "images_caught": sum(1 for s in hallucination_scores if s.fabricated),
+        "trap_instances": sum(s.trap_count for s in hallucination_scores),
+        "fabricated_instances": sum(len(s.fabricated_facts) for s in hallucination_scores),
+        "by_kind": {k.value: v for k, v in sorted(by_kind.items(), key=lambda kv: kv[0].value)},
+        "mean_coverage": (
+            round(sum(coverage_vals) / len(coverage_vals), 4)
+            if (coverage_vals := [s.coverage for s in hallucination_scores if s.coverage is not None])
+            else None
+        ),
+        "count_advisory_images": sum(1 for s in hallucination_scores if s.count_advisory),
+    }
+    place_block = {
+        "accuracy": placement_accuracy(placement_scores),
+        "claims": sum(s.claims for s in placement_scores),
+        "correct": sum(len(s.correct) for s in placement_scores),
+        "wrong": sum(len(s.wrong) for s in placement_scores),
+        "abstained": sum(len(s.abstained) for s in placement_scores),
+        "images_scored": len(placement_scores),
+    }
 
     result: dict[str, Any] = {
         "schema": SCHEMA,
@@ -839,8 +1028,12 @@ def score_run_record(
             "easy_wrong_defined_images": easy_wrong_defined_images,  # 0 => Easy-Wrong trap vacuous
             "policy_violations": sum(1 for s in caption_scores if s.policy_violation),
             "wrong_name_images": sum(1 for s in caption_scores if s.named_wrong_person),
-            "mean_gated_score": (round(sum(gated_values) / len(gated_values), 4) if gated_values else None),
+            "mean_gated_score": gated_mean,
+            "gated_score_scored": gated_scored_n,
+            "gated_score_excluded": gated_excluded_n,
         },
+        "hallucination": hall_block,
+        "placement": place_block,
         "quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),
         "faces": {
             "detection": {
@@ -1054,9 +1247,14 @@ def _markdown(scored: dict[str, Any]) -> str:
     if latency:
         wall = latency["wall_clock_s"]
         calls = latency["model_calls"]
+        cache_note = (
+            f", cache-hits excluded={latency['cache_hits_excluded']}"
+            if latency.get("cache_hits_excluded")
+            else ""
+        )
         lines.append(
             f"- latency: per-image wall-clock p50 {wall['p50']}s p95 {wall['p95']}s "
-            f"({latency['images_timed']} timed) · model calls/image: {calls['per_image_mean']} "
+            f"({latency['images_timed']} timed{cache_note}) · model calls/image: {calls['per_image_mean']} "
             f"(total {calls['total']})"
         )
     lines += [
@@ -1071,8 +1269,27 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"(must_right-defined images: {cap['must_right_defined_images']}; "
         f"easy_wrong-defined images: {cap.get('easy_wrong_defined_images')})",
         f"- policy violations: {cap['policy_violations']}",
-        f"- mean gated score: {_fmt(cap['mean_gated_score'])}",
+        f"- mean gated score: {_fmt(cap['mean_gated_score'])} "
+        f"(scored={cap.get('gated_score_scored')}, excluded={cap.get('gated_score_excluded')})",
     ]
+    hall = scored.get("hallucination") or {}
+    if hall:
+        by_kind = hall.get("by_kind") or {}
+        kind_bits = ", ".join(f"{k}={v}" for k, v in sorted(by_kind.items())) or "none"
+        lines += [
+            f"- fabricated-fact rate: {_fmt(hall.get('fabricated_fact_rate'))} "
+            f"(caught={hall.get('images_caught')}/{hall.get('images_with_traps')} trap images; "
+            f"instances={hall.get('fabricated_instances')}/{hall.get('trap_instances')})",
+            f"- fabricated by kind: {kind_bits}",
+            f"- true-fact coverage: {_fmt(hall.get('mean_coverage'))}",
+        ]
+    place = scored.get("placement") or {}
+    if place:
+        lines += [
+            f"- placement accuracy: {_fmt(place.get('accuracy'))} "
+            f"(correct={place.get('correct')} wrong={place.get('wrong')} "
+            f"claims={place.get('claims')} abstained={place.get('abstained')})",
+        ]
 
     def _quality_lines(quality: dict[str, Any]) -> list[str]:
         band = quality.get("sentence_band", [])
@@ -1081,6 +1298,10 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"- mean context duplication: {_fmt(quality['mean_context_duplication'])}",
             f"- name front-loaded rate: {_fmt(quality['name_front_loaded_rate'])}",
             f"- sentence band {band} ok rate: {_fmt(quality['sentence_band_ok_rate'])}",
+            f"- mean FKRE: {_fmt(quality.get('mean_fkre'))}",
+            f"- mean repetition ratio: {_fmt(quality.get('mean_repetition_ratio'))}",
+            f"- mean tag coverage: {_fmt(quality.get('mean_tag_coverage'))}",
+            f"- first-sentence gist ok rate: {_fmt(quality.get('first_sentence_gist_ok_rate'))}",
         ]
 
     lines += ["", "## Quality axes (short surface, report-only signals)", ""]
@@ -1218,11 +1439,15 @@ def build_reports(
     )
     if redaction is not None:
         scored["redaction"] = redaction
-        # Withhold internal run-level provenance (base_url endpoint) so the hub-safe
-        # public artifact never discloses infrastructure topology (VLM6-S5-BR-01).
+        # Withhold internal run-level provenance (base_url endpoint + secrets) so
+        # the hub-safe public artifact never discloses infrastructure topology or
+        # credentials (VLM6-S5-BR-01 / VLM6-R3). Redact at the render boundary —
+        # underlying computation already finished above.
         for field_name in _PUBLIC_PROVENANCE_WITHHELD_FIELDS:
             if scored["provenance"].get(field_name):
                 scored["provenance"][field_name] = _PUBLIC_PROVENANCE_REDACTED
+        # Absolute local filesystem paths → basename only (render boundary).
+        scored = _redact_public_paths(scored)
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
 
 

@@ -1664,6 +1664,10 @@ def test_latency_section_and_markdown_line_render_when_timed():
     record, entries = _run_record(), _manifest_entries()
     record["items"][0]["latency_s"] = 3.2
     record["items"][1]["latency_s"] = 1.1
+    # Both timed items must be live inference (not cache hits) so p50/p95
+    # reflect open-loop timings (VLM6-R4-04). Fixture item 1 defaults cached=True.
+    record["items"][0]["describe"]["cached"] = False
+    record["items"][1]["describe"]["cached"] = False
     json_doc, md = build_reports(record, entries)
     scored = json.loads(json_doc)
     assert scored["latency"] == {
@@ -1674,6 +1678,40 @@ def test_latency_section_and_markdown_line_render_when_timed():
     assert "- latency: per-image wall-clock p50 1.1s p95 3.2s (2 timed)" in md
     assert build_reports(record, entries) == build_reports(record, entries)  # determinism holds
 
+
+def test_latency_excludes_cache_hits():  # VLM6-R4-04
+    """Cache-hit timings must not dilute p50/p95 open-loop latency (TEST-15).
+
+    RED without fix: both items timed → p50=0.5 (cache 0.001 + live 1.0 avg-ish
+    nearest-rank) or images_timed=2. GREEN: only the live miss contributes.
+    """
+    items = [
+        {
+            "media_id": 1,
+            "describe": {"alt_text_draft": "x", "cached": True},
+            "error": None,
+            "latency_s": 0.001,
+        },
+        {
+            "media_id": 2,
+            "describe": {"alt_text_draft": "y", "cached": False},
+            "error": None,
+            "latency_s": 4.0,
+        },
+        {
+            "media_id": 3,
+            "describe": {"alt_text_draft": "z", "cached": False},
+            "error": None,
+            "latency_s": 2.0,
+        },
+    ]
+    summary = _latency_summary(items)
+    assert summary is not None
+    assert summary["images_timed"] == 2
+    assert summary["wall_clock_s"] == {"p50": 2.0, "p95": 4.0}
+    assert summary["cache_hits_excluded"] == 1
+    # All-cache corpus ⇒ no latency section (nothing timed live).
+    assert _latency_summary(items[:1]) is None
 
 # --- Identity shape normalizer (dict rows vs legacy name strings) ------------
 
@@ -2055,3 +2093,216 @@ def test_identity_names_rejects_non_list_top_level():  # A-15
     for bad in (None, "Zoe Alone", {"name": "dict-not-list"}):
         with pytest.raises(TypeError, match="list of dict rows"):
             identity_names(bad)
+
+
+# --- VLM-6 lc1-report: placement / hallucination wiring + public redaction ---
+
+
+def test_score_run_record_surfaces_placement_accuracy():  # VLM6-R4-02
+    """Placement is scored and must appear on the report (not computed-and-dropped).
+
+    RED without wiring: ``placement`` key absent or accuracy None while caption
+    asserts the correct L→R claim.
+    """
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["spatial_facts"] = [
+        {
+            "subject": "Alice Example",
+            "relation": "left_of",
+            "reference": "Bob Builder",
+            "phrases": ["left of Bob Builder"],
+        }
+    ]
+    record["items"][0]["describe"]["alt_text_draft"] = (
+        "Alice Example stands left of Bob Builder by a pool."
+    )
+    # Drop the error item so aggregates are clean.
+    record["items"] = [record["items"][0]]
+    scored = score_run_record(record, entries)
+    assert "placement" in scored
+    assert scored["placement"]["accuracy"] == pytest.approx(1.0)
+    assert scored["placement"]["claims"] == 1
+    assert scored["placement"]["correct"] == 1
+    row = scored["per_image"][0]
+    assert row["placement"]["accuracy"] == pytest.approx(1.0)
+    assert "Alice Example left_of Bob Builder" in row["placement"]["correct"]
+    _json_doc, md = build_reports(record, entries)
+    assert "placement accuracy" in md.lower()
+
+
+def test_score_run_record_surfaces_placement_wrong_claim():  # VLM6-R4-02
+    """Wrong placement claims must score 0.0 (not silently omit the section)."""
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["spatial_facts"] = [
+        {
+            "subject": "Alice Example",
+            "relation": "left_of",
+            "reference": "Bob Builder",
+            "phrases": ["left of Bob Builder"],
+        }
+    ]
+    # Inverted claim.
+    record["items"][0]["describe"]["alt_text_draft"] = (
+        "Alice Example stands right of Bob Builder by a pool."
+    )
+    record["items"] = [record["items"][0]]
+    scored = score_run_record(record, entries)
+    assert scored["placement"]["accuracy"] == pytest.approx(0.0)
+    assert scored["placement"]["wrong"] == 1
+    assert scored["per_image"][0]["placement"]["wrong"]
+
+
+def test_score_run_record_surfaces_hallucination_fabricated_facts():  # VLM6-R2-02
+    """Fabricated-fact rate must surface on the report (not computed-and-dropped).
+
+    RED without wiring: ``hallucination`` key absent while caption trips a false-
+    polarity reference fact.
+    """
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["reference_facts"] = [
+        {
+            "text": "red sports car",
+            "kind": "object",
+            "polarity": "false",
+            "phrases": ["red sports car", "sports car"],
+        },
+        {
+            "text": "poolside",
+            "kind": "scene",
+            "polarity": "true",
+            "phrases": ["pool"],
+        },
+    ]
+    record["items"][0]["describe"]["alt_text_draft"] = (
+        "Alice Example relaxes by a pool next to a red sports car."
+    )
+    record["items"] = [record["items"][0]]
+    scored = score_run_record(record, entries)
+    assert "hallucination" in scored
+    assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(1.0)
+    assert scored["hallucination"]["images_caught"] == 1
+    assert scored["hallucination"]["by_kind"].get("object") == 1
+    row = scored["per_image"][0]
+    assert row["hallucination"]["fabricated"] is True
+    assert any(f["text"] == "red sports car" for f in row["hallucination"]["fabricated_facts"])
+    _json_doc, md = build_reports(record, entries)
+    assert "fabricated-fact rate" in md.lower()
+
+
+def test_score_run_record_hallucination_clean_caption_rate_zero():  # VLM6-R2-02
+    """Clean caption against a trap corpus yields fabricated_fact_rate 0.0, not None."""
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["reference_facts"] = [
+        {
+            "text": "red sports car",
+            "kind": "object",
+            "polarity": "false",
+            "phrases": ["red sports car"],
+        }
+    ]
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example relaxes by a pool."
+    record["items"] = [record["items"][0]]
+    scored = score_run_record(record, entries)
+    assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
+    assert scored["hallucination"]["images_caught"] == 0
+    assert scored["per_image"][0]["hallucination"]["fabricated"] is False
+
+
+def test_public_report_redacts_api_key_and_tenant_id():  # VLM6-R3
+    """Secrets on provenance must be ABSENT from the public rendered artifact."""
+    record, entries = _audience_fixtures()
+    record["provenance"]["api_key"] = "sk-live-TOPSECRET-xyz"
+    record["provenance"]["tenant_id"] = "tenant-private-999"
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    for blob in (json_doc, md):
+        assert "sk-live-TOPSECRET-xyz" not in blob
+        assert "tenant-private-999" not in blob
+    scored = json.loads(json_doc)
+    assert scored["provenance"]["api_key"] == "redacted"
+    assert scored["provenance"]["tenant_id"] == "redacted"
+    # LOCAL still shows the operator secrets (operator view, not hub-safe).
+    local_json, _ = build_reports(record, entries, audience=Audience.LOCAL)
+    assert "sk-live-TOPSECRET-xyz" in local_json
+    assert "tenant-private-999" in local_json
+
+
+def test_public_report_redacts_absolute_local_paths():  # VLM6-R3
+    """Absolute operator filesystem paths must be ABSENT from public output.
+
+    Publishable items may still be stored under absolute LocalWP paths; the
+    render boundary collapses them to basenames. Control asserts the sensitive
+    absolute prefix is missing, not merely that a redactor was invoked.
+    """
+    record, entries = _audience_fixtures()
+    abs_path = "/Users/daniel/Development/wp-context-alt-text/app/public/wp-content/uploads/celebs01/obama-podium.jpg"
+    record["items"][0]["path"] = abs_path
+    entries[0]["path"] = abs_path
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    for blob in (json_doc, md):
+        assert "/Users/daniel" not in blob
+        assert "wp-context-alt-text" not in blob
+        assert "wp-content/uploads" not in blob
+    scored = json.loads(json_doc)
+    assert scored["per_image"][0]["path"] == "obama-podium.jpg"
+    # Basename retained so the public artifact stays legible.
+    assert "obama-podium.jpg" in json_doc
+
+
+def test_public_report_still_redacts_base_url():  # VLM6-R3 / VLM6-S5-BR-01
+    record, entries = _audience_fixtures()
+    record["provenance"]["base_url"] = "https://acx-backend.internal.example.ts.net"
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    for blob in (json_doc, md):
+        assert "acx-backend.internal.example.ts.net" not in blob
+    assert json.loads(json_doc)["provenance"]["base_url"] == "redacted"
+
+
+def test_gated_score_components_surfaced_on_caption_block():
+    """aggregate_gated_scores components must appear (not silent N/A absorption)."""
+    record, entries = _run_record(), _manifest_entries()
+    # Empty-identity glacier-like image that scores: force recognition-disabled
+    # empty present set so gated_score is None (not-applicable).
+    entries[0]["present_identities"] = []
+    entries[0]["must_right"] = []
+    record["items"][0]["describe"]["alt_text_draft"] = "A quiet pool at dusk."
+    record["items"][0]["identities"] = []
+    record["items"][0]["face_count"] = 0
+    entries[0]["face_count"] = 0
+    record["items"] = [record["items"][0], record["items"][1]]  # keep bob wrong-name row
+    scored = score_run_record(record, entries)
+    assert "gated_score_scored" in scored["caption"]
+    assert "gated_score_excluded" in scored["caption"]
+    assert scored["caption"]["gated_score_scored"] + scored["caption"]["gated_score_excluded"] == scored[
+        "counts"
+    ]["scored"]
+    _json_doc, md = build_reports(record, entries)
+    assert "excluded=" in md
+
+
+def test_quality_block_surfaces_fkre_and_tag_coverage_aggregates():
+    """Per-image fkre/tag_coverage/repetition/gist must roll up (not dead-path)."""
+    record, entries = _run_record(), _manifest_entries()
+    scored = score_run_record(record, entries)
+    quality = scored["quality"]
+    assert quality.get("mean_fkre") is not None
+    assert "mean_repetition_ratio" in quality
+    assert "mean_tag_coverage" in quality or quality.get("mean_tag_coverage") is None
+    assert "first_sentence_gist_ok_rate" in quality
+    _json_doc, md = build_reports(record, entries)
+    assert "mean FKRE" in md
+
+
+def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R2-04
+    """Without face_boxes, positional labeled must not silently use present_identities.
+
+    RED before: labeled fell back to alphabetical present and would score if
+    labeled_order_known were ever ignored. GREEN: excluded + empty comparison.
+    """
+    record, entries = _run_record(), _manifest_entries()
+    assert all(not e.get("face_boxes") for e in entries)
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 0
+    assert pos["position_total"] == 0
+    # Excluded images listed (legacy no-box entries).
+    assert len(pos["excluded_images"]) >= 1

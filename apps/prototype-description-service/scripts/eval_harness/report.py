@@ -44,6 +44,7 @@ from .face_assignment import (
 )
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
+    POSITIONAL_EVAL_NOT_EVALUABLE,
     SAMPLING_FRAME_CLUSTERING,
     SAMPLING_FRAME_FACE_ID,
     SAMPLING_FRAME_UNKNOWN_REJECTION,
@@ -59,6 +60,7 @@ from .face_metrics import (
     identification_pr,
     labeled_left_to_right,
     positional_identification,
+    predicted_names_for_positional,
 )
 from .manifest import Provenance, ProvenanceSource, ReferenceFact, SliceTag, SpatialFact
 from .placement_metrics import PlacementScores, placement_accuracy, score_placement
@@ -920,22 +922,33 @@ def build_score_verdict(
             f"assertions={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
 
-    # Category vacuity (EVAL-04 / EVAL-23 / AUDIT-07 / VLM6-A-05 / VLM6-B-07):
+    # Category vacuity (EVAL-04 / EVAL-23 / AUDIT-07 / VLM6-A-05 / VLM6-B-07 / B-10):
     # a critical scored slice with claim-unit sampling π=0 cannot certify pass.
     # Frame: target=adoption readiness; sampling unit=scored image; observation
     # unit=positional image (face_boxes L→R) or placement claim (spatial_fact).
+    # Prefer machine-readable positional.status / evaluable (sr-007) over the
+    # bare compared_images counter alone.
     if scored_n > 0:
         positional = ident.get("positional") or {}
         compared_images = int(positional.get("compared_images") or 0)
-        if compared_images == 0:
+        pos_evaluable = positional.get("evaluable")
+        pos_status = positional.get("status")
+        pos_vacuous = (
+            compared_images == 0
+            or pos_evaluable is False
+            or pos_status == POSITIONAL_EVAL_NOT_EVALUABLE
+        )
+        if pos_vacuous:
             ordering = faces.get("identity_ordering") or {}
             degraded = int(ordering.get("degraded_images") or 0)
             excluded_raw = positional.get("excluded_images") or []
             excluded_n = len(excluded_raw) if isinstance(excluded_raw, list) else int(excluded_raw or 0)
             vacuity_reasons.append(
                 "category-vacuity: positional — claim unit=image with face_boxes "
-                f"L→R order; compared_images=0 degraded_images={degraded} "
-                f"excluded_images={excluded_n} (π=0 on face_boxes; AUDIT-07)"
+                f"L→R order; compared_images={compared_images} "
+                f"status={pos_status!s} evaluable={pos_evaluable!s} "
+                f"degraded_images={degraded} excluded_images={excluded_n} "
+                f"(π=0 on face_boxes; AUDIT-07)"
             )
         place_claims = int(placement.get("claims") or 0)
         place_acc = placement.get("accuracy")
@@ -946,6 +959,18 @@ def build_score_verdict(
                 "category-vacuity: placement — claim unit=asserted spatial_fact; "
                 f"claims={place_claims} accuracy={place_acc!s} abstained={abstained} "
                 f"images_scored={images_scored} (π=0 on spatial_facts; AUDIT-07)"
+            )
+        # VLM6-C-05 / fx4 coupling: fabricated_fact_rate may be None when there
+        # are no trap images. None is not measurable — never a clean 0.0 pass
+        # (EVAL-19 / AUDIT-07). 0.0 remains valid when traps exist and none fired.
+        hall = scored.get("hallucination") or {}
+        fab_rate = hall.get("fabricated_fact_rate")
+        if fab_rate is None:
+            traps = int(hall.get("images_with_traps") or 0)
+            vacuity_reasons.append(
+                "category-vacuity: fabricated_fact — claim unit=image with "
+                f"reference_facts trap; fabricated_fact_rate=None "
+                f"images_with_traps={traps} (not measurable; AUDIT-07)"
             )
 
     # Hard failures win; otherwise vacuity yields not_ready (not adoption pass).
@@ -1140,18 +1165,34 @@ def score_run_record(
             )
         )
         # item["identities"] are positional dict rows from _extract_identities
-        # ({name,bbox,unpositioned,...}); identity_names keeps L→R order as str
-        # for ImageIdentities.predicted (Sequence[str]).
+        # ({name,bbox,unpositioned,...}). Set-based identification uses the name
+        # multiset (order-blind). Positional L→R MUST use centre-x ordering
+        # (VLM6-B-03 / EVAL-13) — corner-x and centre-x disagree when face widths
+        # differ; identity_names alone cannot recover that.
         # Labeled order for the positional metric must NOT use present_identities
         # (alphabetical / XMP write order). Derive L→R from face_boxes centre x;
         # when face_boxes are missing, exclude from positional scoring (FL30A-GATE-01).
         # VLM6-R2-04: never feed alphabetical present_identities as labeled when
         # order is unknown — that was a dead/no-op path (excluded anyway) that
         # invited accidental re-enablement of alphabetical scoring.
+        identities_raw = item.get("identities") or []
         try:
-            predicted_names = identity_names(item.get("identities", []))
+            predicted_names = identity_names(identities_raw)
         except (TypeError, ValueError) as exc:
             raise ReportError(str(exc)) from exc
+        # Absolute-pixel wire bboxes need image size for normalized centre
+        # (A-08). When capture size is missing, unit dims keep the same
+        # within-image centre-x order without inventing a spatial scale.
+        image_w = item.get("image_width")
+        image_h = item.get("image_height")
+        order_w = float(image_w) if image_w is not None else 1.0
+        order_h = float(image_h) if image_h is not None else 1.0
+        pos_predicted = predicted_names_for_positional(
+            identities_raw, image_width=order_w, image_height=order_h
+        )
+        # Fallback only when rows are unusable (identities is None).
+        if pos_predicted is None:
+            pos_predicted = predicted_names
         present = list(entry["present_identities"])
         ordered_labeled = labeled_left_to_right(entry.get("face_boxes") or [])
         labeled_order_known = ordered_labeled is not None
@@ -1175,13 +1216,19 @@ def score_run_record(
         positional_items.append(
             ImageIdentities(
                 image=path,
-                predicted=predicted_names,
+                # Centre-ordered + leftmost-wins names for the positional metric
+                # (VLM6-B-03). predicted_rows lets positional_identification
+                # re-apply the same rule if callers pass raw list order.
+                predicted=pos_predicted,
                 # When order is known, feed spatial L→R — never sort predicted.
                 # When unknown, labeled=[] + labeled_order_known=False (exclude).
                 labeled=list(ordered_labeled) if order_known else [],
                 recognition_enabled=recognition_enabled,
                 stranger_faces=stranger_faces,
                 labeled_order_known=order_known,
+                predicted_rows=list(identities_raw) if order_known else None,
+                image_width=order_w if order_known else None,
+                image_height=order_h if order_known else None,
             )
         )
         row: dict[str, Any] = {
@@ -1453,7 +1500,10 @@ def score_run_record(
                 "evaluated_images": identification_evaluated,
                 "wrong_names": live_wrong,
                 "ignored_wrong_names": ignored_wrong,
-                # A-02: order-sensitive score alongside set-based P/R.
+                # A-02 / VLM6-B-10: order-sensitive score + machine-readable
+                # vacuity (evaluable/status/vacuity_signal/sampling_frame).
+                # Gate consumers must not treat position_accuracy is None alone
+                # as a soft skip — status/not_evaluable blocks adoption (EVAL-23).
                 "positional": {
                     "position_accuracy": positional.position_accuracy,
                     "position_hits": positional.position_hits,
@@ -1464,6 +1514,10 @@ def score_run_record(
                     "swap_images": positional.swap_images,
                     # Legacy entries without face_boxes: order unknown (FL30A-GATE-01).
                     "excluded_images": list(positional.excluded_images),
+                    "evaluable": positional.evaluable,
+                    "status": positional.status,
+                    "vacuity_signal": positional.vacuity_signal,
+                    "sampling_frame": positional.sampling_frame,
                 },
             },
             # A-07 / VLM6-R2-04: loud surface for bbox-missing / degraded order.
@@ -1936,8 +1990,16 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"{positional_block.get('position_total')}; "
             f"exact-order images={positional_block.get('exact_order_images')}/"
             f"{positional_block.get('compared_images')}; "
-            f"swaps={positional_block.get('swap_images')})",
+            f"swaps={positional_block.get('swap_images')}; "
+            f"status={positional_block.get('status')}; "
+            f"evaluable={positional_block.get('evaluable')})",
         ]
+        # VLM6-B-10: surface vacuity loudly in MD (not only JSON).
+        if positional_block.get("evaluable") is False or positional_block.get("vacuity_signal"):
+            lines.append(
+                f"- positional vacuity: {positional_block.get('vacuity_signal') or 'not_evaluable'} "
+                f"(sampling_frame={positional_block.get('sampling_frame')})"
+            )
     ordering = scored["faces"].get("identity_ordering") or {}
     if ordering.get("degraded_images"):
         lines += [

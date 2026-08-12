@@ -1,282 +1,189 @@
-# Lane `fx4` — vacuity honesty, generator provenance, anchor generators, docs
+# Lane `fx4` — CLI exit gates, provenance representation, enum hygiene
 
-**Branch:** `feature/vlm-6-fx4` (this lane's branch)  
-**Base:** `e2575b5ef09ed75de7f792546439d53624c9d344`  
-**Owned files only** (nothing under `docs/tasks/vlm/bakeoff-results/**` was regenerated).
+**Branch:** `fix/fx4` (forked from `feature/vlm-6` @ `b28e126e89bc41202e0168276f8493511212c80d`)  
+**Worktree:** `/home/ubuntu/lane-gx5`  
+**Python:** `apps/prototype-description-service/.venv/bin/python`  
+**Heuristics:** TEST-15, AUDIT-07, EVAL-23, rg-006, rg-015, sr-001, sr-007
 
-**Gate (excluding the five expected-red freeze tests):**
+---
+
+## 1. Per finding
+
+### RV1-01 (high) — quality floor never gated exit
+
+**Changed:**
+- `scripts/eval_harness/cli.py` — after adoption integrity gates and before `not_ready`, scan `verdict.reasons` for `quality-floor:` prefixes and call `_score_gate_fail` with class-unique prefix `score quality-floor gate:`. Soft under `--freeze-certification` (early return already present).
+- `scripts/eval_harness/README.md` — exit-prefix table now lists `score quality-floor gate:` (was "(folded into `verdict=fail` reasons)" with no exit). Reasons row + prose already claimed non-zero exit; table is consistent.
+- `scene/tests/test_eval_harness_cli.py::test_cmd_score_quality_floor_breach_exits_nonzero` — forces `position_accuracy=0.0` post-score, rebuilds verdict, asserts `SystemExit.code != 0` and `quality-floor` in message + artifact.
+
+**Why:** report.py already stamped quality-floor into `verdict=fail`; only `not_ready` was exit-wired. Adoption scripts keyed on exit status green-lit failing runs.
+
+**RED (gate swallowed / pre-fix path):**
 ```
-cd apps/prototype-description-service && .venv/bin/python -m pytest \
-  scene/tests/test_eval_harness_determinism_anchor.py \
-  scene/tests/test_eval_harness_face_determinism_anchor.py \
-  scene/tests/test_eval_harness_caption_metrics.py \
-  scene/tests/test_eval_harness_describe_baseline.py \
-  scene/tests/test_eval_harness_manifest.py \
-  --deselect …/test_generator_regenerates_byte_identical_committed_anchor \
-  --deselect …/test_expect_report_matches_committed_freeze_green \
-  --deselect …/test_face_generator_regenerates_byte_identical_committed_anchor \
-  --deselect …/test_face_expect_report_matches_committed_freeze_green \
-  --deselect …/test_cli_score_face_expect_report_end_to_end_green \
-  -q
-# 147 passed, 1 skipped, 5 deselected
+SOFT-FAIL swallow: score quality-floor gate: quality-floor: position_accuracy=0.0 <= floor=0.0 (critical scored slice t
+QF live: (True, 'green-exit artifact=fail')
+exit_code=0 verdict=fail reasons=['quality-floor: position_accuracy=0.0 <= floor=0.0 (critical scored slice total failure; EVAL-04 / S2-02)']
+RED CAPTURE OK: exit=0 with verdict=fail quality-floor reasons present
+```
+Pytest with gate disabled (earlier capture):
+```
+E   Failed: DID NOT RAISE SystemExit
+scored=2/2 ... verdict=fail ...
+FAILED scene/tests/test_eval_harness_cli.py::test_cmd_score_quality_floor_breach_exits_nonzero
+```
+
+**GREEN:**
+```
+./.venv/bin/python -m pytest scene/tests/test_eval_harness_cli.py::test_cmd_score_quality_floor_breach_exits_nonzero -q
+.                                                                        [100%]
+1 passed in 0.92s
 ```
 
 ---
 
-## A. Anchor self-comparison / non-evidential face metrics
+### RV1-05 (low) — raw verdict string literals in test fixtures
 
-### VLM6-C-04 (high) — seeded predictions no longer pure GT echo
+**Changed:** `scene/tests/test_eval_harness_cli.py`
+- `_adoption_compare_report` base verdict → `ScoreVerdict.PASS.value`
+- `pass_ungated` / `pass` overrides → enum members
+- renderer-error fixture → `ScoreVerdict.PASS.value`
 
-- **Files:** `generate_determinism_anchor.py` (`_identity_rows`, `_predicted_face_count`, `build_run_record`)
-- **Choice:** **fixed seeded deviation** (not pure echo). Under-count / over-count face_count on index%7 / index%11; drop or inject identity names on index%5 / index%9. Keeps byte-stability while detection/identification can move (TEST-15).
-- **Also:** `predictions_source=ground_truth_derived_fixture`, `face_metrics_evidential=false` in provenance.
-- **RED (unfixed pure-echo scoring):**
-  ```
-  faces detection {'precision': 1.0, 'recall': 1.0, 'tp': 57, 'fp': 0, 'fn': 0}
-  ident P/R 1.0 1.0; wrong_names []
-  ```
-- **GREEN (after fix):**
-  ```
-  detection {'fn': 6, 'fp': 3, 'precision': 0.944…, 'recall': 0.894…, 'tp': 51}
-  ident P/R 0.878… 0.805…; wrong_names n=4 (Fixture-Wrong-*)
-  test_seeded_predictions_are_not_pure_gt_echo PASSED
-  ```
-- **Behaviour:** Fixture predictions are labelled non-evidential and deliberately imperfect so metrics are not tautological.
+**Why:** raw strings are the forge vector for verdict statuses the enum rejects (sr-007).
 
-### VLM6-E-04 (high) — MD surfaces coverage gaps + non-evidential face note
-
-- **Files:** `generate_determinism_anchor.py` (`write_anchor` MD append); tests
-- **RED:** committed / pre-fix MD had no `Coverage gaps` block (only JSON provenance).
-- **GREEN:**
-  ```
-  test_generator_md_renders_coverage_gaps PASSED
-  assert "Coverage gaps" in md; assert "non-evidential" in md
-  ```
-- **Behaviour:** Generated report MD always includes sampling-frame gaps and states face metrics are non-evidential.
+**RED/GREEN:** fixture rewrite is structural (import already present). No separate mutant — enum values equal the prior strings (`"pass"` etc.), so behaviour is identical; contract is "fixtures cannot invent non-enum statuses". Spot-check: suite compare tests still pass under full run.
 
 ---
 
-## B. Vacuous categories honest
+### HARM-10 (low) — `_VERDICT_NON_COMPARABLE` alias
 
-### VLM6-C-05 / VLM6-E-03 (high) — `fabricated_fact_rate` None when no traps
+**Changed:** `cli.py` — deleted module-level alias; all sites use `ScoreVerdict.NON_COMPARABLE.value` (fold, relabel gate, compare gate). Definition no longer follows first use.
 
-- **Files:** `caption_metrics.py:fabricated_fact_rate`
-- **RED (unfixed):**
-  ```
-  AssertionError: expected None when no traps, got 0.0
-  0.0
-  ```
-  (37 untrapped scores → rate `0.0` with denom=37)
-- **GREEN:**
-  ```
-  test_fabricated_fact_rate_none_when_no_traps_corpus_wide PASSED
-  assert fabricated_fact_rate(untrapped, over="all") is None
-  ```
-- **Behaviour:** Zero trap coverage → `None` (EVAL-19). Trap-present paths still return 0.0/fractions as before.
+**Why:** one name per concept (sr-007); sibling members had no alias.
 
-### VLM6-C-07 (medium) — `require_metric_backing` exercised by generator
-
-- **Files:** `manifest.py:metric_backing_refusals`; `generate_determinism_anchor.py` stamps `metric_backing_refusals`
-- **RED:** refusals absent from run-record provenance (API only unit-tested).
-- **GREEN:**
-  ```
-  test_generator_stamps_metric_backing_refusals PASSED
-  assert field in refusals for face_boxes/spatial_facts/reference_facts/demographic_cohort
-  ```
-- **Behaviour:** Generator calls the vacuity API and records refusals. Live score/verdict paths: see Cross-lane (fx2 already has `not_ready`).
-
-### VLM6-E-07 (medium) — shared `compute_corpus_coverage_gaps`
-
-- **Files:** `manifest.py:compute_corpus_coverage_gaps`; generators delegate
-- **Behaviour:** Gap computation lives in `manifest.py` so live `cli`/`report` can stamp the same structure. Live call site not owned → Cross-lane.
+**RED/GREEN:** `grep _VERDICT_NON_COMPARABLE cli.py` → empty. Relabel/compare tests in full suite still green (use enum values already).
 
 ---
 
-## C. Coverage-gap accounting
+### HARM-03 (medium) + RV2-06 (medium) — three encodings of absent HEAD
 
-### VLM6-C-01 (high) — populated count + threshold, not boolean
+**Changed together:**
+- `describe_baseline.py:626` — `head_sha=resolve_head_sha()` (no `or ""`)
+- `cli.py` — `fetch_run_record(head_sha: str | None)`; `_head_sha() -> str | None` returns `None` on git failure (never `"unknown"` / forty zeros)
+- `fusion_runner.py` — `_head_sha() -> str | None` returns `None` on git failure (never `"0"*40`); `run_fusion_eval(head_sha: str | None)`
 
-- **Files:** `manifest.py:compute_corpus_coverage_gaps`; `generate_determinism_anchor._coverage_gaps` alias
-- **RED (old behaviour locked by prior test):** one injected row → `"face_boxes" not in gaps`.
-- **GREEN:**
-  ```
-  test_coverage_gaps_keep_under_sampled_field_after_single_population PASSED
-  assert gaps["face_boxes"]["populated"] == 1
-  assert gaps["face_boxes"]["below_threshold"] is True
-  ```
-- **Behaviour:** Every registry field always reported with `populated`/`total`/`threshold`/`below_threshold`/`pi_zero`.
+**Why:** one value (`None`) for unresolvable across producers; S4-06 forbids fabricating forty zeros.
 
-### VLM6-B-05 (medium) — vacuity keys on probe count
+**RED (pre-fix encodings):**
+```
+pre-fix fusion_runner git-fail sentinel: 0000000000000000000000000000000000000000
+pre-fix cli git-fail sentinel: unknown
+pre-fix describe empty-coalesce: ''
+```
 
-- **Files:** `generate_face_determinism_anchor.py:_is_vacuous_id_slice`, `compute_coverage_gaps`
-- **RED (old predicate):**
-  ```
-  OLD vacuous on perfect n=5: True   # wrong — cell executed
-  ```
-- **GREEN:**
-  ```
-  NEW vacuous on perfect n=5: False
-  test_id_slice_vacuity_keys_on_probe_count_not_errors PASSED
-  assert "detection" not in gaps  # perfect detector tp>0, fp=fn=0
-  ```
-- **Behaviour:** ID vacuous iff `n_named_probes==0`; detection vacuous iff `tp+fp+fn==0` (not per-error-path zeros).
-
-### VLM6-C-02 (medium) — gaps from `SHIPPED_CORPUS_COVERAGE_GAPS`
-
-- **Files:** `manifest.py:compute_corpus_coverage_gaps`
-- **GREEN:** `demographic_cohort` present in gaps on golden-37; registry cannot drift from disclosure.
-- **Behaviour:** Gap keys = registry keys (incl. demographic_cohort).
-
-### VLM6-C-08 (low) — schema-valid FaceBox in control
-
-- **Files:** `test_eval_harness_determinism_anchor.py`
-- **Behaviour:** Control uses `FaceBox(x,y,w,h,source=…)` (rg-005), not invalid `{width,height}` via silent `model_copy`.
-
-### VLM6-B-04 (medium) — runtime `validate_coverage_gaps`
-
-- **Files:** `generate_face_determinism_anchor.py:validate_coverage_gaps`; face generator calls it before promote
-- **RED (old test was tautology):** only `compute != truncated` with no guard.
-- **GREEN:**
-  ```
-  test_coverage_gaps_guard_fails_when_gap_list_under_declares PASSED
-  with pytest.raises(CoverageGapsUnderDeclaredError): validate_coverage_gaps(report, declared=truncated)
-  ```
-- **Behaviour:** Under-declared gap list raises. Generator refuses to promote bad freezes.
+**GREEN:**
+```
+post-fix cli: None
+post-fix fusion: None
+post-fix resolve unset: None
+GREEN: all None
+```
+Tests:
+```
+test_rv2_06_cli_head_sha_returns_none_on_git_failure PASSED
+test_rv2_06_fusion_head_sha_returns_none_on_git_failure PASSED
+test_rv2_06_no_head_sha_path_emits_forty_zeros PASSED
+```
 
 ---
 
-## D. Provenance + atomic writes
+### RV3-05 (low) — "real SHA" test that wasn't
 
-### VLM6-F-04 (medium) — no fabricated contract `head_sha`
+**Option picked: (a)** — verify via `git rev-parse --verify <sha>^{commit}` when git is available and cwd is a work tree. Degrades to format-only when git binary missing or not inside a work tree.
 
-- **Files:** both generators
-- **Behaviour:** Byte-stability sentinels live in `fixture_revision` / `canonical_timestamp`. Contract `head_sha` is `null` in pin mode (never 40 zeros). Optional `--live-head-sha` for real SHA.
+**Changed:**
+- `describe_baseline.resolve_head_sha` — post-format check, git verify when possible
+- `test_describe_baseline_pin_provenance.py` — accepts real worktree HEAD; new refuse test for `"a"*40`; degrade-without-git test
 
-### VLM6-F-05 (medium) — atomic multi-artifact promote
+**Why (a):** closes arbitrary-40-hex fabrication adjacent to forty zeros; test environment has git + repo.
 
-- **Files:** both generators (`_atomic_promote` via temp dir + `os.replace`)
-- **Behaviour:** Full artifact set built and verified in temp, then same-directory atomic replace (rg-002).
+**RED (pre-fix format-only):**
+```
+RED (pre-fix accept arbitrary 40-hex):
+  DID NOT RAISE SystemExit
+  pre_fix returned: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
 
-### VLM6-C-09 (low) — no invented bboxes
+**GREEN:**
+```
+GREEN (post-fix refuse):
+  raised: HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is not a resolvable commit in this repository (git rev-parse --verify failed); pass a real SHA from `git rev-parse HEAD` or unset HEAD_SHA to record null (RV3-05 / S4-06 / rg-015)
+  accepts real HEAD: b28e126e89bc...
+```
+```
+scene/tests/test_describe_baseline_pin_provenance.py — 12 passed
+```
 
-- **Files:** `generate_determinism_anchor._identity_rows`
-- **GREEN:** `assert "bbox" not in row` and `unpositioned is True` in `test_seeded_predictions_are_not_pure_gt_echo`.
-- **Behaviour:** Fixture identity rows never invent pixel geometry.
-
----
-
-## E. Documentation
-
-### VLM6-C-03 (high) — Rubric caveat rewritten
-
-- **Files:** `README.md`
-- **Behaviour:** States measured `must_right` 34/37, `easy_wrong` 37/37; `RubricEmptyWarning` does **not** fire. Removed false “empty for every entry” claim.
-
-### VLM6-F-06 / VLM6-E-06 (low/medium) — no hardcoded manifest digest
-
-- **Files:** `README.md`
-- **Behaviour:** Removed the hardcoded truncated manifest digest literal; operators must read digest from the artifact. Inventory adds `demographic_cohort` 0/37 and fabricated-fact = undefined.
-
-### VLM6-E-08 (medium) — “certified” means byte-stability only
-
-- **Files:** `README.md` operator table + example command notes
-- **Behaviour:** Green determinism gate explicitly “scoring-path byte-stability only”, not adoption / face quality.
+**Cross-lane note:** `resolve_head_sha` is a reusable helper (describe_baseline). Lane fx2's `--live-head-sha` guard could call the same pattern; see §7.
 
 ---
 
-## F. Baseline Δ reporting
+## 2. RV3-05 option
 
-### VLM6-C-06 (medium) — offline Δ vs zero-rule
+**(a)** — git rev-parse verify in production + real HEAD in tests. Practical here (worktree always has git). Degrades sanely offline.
 
-- **Files:** `describe_baseline.py:score_rows_against_golden`, `_write_report`
-- **Disposition from fx5:** implement (not defer). Adopted.
-- **RED path:** unmatched media_ids → `status=undefined` (not a green absolute-only win); worse wrong-name caption → `delta.wrong_name_images > 0`.
-- **GREEN:**
-  ```
-  test_score_rows_against_golden_undefined_when_no_match PASSED
-  test_score_rows_delta_goes_red_when_candidate_worse_than_zero_rule PASSED
-  test_write_report_includes_rubric_delta PASSED
-  ```
-- **Behaviour:** Report carries `summary.rubric_delta` vs zero-rule empty caption on real golden; MD prints Δ line.
+## 3. Disagreements
 
----
+None. All six reproduced (live probe for RV1-01 matched reviewer: `QF live: (True, 'green-exit artifact=fail')`).
 
-## Anchor regeneration handoff
+## 4. Full suite result
 
-**Do not treat moving a headline from `0.0` → `None` as a regression.** That is the intended honesty outcome of this wave.
-
-### Caption anchor regen
-```bash
+```
 cd apps/prototype-description-service
-.venv/bin/python -m scripts.eval_harness.generate_determinism_anchor \
-  --manifest scene/tests/seed/golden.json \
-  --out-dir ../../docs/tasks/vlm/bakeoff-results \
-  --stem S2A-determinism-anchor-run-20260811 \
-  --head-sha 0000000000000000000000000000000000000000 \
-  --started-at 2026-08-11T00:00:00Z
-```
-(Also accept `--fixture-revision` / `--canonical-timestamp`.)
-
-**Expected freeze number moves:**
-| Field | Old freeze | After regen | Why |
-| --- | --- | --- | --- |
-| `faces.detection` P/R | 1.0 / 1.0 | ~0.94 / ~0.89 | seeded deviation |
-| `faces.identification` P/R | 1.0 / 1.0 | ~0.88 / ~0.81 | seeded name drop/inject |
-| `hallucination.fabricated_fact_rate` | **0.0** | **`None`** | no traps (EVAL-19) — **intended** |
-| `verdict` | `pass_ungated` (stale) | `not_ready` (fx2) | category vacuity |
-| `provenance.coverage_gaps` | 3 string fields | 4 structured records incl. `demographic_cohort` | C-01/C-02 |
-| `provenance.head_sha` | 40 zeros | `null` + `fixture_revision` | F-04 |
-| `predictions_source` / `face_metrics_evidential` | absent | set | C-04 |
-| identity `bbox` | invented pixels | absent; `unpositioned=true` | C-09 |
-| report MD | no coverage_gaps block | has `## Coverage gaps` | E-04 |
-
-Also wait for **fx6** (`report.py`/`cli.py`) before regenerating — positional vacuity fields and verdict wiring will further change report bytes.
-
-### Face anchor regen
-```bash
-cd apps/prototype-description-service
-.venv/bin/python -m scripts.eval_harness.generate_face_determinism_anchor \
-  --out-dir ../../docs/tasks/vlm/bakeoff-results
+./.venv/bin/python -m pytest scene/tests/ -q -p no:randomly
+# 1276 passed, 4 skipped, 31 warnings in 187.67s (0:03:07)
+# SUITE_EXIT:0
 ```
 
-**Expected moves:**
-| Field | Change |
+No failures.
+
+## 5. `git diff --stat` against `b28e126e`
+
+```
+ .s2a/vlm6-fx4-report.md                            | (report rewrite)
+ .../scene/tests/test_describe_baseline_pin_provenance.py | ~+90
+ .../scene/tests/test_eval_harness_cli.py           | ~+55
+ .../scripts/eval_harness/README.md                 |  2 +-
+ .../scripts/eval_harness/cli.py                    | ~+55/-20
+ .../scripts/eval_harness/describe_baseline.py      | 39 ++++-
+ .../scripts/eval_harness/fusion_runner.py          | 22 ++-
+```
+
+(Exact `--stat` at commit time in git log.)
+
+## 6. What could not verify
+
+- Live `describe_baseline` full remote pass (needs ACX_EVAL_* + uploads) — unit-level only.
+- `_fmt_prov` dual render of `""` vs `None` still lives in `report.py` (fx1). After this lane, producers no longer emit `""` for absent HEAD, so the `"" → "unknown"` branch is dead for our paths; renderer still treats both for other callers.
+- Quality-floor thresholds themselves (`POSITION_ACCURACY_FLOOR` etc.) owned by fx1/`report.py` — not retuned here.
+- Did not re-run live reviewer probe after final commit SHA (suite + targeted tests only).
+
+## 7. Cross-lane requests
+
+| Lane | Request |
 | --- | --- |
-| `provenance.head_sha` | 40 zeros → `null`; add `fixture_revision` |
-| `coverage_gaps` predicate | perfect ID / perfect detection no longer listed as gaps |
-| freeze digests | all four artifacts will change |
-
-Update `_FROZEN_DIGESTS` in both test modules only as part of the regen lane.
-
-### Expected-red tests (this lane — do not “fix” by editing freezes)
-- `test_generator_regenerates_byte_identical_committed_anchor`
-- `test_expect_report_matches_committed_freeze_green`
-- `test_face_generator_regenerates_byte_identical_committed_anchor`
-- `test_face_expect_report_matches_committed_freeze_green`
-- `test_cli_score_face_expect_report_end_to_end_green`
+| **fx1 (`report.py`)** | Optional: `_fmt_prov` can drop the empty-string → `"unknown"` branch if no other producer still writes `""` for `head_sha`. Presentation may keep `null` for `None`. No functional blocker. |
+| **fx1** | Quality-floor reason strings must keep the `quality-floor:` prefix — cli exit gate keys on it. If fx1 renames tokens, update both sides. |
+| **fx2 (anchor generators)** | RV3-05(a) git-verify lives in `describe_baseline.resolve_head_sha`. If fx2 adds a SHA guard for `--live-head-sha`, prefer reusing this helper (or extracting a shared `scripts/eval_harness/provenance.py`) to avoid duplicating verify/degrade logic. |
+| **coordinator** | `fetch_run_record` / `run_fusion_eval` now accept `head_sha: str \| None`. Call sites that forced `or ""` should pass `None`. |
 
 ---
 
-## Cross-lane requests
+## Owned files touched
 
-1. **`cli.py` / `report.py` (fx6 or owners):** stamp `provenance.coverage_gaps = compute_corpus_coverage_gaps(manifest.entries)` on live fetch/score (VLM6-E-07). Import from `scripts.eval_harness.manifest`.
-2. **`report.py`:** call `metric_backing_refusals` / honour `fabricated_fact_rate is None` in MD (`_fmt(None)` already) and in any gate that treated `0.0` as clean (fx2 verdict already blocks placement/positional; ensure fabricated-fact vacuity is named if not already).
-3. **`cli.py` compare:** already blocks vacuous fabricated-fact via `images_with_traps==0` (fx1) — keep that; do not re-introduce meet-or-beat on `None`.
-4. **Task plan (fx5):** phrase “empty on 0/37” vs “0/37 entries populate it” consistently with README inventory (same fact, same wording).
-5. **MD renderer in `report.py`:** prefer first-class coverage_gaps + non-evidential face section so generators need not append MD post-hoc (fx4 currently appends if missing).
-
----
-
-## Deferred
-
-| Item | Reason |
-| --- | --- |
-| Golden-100 population of `face_boxes` / `spatial_facts` / `reference_facts` | Slice 1 corpus work; gate is honest today via `None` / `not_ready` / structured gaps |
-| Florence offline Δ arm in describe_baseline | Zero-rule arm lands now; Florence freeze path needs a committed scored baseline not owned here |
-| Committed freeze regen | Explicitly owned by a later serialized lane after fx6 |
-
----
-
-## Heuristics cited
-
-TEST-15, EVAL-04, EVAL-13, EVAL-16, EVAL-19, EVAL-23, AUDIT-07, MLDATA-09, rg-002, rg-005, rg-008, rg-015, sr-001, sr-006, sr-007.
+- `apps/prototype-description-service/scripts/eval_harness/cli.py`
+- `apps/prototype-description-service/scripts/eval_harness/describe_baseline.py`
+- `apps/prototype-description-service/scripts/eval_harness/fusion_runner.py`
+- `apps/prototype-description-service/scripts/eval_harness/README.md` (quality-floor exit claims; path is harness README — service top-level README had no matching claims)
+- `apps/prototype-description-service/scene/tests/test_describe_baseline_pin_provenance.py`
+- `apps/prototype-description-service/scene/tests/test_eval_harness_cli.py` (RV1-01 test + RV1-05 fixtures; not owned by concurrent lanes)
+- `.s2a/vlm6-fx4-report.md`

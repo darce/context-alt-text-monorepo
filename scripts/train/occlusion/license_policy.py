@@ -2139,11 +2139,25 @@ def _floor_package_identity_denylist(
 
     # Denylist scan: every non-empty string value under any identity alias.
     # Emit against the raw key so detail names what the row author wrote.
+    # FIR-7-B4-01 / BR-21: a present value whose :func:`canonical` is None
+    # (non-ASCII residue after NFKC/Cf — unicode dashes, confusable scripts)
+    # is fail-closed ``invalid_row``. Never treat that miss as "no denylist
+    # hit" and silently skip the floor.
     for canonical_key in _PACKAGE_IDENTITY_FIELD_KEYS:
         for raw_key, raw in by_canonical[canonical_key]:
             text = str.strip(raw)
             if not text:
                 continue
+            folded = canonical(text)
+            if folded is None:
+                return _fail(
+                    RejectionReason.INVALID_ROW,
+                    detail=(
+                        f"{raw_key}={text!r} contains non-ASCII residue after "
+                        "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                    ),
+                    category=category,
+                )
             deny = _package_denylist_hit(text)
             if deny is None:
                 continue
@@ -2524,11 +2538,24 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
             detail="model_id is required for ingest",
             category=PolicyCategory.MODEL_INGEST,
         )
+    text = str.strip(model_id)
+    # FIR-7-B4-01 / BR-21: non-ASCII residue is invalid identity, not a
+    # missing registry entry (do not imply the token is merely unregistered).
+    folded = canonical(text)
+    if folded is None:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"model_id={text!r} contains non-ASCII residue after "
+                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.MODEL_INGEST,
+        )
     resolved = _resolve_model_key(model_id)
 
     # FIR-7-B3-01: folded denylist lookup (separator/case + compact) so
     # yolo-v5 / yolo_v5 hit the same seed as yolov5.
-    deny = _package_denylist_hit(str.strip(model_id))
+    deny = _package_denylist_hit(text)
     if deny is not None:
         return _fail(
             deny.reason,
@@ -2598,12 +2625,26 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
             detail="tooling package_name is required",
             category=PolicyCategory.TOOLING,
         )
+    text = str.strip(package_name)
+    # FIR-7-B4-01 / BR-21: non-ASCII residue is invalid identity, not an
+    # unregistered tooling package (do not imply the token is merely missing
+    # from the allowlist).
+    folded = canonical(text)
+    if folded is None:
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"package_name={text!r} contains non-ASCII residue after "
+                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+            ),
+            category=PolicyCategory.TOOLING,
+        )
     key = _normalize_token(package_name)
     # FIR-7-A3-01 / FIR-7-B3-01: denylist lookup uses the same separator/case
     # fold as row doors (via _package_denylist_hit). Bare PACKAGE_DENYLIST.get
     # on the lowercased token missed yolo-v8 / ultralytics-yolo and reported
     # unknown_source instead of denylisted_package.
-    deny = _package_denylist_hit(str.strip(package_name))
+    deny = _package_denylist_hit(text)
     if deny is not None:
         return _fail(
             deny.reason,

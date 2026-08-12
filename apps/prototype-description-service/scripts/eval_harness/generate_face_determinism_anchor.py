@@ -57,6 +57,7 @@ from scripts.eval_harness.promote_atomic import (
     FACE_PROMOTE,
     atomic_promote,
     recover_promote,
+    scavenge_orphan_stages,
 )
 from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
 
@@ -593,6 +594,9 @@ def write_face_anchor(
 
     Returns (manifest_path, run_path, report_json, report_md, manifest_sha).
     """
+    # Reclaim orphan stage dirs left by crashes before journal write (RV2-07).
+    scavenge_orphan_stages(out_dir, _PROMOTE_NS)
+
     fix_rev = head_sha if head_sha is not None else fixture_revision
     can_ts = started_at if started_at is not None else canonical_timestamp
 

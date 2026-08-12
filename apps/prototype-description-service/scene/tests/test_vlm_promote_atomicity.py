@@ -394,3 +394,52 @@ def test_s4_02_face_twin_recover_installing_all_new(tmp_path: Path) -> None:
     after = _read_named(dest)
     assert _is_all_new(after, new), after
     assert not _is_mixed(after, old, new)
+
+
+def test_rv2_07_scavenge_removes_old_orphan_stages(tmp_path: Path) -> None:
+    """Orphan stage dirs older than max age with no journal are reclaimed (RV2-07)."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    orphan = dest / f"{CAPTION_PROMOTE.stage_prefix}orphan-old"
+    orphan.mkdir()
+    (orphan / "man.json").write_text("stale")
+    # Make it old.
+    old_mtime = 1_000_000.0
+    os.utime(orphan, (old_mtime, old_mtime))
+    # Protected stage referenced by journal must survive.
+    protected = dest / f"{CAPTION_PROMOTE.stage_prefix}protected"
+    protected.mkdir()
+    (protected / "man.json").write_text("keep")
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {"stage": str(protected), "names": ["man.json"], "phase": "staged"},
+    )
+    # Fresh orphan must not be reclaimed yet.
+    fresh = dest / f"{CAPTION_PROMOTE.stage_prefix}fresh"
+    fresh.mkdir()
+    (fresh / "man.json").write_text("new")
+
+    reclaimed = promote.scavenge_orphan_stages(
+        dest, CAPTION_PROMOTE, max_age_sec=3600.0, now=old_mtime + 7200.0
+    )
+    assert str(orphan) in reclaimed
+    assert not orphan.exists()
+    assert protected.exists(), "journal-referenced stage must not be scavenged"
+    assert fresh.exists(), "fresh orphan below age threshold must stay"
+    assert (dest / CAPTION_PROMOTE.journal_name).is_file()
+
+
+def test_rv2_07_scavenge_skips_when_journal_corrupt(tmp_path: Path) -> None:
+    """Corrupt journal → protect all stages (never destroy recovery evidence)."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}maybe"
+    stage.mkdir()
+    (dest / CAPTION_PROMOTE.journal_name).write_text("{truncated")
+    os.utime(stage, (1_000_000.0, 1_000_000.0))
+    reclaimed = promote.scavenge_orphan_stages(
+        dest, CAPTION_PROMOTE, max_age_sec=1.0, now=1_000_000.0 + 10_000.0
+    )
+    assert reclaimed == []
+    assert stage.exists()

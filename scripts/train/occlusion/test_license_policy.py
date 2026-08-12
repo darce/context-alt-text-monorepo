@@ -4787,4 +4787,105 @@ class TestRv12CompoundSpdxAllowlistTokenisation:
         assert "UnknownLic-1.0" in result.detail
         assert "unknown component" in result.detail
 
+# ---------------------------------------------------------------------------
+# FIR-7-RV-13 — both clearance axes exact-match on canonical lower-case
+# ---------------------------------------------------------------------------
+
+
+class TestRv13ClearanceAxesExactMatchNormalisation:
+    """FIR-7-RV-13: photo_clearance and clearance_decision refuse case drift."""
+
+    def test_photo_clearance_uppercase_refused(self) -> None:
+        row = {
+            "source": "operator-photo",
+            "license": "MIT",
+            "derived_from_model": "",
+            "photo_clearance": "CLEARED",
+        }
+        result = policy.audit_occluder_asset(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+
+    def test_photo_clearance_lowercase_canonical_admits(self) -> None:
+        row = {
+            "source": "operator-photo",
+            "license": "MIT",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+        }
+        result = policy.audit_occluder_asset(row)
+        assert result.ok is True, result.detail
+
+    def test_clearance_decision_uppercase_refused(self) -> None:
+        row = {
+            "source": "dcface",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance_decision": policy.DCFACE_CLEARANCE_DECISION.upper(),
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert "requires clearance_decision=" in result.detail
+
+    def test_clearance_decision_exact_canonical_admits(self) -> None:
+        row = {
+            "source": "dcface",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "clearance_decision": policy.DCFACE_CLEARANCE_DECISION,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is True, result.detail
+
+    def test_both_axes_side_by_side_normalisation(self) -> None:
+        """Pin both axes' normalisation side by side (exact lower-case only)."""
+        # Photo axis.
+        photo_upper = policy.audit_occluder_asset(
+            {
+                "source": "operator-photo",
+                "license": "MIT",
+                "derived_from_model": "",
+                "photo_clearance": "CLEARED",
+            }
+        )
+        photo_lower = policy.audit_occluder_asset(
+            {
+                "source": "operator-photo",
+                "license": "MIT",
+                "derived_from_model": "",
+                "photo_clearance": "cleared",
+            }
+        )
+        assert photo_upper.ok is False
+        assert photo_upper.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+        assert photo_lower.ok is True
+
+        # Lineage axis.
+        cd_upper = policy.audit_provenance_row(
+            {
+                "source": "dcface",
+                "license": "Apache-2.0",
+                "derived_from_model": "",
+                "clearance_decision": policy.DCFACE_CLEARANCE_DECISION.upper(),
+            },
+            category=policy.PolicyCategory.SYNTHETIC_SOURCE,
+        )
+        cd_lower = policy.audit_provenance_row(
+            {
+                "source": "dcface",
+                "license": "Apache-2.0",
+                "derived_from_model": "",
+                "clearance_decision": policy.DCFACE_CLEARANCE_DECISION,
+            },
+            category=policy.PolicyCategory.SYNTHETIC_SOURCE,
+        )
+        assert cd_upper.ok is False
+        assert cd_upper.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert cd_lower.ok is True
+
 

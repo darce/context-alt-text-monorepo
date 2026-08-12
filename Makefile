@@ -629,6 +629,10 @@ bakeoff-face-score:
 
 # Offline determinism freezes (caption + face). Not eval-captions / bakeoff-face-score:
 # those score a freshly fetched record with no committed freeze. Non-zero on mismatch.
+# --freeze-certification: exit code means byte-stability only (fx8). The freezes are
+# deliberately imperfect non-evidential fixtures; adoption gates stay hard on live score.
+# --rubric-gate skip on caption: freeze stamp parity only (artifact carries
+# rubric_gate=skip); not an exit-code softener under --freeze-certification.
 .PHONY: eval-anchor-check
 eval-anchor-check:
 	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score \
@@ -636,12 +640,14 @@ eval-anchor-check:
 		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
 		--check-determinism \
 		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
-		--rubric-gate skip
+		--rubric-gate skip \
+		--freeze-certification
 	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score-face \
 		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
 		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
 		--check-determinism \
-		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json
+		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json \
+		--freeze-certification
 
 # DS-3 per-prospect demo provisioning (backend registry + minter wrap only).
 # Usage: make provision-demo LABEL="Acme Gallery" SEED=default

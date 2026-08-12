@@ -65,7 +65,9 @@ export const WorkbenchFindingsPanel = ({
 
   // UI-03 / UI-04: top-unlabeled (or primary) failure is not an empty backlog.
   // Gate the drained empty copy + its aria-live on a successful load only.
-  if (!hasFindings && (isError || isTopUnlabeledError)) {
+  // buildWorkbenchFindings already folds a zero-total top-unlabeled outage into
+  // isError, so isError alone covers both failure modes here (UI-03 hook test).
+  if (!hasFindings && isError) {
     return (
       <div className="acx-findings-panel acx-findings-panel--error" role="status" aria-live="polite">
         <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
@@ -151,8 +153,9 @@ export const WorkbenchFindingsPanel = ({
         </div>
       )}
 
-      {/* UI-04: empty drain copy is only for a successful zero — errors return above. */}
-      {!hasFindings && !isTopUnlabeledError && (
+      {/* UI-04: empty drain copy is only for a successful zero — every failure
+          mode (including a zero-total top-unlabeled outage) returns above. */}
+      {!hasFindings && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>

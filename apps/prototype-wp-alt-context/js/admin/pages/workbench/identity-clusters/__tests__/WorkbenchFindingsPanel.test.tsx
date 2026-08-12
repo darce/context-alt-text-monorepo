@@ -176,9 +176,12 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   // UI-03: top-unlabeled 500 must not launder into the confident empty state.
+  // Fixture mirrors buildWorkbenchFindings: a zero-total top-unlabeled outage
+  // is folded into isError, so isError:false here would be unproducible.
   it('UI-03: top-unlabeled error shows error affordance, not "No findings yet"', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
+        isError: true,
         isTopUnlabeledError: true,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
@@ -196,6 +199,7 @@ describe('WorkbenchFindingsPanel', () => {
   it('UI-04: aria-live announces error (not empty) when top-unlabeled failed', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
+        isError: true,
         isTopUnlabeledError: true,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),

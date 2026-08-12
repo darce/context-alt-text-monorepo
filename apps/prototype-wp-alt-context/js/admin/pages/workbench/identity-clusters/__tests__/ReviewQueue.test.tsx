@@ -2009,7 +2009,74 @@ describe('ReviewQueue', () => {
 
     await screen.findByTestId('acx-review-queue-top-unlabeled-error');
     expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
-    expect(screen.getByText('—')).toBeInTheDocument();
+    // A bare em dash announces as punctuation in the aria-live position span;
+    // AT must hear an explicit phrase instead.
+    const position = document.querySelector('.acx-review-queue__position');
+    expect(position).toHaveTextContent('Position unavailable');
+    expect(position?.textContent).not.toBe('—');
+  });
+
+  // [rg-003] a top-unlabeled 500 must not remove the Clear-filters escape hatch
+  // while filters are hiding real pending work.
+  it('E21-14: top-unlabeled 500 keeps the Clear filters escape hatch and announces both states', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    // Real pending work exists (one assignment) before the filter is applied.
+    await screen.findByText(/Is this/);
+
+    // Filter to a kind with no items → filtered-empty-with-work under the outage.
+    await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+
+    const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(screen.getByText('No items match the current filters.')).toBeInTheDocument();
+    const clearBtn = screen.getByRole('button', { name: 'Clear filters' });
+    expect(clearBtn).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+
+    // The live region must announce the outage AND the filtered-empty hint.
+    await waitFor(() => {
+      const live = document.querySelector('.acx-review-queue__live');
+      expect(live).toHaveTextContent('Unable to load unlabeled clusters.');
+      expect(live).toHaveTextContent('No items match the current filters.');
+    });
+
+    // The escape hatch still works: clearing filters brings the work back.
+    await user.click(clearBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+    });
   });
 
   it('E21-14-BR-16: topUnlabeledQuery sets retry:false (no automatic 500 reattempts)', async () => {

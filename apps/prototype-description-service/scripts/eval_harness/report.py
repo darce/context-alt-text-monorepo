@@ -62,6 +62,7 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
     labeled_order,
+    named_box_name,
     positional_identification,
     predicted_names_for_positional,
 )
@@ -518,8 +519,8 @@ def _string_contains_operator_path(text: str) -> bool:
 def _normalize_face_boxes_for_order(face_boxes: Sequence[Any] | None) -> list[Any]:
     """Normalize blank/non-numeric ``y`` to None before labeled_order (RA-04).
 
-    face_metrics treats only ``y is None`` as missing; ``y: ""`` raises ValueError.
-    Report normalizes at the consumer boundary (source fix is face_metrics / wE4).
+    Source ``labeled_order`` now coerces blank/non-numeric y itself; this consumer
+    boundary normaliser remains as defense-in-depth for report path stability.
     """
     if not face_boxes:
         return []
@@ -558,12 +559,17 @@ def _collect_identity_names_for_public_scrub(
                 if name:
                     names.add(str(name))
         for box in entry.get("face_boxes") or []:
-            if isinstance(box, Mapping) and box.get("name"):
-                names.add(str(box["name"]))
+            # Shared namedness predicate (RA-02 / wE4 residual) — not raw truthiness.
+            box_name = named_box_name(box)
+            if box_name is not None:
+                names.add(box_name)
     for item in run_record.get("items") or []:
         for ident in item.get("identities") or []:
-            if isinstance(ident, Mapping) and ident.get("name"):
-                names.add(str(ident["name"]))
+            if not isinstance(ident, Mapping):
+                continue
+            ident_name = named_box_name(ident)
+            if ident_name is not None:
+                names.add(ident_name)
     faces = scored.get("faces") if isinstance(scored.get("faces"), Mapping) else {}
     identification = faces.get("identification") if isinstance(faces.get("identification"), Mapping) else {}
     for name in identification.get("per_identity") or {}:
@@ -2960,9 +2966,10 @@ def _build_single_subject_cohort_by_media(entries: Sequence[Mapping[str, Any]]) 
         boxes = list(entry.get("face_boxes") or [])
         named: set[str] = set()
         for b in boxes:
-            name = b.get("name") if isinstance(b, Mapping) else getattr(b, "name", None)
-            if name:
-                named.add(str(name))
+            # Shared face_metrics predicate (strip + drop Cf; empty → anonymous).
+            name = named_box_name(b)
+            if name is not None:
+                named.add(name)
         # multi-face / multi-identity media EXCLUDED from image-level fallback
         if len(named) != 1:
             continue
@@ -3143,11 +3150,12 @@ def build_real_occlusion_pairs(
         if not occ_tags:
             continue
         boxes = list(entry.get("face_boxes") or [])
-        named = [
-            (i, box)
-            for i, box in enumerate(boxes)
-            if (box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None))
-        ]
+        # Shared namedness predicate — whitespace/format-only never enter pairs.
+        named: list[tuple[int, Any, str]] = []
+        for i, box in enumerate(boxes):
+            name = named_box_name(box)
+            if name is not None:
+                named.append((i, box, name))
         if not named:
             continue
         faces = list(item.get("faces") or [])
@@ -3157,14 +3165,13 @@ def build_real_occlusion_pairs(
             list(item.get("image_size") or [1, 1]),
         )
         emb_by_gt = {p.gt_index: [float(v) for v in faces[p.det_index]["embedding"]] for p in assoc.pairs}
-        for gt_index, box in named:
-            name = box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None)
+        for gt_index, _box, name in named:
             for tag in occ_tags:
                 out.setdefault(tag, []).append(
                     {
                         "media_id": int(item["media_id"]),
                         "box_index": gt_index,
-                        "true_name": str(name),
+                        "true_name": name,
                         "kind": tag,
                         "embedding": emb_by_gt.get(gt_index),
                     }

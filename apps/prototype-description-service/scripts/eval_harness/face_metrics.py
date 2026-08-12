@@ -411,6 +411,10 @@ def labeled_order(face_boxes: Sequence[Any] | None) -> LabeledOrderResult:
     See ``labeled_left_to_right`` for order semantics. Prefer this entry when
     the caller must surface ``order_degraded`` / ``y_missing_count`` (anchor
     report disclosure; VLM6-R2-G-01).
+
+    ``y`` coercion (RA-04 source): ``None``, blank/whitespace string, or any
+    non-numeric value → missing (``None``). Missing y uses the per-box x-only
+    key and sets ``order_degraded=True`` — never raises, never invents ``0.0``.
     """
     if not face_boxes:
         return LabeledOrderResult(names=None)
@@ -431,7 +435,14 @@ def labeled_order(face_boxes: Sequence[Any] | None) -> LabeledOrderResult:
         if x is None:
             named_missing_x += 1
             continue
-        y_val: float | None = None if y is None else float(y)
+        # Blank / whitespace / non-numeric y → missing (None), not ValueError.
+        # Same ordering branch as y is None (order_degraded); no third state (RA-04).
+        y_val: float | None = None
+        if y is not None:
+            try:
+                y_val = float(y)
+            except (TypeError, ValueError):
+                y_val = None
         named.append((float(x), y_val, name))
     # Named boxes exist but none carry x → manifest defect, not empty order.
     if not named and named_missing_x > 0:

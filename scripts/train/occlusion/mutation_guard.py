@@ -65,16 +65,37 @@ _HERE = Path(__file__).resolve().parent
 _POLICY = _HERE / "license_policy.py"
 _TEST = _HERE / "test_license_policy.py"
 _TEST_HARDENING = _HERE / "test_license_policy_hardening.py"
+_TEST_EQUIVALENCE = _HERE / "test_equivalence_claims.py"
+# Node-id RF-01 floor covers these suite files (FIR-7-LR-03). Kill decisions
+# still run against test_license_policy.py only (see SCOPE in main).
+_FLOORED_TEST_FILES: tuple[Path, ...] = (
+    _TEST,
+    _TEST_HARDENING,
+    _TEST_EQUIVALENCE,
+)
 # Checked-in node-id SET for RF-01 coverage mediation (subset semantics:
 # live collect must be a superset of this fixture — coverage may grow, never
 # shrink). Rewrite only via ``--record-baseline``.
 _NODEID_BASELINE = _HERE / "mutation_guard_nodeid_baseline.txt"
+# Live node-ids beyond the recorded floor are unprotected by the RF-01
+# subset check. Growth requires a re-record of the baseline in the same
+# commit that lands the new tests (FIR-7-LR-01).
+MAX_LIVE_EXTRAS_TOLERANCE = 0
+# Absolute count floor: live collect must not fall below this count.
+# Editing both baseline copies in one commit must also edit this constant —
+# a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
+# --record-baseline to match the newly recorded set size.
+ABSOLUTE_NODEID_FLOOR = 885  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
-# Prefer the on-disk fixture when present; else use this set.
+# Bootstrap ONLY for --record-baseline drop accounting when the on-disk
+# fixture is absent — never a runtime fallback (FIR-7-LR-02).
 # Refresh both via: python mutation_guard.py --record-baseline
 _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
+    'test_equivalence_claims.py::test_m6_grid_size_is_the_number_the_docstring_quotes',
+    'test_equivalence_claims.py::test_m6_is_not_path_equivalent_one_layer_down',
+    'test_equivalence_claims.py::test_m6_is_verdict_and_reason_equivalent_on_audit_provenance_row',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_apache_self_generated_row_passes',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_apache_spdx_allowlisted',
     'test_license_policy.py::TestApacheSelfGeneratedPasses::test_operator_cleared_is_not_spdx_pass',
@@ -147,7 +168,8 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_research_source_reason_is_exact_on_every_door[occluder_asset]',
     'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_research_source_reason_is_exact_on_every_door[tooling]',
     'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_research_source_reason_is_exact_on_every_door[training_data]',
-    'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_synthetic_door_keeps_its_more_specific_reason',
+    'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_synthetic_door_keeps_clearance_reason_for_registry_heads',
+    'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_synthetic_door_reports_source_taint_for_non_registry_heads',
     'test_license_policy.py::TestBr53SourceAxisClosedOnEveryDoor::test_synthetic_exemption_cannot_pass_a_tainted_source',
     'test_license_policy.py::TestBr56SlashUnderscoreAsymmetryIsDeliberate::test_br56_shape_table[acme/commercial_pack_v1-True-None]',
     'test_license_policy.py::TestBr56SlashUnderscoreAsymmetryIsDeliberate::test_br56_shape_table[acme/ffhq-False-research_only_source]',
@@ -279,6 +301,23 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_door_token_matrix[training_data-license_cleared-None-pending_legal_clearance]',
     'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_door_token_matrix[training_data-operator_cleared-None-pending_legal_clearance]',
     'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_generic_token_cannot_clear_lineage_on_occluder',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[model_ingest-False-None-False-pending_legal_clearance-requires clearance_decision=]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[model_ingest-True-None-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[model_ingest-True-cleared-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[occluder_asset-False-cleared-False-pending_legal_clearance-requires clearance_decision=]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[occluder_asset-True-None-False-uncleared_occluder_asset-uncleared]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[occluder_asset-True-cleared-False-unknown_source-not a registered]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[synthetic_source-False-None-False-pending_legal_clearance-requires clearance_decision=]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[synthetic_source-True-None-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[synthetic_source-True-cleared-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[synthetic_source-True-operator_cleared-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[tooling-False-None-False-pending_legal_clearance-requires clearance_decision=]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[tooling-True-None-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[tooling-True-cleared-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[training_data-False-None-False-pending_legal_clearance-requires clearance_decision=]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[training_data-True-None-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[training_data-True-allowed-True-None-None]',
+    'test_license_policy.py::TestBr65ClearanceAxesSeparated::test_br65_real_synth_head_dual_axis_matrix[training_data-True-cleared-True-None-None]',
     'test_license_policy.py::TestBr66RegistrationFloorOnEveryDoor::test_operator_owned_source_exempts_unregistered_renderer',
     'test_license_policy.py::TestBr66RegistrationFloorOnEveryDoor::test_registered_lineage_still_passes_where_source_admits',
     'test_license_policy.py::TestBr66RegistrationFloorOnEveryDoor::test_unregistered_derived_fails_every_door[model_ingest]',
@@ -581,6 +620,11 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[10-synthetic_source]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[10-tooling]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[10-training_data]',
+    'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[11-model_ingest]',
+    'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[11-occluder_asset]',
+    'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[11-synthetic_source]',
+    'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[11-tooling]',
+    'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[11-training_data]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[2-model_ingest]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[2-occluder_asset]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_result_category_equals_asked_door[2-synthetic_source]',
@@ -656,6 +700,7 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestGate34DerivedFromModelPackageDenylist::test_gate34_audit_derived_from_model_denylisted_package[yolo]',
     'test_license_policy.py::TestGate34DerivedFromModelPackageDenylist::test_gate34_audit_derived_from_model_denylisted_package[yolov8]',
     'test_license_policy.py::TestGate34DerivedFromModelPackageDenylist::test_gate34_training_data_row_derived_ultralytics_reason',
+    'test_license_policy.py::TestLr04OccluderResearchSourceReasonPreservation::test_occluder_ffhq_reports_research_only_source',
     'test_license_policy.py::TestMultiLicenseFieldResolution::test_br35_agreeing_license_keys_pass',
     'test_license_policy.py::TestMultiLicenseFieldResolution::test_br35_disagreeing_license_and_spdx_id_fails',
     'test_license_policy.py::TestMultiLicenseFieldResolution::test_br35_secondary_only_agpl_still_fails',
@@ -714,6 +759,50 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestPolicyEnumsAndHardFail::test_require_pass_raises_on_fail',
     'test_license_policy.py::TestPolicyEnumsAndHardFail::test_require_pass_returns_on_pass',
     'test_license_policy.py::TestPolicyEnumsAndHardFail::test_verdicts_are_strenum',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[123-model_ingest]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[123-occluder_asset]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[123-synthetic_source]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[123-tooling]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[123-training_data]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat1-model_ingest]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat1-occluder_asset]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat1-synthetic_source]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat1-tooling]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat1-training_data]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat2-model_ingest]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat2-occluder_asset]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat2-synthetic_source]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat2-tooling]',
+    'test_license_policy.py::TestRd01NonStringRowCategory::test_non_string_row_category_is_invalid_row[bad_cat2-training_data]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_non_policy_category_type_is_invalid_row[123]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_non_policy_category_type_is_invalid_row[bad_category1]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_non_policy_category_type_is_invalid_row[bad_category2]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_string_category_value_is_invalid_row[model_ingest]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_string_category_value_is_invalid_row[occluder_asset]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_string_category_value_is_invalid_row[synthetic_source]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_string_category_value_is_invalid_row[tooling]',
+    'test_license_policy.py::TestRd02CategoryParameterTypeGuard::test_string_category_value_is_invalid_row[training_data]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[license-model_ingest]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[license-occluder_asset]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[license-synthetic_source]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[license-tooling]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[license-training_data]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[spdx_id-model_ingest]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[spdx_id-occluder_asset]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[spdx_id-synthetic_source]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[spdx_id-tooling]',
+    'test_license_policy.py::TestRd03LicenseFieldNoneArm::test_none_license_field_is_invalid_row[spdx_id-training_data]',
+    'test_license_policy.py::TestRd04OccluderNonMappingAndAsymmetry::test_non_mapping_returns_invalid_row[42]',
+    'test_license_policy.py::TestRd04OccluderNonMappingAndAsymmetry::test_non_mapping_returns_invalid_row[None]',
+    'test_license_policy.py::TestRd04OccluderNonMappingAndAsymmetry::test_non_mapping_returns_invalid_row[a-string]',
+    'test_license_policy.py::TestRd04OccluderNonMappingAndAsymmetry::test_non_mapping_returns_invalid_row[bad_asset1]',
+    'test_license_policy.py::TestRd04OccluderNonMappingAndAsymmetry::test_raise_vs_return_asymmetry_across_entry_points',
+    'test_license_policy.py::TestRd05OccluderPhotoClearanceType::test_non_string_photo_clearance_is_invalid_row[123]',
+    'test_license_policy.py::TestRd05OccluderPhotoClearanceType::test_non_string_photo_clearance_is_invalid_row[bad_pc1]',
+    'test_license_policy.py::TestRd05OccluderPhotoClearanceType::test_non_string_photo_clearance_is_invalid_row[bad_pc2]',
+    'test_license_policy.py::TestRd05OccluderPhotoClearanceType::test_none_photo_clearance_is_not_type_rejected',
+    'test_license_policy.py::TestRd06LicensePolicyErrorPayload::test_audit_provenance_row_non_mapping_payload',
+    'test_license_policy.py::TestRd06LicensePolicyErrorPayload::test_audit_tooling_row_non_mapping_payload',
     'test_license_policy.py::TestResearchMatcherPrecision::test_br27_controls_still_fail_research[casia_webface]',
     'test_license_policy.py::TestResearchMatcherPrecision::test_br27_controls_still_fail_research[dataset/ffhq]',
     'test_license_policy.py::TestResearchMatcherPrecision::test_br27_controls_still_fail_research[ffhq]',
@@ -757,6 +846,38 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestResearchOnlySourcesFail::test_research_source_fails_with_research_only_reason[widerface_val]',
     'test_license_policy.py::TestRowDeclaredCategoryNonDispatching::test_br34_caller_category_still_dispatches',
     'test_license_policy.py::TestRowDeclaredCategoryNonDispatching::test_br34_contract3_passes_with_and_without_row_category',
+    'test_license_policy.py::TestRv03RepresentativeRowsDiscriminationFloor::test_representative_rows_discriminate_rejection_axes',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_measured_escape_witnesses_fail[model-id-wins-package]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_measured_escape_witnesses_fail[tooling-shadow-package_name]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_measured_escape_witnesses_fail[training-package]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w1-model_ingest]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w1-occluder_asset]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w1-synthetic_source]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w1-tooling]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w1-training_data]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w2-model_ingest]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w2-occluder_asset]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w2-synthetic_source]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w2-tooling]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w2-training_data]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-model_ingest]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-occluder_asset]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-synthetic_source]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-tooling]',
+    'test_license_policy.py::TestRv10PackageDenylistFloorAcrossIdentityFields::test_witness_fails_every_door[w3-training_data]',
+    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[buffalo_l-nc_model_derived]',
+    'test_license_policy.py::TestRv11SyntheticSourceAxisTaintReasonFidelity::test_synthetic_door_reports_source_axis_taint[ffhq-research_only_source]',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[(MIT)]',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[Apache-2.0+]',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[MIT AND Apache-2.0]',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_all_allowlisted_compounds_pass[MIT+]',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_denylisted_component_named',
+    'test_license_policy.py::TestRv12CompoundSpdxAllowlistTokenisation::test_unknown_component_named',
+    'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_both_axes_side_by_side_normalisation',
+    'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_clearance_decision_exact_canonical_admits',
+    'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_clearance_decision_uppercase_refused',
+    'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_photo_clearance_lowercase_canonical_admits',
+    'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_photo_clearance_uppercase_refused',
     'test_license_policy.py::TestSelfGeneratedIsSourceNotLicense::test_br25_contract3_self_generated_apache_still_passes',
     'test_license_policy.py::TestSelfGeneratedIsSourceNotLicense::test_br25_scraped_with_self_generated_license_fails',
     'test_license_policy.py::TestSyntheticFailClosedAndRowValidation::test_br37_audit_derived_from_model_none_is_empty_opt_out',
@@ -831,6 +952,32 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[mysteryganv2]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[synthface3]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[vec2face-successor]',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_clearance_decision_rejected',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_agpl_rejected',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_on_tooling_rejected',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_research_only_rejected',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_photo_clearance_rejected',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_hide_derived_nc_still_caught',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_honest_subclass_still_evaluates_correctly',
+    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_toop_source_research_still_caught',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_provenance_token_in_source_no_longer_required',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_tooling_internal_lineage_clears_without_provenance_in_source',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_tooling_source_is_package_shape_also_clears',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_unregistered_lineage_fails_every_door[model_ingest]',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_unregistered_lineage_fails_every_door[occluder_asset]',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_unregistered_lineage_fails_every_door[synthetic_source]',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_unregistered_lineage_fails_every_door[tooling]',
+    'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_unregistered_lineage_fails_every_door[training_data]',
+    'test_license_policy_hardening.py::TestGate22PackageDenylistOutranksRegistration::test_denylisted_package_plus_any_junk_lineage_reports_package',
+    'test_license_policy_hardening.py::TestGate22PackageDenylistOutranksRegistration::test_denylisted_package_plus_unregistered_lineage_reports_package',
+    'test_license_policy_hardening.py::TestGate22PackageDenylistOutranksRegistration::test_precedence_inverted_order_would_surface_registration',
+    'test_license_policy_hardening.py::TestGate23SyntheticExemptionRechecksCommercialUse::test_forbidden_synthetic_derived_fails_every_door[model_ingest]',
+    'test_license_policy_hardening.py::TestGate23SyntheticExemptionRechecksCommercialUse::test_forbidden_synthetic_derived_fails_every_door[occluder_asset]',
+    'test_license_policy_hardening.py::TestGate23SyntheticExemptionRechecksCommercialUse::test_forbidden_synthetic_derived_fails_every_door[synthetic_source]',
+    'test_license_policy_hardening.py::TestGate23SyntheticExemptionRechecksCommercialUse::test_forbidden_synthetic_derived_fails_every_door[tooling]',
+    'test_license_policy_hardening.py::TestGate23SyntheticExemptionRechecksCommercialUse::test_forbidden_synthetic_derived_fails_every_door[training_data]',
+    'test_license_policy_hardening.py::TestRv14UnreadableNodeidBaseline::test_non_utf8_baseline_returns_harness_error',
+    'test_license_policy_hardening.py::TestRv14UnreadableNodeidBaseline::test_unreadable_baseline_returns_harness_error',
 })
 _REPO_ROOT = _HERE.parents[2]
 
@@ -958,18 +1105,24 @@ def _m_control_inert_comment(src: str) -> str:
 def _m1_unknown_spdx_pass(src: str) -> str:
     """Flip UNKNOWN_SPDX default-deny to PASS.
 
-    Anchor is the unique UNKNOWN_SPDX fail-closed return in ``audit_license``
-    (structure/symbol, not comment prose — BR-17).
+    Anchor is the per-token UNKNOWN_SPDX fail-closed return in ``audit_spdx``
+    (structure/symbol, not comment prose — BR-17). Post FIR-7-RV-12 compound
+    SPDX tokenisation, unknown licenses fail on this loop body rather than the
+    empty-token trailing return; re-pointed so the smoke mutant stays live
+    against the post-wave-A tree.
     """
     old = (
-        "    return _fail(\n"
-        "        RejectionReason.UNKNOWN_SPDX,\n"
-        "        detail=f\"license {tag!r} is not on the allowlist\",\n"
-        "    )"
+        "            return _fail(\n"
+        "                RejectionReason.UNKNOWN_SPDX,\n"
+        "                detail=(\n"
+        '                    f"license {tag!r} contains unknown component {tok!r}; "\n'
+        '                    "not on the allowlist"\n'
+        "                ),\n"
+        "            )"
     )
     new = (
-        "    # MUTATION M1: unknown SPDX incorrectly PASSes\n"
-        "    return _pass(detail=f\"license {tag!r} unknown but mutated to pass\")"
+        "            # MUTATION M1: unknown SPDX component incorrectly PASSes\n"
+        '            return _pass(detail=f"license {tag!r} unknown component mutated to pass")'
     )
     return _replace_unique(src, old, new, "M1")
 
@@ -1694,16 +1847,23 @@ def _victims_matched(failed_names: list[str], expected: tuple[str, ...]) -> list
 
 
 def _normalize_nodeid(line: str) -> str:
-    """Canonicalise a pytest nodeid to ``test_license_policy.py::...`` form."""
+    """Canonicalise a pytest nodeid to ``basename.py::...`` form.
+
+    Strips any leading path components so collect-only output that includes
+    a directory prefix still matches the recorded floor ids.
+    """
     line = line.strip()
-    marker = "test_license_policy.py::"
-    if marker in line:
-        return marker + line.split(marker, 1)[1]
+    if "::" not in line:
+        return line
+    left, right = line.split("::", 1)
+    base = left.rsplit("/", 1)[-1]
+    if base.endswith(".py"):
+        return f"{base}::{right}"
     return line
 
 
 def _collect_nodeids(test_path: Path) -> tuple[tuple[str, ...], str | None]:
-    """Collect full normalised nodeids from the unmutated suite (RF-01)."""
+    """Collect full normalised nodeids from one unmutated suite file (RF-01)."""
     cmd = [
         sys.executable,
         "-m",
@@ -1723,7 +1883,10 @@ def _collect_nodeids(test_path: Path) -> tuple[tuple[str, ...], str | None]:
         env=env,
     )
     raw = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode not in (0, 1):
+    # pytest rc=5 means "no tests collected" — treat as empty set so the
+    # RF-01 subset / absolute-floor checks report the coverage loss rather
+    # than a collect harness error (FIR-7-LR-03 gutting red-prove).
+    if proc.returncode not in (0, 1, 5):
         return (), (
             f"pytest --collect-only failed rc={proc.returncode}: "
             f"{raw.strip().splitlines()[-3:] if raw.strip() else '(no output)'}"
@@ -1743,11 +1906,37 @@ def _collect_nodeids(test_path: Path) -> tuple[tuple[str, ...], str | None]:
             continue
         nodeids.append(nid)
     if not nodeids:
-        return (), (
-            "pytest --collect-only produced zero nodeids "
-            f"(rc={proc.returncode})"
-        )
+        # Empty is a valid collect outcome (gutted file, deselected suite).
+        # Callers merge across floored files and apply subset / absolute floor.
+        return (), None
     return tuple(sorted(set(nodeids))), None
+
+
+def _floored_test_files() -> tuple[Path, ...]:
+    """Return the floored suite files that currently exist on disk."""
+    return tuple(p for p in _FLOORED_TEST_FILES if p.is_file())
+
+
+def _collect_floored_nodeids(
+    test_paths: tuple[Path, ...] | None = None,
+) -> tuple[tuple[str, ...], str | None]:
+    """Collect + merge normalised nodeids from all floored suite files.
+
+    Covers test_license_policy.py, test_license_policy_hardening.py, and
+    test_equivalence_claims.py when present (FIR-7-LR-03).
+    """
+    paths = test_paths if test_paths is not None else _floored_test_files()
+    if not paths:
+        return (), "no floored test files present on disk"
+    all_ids: set[str] = set()
+    for path in paths:
+        nodeids, err = _collect_nodeids(path)
+        if err is not None:
+            return (), f"{path.name}: {err}"
+        all_ids.update(nodeids)
+    if not all_ids:
+        return (), "pytest --collect-only produced zero nodeids across floored files"
+    return tuple(sorted(all_ids)), None
 
 
 def _name_components_from_nodeids(nodeids: tuple[str, ...]) -> frozenset[str]:
@@ -1780,77 +1969,87 @@ def _collect_test_name_components(test_path: Path) -> tuple[frozenset[str], str 
 
 
 def _load_nodeid_baseline(path: Path) -> tuple[frozenset[str], str | None]:
-    """Load node-id baseline: on-disk fixture if present, else embedded set.
+    """Load node-id baseline from the on-disk fixture only (fail-closed).
 
-    The embedded set is a second, independent copy of the recorded node-id
-    set for the embedded-baseline cross-check: an agent that edits the on-disk fixture
-    alone is caught because this set must still be a subset of the fixture.
-    When the on-disk fixture is present it wins, so intentional growth can
-    be recorded without editing this module's constant.
+    An absent, non-file (directory), broken-symlink, empty, or unreadable
+    fixture is a HARNESS-ERROR. The embedded set is a bootstrap for
+    ``--record-baseline`` drop accounting only — never a runtime fallback
+    (FIR-7-LR-02 / SECD-03).
 
-    The two copies are cross-checked, because otherwise this function
-    reintroduces one level up exactly the hole RF-01 closed: the fixture is
-    the record of what coverage must exist, so a caller who deletes tests
-    *and* their ids from the fixture passes the subset check silently, while
-    an intact copy of those same ids sits unread in this module. The file may
-    therefore only ever be a *superset* of the embedded set -- growth is
-    recordable in the file alone, shrinkage additionally requires editing
-    Python source, where it is visible in review (SECD-03, TEST-15).
+    When the fixture loads successfully it is cross-checked against the
+    embedded set: the file must be a *superset* of the embedded set so an
+    agent that edits the on-disk fixture alone cannot silently shrink the
+    floor (SECD-03, TEST-15).
     """
-    if path.is_file():
-        recorded: set[str] = set()
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            # UnicodeDecodeError subclasses ValueError, not OSError: a readable
-            # but non-UTF-8 fixture would otherwise escape as a raw traceback
-            # while every sibling malformed-fixture branch reports HARNESS-ERROR.
-            errno = getattr(exc, "errno", None)
-            errno_part = f" [errno {errno}]" if errno is not None else ""
-            return frozenset(), (
-                f"node-id baseline fixture unreadable: {path}{errno_part}: {exc}"
-            )
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            recorded.add(_normalize_nodeid(line))
-        if not recorded:
-            return frozenset(), f"node-id baseline fixture empty: {path.name}"
-        dropped = frozenset(_EMBEDDED_NODEID_BASELINE) - recorded
-        if dropped:
-            sample = ", ".join(sorted(dropped)[:3])
-            return frozenset(), (
-                f"node-id baseline fixture {path.name} is missing "
-                f"{len(dropped)} id(s) still present in "
-                "_EMBEDDED_NODEID_BASELINE, e.g. "
-                f"{sample}. The fixture may only grow. If the coverage loss "
-                "is real, fix it; if it is intentional, run "
-                "'python mutation_guard.py --record-baseline', which rewrites "
-                "both copies -- regenerating after an unexplained loss is "
-                "exactly the mistake this gate exists to catch."
-            )
-        return frozenset(recorded), None
-    if _EMBEDDED_NODEID_BASELINE:
-        return frozenset(_EMBEDDED_NODEID_BASELINE), None
-    return frozenset(), (
-        f"node-id baseline fixture missing: {path.name} and embedded set empty. "
-        "Create it with: python mutation_guard.py --record-baseline"
-    )
+    # Fail closed: missing path, broken symlink, directory, or non-file.
+    # Do not fall back to the embedded copy at runtime (FIR-7-LR-02).
+    try:
+        is_symlink = path.is_symlink()
+    except OSError as exc:
+        return frozenset(), f"node-id baseline fixture unreadable: {path}: {exc}"
+    if is_symlink and not path.exists():
+        return frozenset(), (
+            f"node-id baseline fixture unreadable: {path} (broken symlink)"
+        )
+    if not path.exists():
+        return frozenset(), f"node-id baseline fixture missing: {path}"
+    if not path.is_file():
+        kind = "directory" if path.is_dir() else "not a regular file"
+        return frozenset(), (
+            f"node-id baseline fixture unreadable: {path} ({kind})"
+        )
+
+    recorded: set[str] = set()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError subclasses ValueError, not OSError: a readable
+        # but non-UTF-8 fixture would otherwise escape as a raw traceback
+        # while every sibling malformed-fixture branch reports HARNESS-ERROR.
+        errno = getattr(exc, "errno", None)
+        errno_part = f" [errno {errno}]" if errno is not None else ""
+        return frozenset(), (
+            f"node-id baseline fixture unreadable: {path}{errno_part}: {exc}"
+        )
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        recorded.add(_normalize_nodeid(line))
+    if not recorded:
+        return frozenset(), f"node-id baseline fixture empty: {path}"
+    dropped = frozenset(_EMBEDDED_NODEID_BASELINE) - recorded
+    if dropped:
+        sample = ", ".join(sorted(dropped)[:3])
+        return frozenset(), (
+            f"node-id baseline fixture {path} is missing "
+            f"{len(dropped)} id(s) still present in "
+            "_EMBEDDED_NODEID_BASELINE, e.g. "
+            f"{sample}. The fixture may only grow. If the coverage loss "
+            "is real, fix it; if it is intentional, run "
+            "'python mutation_guard.py --record-baseline', which rewrites "
+            "both copies -- regenerating after an unexplained loss is "
+            "exactly the mistake this gate exists to catch."
+        )
+    return frozenset(recorded), None
 
 
 def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
     """Rewrite the node-id fixture (explicit operator action only).
 
-    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` in this module so the embedded-baseline
-    cross-check remains consistent (second independent copy of the set).
+    Also rewrites ``_EMBEDDED_NODEID_BASELINE`` and ``ABSOLUTE_NODEID_FLOOR``
+    in this module so the embedded-baseline cross-check and absolute-count
+    floor remain consistent (review-visible Python source; FIR-7-RV-05).
     """
     header = (
         "# mutation_guard node-id baseline (subset semantics: live ⊇ recorded)\n"
         "# Coverage may grow; it must never shrink.\n"
+        "# Floored files: test_license_policy.py, "
+        "test_license_policy_hardening.py, test_equivalence_claims.py\n"
         "# Regenerate ONLY via: python mutation_guard.py --record-baseline\n"
         "# Regenerating this file after a coverage *loss* is exactly the\n"
         "# mistake this gate exists to catch (RF-01 / TEST-15 / SECD-03).\n"
+        "# Drops require --allow-drop (FIR-7-RV-06).\n"
     )
     body = "\n".join(sorted(nodeids))
     path.write_text(header + body + "\n", encoding="utf-8")
@@ -1877,9 +2076,27 @@ def _write_nodeid_baseline(path: Path, nodeids: tuple[str, ...]) -> None:
         new_block_lines.append(f"    {nid!r},")
     new_block_lines.append("})")
     new_src = src[:begin] + "\n".join(new_block_lines) + src[end:]
+    # Sync absolute count floor to the newly recorded set size (FIR-7-RV-05).
+    floor_re = re.compile(
+        r"^ABSOLUTE_NODEID_FLOOR\s*=\s*\d+[^\n]*$",
+        re.MULTILINE,
+    )
+    floor_line = (
+        f"ABSOLUTE_NODEID_FLOOR = {len(nodeids)}  "
+        "# synced by --record-baseline; growth requires re-record"
+    )
+    if floor_re.search(new_src):
+        new_src = floor_re.sub(floor_line, new_src, count=1)
+    else:
+        print(
+            "WARN: could not locate ABSOLUTE_NODEID_FLOOR to rewrite; "
+            "embedded set updated without absolute-floor sync.",
+            flush=True,
+        )
     guard_path.write_text(new_src, encoding="utf-8")
     print(
-        f"NODEID-BASELINE: also rewrote embedded bootstrap in {guard_path.name}",
+        f"NODEID-BASELINE: also rewrote embedded bootstrap + "
+        f"ABSOLUTE_NODEID_FLOOR={len(nodeids)} in {guard_path.name}",
         flush=True,
     )
 
@@ -2091,7 +2308,17 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Rewrite mutation_guard_nodeid_baseline.txt from the live collect "
             "set and exit. Use only when coverage intentionally grew; "
-            "regenerating after a coverage loss defeats RF-01."
+            "regenerating after a coverage loss defeats RF-01. Drops require "
+            "--allow-drop (FIR-7-RV-06)."
+        ),
+    )
+    parser.add_argument(
+        "--allow-drop",
+        action="store_true",
+        help=(
+            "With --record-baseline: permit writing a baseline that drops "
+            "previously recorded node-ids. Without this flag any drop is "
+            "EXIT=2 and no files are written (FIR-7-RV-06)."
         ),
     )
     args = parser.parse_args(argv)
@@ -2123,35 +2350,85 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- RF-05: explicit certification scope (silence was the defect) -----
-    # Kill decisions run against test_license_policy.py only; the hardening
-    # file is outside the mediated set. Name that so an operator reading
-    # "killed=N OK" next to a 780-passing suite cannot assume 780 backs it.
-    hardening_note = (
-        f"{_TEST_HARDENING.name} present but EXCLUDED from kill decisions"
-        if _TEST_HARDENING.is_file()
-        else f"{_TEST_HARDENING.name} not present"
+    # Kill decisions run against test_license_policy.py only; the node-id
+    # floor additionally covers hardening + equivalence (FIR-7-LR-03).
+    floored_names = [p.name for p in _floored_test_files()]
+    floored_note = (
+        f"node-id floor covers {{{', '.join(floored_names)}}}"
+        if floored_names
+        else "node-id floor has no floored files present"
+    )
+    kill_note = (
+        f"kill decisions certify against {_TEST.name} only "
+        f"({_TEST_HARDENING.name} / {_TEST_EQUIVALENCE.name} are "
+        "floored for coverage mediation but EXCLUDED from kill decisions)"
     )
     print(
-        f"SCOPE: certifying kills against {_TEST.name} only; {hardening_note}. "
-        "Suite evidence outside this file is not load-bearing for this guard "
-        "(RF-05 / SECD-02).",
+        f"SCOPE: {kill_note}; {floored_note}. "
+        "Suite evidence outside the kill file is not load-bearing for "
+        "mutant verdicts (RF-05 / SECD-02 / FIR-7-LR-03).",
         flush=True,
     )
     print(flush=True)
 
     # --- RF-01: record or mediate the collected node-id SET -----------------
     print("NODEID-BASELINE: collecting live node-ids...", flush=True)
-    live_nodeids, nodeid_err = _collect_nodeids(_TEST)
+    live_nodeids, nodeid_err = _collect_floored_nodeids()
     if nodeid_err is not None:
         print(f"HARNESS-ERROR NODEID-BASELINE: collect failed: {nodeid_err}", flush=True)
         return 2
     live_nodeid_set = frozenset(live_nodeids)
     print(
-        f"NODEID-BASELINE: live collect has {len(live_nodeid_set)} node-id(s)",
+        f"NODEID-BASELINE: live collect has {len(live_nodeid_set)} node-id(s) "
+        f"from {len(floored_names)} floored file(s)",
         flush=True,
     )
 
     if args.record_baseline:
+        # Drop accounting: compare live against prior floor. Prefer the on-disk
+        # fixture; if absent, the embedded bootstrap is used for comparison
+        # only (never as a runtime fallback — FIR-7-LR-02 / FIR-7-RV-06).
+        if _NODEID_BASELINE.is_file():
+            prev_recorded, prev_err = _load_nodeid_baseline(_NODEID_BASELINE)
+            if prev_err is not None:
+                print(
+                    f"HARNESS-ERROR NODEID-BASELINE: cannot load prior floor "
+                    f"for drop accounting: {prev_err}",
+                    flush=True,
+                )
+                return 2
+            print(
+                f"NODEID-BASELINE: source={_NODEID_BASELINE} "
+                f"count={len(prev_recorded)} (prior floor for drop check)",
+                flush=True,
+            )
+        else:
+            prev_recorded = frozenset(_EMBEDDED_NODEID_BASELINE)
+            print(
+                f"NODEID-BASELINE: on-disk fixture missing; using embedded "
+                f"bootstrap for drop accounting "
+                f"(count={len(prev_recorded)})",
+                flush=True,
+            )
+        dropped = sorted(prev_recorded - live_nodeid_set)
+        print(f"dropped from recorded floor: {len(dropped)} ids", flush=True)
+        for did in dropped:
+            print(did, flush=True)
+        if dropped and not args.allow_drop:
+            print(
+                "HARNESS-ERROR NODEID-BASELINE: refusing to write — "
+                f"{len(dropped)} id(s) would be dropped from the recorded "
+                "floor. Re-add the tests, or pass --allow-drop to accept the "
+                "shrink (FIR-7-RV-06). No files written.",
+                flush=True,
+            )
+            return 2
+        if dropped and args.allow_drop:
+            print(
+                f"ALLOW-DROP: writing baseline despite {len(dropped)} "
+                "dropped id(s) (FIR-7-RV-06) — review this carefully.",
+                flush=True,
+            )
         _write_nodeid_baseline(_NODEID_BASELINE, live_nodeids)
         print(
             f"NODEID-BASELINE: wrote {len(live_nodeids)} node-id(s) → "
@@ -2166,6 +2443,12 @@ def main(argv: list[str] | None = None) -> int:
     if rec_err is not None:
         print(f"HARNESS-ERROR NODEID-BASELINE: {rec_err}", flush=True)
         return 2
+    # Always report which source backed the floor (FIR-7-LR-02).
+    print(
+        f"NODEID-BASELINE: source={_NODEID_BASELINE} "
+        f"count={len(recorded_nodeids)}",
+        flush=True,
+    )
     subset_errors = _nodeid_subset_errors(recorded_nodeids, live_nodeid_set)
     if subset_errors:
         for line in subset_errors:
@@ -2180,7 +2463,32 @@ def main(argv: list[str] | None = None) -> int:
     extra = len(live_nodeid_set - recorded_nodeids)
     print(
         f"NODEID-BASELINE: ok (recorded={len(recorded_nodeids)} ⊆ "
-        f"live={len(live_nodeid_set)}; live extras={extra} allowed)",
+        f"live={len(live_nodeid_set)}; live extras={extra} (unprotected))",
+        flush=True,
+    )
+    if extra > MAX_LIVE_EXTRAS_TOLERANCE:
+        print(
+            f"HARNESS-ERROR RF-01: live extras={extra} exceed "
+            f"MAX_LIVE_EXTRAS_TOLERANCE={MAX_LIVE_EXTRAS_TOLERANCE}. "
+            "New tests outside the recorded floor are unprotected; re-record "
+            "the baseline in the same commit that lands the growth "
+            "(FIR-7-LR-01).",
+            flush=True,
+        )
+        return 2
+    if len(live_nodeid_set) < ABSOLUTE_NODEID_FLOOR:
+        print(
+            f"HARNESS-ERROR RF-01: live collect count "
+            f"{len(live_nodeid_set)} < ABSOLUTE_NODEID_FLOOR="
+            f"{ABSOLUTE_NODEID_FLOOR}. Absolute floor violated "
+            "(FIR-7-RV-05).",
+            flush=True,
+        )
+        return 2
+    print(
+        f"NODEID-BASELINE: absolute floor ok "
+        f"(live={len(live_nodeid_set)} >= ABSOLUTE_NODEID_FLOOR="
+        f"{ABSOLUTE_NODEID_FLOOR})",
         flush=True,
     )
     print(flush=True)
@@ -2233,6 +2541,12 @@ def main(argv: list[str] | None = None) -> int:
 
     survivors: list[str] = []
     killed: list[str] = []
+    # Kill taxonomy (FIR-7-LR-09): headline must not present collateral-dominated
+    # or smoke kills as uniform axis evidence. EXIT semantics unchanged — weak
+    # kills still count as kills (decision recorded upstream).
+    killed_tight: list[str] = []
+    killed_weak: list[str] = []
+    killed_smoke: list[str] = []
     errors: list[str] = []
     unexpected: list[str] = []  # wrong expect_survived / require_kill mismatch
     known_gaps: list[str] = []
@@ -2393,6 +2707,20 @@ def main(argv: list[str] | None = None) -> int:
                 collateral = _collateral_count(
                     failed_names, mutation.expected_victims
                 )
+                # FIR-7-LR-09 taxonomy: smoke / weak (collateral dominates) / tight.
+                is_weak = (
+                    not mutation.smoke_level
+                    and collateral > max(2, n_victim_fail)
+                )
+                if mutation.smoke_level:
+                    killed_smoke.append(mutation.name)
+                    tax = "smoke"
+                elif is_weak:
+                    killed_weak.append(mutation.name)
+                    tax = "weak"
+                else:
+                    killed_tight.append(mutation.name)
+                    tax = "tight"
                 print(f"KILLED   {mutation.name}: {mutation.description}")
                 print(f"  suite: {summary}")
                 print(f"  victims: {', '.join(hits)}")
@@ -2402,7 +2730,7 @@ def main(argv: list[str] | None = None) -> int:
                 # mutants (M1–M4/M11) that still serve as smoke probes.
                 role = "smoke" if mutation.smoke_level else "axis"
                 print(
-                    f"  discrimination: role={role} failed={n_failed} "
+                    f"  discrimination: role={role} tax={tax} failed={n_failed} "
                     f"victim_failures={n_victim_fail} collateral={collateral}"
                 )
                 if mutation.smoke_level:
@@ -2410,7 +2738,7 @@ def main(argv: list[str] | None = None) -> int:
                         "  note: smoke-level mutant — kill-presence only; "
                         "not counted as axis-tight evidence (RF-03)"
                     )
-                elif collateral > max(2, n_victim_fail):
+                elif is_weak:
                     print(
                         f"  WARN: collateral ({collateral}) dominates "
                         f"victim_failures ({n_victim_fail}) — this kill is "
@@ -2424,7 +2752,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print(
-        f"killed={len(killed)} survivors={len(survivors)} "
+        f"killed={len(killed)} (tight={len(killed_tight)} "
+        f"weak={len(killed_weak)} smoke={len(killed_smoke)}) "
+        f"survivors={len(survivors)} "
         f"errors={len(errors)} total={len(selected)}"
     )
     if survivors:

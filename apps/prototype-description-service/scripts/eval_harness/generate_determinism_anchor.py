@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -49,8 +48,23 @@ from scripts.eval_harness.manifest import (
     load_manifest,
     metric_backing_refusals,
 )
+from scripts.eval_harness.promote_atomic import (
+    CAPTION_PROMOTE,
+    atomic_promote,
+    recover_promote,
+    scavenge_orphan_stages,
+    validate_live_head_sha,
+)
 from scripts.eval_harness.report import score_run_record
 from scripts.eval_harness.schema import SCHEMA, DocKind
+
+# Shared promote protocol (HARM-02) — caption namespace (RV2-03).
+_PROMOTE_NS = CAPTION_PROMOTE
+_PROMOTE_JOURNAL = CAPTION_PROMOTE.journal_name
+_PROMOTE_STAGE_PREFIX = CAPTION_PROMOTE.stage_prefix
+# Structural re-exports so tests can assert caption/face share one implementation.
+_atomic_promote_core = atomic_promote
+_recover_promote_core = recover_promote
 
 # Fixed defaults so two generator runs on the same tree are byte-identical.
 # These are BYTE-STABILITY SENTINELS in fixture_* fields — not git / wall-clock
@@ -227,131 +241,14 @@ def _dumps(obj: dict[str, Any]) -> str:
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
-# Journal + staging marker for set-atomic promote (S4-02 / rg-002).
-_PROMOTE_JOURNAL = ".vlm-anchor-promote.journal"
-_PROMOTE_STAGE_PREFIX = ".vlm-promote-stage-"
-
-
-def _fsync_path(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
-def _write_promote_journal(dest_dir: Path, payload: dict[str, Any]) -> None:
-    path = dest_dir / _PROMOTE_JOURNAL
-    tmp = dest_dir / f".{_PROMOTE_JOURNAL}.tmp"
-    tmp.write_text(json.dumps(payload, sort_keys=True) + "\n")
-    _fsync_path(tmp)
-    os.replace(tmp, path)
-    _fsync_path(dest_dir)
-
-
 def _recover_promote(dest_dir: Path) -> None:
-    """Finish or abandon an interrupted set-promote so dest is never left mixed.
-
-    Phase ``staged``: no live paths touched → drop stage + journal (all-old).
-    Phase ``installing``: stage holds the full durable new set → complete every
-    name from stage (all-new). Either outcome is a consistent set (S4-02).
-    """
-    journal_path = dest_dir / _PROMOTE_JOURNAL
-    if not journal_path.is_file():
-        return
-    try:
-        journal = json.loads(journal_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        journal_path.unlink(missing_ok=True)
-        return
-    names = list(journal.get("names") or [])
-    stage = Path(journal["stage"]) if journal.get("stage") else None
-    phase = journal.get("phase")
-    if stage is None or not names:
-        journal_path.unlink(missing_ok=True)
-        return
-    if phase == "installing" and stage.is_dir():
-        for name in names:
-            src = stage / name
-            if not src.is_file():
-                continue
-            dest = dest_dir / name
-            tmp = dest_dir / f".{name}.promoting"
-            tmp.write_bytes(src.read_bytes())
-            _fsync_path(tmp)
-            os.replace(tmp, dest)
-        _fsync_path(dest_dir)
-    # staged (or incomplete stage): leave live paths alone → all-old
-    if stage.is_dir():
-        for child in stage.iterdir():
-            child.unlink(missing_ok=True)
-        stage.rmdir()
-    journal_path.unlink(missing_ok=True)
+    """Caption-namespaced recover (shared impl — HARM-02 / RV2-03)."""
+    recover_promote(dest_dir, _PROMOTE_NS)
 
 
 def _atomic_promote(src_dir: Path, dest_dir: Path, names: list[str]) -> None:
-    """Promote a named freeze artifact *set* as one unit (rg-002 / VLM6-F-05 / S4-02).
-
-    Per-file ``os.replace`` is atomic, but a bare loop is not: a kill after the
-    first replace leaves a new artifact paired with stale siblings (the exact
-    failure the face-generator docstring used to forbid without guaranteeing).
-
-    *dest_dir* is a shared bakeoff-results tree, so a whole-directory rename of
-    the destination is not workable. Instead:
-
-    1. Recover any prior interrupted promote (journal).
-    2. Stage the complete new set under a unique sibling dir and fsync it.
-    3. Journal ``phase=installing`` (durable intent).
-    4. Install each name from the durable stage via ``os.replace``.
-    5. Drop journal + stage.
-
-    Guarantee: after return, or after crash + ``_recover_promote`` (automatic on
-    the next promote), every named path is fully old or fully new — never mixed.
-    A crash mid-install may leave a transient mixed tree until recovery runs.
-    """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    _recover_promote(dest_dir)
-
-    token = f"{os.getpid():x}-{id(names):x}-{len(names):x}"
-    # Unique sibling under dest_dir (same filesystem → rename/replace works).
-    stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}"
-    # Avoid collision if a prior crash left an empty dir with same token (rare).
-    n = 0
-    while stage.exists():
-        n += 1
-        stage = dest_dir / f"{_PROMOTE_STAGE_PREFIX}{token}-{n}"
-    stage.mkdir()
-    try:
-        for name in names:
-            target = stage / name
-            target.write_bytes((src_dir / name).read_bytes())
-            _fsync_path(target)
-        _fsync_path(stage)
-
-        _write_promote_journal(
-            dest_dir,
-            {"stage": str(stage), "names": list(names), "phase": "staged"},
-        )
-        _write_promote_journal(
-            dest_dir,
-            {"stage": str(stage), "names": list(names), "phase": "installing"},
-        )
-
-        for name in names:
-            dest = dest_dir / name
-            tmp = dest_dir / f".{name}.promoting"
-            tmp.write_bytes((stage / name).read_bytes())
-            _fsync_path(tmp)
-            os.replace(tmp, dest)
-        _fsync_path(dest_dir)
-
-        (dest_dir / _PROMOTE_JOURNAL).unlink(missing_ok=True)
-        for child in stage.iterdir():
-            child.unlink(missing_ok=True)
-        stage.rmdir()
-    except BaseException:
-        # Leave journal + stage for _recover_promote; re-raise.
-        raise
+    """Caption-namespaced set-atomic promote (shared impl — HARM-02 / RV2-03)."""
+    atomic_promote(src_dir, dest_dir, names, _PROMOTE_NS)
 
 
 def write_anchor(
@@ -379,8 +276,13 @@ def write_anchor(
     ``head_sha``/``started_at`` are nulled so two generator runs match and no
     contract wall-clock/git field holds a fabricated sentinel (S4-04 / rg-015).
     Byte-stability comes only from ``fixture_revision`` / ``canonical_timestamp``.
-    Pass ``pin_live_provenance=False`` (or ``--live-*``) to record real values.
+    Pin mode is gated solely on this flag (RV2-05) — never on whether
+    ``live_*`` is ``None`` vs empty string. Pass ``pin_live_provenance=False``
+    (CLI ``--no-pin``) to record real values; empty ``live_head_sha`` is refused.
     """
+    # Reclaim orphan stage dirs left by crashes before journal write (RV2-07).
+    scavenge_orphan_stages(out_dir, _PROMOTE_NS)
+
     # Metadata-only: uses path/sha256/media_id/present_identities/face_count for synthetic
     # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
     manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
@@ -389,7 +291,12 @@ def write_anchor(
     fix_rev = head_sha if head_sha is not None else fixture_revision
     can_ts = started_at if started_at is not None else canonical_timestamp
 
-    if pin_live_provenance and live_head_sha is None and live_started_at is None:
+    # Pin mode is explicit (RV2-05) — not "live_* is None". Empty live_head_sha
+    # is refused so it cannot silently exit pin mode and inject wall-clock.
+    if live_head_sha is not None:
+        live_head_sha = validate_live_head_sha(live_head_sha)
+
+    if pin_live_provenance:
         # Byte-stable mode: null contract head_sha/started_at (never fabricate).
         # Sentinels live only in fixture_revision / canonical_timestamp (S4-04).
         record = build_run_record(
@@ -512,14 +419,28 @@ def main(argv: list[str] | None = None) -> int:
         help="(legacy) maps to --canonical-timestamp when set; prefer --canonical-timestamp",
     )
     parser.add_argument(
+        "--pin",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="pin mode: null provenance.head_sha/started_at (default: true). "
+        "Pass --no-pin to record live provenance (RV2-05 / S4-04).",
+    )
+    parser.add_argument(
         "--live-head-sha",
         default=None,
-        help="optional real git SHA recorded under provenance.head_sha (not a sentinel)",
+        help="real 40-char git SHA for provenance.head_sha when --no-pin "
+        "(refuses empty string, forty zeros, non-hex; RV2-04 / RV2-05 / S4-06)",
     )
     parser.add_argument(
         "--live-started-at",
         default=None,
-        help="optional real ISO-8601 recorded under provenance.started_at (not a sentinel)",
+        help="real ISO-8601 for provenance.started_at when --no-pin (not a sentinel)",
+    )
+    parser.add_argument(
+        "--verify-live-head-sha",
+        action="store_true",
+        default=False,
+        help="also require git rev-parse --verify <sha>^{commit} for --live-head-sha",
     )
     args = parser.parse_args(argv)
 
@@ -530,6 +451,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.started_at is not None:
         canonical_timestamp = args.started_at
 
+    # Validate / normalise live SHA at parse boundary (RV2-04 / RV2-05).
+    live_head = validate_live_head_sha(
+        args.live_head_sha,
+        verify_git=bool(args.verify_live_head_sha),
+    )
+    if live_head is not None and args.pin:
+        raise SystemExit(
+            "--live-head-sha requires --no-pin (pin mode nulls contract head_sha; "
+            "RV2-05 / S4-04)"
+        )
+    if args.live_started_at is not None and args.pin:
+        raise SystemExit(
+            "--live-started-at requires --no-pin (pin mode nulls contract started_at; "
+            "RV2-05 / S4-04)"
+        )
+
     run_path, report_json_path, report_md_path, manifest_sha = write_anchor(
         manifest_path=args.manifest,
         out_dir=args.out_dir,
@@ -538,8 +475,9 @@ def main(argv: list[str] | None = None) -> int:
         canonical_timestamp=canonical_timestamp,
         head_sha=args.head_sha,
         started_at=args.started_at,
-        live_head_sha=args.live_head_sha,
+        live_head_sha=live_head,
         live_started_at=args.live_started_at,
+        pin_live_provenance=bool(args.pin),
     )
     print(f"manifest_sha256={manifest_sha}")
     print(f"run_record={run_path}")

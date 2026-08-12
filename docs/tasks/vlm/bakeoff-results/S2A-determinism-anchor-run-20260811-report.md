@@ -23,6 +23,7 @@
 - fabricated by kind: none
 - true-fact coverage: null
 - placement accuracy: null (correct=0 wrong=0 claims=0 abstained=0)
+- ⚠️ **placement is VACUOUS**: 0 asserted claims — every spatial fact was abstained or the corpus defines no `spatial_facts`. The accuracy above is not evidence of placement correctness.
 
 ### Strata (difficulty / domain)
 

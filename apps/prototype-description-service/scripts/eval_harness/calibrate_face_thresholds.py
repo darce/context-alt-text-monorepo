@@ -286,9 +286,10 @@ def validate_golden_manifest(doc: object) -> list[str]:
             )
         if domain is not None and not isinstance(domain, str):
             errors.append(f"entries[{i}].domain must be a string when present")
-        if tags is not None:
-            if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-                errors.append(f"entries[{i}].tags must be a list of strings when present")
+        if tags is not None and (
+            not isinstance(tags, list) or not all(isinstance(t, str) for t in tags)
+        ):
+            errors.append(f"entries[{i}].tags must be a list of strings when present")
     return errors
 
 

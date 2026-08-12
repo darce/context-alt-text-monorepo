@@ -33,7 +33,6 @@ import tempfile
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Any, NamedTuple, NoReturn
@@ -59,12 +58,14 @@ from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import (
     WRONG_NAME_RATE_FLOOR,
     Audience,
+    IdentityOrdering,
     ReportError,
     ScoreVerdict,
     _total_wrong_name_count,
     build_face_reports,
     build_reports,
     face_wrong_name_rate,
+    identity_names,  # noqa: F401 — re-export for external callers; report owns it (VLM6-RH-07)
     occlusion_inputs_from_record,
     score_face_run_record,
     score_run_record,
@@ -92,18 +93,6 @@ RUBRIC_GATE_SKIP = "skip"
 # fail open when report.py renames a field — the gate cannot go red (TEST-15).
 # Message token ``score schema error:`` is class-unique vs gate tokens.
 _SCORE_SCHEMA_ERROR_TOKEN = "score schema error"
-
-
-class IdentityOrdering(StrEnum):
-    """Identity L→R ordering quality (sr-007; VLM6-RH-06).
-
-    Producer (``_extract_identities``) and consumers must use these values —
-    never raw ``\"positional\"`` / ``\"degraded\"`` literals. Wire form stays
-    the string value so report.py can still match without a concurrent edit.
-    """
-
-    POSITIONAL = "positional"
-    DEGRADED = "degraded"
 
 
 class ScoreGateError(RuntimeError):
@@ -481,31 +470,6 @@ def _image_dimensions(image_bytes: bytes) -> tuple[int | None, int | None]:
         return int(width), int(height)
     except Exception:  # noqa: BLE001 — non-image fixtures in unit tests; stamp None
         return None, None
-
-
-def identity_names(identities: object) -> list[str]:
-    """Turn stored ``identities`` into an ordered list of name strings.
-
-    Greenfield (A-06): only the positional dict row shape from
-    ``_extract_identities`` is accepted — ``{"name", "bbox", "unpositioned", ...}``.
-    Bare-string lists raise; dual-shape shims are forbidden. Left-to-right order
-    is preserved — never re-sorted alphabetically. Dict entries with a missing or
-    empty ``name`` raise rather than being silently skipped.
-    """
-    if not isinstance(identities, list):
-        raise TypeError(f"identities must be a list of dict rows, got {type(identities).__name__}")
-    names: list[str] = []
-    for index, entry in enumerate(identities):
-        if not isinstance(entry, dict):
-            raise TypeError(
-                f"identities[{index}] must be a dict identity row; got "
-                f"{type(entry).__name__} — greenfield rejects bare-string identity lists"
-            )
-        name = entry.get("name")
-        if not name:
-            raise ValueError(f"identities[{index}] has empty/missing 'name' (keys present: {sorted(entry)!r})")
-        names.append(str(name))
-    return names
 
 
 def _identity_row_from_wire(row: dict[str, Any], *, name: str, bbox: dict[str, int | float] | None) -> dict[str, Any]:
@@ -1392,6 +1356,16 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score manifest-mismatch gate: run-record provenance missing fetch-time "
             f"manifest_sha256 — record is not self-consistent with its fetch provenance "
             f"(see {json_path})"
+        )
+    # R2-06: not a gate (see above), but it must not exit silently either. A drifted
+    # run previously printed a normal-looking pass with the fact buried in provenance.
+    if scored.get("provenance", {}).get("manifest_matches_fetch") is False:
+        print(
+            f"[score] WARNING manifest drift: scored against manifest "
+            f"{scored['provenance'].get('score_manifest_sha256')} but fetched under "
+            f"{fetch_manifest_sha} — these numbers are not comparable to a baseline "
+            f"scored on the fetch-time corpus (see {json_path})",
+            file=sys.stderr,
         )
     # Empty rubric: Must-Right and Easy-Wrong vacuity are independent. Emptying
     # only must_right while easy_wrong remains used to leave the OR'd counter

@@ -150,6 +150,20 @@ class Audience(StrEnum):
     LOCAL = "local"
 
 
+class IdentityOrdering(StrEnum):
+    """Identity L→R ordering quality (sr-007; VLM6-RH-06).
+
+    Lives here, not in ``cli``: ``report`` is the consumer, and ``report`` must
+    not import ``cli`` (VLM6-RH-07). ``cli`` re-exports it for the producer side.
+    Never compare against raw ``"positional"`` / ``"degraded"`` literals — the
+    token ``degraded`` is also an unrelated describe-route status, so an untyped
+    literal collides across two domains and a typo silently takes neither branch.
+    """
+
+    POSITIONAL = "positional"
+    DEGRADED = "degraded"
+
+
 class ScoreVerdict(StrEnum):
     """Machine-readable pass/fail for a scored caption+face report (VLM-6 S2A).
 
@@ -245,6 +259,12 @@ def identity_names(identities: object) -> list[str]:
     Pure data normalizer owned by the scoring module so report does not import
     ``cli`` at call time (VLM6-RH-07 — entrypoints depend on libraries, not the
     reverse). Greenfield: only dict rows with a non-empty ``name`` are accepted.
+
+    This is the ONLY definition. ``cli`` and ``describe_baseline`` re-export it
+    rather than carrying copies: the first RH-07 fix broke the cycle by cloning
+    the body into both modules, which left the contract tests importing the
+    ``cli`` clone while scoring ran the ``report`` one — a regression in the copy
+    that scoring uses could not go red (sr-007, TEST-15).
     """
     if not isinstance(identities, list):
         raise TypeError(f"identities must be a list of dict rows, got {type(identities).__name__}")
@@ -1021,7 +1041,7 @@ def score_run_record(
         # ``degraded`` means unpositioned rows were appended alphabetically — exclude
         # from positional scoring so the L→R swap metric is not contaminated.
         ordering_stamp = item.get("identity_ordering")
-        predicted_order_known = ordering_stamp != "degraded"
+        predicted_order_known = ordering_stamp != IdentityOrdering.DEGRADED
         order_known = labeled_order_known and predicted_order_known
         # Set-based identification_pr still uses present_identities (order-blind).
         # Positional uses face-box L→R when both labeled and predicted order known.
@@ -1142,11 +1162,21 @@ def score_run_record(
             continue
         source = item.get("identity_ordering")
         path = str(item.get("path", item.get("media_id", "?")))
-        if source == "degraded":
+        # Exhaustive (sr-007, VLM6-RH-06): an unrecognized stamp used to take
+        # neither branch, leaving both counters 0 — the A-07 loud surface failing
+        # silently. ``None`` stays legal: it means the fetch never stamped.
+        if source is None:
+            continue
+        if source == IdentityOrdering.DEGRADED:
             ordering_degraded += 1
             degraded_paths.append(path)
-        elif source == "positional":
+        elif source == IdentityOrdering.POSITIONAL:
             ordering_positional += 1
+        else:
+            raise ReportError(
+                f"unknown identity_ordering {source!r} on {path}; "
+                f"expected one of {[m.value for m in IdentityOrdering]} or absent"
+            )
 
     fetch_provenance = dict(run_record["provenance"])
     provenance = {
@@ -1498,6 +1528,56 @@ def _stratum_blocks(
     }
 
 
+def _placement_vacuity_lines(place: dict[str, Any]) -> list[str]:
+    """Disclose how little the placement number is standing on (VLM6-R4-03).
+
+    ``score_placement`` only counts a fact when the caption contains a near-verbatim
+    substring of an authored phrase or its token-swapped inversion; a paraphrase
+    ("Bob in the middle, flanked by Alice and Carol" against a BETWEEN fact) is
+    dropped from the denominator as "no claim", not scored wrong. So a ``None`` or
+    near-1.0 accuracy is not evidence of correct placement — it can just mean the
+    model phrased things its own way. Publishing the denominator alongside the
+    number is the disclosure; a validated-judge scorer (EVAL-11) is Slice 2 work.
+    """
+    claims = int(place.get("claims") or 0)
+    abstained = int(place.get("abstained") or 0)
+    if claims == 0:
+        return [
+            "- ⚠️ **placement is VACUOUS**: 0 asserted claims — every spatial fact was "
+            "abstained or the corpus defines no `spatial_facts`. The accuracy above is "
+            "not evidence of placement correctness.",
+        ]
+    if abstained > claims:
+        return [
+            f"- ⚠️ placement accuracy is computed over a minority of facts: {claims} asserted "
+            f"vs {abstained} abstained. Near-verbatim matching drops paraphrased placement "
+            f"claims from the denominator rather than scoring them wrong.",
+        ]
+    return []
+
+
+def _manifest_drift_line(prov: dict[str, Any]) -> str:
+    """Provenance line for the score-time manifest, loud on drift (VLM6-R2-06).
+
+    Drift is deliberately not a hard gate (``_manifest_sha`` hashes ``model_dump()``,
+    so any label edit would permanently block re-scoring archived baselines — see
+    the F1-3 note in ``cli._cmd_score``). But ``(matches fetch: False)`` buried in a
+    provenance list read as an ordinary pass: a candidate scored against a different
+    corpus revision than it was fetched under produced evidence that looked valid.
+    Shared by the caption and face renderers so the face report cannot omit it.
+    """
+    matches = prov.get("manifest_matches_fetch")
+    line = f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}` (matches fetch: {matches})"
+    if matches is False:
+        return (
+            f"{line}\n"
+            "- ⚠️ **MANIFEST DRIFT**: scored against a different corpus revision than the run "
+            "was fetched under. Rubric/label edits since the fetch are inside these numbers; "
+            "they are not comparable to a baseline scored on the fetch-time manifest."
+        )
+    return line
+
+
 def _markdown(scored: dict[str, Any]) -> str:
     prov = scored["provenance"]
     model = prov.get("model", {})
@@ -1515,8 +1595,7 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
         f"- base_url: {prov.get('base_url', 'unknown')}",
         f"- fetch manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
-        f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}` "
-        f"(matches fetch: {prov.get('manifest_matches_fetch')})",
+        _manifest_drift_line(prov),
         f"- started_at: {prov.get('started_at', 'unknown')}",
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
@@ -1649,6 +1728,7 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"(correct={place.get('correct')} wrong={place.get('wrong')} "
             f"claims={place.get('claims')} abstained={place.get('abstained')})",
         ]
+        lines += _placement_vacuity_lines(place)
     strata = scored.get("strata") or {}
     if strata.get("by_difficulty") or strata.get("by_domain"):
         lines += ["", "### Strata (difficulty / domain)", ""]
@@ -2903,7 +2983,8 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"- model_ids: `{', '.join(model.get('model_ids') or []) or 'unknown'}` "
         f"embedding_dims: `{model.get('embedding_dims')}` leg: `{model.get('leg')}`",
         f"- head_sha: `{prov.get('head_sha', 'unknown')}`",
-        f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}`",
+        f"- fetch manifest_sha256: `{prov.get('manifest_sha256', 'unknown')}`",
+        _manifest_drift_line(prov),
         f"- canon_version: `{prov.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}` "
         f"protocol_id: `{prov.get('protocol_id', FACE_BAKEOFF_PROTOCOL_ID)}`",
         f"- zero_box_corpus: {prov.get('zero_box_corpus')} total_gt_boxes: {prov.get('total_gt_boxes')}",

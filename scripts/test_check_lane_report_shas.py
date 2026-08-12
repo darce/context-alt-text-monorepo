@@ -506,32 +506,44 @@ def test_homoglyph_detection_is_unconditional_not_vocab_gated(report_dir: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
-    """RV4-04: default walk must see ``.s2a/**/*.md``, not only one level deep."""
-    nested = report_dir / "_rv4_nested" / "lane-report.md"
-    _write(nested, "Sandbox base was deadbee\n")
-    # Invoke with no path args so main() uses the default walk.
-    proc = subprocess.run(
-        [sys.executable, str(GUARD)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode != 0, (
-        f"nested .s2a report must fail default walk; stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    )
-    assert "deadbee" in proc.stderr
-
-
-def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
-    """RV4-04 / rg-006: default walk and --scan-staged share one path predicate."""
+def _load_guard_module():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("check_lane_report_shas", GUARD)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+def test_nested_s2a_path_is_scanned_by_default_walk(report_dir: Path) -> None:
+    """RV4-04 / VLM6-R2-E-02: default walk membership is checked directly (no ambient pollution).
+
+    Asserts path membership via ``_default_report_paths`` rather than a full-repo
+    default-walk exit code. Uses a unique token that cannot substring-match ambient
+    ``deadbeef`` citations in other lane reports.
+    """
+    mod = _load_guard_module()
+    # Unique token: not a substring of ambient deadbeef / cafebab noise.
+    unique_token = "f00ba12"  # 7 hex, unresolvable, no ambient substring collision
+    nested = report_dir / "_rv4_nested" / "lane-report.md"
+    _write(nested, f"Sandbox base was {unique_token}\n")
+    defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
+    assert nested.resolve() in defaults, (
+        f"default walk missed nested path {nested}; "
+        f"count={len(defaults)} sample={[str(p) for p in sorted(defaults) if '_rv4' in str(p) or '_fx3' in str(p)]}"
+    )
+    # Also confirm the file is actually scanned when targeted (path in stderr, unique token).
+    rel = str(nested.relative_to(REPO_ROOT))
+    proc = _run_guard(rel)
+    assert proc.returncode != 0
+    assert unique_token in proc.stderr
+    assert "_rv4_nested" in proc.stderr or "lane-report" in proc.stderr
+
+
+def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
+    """RV4-04 / rg-006: default walk filters through the shared path predicate."""
+    mod = _load_guard_module()
 
     # Nested and shallow paths must both be accepted by the shared predicate.
     assert mod._is_lane_report_relpath(".s2a/top.md") is True
@@ -553,6 +565,40 @@ def test_default_walk_and_staged_predicate_agree_on_nested_paths() -> None:
     finally:
         nested_file.unlink(missing_ok=True)
         nested_dir.rmdir()
+
+
+def test_default_walk_sees_s2a_at_arbitrary_depth_above_star(tmp_path: Path) -> None:
+    """VLM6-R2-G-04 / rg-006: depth above ``*/.s2a`` is not missed by a hand-maintained glob.
+
+    ``*`` does not cross path separators, so a parallel glob list drifts from the
+    predicate. The collector must walk the tree and filter through
+    ``_is_lane_report_relpath`` so e.g. ``a/b/c/.s2a/report.md`` is included.
+    """
+    mod = _load_guard_module()
+    # Build a synthetic mini-tree under the real repo so relative_to(repo) works,
+    # at a depth ``*/.s2a/**`` cannot reach (three path segments before .s2a).
+    deep_dir = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / "scene"
+        / ".s2a"
+        / "_cx5_depth_parity"
+    )
+    deep_dir.mkdir(parents=True, exist_ok=True)
+    deep_file = deep_dir / "report.md"
+    deep_file.write_text("no tokens here\n", encoding="utf-8")
+    try:
+        rel = deep_file.relative_to(REPO_ROOT).as_posix()
+        assert mod._is_lane_report_relpath(rel) is True
+        defaults = {p.resolve() for p in mod._default_report_paths(REPO_ROOT)}
+        assert deep_file.resolve() in defaults, (
+            f"default walk missed arbitrary-depth .s2a path {deep_file}; "
+            f"predicate={mod._is_lane_report_relpath(rel)}"
+        )
+    finally:
+        deep_file.unlink(missing_ok=True)
+        deep_dir.rmdir()
 
 
 # ---------------------------------------------------------------------------

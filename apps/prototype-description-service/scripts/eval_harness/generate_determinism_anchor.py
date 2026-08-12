@@ -122,8 +122,36 @@ def build_run_record(
             "started_at": started_at,
             "generator": "scripts.eval_harness.generate_determinism_anchor",
             "adapter": "seeded",
+            "note": (
+                "byte-stability anchor from the seeded offline adapter; no model, no real "
+                "image bytes. Proves the scoring path is deterministic and that corruption "
+                "goes red — not that captions are good. See eval_harness/README.md "
+                "§ Corpus coverage boundary."
+            ),
+            "coverage_gaps": _coverage_gaps(manifest.entries),
         },
         "items": items,
+    }
+
+
+# Which scorers the corpus leaves with nothing to assert against. Derived from the
+# loaded manifest, never hand-stamped (rg-015): a gap that disappears when Slice 2
+# populates the field must disappear from the anchor too, or the disclosure becomes
+# a stale lie in the one artifact operators trust most (VLM6-R2-03 / VLM6-GATE-04).
+_GAP_REASONS = {
+    "face_boxes": "positional_identification never runs; set-based identity scoring "
+    "cannot catch right-names-on-wrong-faces",
+    "spatial_facts": "placement accuracy is vacuous (0 asserted claims)",
+    "reference_facts": "no denominator for fabricated-fact scoring",
+}
+
+
+def _coverage_gaps(entries: list[Any]) -> dict[str, str]:
+    """Fields absent across the whole corpus, with what each absence disables."""
+    return {
+        field: f"0/{len(entries)} entries populate it — {reason}"
+        for field, reason in _GAP_REASONS.items()
+        if not any(getattr(entry, field, None) for entry in entries)
     }
 
 

@@ -907,17 +907,22 @@ def test_labeled_left_to_right_tie_stable_across_input_order():
 
     Pre-fix: stable sort on x alone → input order wins on pure ties.
     Post-fix: (x, y, name) matches predicted path → same sequence either way.
-    HARM-07: missing y is unorderable (no fabricated y=0.0) — exclude image.
+    HARM-07: never invent y=0.0; missing-y path sorts by (x, name) only.
     """
     order_a = [{"name": "Bob", "x": 0.5, "y": 0.1}, {"name": "Alice", "x": 0.5, "y": 0.1}]
     order_b = [{"name": "Alice", "x": 0.5, "y": 0.1}, {"name": "Bob", "x": 0.5, "y": 0.1}]
     assert labeled_left_to_right(order_a) == labeled_left_to_right(order_b)
     assert labeled_left_to_right(order_a) == ["Alice", "Bob"]  # name tie-break
-    # Pure-x tie without y: refuse to invent y=0.0 (HARM-07 / rg-015).
+    # Pure-x tie without y: no fabricated y=0.0 — name secondary only (HARM-07).
     bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
     bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
-    assert labeled_left_to_right(bare_a) is None
-    assert labeled_left_to_right(bare_b) is None
+    assert labeled_left_to_right(bare_a) == labeled_left_to_right(bare_b) == ["Alice", "Bob"]
+    # Different y at same x must NOT collapse via invented 0.0.
+    y_order = [
+        {"name": "High", "x": 0.5, "y": 0.9},
+        {"name": "Low", "x": 0.5, "y": 0.1},
+    ]
+    assert labeled_left_to_right(y_order) == ["Low", "High"]
 
 
 def test_gt_box_name_empty_string_is_anonymous():

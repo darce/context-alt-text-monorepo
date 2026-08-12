@@ -181,100 +181,9 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
     Fixture is fully gate-clean (F1d-1 / VLM6-A-05): no failed items, non-empty
     must_right and easy_wrong, fetch-time sha present, recognition_enabled, and
     face_boxes + spatial_facts + reference_facts trap so all gated categories
-    have π>0 (including fabricated_fact; EVAL-19).
+    have π>0 (including fabricated_fact; EVAL-19). RV1-03: n ≥ SCORE_PASS_MIN.
     """
-    record = {
-        "schema": "acx-eval/v1",
-        "kind": "run_record",
-        "provenance": {
-            "manifest_sha256": "m" * 64,
-            "base_url": "https://api.example.com",
-            "head_sha": "0" * 40,
-            "started_at": "2026-07-06T00:00:00Z",
-        },
-        "items": [
-            {
-                "media_id": 1,
-                "path": "mock_images/alice-pool.jpg",
-                "describe": {
-                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
-                    "visual_facts": {"objects": []},
-                },
-                "identities": [
-                    {
-                        "name": "Alice Example",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                    {
-                        "name": "Bob Builder",
-                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                ],
-                "face_count": 2,
-                "identity_ordering": "positional",
-                "error": None,
-            },
-            {
-                "media_id": 2,
-                "path": "mock_images/bob-beach.jpg",
-                "describe": {
-                    "alt_text_draft": "Bob Builder on a beach.",
-                    "visual_facts": {"objects": []},
-                },
-                "identities": [
-                    {
-                        "name": "Bob Builder",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    }
-                ],
-                "face_count": 1,
-                "identity_ordering": "positional",
-                "error": None,
-            },
-        ],
-    }
-    entries = [
-        {
-            "path": "mock_images/alice-pool.jpg",
-            "media_id": 1,
-            "face_count": 2,
-            "present_identities": ["Alice Example", "Bob Builder"],
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Carol Decoy"],
-            "policy": {"recognition_enabled": True},
-            "face_boxes": [
-                {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-            ],
-            "spatial_facts": [
-                {
-                    "subject": "Alice Example",
-                    "relation": "left_of",
-                    "reference": "Bob Builder",
-                    "phrases": ["left of Bob Builder"],
-                }
-            ],
-            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
-        },
-        {
-            "path": "mock_images/bob-beach.jpg",
-            "media_id": 2,
-            "face_count": 1,
-            "present_identities": ["Bob Builder"],
-            "must_right": ["Bob Builder"],
-            "easy_wrong": ["Alice Example"],
-            "policy": {"recognition_enabled": True},
-            "face_boxes": [
-                {"name": "Bob Builder", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-            ],
-            # No spatial claim required on every image — corpus placement
-            # claims aggregate; alice-pool already supplies π>0.
-            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
-        },
-    ]
+    record, entries = _two_image_measurable_pass_pair()
     scored = score_run_record(record, entries)
     assert scored["faces"]["identification"]["wrong_names"] == []
     assert scored["counts"]["failed"] == 0
@@ -2826,7 +2735,78 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
 
 
 def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
-    """Two-image measurable corpus that can honestly score verdict=pass (S2-05 min=2)."""
+    """Measurable corpus that clears SCORE_PASS_MIN_SCORED_IMAGES (RV1-03 n=5).
+
+    Name kept for call-site stability; body is five distinct measurable images.
+    """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
+    pairs = [
+        ("Alice Example", "Bob Builder", "pool"),
+        ("Carol Decoy", "Dana Friend", "park"),
+        ("Eve Visitor", "Frank Guest", "cafe"),
+        ("Grace Host", "Hank Neighbor", "yard"),
+        ("Ivy Cousin", "Jake Sibling", "beach"),
+    ]
+    # Pad if the floor is raised further.
+    while len(pairs) < SCORE_PASS_MIN_SCORED_IMAGES:
+        i = len(pairs) + 1
+        pairs.append((f"Person{i}A", f"Person{i}B", f"scene{i}"))
+    items: list[dict] = []
+    entries: list[dict] = []
+    for idx, (left, right, scene) in enumerate(pairs, start=1):
+        path = f"mock_images/{left.split()[0].lower()}-{scene}.jpg"
+        items.append(
+            {
+                "media_id": idx,
+                "path": path,
+                "describe": {
+                    "alt_text_draft": f"{left} stands left of {right} by a {scene}.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": left,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": right,
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
+                "error": None,
+            }
+        )
+        entries.append(
+            {
+                "path": path,
+                "media_id": idx,
+                "face_count": 2,
+                "present_identities": [left, right],
+                "must_right": [left],
+                "easy_wrong": [right],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"name": left, "x": 0.2, "y": 0.4},
+                    {"name": right, "x": 0.6, "y": 0.4},
+                ],
+                "spatial_facts": [
+                    {
+                        "subject": left,
+                        "relation": "left_of",
+                        "reference": right,
+                        "phrases": [f"left of {right}"],
+                    }
+                ],
+                "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
+            }
+        )
     record = {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -2836,105 +2816,8 @@ def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
             "head_sha": "0" * 40,
             "started_at": "2026-07-06T00:00:00Z",
         },
-        "items": [
-            {
-                "media_id": 1,
-                "path": "mock_images/alice-pool.jpg",
-                "describe": {
-                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
-                    "visual_facts": {"objects": []},
-                },
-                "identities": [
-                    {
-                        "name": "Alice Example",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                    {
-                        "name": "Bob Builder",
-                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                ],
-                "face_count": 2,
-                "identity_ordering": "positional",
-                "image_width": 200,
-                "image_height": 200,
-                "error": None,
-            },
-            {
-                "media_id": 2,
-                "path": "mock_images/carol-park.jpg",
-                "describe": {
-                    "alt_text_draft": "Carol Decoy stands left of Dana Friend in a park.",
-                    "visual_facts": {"objects": []},
-                },
-                "identities": [
-                    {
-                        "name": "Carol Decoy",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                    {
-                        "name": "Dana Friend",
-                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                ],
-                "face_count": 2,
-                "identity_ordering": "positional",
-                "image_width": 200,
-                "image_height": 200,
-                "error": None,
-            },
-        ],
+        "items": items,
     }
-    entries = [
-        {
-            "path": "mock_images/alice-pool.jpg",
-            "media_id": 1,
-            "face_count": 2,
-            "present_identities": ["Alice Example", "Bob Builder"],
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Carol Decoy"],
-            "policy": {"recognition_enabled": True},
-            "face_boxes": [
-                {"name": "Alice Example", "x": 0.2, "y": 0.4},
-                {"name": "Bob Builder", "x": 0.6, "y": 0.4},
-            ],
-            "spatial_facts": [
-                {
-                    "subject": "Alice Example",
-                    "relation": "left_of",
-                    "reference": "Bob Builder",
-                    "phrases": ["left of Bob Builder"],
-                }
-            ],
-            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
-        },
-        {
-            "path": "mock_images/carol-park.jpg",
-            "media_id": 2,
-            "face_count": 2,
-            "present_identities": ["Carol Decoy", "Dana Friend"],
-            "must_right": ["Carol Decoy"],
-            "easy_wrong": ["Alice Example"],
-            "policy": {"recognition_enabled": True},
-            "face_boxes": [
-                {"name": "Carol Decoy", "x": 0.2, "y": 0.4},
-                {"name": "Dana Friend", "x": 0.6, "y": 0.4},
-            ],
-            "spatial_facts": [
-                {
-                    "subject": "Carol Decoy",
-                    "relation": "left_of",
-                    "reference": "Dana Friend",
-                    "phrases": ["left of Dana Friend"],
-                }
-            ],
-            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
-        },
-    ]
     return record, entries
 
 
@@ -2944,8 +2827,10 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
     Control for B-10: face_boxes (positional) + spatial_facts (placement) +
     reference_facts trap (fabricated_fact) so every category has π>0; proves
     the gate can go green and is not a permanent brick (TEST-15).
-    S2-05: sample size must clear SCORE_PASS_MIN_SCORED_IMAGES (two images).
+    RV1-03: sample size must clear SCORE_PASS_MIN_SCORED_IMAGES (n=5).
     """
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
     record, entries = _two_image_measurable_pass_pair()
     scored = score_run_record(record, entries)
     pos = scored["faces"]["identification"]["positional"]
@@ -2955,12 +2840,15 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
     assert pos["vacuity_signal"] is None
     assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
     assert scored["hallucination"]["images_with_traps"] >= 1
-    assert scored["counts"]["scored"] >= 2
+    assert scored["counts"]["scored"] >= SCORE_PASS_MIN_SCORED_IMAGES
     assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value, scored["verdict"]["reasons"]
 
 
 def _passable_scored_dict(**hall_overrides: object) -> dict:
     """Hand-built scored dict that clears every score vacuity + quality floor (S2-06)."""
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
+    n = SCORE_PASS_MIN_SCORED_IMAGES
     hall = {
         "fabricated_fact_rate": 0.0,
         "fabricated_fact_rate_trapped": 0.0,
@@ -2968,7 +2856,7 @@ def _passable_scored_dict(**hall_overrides: object) -> dict:
     }
     hall.update(hall_overrides)
     return {
-        "counts": {"total": 2, "scored": 2, "failed": 0},
+        "counts": {"total": n, "scored": n, "failed": 0},
         "corpus": {"media_id_missing": 0, "media_id_extra": 0},
         "provenance": {"manifest_sha256": "a" * 64},
         "caption": {
@@ -2981,13 +2869,13 @@ def _passable_scored_dict(**hall_overrides: object) -> dict:
         "faces": {
             "detection": {"precision": 1.0, "recall": 1.0},
             "identification": {
-                "evaluated_images": 2,
+                "evaluated_images": n,
                 "wrong_names": [],
                 "ignored_wrong_names": [],
                 "precision": 1.0,
                 "recall": 1.0,
                 "positional": {
-                    "compared_images": 2,
+                    "compared_images": n,
                     "evaluable": True,
                     "status": "scored",
                     "excluded_images": [],
@@ -2996,11 +2884,11 @@ def _passable_scored_dict(**hall_overrides: object) -> dict:
             },
             "identity_ordering": {
                 "degraded_images": 0,
-                "positional_images": 2,
+                "positional_images": n,
                 "order_unknown_excluded": 0,
             },
         },
-        "placement": {"claims": 2, "accuracy": 1.0, "abstained": 0, "images_scored": 2},
+        "placement": {"claims": n, "accuracy": 1.0, "abstained": 0, "images_scored": n},
         "hallucination": hall,
     }
 
@@ -3134,7 +3022,9 @@ def test_score_verdict_pass_when_positional_and_placement_measurable():  # VLM6-
     assert scored["placement"]["accuracy"] is not None
     assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
     assert scored["hallucination"]["images_with_traps"] >= 1
-    assert scored["counts"]["scored"] >= 2
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
+    assert scored["counts"]["scored"] >= SCORE_PASS_MIN_SCORED_IMAGES
     verdict = scored["verdict"]
     assert verdict["verdict"] == ScoreVerdict.PASS.value, verdict["reasons"]
     assert verdict["reasons"] == []
@@ -3359,10 +3249,10 @@ def test_build_score_verdict_zero_fab_rate_with_zero_traps_is_vacuous():  # VLM6
 
 
 def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # VLM6-S2-02
-    """Total failure on critical slices is fail (measured and bad), not pass.
+    """Quality-floor bands fail measured-and-bad slices (RV1-04 / EVAL-04).
 
-    Pre-fix each mutation certified pass. Floors are named constants at the
-    degenerate extreme (position/placement <= 0.0, fab_rate >= 1.0).
+    Pre-fix floors were IEEE corners (0.0 / 1.0) so 0.0001 / 0.9999 passed.
+    Threshold ± epsilon pins the band edges.
     """
     from scripts.eval_harness.report import (
         FABRICATED_FACT_RATE_CEILING,
@@ -3371,34 +3261,72 @@ def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # V
         build_score_verdict,
     )
 
-    cases = [
+    eps = 1e-6
+    # At-or-below / at-or-above threshold → FAIL.
+    fail_cases = [
         (
-            "position",
-            lambda s: s["faces"]["identification"]["positional"].update({"position_accuracy": 0.0}),
+            "position_at_floor",
+            lambda s: s["faces"]["identification"]["positional"].update(
+                {"position_accuracy": POSITION_ACCURACY_FLOOR}
+            ),
             "position_accuracy",
-            POSITION_ACCURACY_FLOOR,
         ),
         (
-            "placement",
-            lambda s: s["placement"].update({"accuracy": 0.0}),
+            "position_below",
+            lambda s: s["faces"]["identification"]["positional"].update(
+                {"position_accuracy": POSITION_ACCURACY_FLOOR - eps}
+            ),
+            "position_accuracy",
+        ),
+        (
+            "placement_at_floor",
+            lambda s: s["placement"].update({"accuracy": PLACEMENT_ACCURACY_FLOOR}),
             "placement.accuracy",
-            PLACEMENT_ACCURACY_FLOOR,
         ),
         (
-            "fabricated",
+            "fab_at_ceiling",
             lambda s: s["hallucination"].update(
-                {"fabricated_fact_rate": 1.0, "fabricated_fact_rate_trapped": 1.0, "images_with_traps": 2}
+                {
+                    "fabricated_fact_rate": FABRICATED_FACT_RATE_CEILING,
+                    "fabricated_fact_rate_trapped": FABRICATED_FACT_RATE_CEILING,
+                    "images_with_traps": 2,
+                }
             ),
             "fabricated_fact_rate",
-            FABRICATED_FACT_RATE_CEILING,
+        ),
+        (
+            "fab_above",
+            lambda s: s["hallucination"].update(
+                {
+                    "fabricated_fact_rate": FABRICATED_FACT_RATE_CEILING + eps,
+                    "fabricated_fact_rate_trapped": FABRICATED_FACT_RATE_CEILING + eps,
+                    "images_with_traps": 2,
+                }
+            ),
+            "fabricated_fact_rate",
         ),
     ]
-    for label, mut, token, _threshold in cases:
+    for label, mut, token in fail_cases:
         scored = _passable_scored_dict()
         mut(scored)
         verdict = build_score_verdict(scored, rubric_gate="enforce")
         assert verdict["verdict"] == ScoreVerdict.FAIL.value, f"{label}: {verdict}"
-        assert any("quality-floor" in r and token in r for r in verdict["reasons"]), verdict["reasons"]
+        assert any("quality-floor" in r and token in r for r in verdict["reasons"]), (
+            label,
+            verdict["reasons"],
+        )
+    # Just above / below threshold → not a quality-floor fail (may still pass).
+    pass_edge = _passable_scored_dict()
+    pass_edge["faces"]["identification"]["positional"]["position_accuracy"] = (
+        POSITION_ACCURACY_FLOOR + eps
+    )
+    pass_edge["placement"]["accuracy"] = PLACEMENT_ACCURACY_FLOOR + eps
+    pass_edge["hallucination"]["fabricated_fact_rate"] = FABRICATED_FACT_RATE_CEILING - eps
+    pass_edge["hallucination"]["fabricated_fact_rate_trapped"] = FABRICATED_FACT_RATE_CEILING - eps
+    pass_edge["hallucination"]["images_with_traps"] = 2
+    verdict_ok = build_score_verdict(pass_edge, rubric_gate="enforce")
+    assert not any("quality-floor" in r for r in verdict_ok["reasons"]), verdict_ok["reasons"]
+    assert verdict_ok["verdict"] == ScoreVerdict.PASS.value, verdict_ok
 
 
 def test_public_redaction_scrubs_free_text_identity_names_everywhere():  # VLM6-S2-03 / S2-04
@@ -3522,3 +3450,131 @@ def test_score_verdict_enum_includes_non_comparable():  # VLM6-S2-09
         ScoreVerdict.NOT_READY,
         ScoreVerdict.NON_COMPARABLE,
     }
+
+
+def test_face_markdown_renders_null_and_bool_json_tokens():  # HARM-04 / S4-05
+    """Face MD must use _fmt_prov for nulls/bools and emit started_at."""
+    from scripts.eval_harness.report import _fmt_prov, _markdown_face
+
+    assert _fmt_prov(None) == "null"
+    assert _fmt_prov(False) == "false"
+    assert _fmt_prov(True) == "true"
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    scored["provenance"]["head_sha"] = None
+    scored["provenance"]["started_at"] = None
+    scored["provenance"]["zero_box_corpus"] = False
+    md = _markdown_face(scored)
+    assert "started_at: null" in md
+    assert "started_at: None" not in md
+    assert "head_sha: `null`" in md
+    assert "zero_box_corpus: false" in md
+    assert "zero_box_corpus: False" not in md
+    assert "directional=true" in md or "directional=false" in md
+    assert "directional=True" not in md
+    assert "directional=False" not in md
+
+
+def test_sample_size_in_shared_vacuity_predicate_blocks_compare():  # RV1-02
+    """Forged verdict=pass + scored=1 must be vacuous so compare cannot adopt.
+
+    Pre-fix: sample-size lived only in build_score_vacuity_reasons; compare
+    consulted score_vacuous_category_labels and accepted the forgery.
+    """
+    from scripts.eval_harness.cli import _compare_vacuous_categories
+    from scripts.eval_harness.report import score_vacuous_category_labels
+
+    forged = _passable_scored_dict()
+    forged["counts"] = {"total": 1, "scored": 1, "failed": 0}
+    forged["verdict"] = {
+        "verdict": ScoreVerdict.PASS.value,
+        "reasons": [],
+        "wrong_name_rate": 0.0,
+    }
+    labels = score_vacuous_category_labels(forged, include_verdict_fields=True)
+    assert "sample_size" in labels
+    msgs = _compare_vacuous_categories(forged, role="candidate")
+    assert any("sample_size" in m for m in msgs), msgs
+
+
+def test_undersized_but_gt1_corpus_is_not_ready():  # RV1-03
+    """n=2 measurable corpus is not_ready under SCORE_PASS_MIN_SCORED_IMAGES=5."""
+    from scripts.eval_harness.report import SCORE_PASS_MIN_SCORED_IMAGES
+
+    assert SCORE_PASS_MIN_SCORED_IMAGES >= 5
+    record, entries = _two_image_measurable_pass_pair()
+    record["items"] = record["items"][:2]
+    entries = entries[:2]
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == 2
+    assert scored["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("sample-size" in r for r in scored["verdict"]["reasons"])
+
+
+def test_public_path_lists_opaque_no_space_identity_slug():  # RV4-01 / TEST-15
+    """Nested path lists emit media_id:N; no-space identity slug must be absent."""
+    private_slug = "JaneDoePrivate"
+    record, entries = _audience_fixtures()
+    # Publishable path with no-space identity slug (evades space-basename heuristic).
+    # Name lives ONLY in the path — not as a per_identity key (that's a different surface).
+    leak_path = f"celebs01/{private_slug}-with-obama.jpg"
+    record["items"] = [record["items"][0]]
+    record["items"][0]["path"] = leak_path
+    entries = [entries[0]]
+    entries[0]["path"] = leak_path
+    local = score_run_record(record, entries)
+    # Inject path into nested lists that PUBLIC must scrub (RV4-01 surfaces).
+    local["faces"]["identification"]["excluded_images"] = [leak_path]
+    local["faces"]["identification"]["positional"]["excluded_images"] = [leak_path]
+    local["faces"]["identity_ordering"]["degraded_paths"] = [leak_path]
+    assert private_slug in json.dumps(local)
+
+    from scripts.eval_harness.report import _redact_caption_report_for_public
+
+    redacted = _redact_caption_report_for_public(local, run_record=record, manifest_entries=entries)
+    blob = json.dumps(redacted)
+    assert private_slug not in blob, blob
+    assert leak_path not in blob
+    pos_excl = redacted["faces"]["identification"]["positional"]["excluded_images"]
+    assert pos_excl == ["media_id:10"], pos_excl
+    assert redacted["faces"]["identification"]["excluded_images"] == ["media_id:10"]
+    assert redacted["faces"]["identity_ordering"]["degraded_paths"] == ["media_id:10"]
+    assert redacted["per_image"][0]["path"] == "media_id:10"
+
+
+def test_public_scrubs_case_and_slug_identity_variants():  # RV4-05 / TEST-15
+    """Lowercased and slugified private names must be absent from PUBLIC blob."""
+    private = "Jane Doe Private"
+    record, entries = _audience_fixtures()
+    # Keep both publishable + private rows so private is on the scrub roster but
+    # not a publishable per_identity key.
+    record, entries = _audience_fixtures()
+    local = score_run_record(record, entries)
+    # Publishable row free-text carries case/slug variants of the private name.
+    pub = next(r for r in local["per_image"] if r["media_id"] == 10)
+    pub["short_error"] = "timeout involving jane doe private and JaneDoePrivate and jane-doe-private"
+    pub["path"] = "celebs01/jane-doe-private-with-obama.jpg"
+    # Pre-control: variants live in local doc.
+    blob_local = json.dumps(local)
+    assert "jane doe private" in blob_local or "JaneDoePrivate" in blob_local
+
+    from scripts.eval_harness.report import _redact_caption_report_for_public, _scrub_identity_names
+
+    # Unit: scrub hits case/slug folds.
+    scrubbed = _scrub_identity_names(
+        "saw jane doe private and JaneDoePrivate and jane-doe-private",
+        [private],
+    )
+    assert "jane doe private" not in scrubbed.casefold()
+    assert "janedoeprivate" not in scrubbed.replace("[redacted]", "").casefold().replace("-", "").replace("_", "")
+    assert "[redacted]" in scrubbed
+
+    redacted = _redact_caption_report_for_public(local, run_record=record, manifest_entries=entries)
+    blob = json.dumps(redacted)
+    assert private not in blob
+    assert "JaneDoePrivate" not in blob
+    assert "jane doe private" not in blob
+    assert "jane-doe-private" not in blob
+    pub_out = next(r for r in redacted["per_image"] if r["media_id"] == 10)
+    assert pub_out["path"] == "media_id:10"
+    assert pub_out["short_error"] in ("<redacted>", "<error>")

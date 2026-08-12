@@ -308,13 +308,16 @@ Stdout always prints a one-line summary including `verdict=…` and
 
 ### Score non-zero exit prefixes
 
-Content gates fire **after** the report is on disk. Prefixes are class-unique
-module constants in `cli.py` (`SCORE_GATE_PREFIX_*` / `SCORE_GATE_PREFIXES`).
-**Caption and face share the same prefix for a given class** (VLM6-R2-F-03 /
-rg-015) so one log grep (e.g. `failed-items gate`) catches both paths; any
-face-specific token is a **suffix** field, never a divergent prefix. A unit
-test asserts every constant appears in this table — adding a gate without a
-README row fails CI.
+Content gates fire **after** the report is on disk (refuse-overwrite fires
+**before** write; `run` wrappers summarise multi-record score gates). Prefixes
+are class-unique module constants in `cli.py` (`SCORE_GATE_PREFIX_*` /
+`SCORE_GATE_PREFIXES`). **Caption and face share the same prefix for a given
+class** (VLM6-R2-F-03 / rg-015) so one log grep (e.g. `failed-items gate` or
+`refuse-overwrite gate`) catches both paths; any face/command-specific token
+is a **suffix** field, never a divergent prefix. Drift tests assert **set
+equality** between this table and `SCORE_GATE_PREFIXES` (bidirectional —
+undocumented constant **or** stale README row fails CI) and lock call sites to
+the constants (RE-04).
 
 | Gate / class | Exit message prefix | When it fires | Operator action |
 | --- | --- | --- | --- |
@@ -334,6 +337,9 @@ README row fails CI.
 | quality floor | `score quality-floor gate:` | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Folded into `verdict=fail` reasons **and** exits non-zero. Distinct from vacuity (`not_ready` = not measured). | Fix model quality on the failing slice; do not adopt. |
 | freeze-cert refused | `score freeze-certification refused:` | `--freeze-certification` but a post-cert fold re-serialised the document (certified bytes ≠ written bytes). | Fix schema/evidence/relabel fold ordering; do not stamp a freeze over degraded bytes. |
 | face-report readback | `score face-report-readback gate:` | `score-face` only: written face-report JSON cannot be read back or is not an object (serialisation / IO). | Investigate write path / disk; re-run score-face. |
+| refuse-overwrite | `score refuse-overwrite gate:` | Pre-write: ordinary `score` / `score-face` would clobber an existing report under the committed bakeoff-results tree without `--allow-overwrite-report`. **Shared by caption and face** — command label (`score:` / `score-face:`) is a **suffix**, never a divergent prefix. | Pass `--allow-overwrite-report` only with intent; freezes must not be rewritten by ordinary score (default writes for freeze run-records go to `OUT_DIR`). |
+| run per-record gate | `run score gate failed:` | `run` multi-record wrapper: one fetched record's score gate fired. Record path is **after** the colon (fixed greppable prefix). Underlying score class still appears in the message body. | Inspect the named record and the nested score prefix; fix that record and re-run. |
+| run multi-record summary | `run score gates failed:` | `run` finished the loop with ≥1 per-record gate failure; process exits once with a summary. | Triage each `record: <score prefix>…` entry; do not treat a partial multi-record run as green. |
 
 Integrity gates (aborted / zero-scored / failed-items / truncation / manifest-* /
 schema / freeze-cert refused / face-report readback) always set exit status,

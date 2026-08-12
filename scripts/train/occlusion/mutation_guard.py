@@ -1489,13 +1489,24 @@ def _m13_pending_legal_clearance_pass(src: str) -> str:
 def _m14_package_denylist_always_miss(src: str) -> str:
     """Force ``_package_denylist_hit`` to always return None (GATE-34 / BR-51).
 
-    Anchor is the unique function body start. model_ingest reads
-    ``PACKAGE_DENYLIST`` directly, so the blast radius is the public derived
-    API plus reason demotion on the row path.
+    Anchor is the unique function body start after the FIR-7-B3-01 folded
+    lookup rewrite. model_ingest also uses ``_package_denylist_hit`` now
+    (folded), so the blast radius is the public derived API, model_ingest,
+    tooling scalar door, plus reason demotion on the row path.
     """
     old = (
         "def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:\n"
-        '    """Exact PACKAGE_DENYLIST lookup on canonical form / slash components (BR-51)."""\n'
+        '    """Exact PACKAGE_DENYLIST lookup after separator/case fold '
+        '(BR-51 / FIR-7-B3-01).\n'
+        "\n"
+        "    Matching is exact on the *folded* form only (BR-50/52): "
+        ":func:`canonical`\n"
+        "    (NFKC, casefold, unify ``-``/``_``/``.``/space) then compact "
+        "(drop\n"
+        "    underscores). ``yolo-v5`` hits the ``yolov5`` seed; "
+        "``yolodummy`` /\n"
+        "    ``myyolo`` do **not** hit ``yolo`` (no substring matching).\n"
+        '    """\n'
         "    c = canonical(value)"
     )
     new = (
@@ -1876,8 +1887,10 @@ MUTATIONS: list[Mutation] = [
         description="_package_denylist_hit always returns None (GATE-34)",
         apply="m14",
         # True kill set (FIR-7-RV-07): GATE-34 pins plus the package-denylist
-        # escape/witness matrix and FIR-7-B2 package-identity pins — those also
-        # die when the denylist always misses.
+        # escape/witness matrix and FIR-7-B2/B3 package-identity pins — those
+        # also die when the denylist always misses. After FIR-7-B3-01/A3-01,
+        # model_ingest + tooling scalar also route through the folded hit
+        # helper, so their denylist pins join the victim set.
         expected_victims=(
             "test_gate34_audit_derived_from_model_denylisted_package",
             "test_gate34_training_data_row_derived_ultralytics_reason",
@@ -1886,6 +1899,18 @@ MUTATIONS: list[Mutation] = [
             "test_package_denylist_outranks_registration",
             "test_alias_key_with_denylisted_value_fails",
             "test_family_token_fails_package_floor",
+            # model_ingest / tooling scalar / BR-24 package-floor pins
+            # (expanded blast radius after folded lookup; FIR-7-B3-01/A3-01)
+            "test_ultralytics_agpl_is_denylisted",
+            "test_yolov8_agpl_family_denied",
+            "test_br39_denylisted_tooling_dependency_fails",
+            "test_br24_ultralytics_source_field_fails_denylisted",
+            "test_br24_ultralytics_package_name_fails_denylisted",
+            "test_br24_ultralytics_dep_parity",
+            "test_multi_fault_reports_documented_winner",
+            "test_denylisted_package_raises_with_exact_reason",
+            "test_nc_denylisted_package_raises_with_exact_reason",
+            "test_tooling_scalar_denylisted_package",
         ),
     ),
     Mutation(

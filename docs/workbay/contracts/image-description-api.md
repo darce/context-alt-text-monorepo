@@ -180,10 +180,58 @@ returns an explicit `502 invalid_description_envelope` — never a fabricated
 - **Preview default**: when `write_alt` is absent or false, `_wp_attachment_image_alt` and `_acx_description_provenance` are untouched and the backend `VisualFactsResponse` is returned without `alt_text_write`.
 - **Write policy**: when `write_alt=true`, missing alt text is written from `alt_text_draft` and generated provenance is stored in `_acx_description_provenance`. Non-empty existing alt text returns `alt_text_write.status="skipped_existing_alt"` unless `force=true`, which returns `forced_overwrite`.
 - **Dual-length write policy (ALTQ-1)**: gated by the operator option `acx_alt_style` (`alt_only` default | `alt_plus_description`; read/saved via `GET`/`POST /acx/v1/settings` field `alt_style`; invalid stored values degrade to `alt_only`). When the style is `alt_plus_description`, the alt write actually happens (not `skipped_existing_alt`), and the backend payload carries a non-empty optional `alt_text_long`, the long surface is written to the attachment description (`post_content`) and `alt_text_write.description_write` reports the result: `written`, `forced_overwrite` (existing description replaced under `force=true`), `skipped_existing_description` (non-empty description without `force`), or `skipped_no_long_text` (style opted in but the adapter produced no long surface). With `alt_only` (default) the `description_write` key is absent and the payload is byte-identical to pre-ALTQ-1 behavior.
-- **Provenance meta**: `_acx_description_provenance` records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash`, `context_hash`, `generated_at`, and `backend_result_id` when supplied by the backend payload.
+- **Provenance meta**: `_acx_description_provenance` has two writers and their shapes differ. The single-describe path (`DescribeMediaService::build_generated_provenance`) records `adapter`, `model_id`, `model_version`, `prompt_or_task_version`, `image_hash` and `context_hash` from the backend payload; `backend_result_id` from the payload's `backend_result_id`, falling back to its `result_id`; `generated_at` stamped locally at write time (**not** taken from the payload); and `alt_text_draft`, the exact string written to alt meta, which is history's Generated-alt column source. The bulk-run apply path (`DescribeController::build_run_apply_provenance`) passes those same keys through from the incoming envelope when present — including `generated_at`, which it does not restamp — then overwrites `alt_text_draft` with the draft it actually measured and wrote, and adds `source` (always `bulk_describe_run`), `run_id`, and `applied_at`. It also adds `recovered_from_run_id` when the apply completed a *different* run's partial write, naming the run that generated the text so recovery does not silently credit the applying run. Consumers must read named keys: the key set is additive per write path and is not closed.
 - **Idempotence**: repeated writes for the same generated tuple preserve matching existing provenance instead of refreshing `generated_at`.
 
-`alt_text_write.status` ∈ `{written, skipped_existing_alt, forced_overwrite}`.
+### Alt-write status vocabulary (R16-BR-04)
+
+Canonical single definition: `src/api/class-alt-text-write-status.php`
+(`AltContext\Api\AltTextWriteStatus`, `AltContext\Api\DescriptionWriteStatus`) per
+[sr-007]. The TS consumer `js/admin/api/describeApi.ts` and this table must agree
+member-for-member [rg-005].
+
+**REST `alt_text_write.status`** (`REST_STATUSES`):
+
+| Member | Meaning |
+| --- | --- |
+| `written` | Alt was empty; draft written and provenance stamped. |
+| `skipped_existing_alt` | Non-empty existing alt and `force=false`. Nothing touched. |
+| `skipped_empty_alt_text` | Draft normalized to empty. Never writes `''` over a human alt, never stamps provenance for an unapplied draft. |
+| `forced_overwrite` | Existing alt replaced under `force=true`. |
+| `provenance_healed` | `force=false` and the stored alt already matched the draft after core's meta transforms: provenance was restamped to close a history gap. Success, not `partial`. No alt text was overwritten and no long description is authored. Emitted by REST and by CLI `generate --write`. |
+| `partial` | Some but not all intended writes landed. Always paired with `reason`. |
+| `failed` | The alt write itself did not persist. |
+
+**REST `alt_text_write.reason`** — present if and only if `status=partial`
+(`PARTIAL_REASONS`):
+
+| Member | Meaning |
+| --- | --- |
+| `provenance_write_failed` | Alt landed, provenance array did not → the item is absent from history and needs retry. |
+| `description_write_failed` | Alt and provenance both landed; only the optional long description failed → nothing missing from history. |
+
+**REST `alt_text_write.description_write`** (`DescriptionWriteStatus::ALL`) — key
+present only when `acx_alt_style=alt_plus_description`: `written`,
+`forced_overwrite`, `skipped_no_long_text`, `skipped_existing_description`,
+`failed`. A `failed` here folds the parent status to `partial` with
+`reason=description_write_failed`.
+
+**CLI `generate` row `status`** (`CLI_STATUSES`): `written`,
+`skipped_existing_alt`, `skipped_empty_alt_text`, `provenance_healed`, `partial`,
+`failed`, `dry_run`.
+
+Deliberate CLI/REST divergences:
+
+- `dry_run` is CLI-only (`generate` without `--write`); REST never emits it.
+- CLI force-overwrite success emits `written`, not `forced_overwrite`, and
+  `CLI_STATUSES` omits `forced_overwrite`. Tracked as an open contract asymmetry
+  rather than an intended contract shape — see finding `R17-BR-13`.
+- CLI `partial` rows carry `reason=provenance_write_failed`. It is the only
+  partial cause the CLI can produce: `generate` does not write a long
+  description, so `description_write_failed` is REST-only.
+- On a REST `partial`, `reason` names the first cause only. A long-description
+  failure concurrent with a provenance failure is reported under the nested
+  `description_write` key, not folded into `reason`.
 
 ## WordPress dry-run surface — `GET /acx/v1/recognition/describe/candidates`
 

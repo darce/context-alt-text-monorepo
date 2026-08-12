@@ -3,15 +3,10 @@
  *
  * Specs navigate with getAcxAdminHashUrl + contract builders (no raw legacy params).
  * tab=confirm degrade proof: lands scan without advanced=open and without tab rewrite.
- * media=expanded + back/forward authored for LocalWP; unit suite covers replace-writes.
  */
 import { expect, test, type Page } from '@playwright/test';
 
-import {
-  toDashboard,
-  toDescriptionHistoryRun,
-  toWorkbench,
-} from '../../../js/admin/navigation/appLinks';
+import { toDescriptionHistoryRun, toWorkbench } from '../../../js/admin/navigation/appLinks';
 import { getAcxAdminHashUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
 import { requireBaseUrl } from '../fixtures/axe';
 
@@ -55,15 +50,6 @@ test('description-history run= deep-link via contract builder lands apply surfac
   await expect(page.locator(HISTORY_LIST)).toHaveCount(0);
 });
 
-test('media=expanded deep-link renders workbench scan with expanded media param in hash', async ({
-  page,
-  baseURL,
-}) => {
-  const base = requireBaseUrl(baseURL);
-  await openHash(page, base, 'alt-context-workbench', toWorkbench({ media: 'expanded' }));
-  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
-  await expect(page).toHaveURL(/media=expanded/);
-});
 
 test('legacy tab=confirm does not open advanced or rewrite tab (shim retired)', async ({
   page,
@@ -92,31 +78,4 @@ test('WP-menu entry param-forwarding still works (non-regression)', async ({ pag
   await page.goto(url);
   await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Status' })).toContainText('Missing alt text');
-});
-
-test('expand toggle then navigate-back restores media=expanded (back/forward)', async ({
-  page,
-  baseURL,
-}) => {
-  const base = requireBaseUrl(baseURL);
-  // Land without media param; expand via UI so the current history entry carries the param.
-  await openHash(page, base, 'alt-context-workbench', toWorkbench());
-  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
-
-  const expandBtn = page.getByRole('button', { name: 'Show media table' });
-  // Findings-present demos collapse the table; zero-findings leaves it expanded.
-  // Only the collapsed chrome exposes the UI toggle — require it for this probe.
-  await expect(expandBtn).toBeVisible({ timeout: 30_000 });
-  await expandBtn.click();
-  await expect(page).toHaveURL(/media=expanded/);
-  // Expanded surface: collapsed summary CTA is gone.
-  await expect(page.getByRole('button', { name: 'Show media table' })).toHaveCount(0);
-
-  // Leave via contract builder (no raw hash), then Back restores expand URL + surface.
-  await openHash(page, base, 'alt-context-dashboard', toDashboard());
-  await expect(page).toHaveURL(/page=alt-context-dashboard/);
-  await page.goBack();
-  await expect(page).toHaveURL(/media=expanded/);
-  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Show media table' })).toHaveCount(0);
 });

@@ -7,6 +7,7 @@ const buildItem = (overrides: Partial<WorkbenchMediaItem> = {}): WorkbenchMediaI
   id: overrides.id ?? 1,
   title: overrides.title ?? 'Sample image',
   altText: overrides.altText ?? null,
+  isDecorative: overrides.isDecorative ?? false,
   status: overrides.status ?? 'missing',
   thumbnailUrl: overrides.thumbnailUrl ?? null,
   mimeType: overrides.mimeType ?? 'image/jpeg',

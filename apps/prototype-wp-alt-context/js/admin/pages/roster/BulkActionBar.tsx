@@ -1,5 +1,6 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
+
 import { Gavel, Trash, X } from 'lucide-react';
 
 import type { BulkMergeFailure, BulkMergeProgress } from './hooks/useClusterActions';
@@ -20,6 +21,52 @@ interface BulkActionBarProps {
   controlsDisabledReason?: string;
 }
 
+/**
+ * Accessible name for a bulk cluster action.
+ * Uses sprintf(_n(...)) so translators with >2 plural forms can select correctly.
+ */
+const mergeIdleLabel = (count: number): string =>
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Merge %d cluster', 'Merge %d clusters', count, 'alt-context'),
+    count,
+  );
+
+const dismissIdleLabel = (count: number): string =>
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Dismiss %d cluster', 'Dismiss %d clusters', count, 'alt-context'),
+    count,
+  );
+
+const mergingSimpleLabel = (count: number): string =>
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Merging %d cluster…', 'Merging %d clusters…', count, 'alt-context'),
+    count,
+  );
+
+const dismissingLabel = (count: number): string =>
+  sprintf(
+    // translators: %d: number of selected clusters
+    _n('Dismissing %d cluster…', 'Dismissing %d clusters…', count, 'alt-context'),
+    count,
+  );
+
+/**
+ * Progress labels name the unit they count: sequential *source* merges
+ * (sourceIds.length from useClusterActions), not the selection size.
+ * So a 3-cluster merge reports "Merging source 1 of 2…" rather than
+ * contradicting the idle "Merge 3 clusters" label with "Merging 1 of 2…".
+ */
+const mergingProgressLabel = (current: number, total: number): string =>
+  sprintf(
+    // translators: %1$d: current source merge step (1-based); %2$d: total source merges
+    __('Merging source %1$d of %2$d…', 'alt-context'),
+    current,
+    total,
+  );
+
 export const BulkActionBar = ({
   count,
   onMerge,
@@ -36,17 +83,20 @@ export const BulkActionBar = ({
 }: BulkActionBarProps): React.JSX.Element => {
   const mergeLabel =
     isMerging && mergeProgress
-      ? sprintf(__('Merging %1$d of %2$d…', 'alt-context'), mergeProgress.current, mergeProgress.total)
+      ? mergingProgressLabel(mergeProgress.current, mergeProgress.total)
       : isMerging
-        ? __('Merging…', 'alt-context')
-        : __('Merge', 'alt-context');
+        ? mergingSimpleLabel(count)
+        : mergeIdleLabel(count);
+
+  const dismissLabel = isDismissing ? dismissingLabel(count) : dismissIdleLabel(count);
 
   const progressAnnouncement =
     isMerging && mergeProgress
-      ? sprintf(__('Merging %1$d of %2$d…', 'alt-context'), mergeProgress.current, mergeProgress.total)
+      ? mergingProgressLabel(mergeProgress.current, mergeProgress.total)
       : '';
 
   const actionsDisabled = controlsDisabled || isMerging || isDismissing;
+  // Domain: merge needs ≥2 clusters; dismiss needs ≥1. Do not flatten.
   const mergeDisabled = count < 2 || actionsDisabled;
   const dismissDisabled = count < 1 || actionsDisabled;
 
@@ -56,7 +106,7 @@ export const BulkActionBar = ({
         <span className="acx-bulk-action-bar__count">
           {sprintf(
             // translators: %d: number of selected clusters
-            __('%d selected', 'alt-context'),
+            _n('%d selected', '%d selected', count, 'alt-context'),
             count,
           )}
         </span>
@@ -83,7 +133,7 @@ export const BulkActionBar = ({
           title={controlsDisabled ? controlsDisabledReason : undefined}
         >
           {isDismissing ? <span className="acx-spinner" aria-hidden="true" /> : <Trash size={16} />}
-          {isDismissing ? __('Dismissing…', 'alt-context') : __('Dismiss', 'alt-context')}
+          {dismissLabel}
         </button>
       </div>
       <p

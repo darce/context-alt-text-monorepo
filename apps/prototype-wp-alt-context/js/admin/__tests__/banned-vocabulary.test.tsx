@@ -15,6 +15,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMockMutation, createMockQuery } from '../test-utils/mockHooks';
+// Type-only (erased at compile time, so no vi.mock hoisting hazard). Annotating the
+// media stub against the real context type is what stops the next context-shape change
+// from silently rotting this mock the way S1c-2 did.
+import type { WorkbenchMediaContextValue } from '../pages/workbench/WorkbenchMediaContext';
+import { DATA_SOURCE } from '../api/recognition/types/dataSource';
 
 const pagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../pages');
 
@@ -307,8 +312,58 @@ vi.mock('../pages/workbench/ClusterPanelContext', () => {
 });
 
 // Media concern lives in its own provider since E21-11 S1 — stub it alongside the monolith.
+// S1c-2 mounts MediaSelection directly (no ScanTabContent shell), so the stub must publish
+// the detail/identities sub-query surfaces MediaSelection reads, and must carry a row —
+// with an empty queue this page renders "No media matches your search." and sweeps nothing.
+//
+// WHAT THIS FIXTURE ACTUALLY SWEEPS: the idle one-row surface — the media table chrome and
+// pagination, `No alt text yet`, `Suggest alt text`, `Edit alt text`, `No tags`, and the
+// `No identities detected yet.` empty state.
+// WHAT IT STILL DOES NOT SWEEP, so do not read green here as "media copy is locked":
+//   - every mutation-driven branch of MediaAltSuggest / MediaAltInlineEditor (`Generating…`,
+//     `Drafted by AI — review before saving.`, `Accept`, `Edit draft`, `Dismiss`,
+//     `Save alt text`, `Cancel edit`, and both error strings) — reaching them needs a
+//     driven mutation, not a fixture;
+//   - the three non-default IdentityClusterList empty states (UNAVAILABLE / ENDPOINT_ERROR /
+//     LOCAL_PROJECTION) — data_source selects exactly one branch per fixture;
+//   - the detail-unavailable / skeleton branches, which need detailReady false.
 vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
-  const stub = {
+  // Neutral fixture — no banned jargon, no UUID (id 11). Shape mirrors
+  // MediaSelection.authExpired.test.tsx baseItem. altText: null and tags: [] are the
+  // deliberate choices: they render real operator copy rather than echoing fixture text.
+  const sweepMediaItem = {
+    id: 11,
+    title: 'Photo',
+    altText: null,
+    isDecorative: false,
+    status: 'missing' as const,
+    thumbnailUrl: null,
+    mimeType: 'image/jpeg',
+    editUrl: '#',
+    updatedAt: '2026-01-01T00:00:00Z',
+    dimensions: { width: 100, height: 100 },
+    tags: [],
+    identities: [],
+    // Required on the detail-merged row type; no UI consumer reads it.
+    xmpPersistence: null,
+  };
+
+  // Full query results via createMockQuery, then project to the published surfaces
+  // (detailSurface / identitiesSurface in useWorkbenchMedia.ts) so the asymmetry is
+  // preserved: detail publishes isPending, identities publishes isPlaceholderData.
+  // total: 0 because detailsByMedia is empty — the detail endpoint reports rows returned,
+  // not ids requested. data_source is required: fetchMediaIdentities throws on an envelope
+  // without one, so an envelope lacking it is a shape production can never emit.
+  const detailQuerySource = createMockQuery({
+    data: { detailsByMedia: {}, limit: 100, total: 0, truncated: false },
+  });
+  const identitiesQuerySource = createMockQuery({
+    data: { identities_by_media: {}, data_source: DATA_SOURCE.BACKEND_PROXY },
+  });
+
+  // Annotated against the real context type: the next shape change fails typecheck here
+  // instead of throwing at render the way BR-21 did.
+  const stub: WorkbenchMediaContextValue = {
     selection: {
       selection: {},
       selectedMedia: [],
@@ -320,7 +375,8 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
       searchQuery: '',
       statusFilter: 'all',
       currentPage: 1,
-      perPage: 20,
+      // MEDIA_PAGE_SIZE_OPTIONS is [10, 50, 100]; 20 was never a selectable value.
+      perPage: 10,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
@@ -328,16 +384,41 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
     },
     mediaQueue: {
       mediaQuery: {
-        data: { items: [], total: 0 },
-        itemsWithIdentities: [],
+        data: { items: [sweepMediaItem], total: 1, totalPages: 1 },
+        itemsWithIdentities: [sweepMediaItem],
         isPending: false,
+        isFetching: false,
         isError: false,
-        error: null,
+        isSuccess: true,
         refetch: vi.fn(),
+        // detailSurface: data, isPending, isLoading, isFetching, isError, error, refetch
+        detailQuery: {
+          data: detailQuerySource.data,
+          isPending: detailQuerySource.isPending,
+          isLoading: detailQuerySource.isLoading,
+          isFetching: detailQuerySource.isFetching,
+          isError: detailQuerySource.isError,
+          error: detailQuerySource.error,
+          refetch: detailQuerySource.refetch,
+        },
+        // identitiesSurface: data, isLoading, isError, error, isPlaceholderData, isFetching, refetch
+        identitiesQuery: {
+          data: identitiesQuerySource.data,
+          isLoading: identitiesQuerySource.isLoading,
+          isError: identitiesQuerySource.isError,
+          error: identitiesQuerySource.error,
+          isPlaceholderData: identitiesQuerySource.isPlaceholderData,
+          isFetching: identitiesQuerySource.isFetching,
+          refetch: identitiesQuerySource.refetch,
+        },
       },
-      statusMessage: '',
+      // Both derived by the real provider from the queue above: one item means
+      // 'Showing 1 media item.' and hasIdentities true. Leaving the empty-queue values
+      // here would publish a queue that contradicts its own row.
+      statusMessage: 'Showing 1 media item.',
+      isStatusPending: false,
       detailTruncationNotice: null,
-      hasIdentities: false,
+      hasIdentities: true,
     },
   };
   return {

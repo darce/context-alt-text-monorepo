@@ -133,14 +133,10 @@ def _live_face_pipeline_adapter():
     """Resolve face_pipeline_adapter from live sys.modules (not package attrs)."""
     import importlib
 
-    return importlib.import_module(
-        "recognition.infrastructure.embeddings.face_pipeline_adapter"
-    )
+    return importlib.import_module("recognition.infrastructure.embeddings.face_pipeline_adapter")
 
 
-def _stub_shared_runtime_loader(
-    monkeypatch: pytest.MonkeyPatch, models_dir: Path | None = None
-) -> None:
+def _stub_shared_runtime_loader(monkeypatch: pytest.MonkeyPatch, models_dir: Path | None = None) -> None:
     """Avoid real ORT session construction for synthetic-byte readiness tests."""
     fpa = _live_face_pipeline_adapter()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
@@ -169,9 +165,11 @@ def _clear_verify_cache() -> None:
     fpa = _live_face_pipeline_adapter()
 
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    health_mod._persisted_embedding_models_for_ready.set(None)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     yield
     health_mod.reset_face_pipeline_verify_cache_for_tests()
+    health_mod._persisted_embedding_models_for_ready.set(None)
     fpa = _live_face_pipeline_adapter()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     from db.settings import get_database_settings
@@ -325,8 +323,7 @@ def test_license_only_drift_triggers_unhealthy_without_model_byte_change(
 
     third = health_mod.check_face_pipeline_models(tmp_path)
     assert third.status.value == "unhealthy", (
-        "license-only drift must flip readiness UNHEALTHY; "
-        f"got status={third.status.value!r} detail={third.detail!r}"
+        f"license-only drift must flip readiness UNHEALTHY; got status={third.status.value!r} detail={third.detail!r}"
     )
     detail_l = third.detail.lower()
     assert "sface" in detail_l, f"detail must name sface: {third.detail!r}"
@@ -396,14 +393,91 @@ def test_unverified_bytes_never_ok_via_call_count(tmp_path: Path, monkeypatch: p
     assert "forced-unverified" in blocked.detail
 
 
-def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
-    """Minimal FastAPI with health probes + open session/auth (no full create_app)."""
-    from unittest.mock import AsyncMock
+class _NestedSavepointCM:
+    """Async context manager for session.begin_nested() on readiness session mocks."""
 
+    def __init__(self, session: _TxnAwareSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> _NestedSavepointCM:
+        self._session._in_savepoint = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+        self._session._in_savepoint = False
+        # Savepoint rollback recovers the outer txn; do not leave it aborted.
+        return False
+
+
+class _TxnAwareSession:
+    """Session mock that aborts the outer txn when execute fails outside a savepoint.
+
+    Mirrors PostgreSQL: a failed statement aborts the enclosing transaction unless
+    isolated by a savepoint (begin_nested). Used to prove GR-01 / GR-10 wiring.
+    """
+
+    def __init__(
+        self,
+        *,
+        typmod_rows: list[tuple[str, str, int]],
+        distinct_rows: list[tuple[str, ...]] | None = None,
+        distinct_error: BaseException | None = None,
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        self._typmod_rows = typmod_rows
+        self._distinct_rows = distinct_rows if distinct_rows is not None else []
+        self._distinct_error = distinct_error
+        self._aborted = False
+        self._in_savepoint = False
+        self.begin_nested_calls = 0
+        self.execute = AsyncMock(side_effect=self._execute)
+
+    def begin_nested(self) -> _NestedSavepointCM:
+        self.begin_nested_calls += 1
+        return _NestedSavepointCM(self)
+
+    async def _execute(self, stmt, *args, **kwargs):  # noqa: ANN001, ANN002
+        if self._aborted and not self._in_savepoint:
+            raise RuntimeError("InFailedSqlTransaction: current transaction is aborted")
+
+        sql = str(getattr(stmt, "text", stmt))
+        if "DISTINCT" in sql.upper() and "embedding_model" in sql:
+            if self._distinct_error is not None:
+                if not self._in_savepoint:
+                    self._aborted = True
+                raise self._distinct_error
+            result = MagicMock()
+            result.all = MagicMock(return_value=list(self._distinct_rows))
+            result.fetchall = MagicMock(return_value=list(self._distinct_rows))
+            return result
+
+        result = MagicMock()
+        result.all = MagicMock(return_value=list(self._typmod_rows))
+        result.fetchall = MagicMock(return_value=list(self._typmod_rows))
+        return result
+
+
+def _identity_typmod_rows() -> list[tuple[str, str, int]]:
+    from db.settings import get_database_settings
+
+    dim = int(get_database_settings().pgvector_dimension)
+    return [
+        ("media_identities", "embedding", dim),
+        ("identity_cluster_representatives", "embedding", dim),
+        ("mv_identity_cluster_centroids", "centroid", dim),
+    ]
+
+
+def _standalone_ready_app(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    session_factory=None,  # noqa: ANN001
+):
+    """Minimal FastAPI with health probes + open session/auth (no full create_app)."""
     from fastapi import FastAPI
 
     from api.main import register_health_probes
-    from db.settings import get_database_settings
     from recognition.interface_adapters.http import deps as dependencies
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
     from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -416,22 +490,13 @@ def _standalone_ready_app(monkeypatch: pytest.MonkeyPatch):
     initialize_session_dependency_circuit_breaker(app, breaker=breaker)
     register_health_probes(app)
 
-    async def _session_yielder():
+    async def _default_session_yielder():
         # Live pgvector typmod probe (FINALA-02): return matching identity columns.
-        dim = int(get_database_settings().pgvector_dimension)
-        rows = [
-            ("media_identities", "embedding", dim),
-            ("identity_cluster_representatives", "embedding", dim),
-            ("mv_identity_cluster_centroids", "centroid", dim),
-        ]
-        result = MagicMock()
-        result.all = MagicMock(return_value=rows)
-        result.fetchall = MagicMock(return_value=rows)
-        session = MagicMock()
-        session.execute = AsyncMock(return_value=result)
-        yield session
+        # Distinct embedding_model probe (CVUP1-PR-03): empty = fresh deploy, not partition.
+        yield _TxnAwareSession(typmod_rows=_identity_typmod_rows(), distinct_rows=[])
 
-    app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
+    yielder = session_factory if session_factory is not None else _default_session_yielder
+    app.dependency_overrides[dependencies.get_observability_session] = yielder
 
     async def _auth_ok() -> AuthContext:
         return AuthContext(token=None, tenant_claim=None, enabled=False)
@@ -560,7 +625,7 @@ def test_ready_invalid_profile_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_
 def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
+    """local finding GROKHARM-04 [OBS-08, EMB-05, SERVE-01]: hashes + dims alone are insufficient.
 
     For face_pipeline profile, readiness must prove ORT session / shared runtime
     construction. Valid verified files with InferenceSession construction failure
@@ -590,7 +655,7 @@ def test_check_face_pipeline_models_ort_construction_failure_unhealthy(
 def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """GROKHARM-04: healthy ready must correspond to a usable shared runtime.
+    """local finding GROKHARM-04: healthy ready must correspond to a usable shared runtime.
 
     Readiness and serve path must not diverge — a successful check must go
     through (or populate) get_shared_face_pipeline_runtime so serve can reuse it.
@@ -632,10 +697,167 @@ def test_check_face_pipeline_models_healthy_implies_usable_shared_runtime(
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
-def test_ready_ort_construction_failure_returns_503(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_check_active_embedding_model_degrades_on_space_partition(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
+    """CVUP1-PR-03: active model_id matching zero persisted rows → DEGRADED.
+
+    If the check regressed to resolve-only always-OK, this assertion goes red:
+    persisted rows carry a foreign model_id while active resolves to another.
+    """
+    from recognition.application import health as health_mod
+    from shared.health import HealthStatus
+
+    active = "opencv-sface+cv5.0.0/ort1.28@128d/l2/cosine"
+    stale = "opencv-sface+cv4.13.0.92/ort1.22@128d/l2/cosine"
+
+    monkeypatch.setattr(
+        "recognition.application.embedding.manifest.active_embedding_model_id",
+        lambda: active,
+    )
+
+    # Auth-gated detail (verbose=True) keeps full space tokens for operators.
+    partitioned = health_mod.check_active_embedding_model(persisted_model_ids=[stale], verbose=True)
+    assert partitioned.status is HealthStatus.DEGRADED, partitioned.detail
+    assert partitioned.name == "embedding_model"
+    assert "partition" in partitioned.detail.lower() or "matches no persisted" in partitioned.detail
+    assert active in partitioned.detail
+    assert stale in partitioned.detail
+
+    # Public path (verbose=False): status identical, detail coarse (no raw ids).
+    public = health_mod.check_active_embedding_model(persisted_model_ids=[stale])
+    assert public.status is HealthStatus.DEGRADED, public.detail
+    assert active not in public.detail
+    assert stale not in public.detail
+    assert "active_space=" in public.detail
+    assert "persisted_spaces=1" in public.detail
+
+    # Matching active among persisted → OK (not a partition).
+    matched = health_mod.check_active_embedding_model(persisted_model_ids=[stale, active], verbose=True)
+    assert matched.status is HealthStatus.OK, matched.detail
+
+    # Empty embeddings table is a fresh deploy, not a partition.
+    fresh = health_mod.check_active_embedding_model(persisted_model_ids=[], verbose=True)
+    assert fresh.status is HealthStatus.OK, fresh.detail
+
+    # Probe unavailable (None) keeps prior resolve-only OK behaviour.
+    no_probe = health_mod.check_active_embedding_model(persisted_model_ids=None, verbose=True)
+    assert no_probe.status is HealthStatus.OK, no_probe.detail
+    assert no_probe.detail.startswith("active=")
+
+
+@pytest.mark.asyncio
+async def test_check_database_contextvar_wires_partition_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CVUP1-GR-10: check_database → ContextVar → check_active_embedding_model (no kwarg).
+
+    Production /ready never passes persisted_model_ids=; it relies on the stash
+    filled by check_database. This must reach DEGRADED on a real partition.
+    """
+    from shared.health import HealthStatus
+
+    active = "opencv-sface+cv5.0.0/ort1.28@128d/l2/cosine"
+    stale = "opencv-sface+cv4.13.0.92/ort1.22@128d/l2/cosine"
+
+    monkeypatch.setattr(
+        "recognition.application.embedding.manifest.active_embedding_model_id",
+        lambda: active,
+    )
+    health_mod._persisted_embedding_models_for_ready.set(None)
+
+    session = _TxnAwareSession(
+        typmod_rows=_identity_typmod_rows(),
+        distinct_rows=[(stale,)],
+    )
+    db = await health_mod.check_database(session)
+    assert db.status is HealthStatus.OK, db.detail
+
+    # No explicit kwarg — production wiring via ContextVar only.
+    emb = health_mod.check_active_embedding_model()
+    assert emb.status is HealthStatus.DEGRADED, emb.detail
+    assert "partition" in emb.detail.lower() or "matches no persisted" in emb.detail
+    assert emb.name == "embedding_model"
+
+
+@pytest.mark.asyncio
+async def test_check_database_distinct_failure_does_not_poison_typmod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CVUP1-GR-01/GR-10: DISTINCT probe raise must not flip database UNHEALTHY.
+
+    Without a savepoint the failed DISTINCT aborts the outer txn and the
+    subsequent typmod probe raises InFailedSqlTransaction → UNHEALTHY.
+    With begin_nested, check_database stays OK (resolve-only partition skip).
+    """
+    from shared.health import HealthStatus
+
+    session = _TxnAwareSession(
+        typmod_rows=_identity_typmod_rows(),
+        distinct_error=RuntimeError("relation media_identities does not exist"),
+    )
+    db = await health_mod.check_database(session)
+    assert db.status is HealthStatus.OK, db.detail
+    assert "vector dimension probe failed" not in db.detail
+    assert session.begin_nested_calls >= 1
+    # Stash cleared so partition check falls back to resolve-only.
+    emb = health_mod.check_active_embedding_model()
+    assert emb.status is HealthStatus.OK, emb.detail
+
+
+def test_ready_distinct_probe_failure_still_200(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """CVUP1-GR-10: /ready stays 200 when DISTINCT probe raises (savepoint isolation).
+
+    This assertion fails against unfixed code where the poisoned txn makes
+    check_database UNHEALTHY and aggregate /ready 503.
+    """
+    from fastapi.testclient import TestClient
+
+    _align_dims_to_sface(monkeypatch)
+    _install_synthetic_pair(tmp_path, monkeypatch)
+    _stub_shared_runtime_loader(monkeypatch, tmp_path)
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "face_pipeline")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(tmp_path))
+
+    async def _session_yielder():
+        yield _TxnAwareSession(
+            typmod_rows=_identity_typmod_rows(),
+            distinct_error=RuntimeError("relation media_identities does not exist"),
+        )
+
+    app = _standalone_ready_app(monkeypatch, session_factory=_session_yielder)
+    client = TestClient(app)
+    resp = client.get("/ready")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] in {"ok", "degraded"}
+    db = next(c for c in body["checks"] if c["name"] == "database")
+    assert db["status"] == "ok", db
+
+
+@pytest.mark.asyncio
+async def test_savepoint_allows_typmod_after_distinct_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CVUP1-GR-10: typmod probe succeeds after DISTINCT has raised inside savepoint."""
+    from shared.health import HealthStatus
+
+    session = _TxnAwareSession(
+        typmod_rows=_identity_typmod_rows(),
+        distinct_error=RuntimeError("permission denied for table media_identities"),
+    )
+    db = await health_mod.check_database(session)
+    assert db.status is HealthStatus.OK, db.detail
+    assert "reachable" in db.detail or "pgvector_dimension" in db.detail
+    assert session.begin_nested_calls >= 1
+    # Outer txn not aborted — a follow-up execute still works.
+    follow = await session.execute("SELECT 1")
+    assert follow is not None
+    assert follow.all() == list(_identity_typmod_rows())
+
+
+def test_ready_ort_construction_failure_returns_503(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """local finding GROKHARM-04: /ready must 503 when model verify passes but ORT runtime fails."""
     from fastapi.testclient import TestClient
 
     fpa = _live_face_pipeline_adapter()

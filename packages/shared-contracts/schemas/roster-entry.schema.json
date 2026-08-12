@@ -90,9 +90,14 @@
                 "type": ["string", "null"]
               },
               "bbox": {
-                "type": ["array", "null"],
-                "items": {
-                  "type": "number"
+                "type": ["object", "null"],
+                "description": "Pixel-space face bounding box.",
+                "required": ["x", "y", "width", "height"],
+                "properties": {
+                  "x": { "type": "integer", "minimum": 0 },
+                  "y": { "type": "integer", "minimum": 0 },
+                  "width": { "type": "integer", "minimum": 0 },
+                  "height": { "type": "integer", "minimum": 0 }
                 }
               },
               "similarity": {
@@ -128,9 +133,14 @@
                   "type": ["string", "null"]
                 },
                 "bbox": {
-                  "type": ["array", "null"],
-                  "items": {
-                    "type": "number"
+                  "type": ["object", "null"],
+                  "description": "Pixel-space face bounding box.",
+                  "required": ["x", "y", "width", "height"],
+                  "properties": {
+                    "x": { "type": "integer", "minimum": 0 },
+                    "y": { "type": "integer", "minimum": 0 },
+                    "width": { "type": "integer", "minimum": 0 },
+                    "height": { "type": "integer", "minimum": 0 }
                   }
                 },
                 "similarity": {

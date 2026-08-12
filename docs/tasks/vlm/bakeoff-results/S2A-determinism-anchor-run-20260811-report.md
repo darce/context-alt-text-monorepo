@@ -4,8 +4,8 @@
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
 - head_sha: `0000000000000000000000000000000000000000`
 - base_url: seeded-stub://offline
-- fetch manifest_sha256: `859a083ee2594b993543e52d9a5c5c9b13e4b98c7c2b87bc390bff8b29c6f123`
-- score manifest_sha256: `859a083ee2594b993543e52d9a5c5c9b13e4b98c7c2b87bc390bff8b29c6f123` (matches fetch: True)
+- fetch manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737`
+- score manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737` (matches fetch: True)
 - started_at: 2026-08-11T00:00:00Z
 - images: 37/37 scored, 0 failed
 - verdict: **pass_ungated** (wrong_name_rate=0.000, floor=0.000)
@@ -18,7 +18,7 @@
 - name precision: null (wrong-name images: 0, rate: 0.000)
 - Must-Right failed images (hard gate): 34 (must_right-defined images: 34; easy_wrong-defined images: 37)
 - policy violations: 0
-- mean gated score: 0.081
+- mean gated score: 0.000
 
 ## Quality axes (short surface, report-only signals)
 

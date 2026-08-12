@@ -141,7 +141,9 @@ def write_anchor(
     started_at: str,
 ) -> tuple[Path, Path, Path, str]:
     """Generate run-record + scored report pair; return paths and computed manifest sha."""
-    manifest = load_manifest(str(manifest_path))
+    # Metadata-only: uses path/sha256/media_id/present_identities/face_count for synthetic
+    # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
     record = build_run_record(manifest, head_sha=head_sha, started_at=started_at)
     manifest_sha = record["provenance"]["manifest_sha256"]
 

@@ -17,7 +17,11 @@ def _load():
 def _seed_manifest():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RubricEmptyWarning)
-        return load_manifest(os.path.join(_SEED_DIR, "golden.json"))
+        # Metadata-only: phrase-box tests use media_id/path for pairing; never open image bytes.
+        return load_manifest(
+            os.path.join(_SEED_DIR, "golden.json"),
+            skip_hash_verification=True,
+        )
 
 
 def _resolve(center, phrase_boxes):

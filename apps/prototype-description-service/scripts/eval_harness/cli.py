@@ -1106,7 +1106,8 @@ def _check_score_determinism_cross_process(
     # Baseline: current process, reading the persisted anchor with the real
     # operator parameters (not the build_reports defaults).
     record = json.loads(resolved_record.read_text())
-    manifest = load_manifest(str(resolved_manifest))
+    # Metadata-only: build_reports reads rubrics/roster/policy, never opens image bytes.
+    manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     manifest_sha = _manifest_sha(manifest)
     ignore_list = _load_ignore_list(resolved_record.parent)
@@ -1134,7 +1135,8 @@ def _check_score_determinism_cross_process(
         "from scripts.eval_harness.report import build_reports, Audience; "
         "rec_path=Path(sys.argv[1]); "
         "rec=json.loads(rec_path.read_text()); "
-        "man=load_manifest(sys.argv[2]); "
+        # Metadata-only: child re-score never opens image bytes (must_right/roster only).
+        "man=load_manifest(sys.argv[2],skip_hash_verification=True); "
         "rg=sys.argv[3]; "
         "aud=Audience(sys.argv[4]); "
         "entries=[e.model_dump() for e in man.entries]; "
@@ -1190,7 +1192,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     _reject_llm_judge(args)
     record_path = Path(args.run_record)
     record = json.loads(record_path.read_text())
-    manifest = load_manifest(args.manifest)
+    # Metadata-only: score_run_record/build_reports use must_right/easy_wrong/roster/policy;
+    # image bytes already live in the run-record and are never re-opened here.
+    manifest = load_manifest(args.manifest, skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
     # Stamp the report with the manifest actually scored against, and verify it
     # against the run record's fetch-time sha instead of copying it blind (S3-04).
@@ -1533,7 +1537,8 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     # surface before unrelated GOLDEN_IMAGES_DIR / manifest errors.
     leg = _build_face_leg(args.leg)
     images_dir = _images_dir()
-    manifest = load_manifest(args.manifest)
+    # Pixel path: walk_face_run_record / build_occlusion_twin_pairs read image bytes.
+    manifest = load_manifest(args.manifest, images_dir=images_dir)
     detector, aligner, embedder = leg.detector, leg.aligner, leg.embedder
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     try:
@@ -1635,7 +1640,9 @@ def _check_face_determinism_cross_process(
     resolved_manifest = Path(manifest_path).resolve()
     # Baseline: current process
     record = json.loads(resolved_record.read_text())
-    manifest = load_manifest(str(resolved_manifest))
+    # Metadata-only: face score uses face_count/tags/boxes from record + manifest fields;
+    # never opens image files (embeddings already in the face run-record).
+    manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
     manifest_sha = _manifest_sha(manifest)
     base_json, base_md = _face_score_once(
         record, manifest, score_manifest_sha256=manifest_sha, public=public
@@ -1650,7 +1657,8 @@ def _check_face_determinism_cross_process(
         "from scripts.eval_harness.cli import _manifest_sha; "
         "from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record; "
         "rec=json.loads(open(sys.argv[1]).read()); "
-        "man=load_manifest(sys.argv[2]); "
+        # Metadata-only: child face re-score never opens image bytes.
+        "man=load_manifest(sys.argv[2],skip_hash_verification=True); "
         "pub=sys.argv[3]=='1'; "
         "sp,rp=occlusion_inputs_from_record(rec,man); "
         "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),"
@@ -1690,7 +1698,9 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     record = json.loads(record_path.read_text())
     if record.get("kind") == DocKind.FACE_RUN_RECORD.value:
         validate_face_run_record(record)
-    manifest = load_manifest(args.manifest)
+    # Metadata-only: score_face_run_record / build_face_reports use tags, face_count,
+    # present_identities, and record-side embeddings — never open image bytes.
+    manifest = load_manifest(args.manifest, skip_hash_verification=True)
     manifest_sha = _manifest_sha(manifest)
     public = bool(getattr(args, "public", False))
     # F6 / B-06: --expect-report is opt-in frozen face-report JSON. Requires

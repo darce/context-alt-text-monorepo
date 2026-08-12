@@ -104,7 +104,8 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
         head_sha="0" * 40,
         started_at="2026-08-11T00:00:00Z",
     )
-    expected_sha = _manifest_sha(load_manifest(str(_MANIFEST)))
+    # Metadata-only: synthetic face anchor has no image files; sha over metadata only.
+    expected_sha = _manifest_sha(load_manifest(str(_MANIFEST), skip_hash_verification=True))
     assert manifest_sha == expected_sha
     assert manifest_sha.startswith("19861fed")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
@@ -119,8 +120,9 @@ def test_face_run_record_is_synthetic_dim8_no_real_embeddings() -> None:
     assert record["kind"] == "face_run_record"
     assert record["provenance"]["embedding_dim"] == _EMBEDDING_DIM
     assert record["provenance"]["model_id"] == "synthetic-face-anchor"
+    # Metadata-only: provenance sha vs synthetic face manifest; never opens image bytes.
     assert record["provenance"]["manifest_sha256"] == _manifest_sha(
-        load_manifest(str(_MANIFEST))
+        load_manifest(str(_MANIFEST), skip_hash_verification=True)
     )
     assert len(record["items"]) >= 7  # F7 multi-regime corpus
     for item in record["items"]:
@@ -287,7 +289,8 @@ def test_f7_clustering_corruption_goes_red(tmp_path: Path) -> None:
     assert "determinism check ANCHOR_MISMATCH" in str(exc.value)
 
     # Prove the cell itself moved (not just some other field).
-    manifest = load_manifest(str(_MANIFEST))
+    # Metadata-only: re-score uses tags/face_count from record + manifest; no image bytes.
+    manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
     synth, real = occlusion_inputs_from_record(payload, manifest)
     json_doc, _ = build_face_reports(
         payload,
@@ -464,7 +467,8 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
     with tempfile.TemporaryDirectory() as td:
         mp = Path(td) / "old-man.json"
         mp.write_text(json.dumps(man, indent=2, sort_keys=True) + "\n")
-        manifest = load_manifest(str(mp))
+        # Metadata-only: old single-identity corpus score probe; never opens image bytes.
+        manifest = load_manifest(str(mp), skip_hash_verification=True)
         sha = _manifest_sha(manifest)
 
         def score(rec):

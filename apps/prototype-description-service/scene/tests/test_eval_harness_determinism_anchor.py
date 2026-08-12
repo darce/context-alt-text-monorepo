@@ -37,10 +37,12 @@ _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 
 # File digests of the committed triple — update only when intentionally regenerating.
+# Regenerated VLM6-lb1 after default-on hash verification unblocked the generator
+# (manifest_sha256 prefix 83bfdc4e; prior freeze 859a083e was stale vs current golden/schema).
 _FROZEN_DIGESTS = {
-    _RUN.name: "743d06ad9441c8dc96d6a525741b507e9f51914d26e8faafdcbdc5b0b7e38312",
-    _REPORT_JSON.name: "03ad0c6c31f2f953cf7ac2523620b8382818976327d7c4a1052c4fab86a7690a",
-    _REPORT_MD.name: "51224e12818bab0da3335bbe002a553aa510a0ee8fa7ab3649f2ac197210f17b",
+    _RUN.name: "4c80fdbf08d1599268d54e684505cdf6cfd33a91d2010151ea572f914e23573a",
+    _REPORT_JSON.name: "a838caa17c104f17bbe6de66985ba3616b166f2fdf2e3a3ca01fa500f9abad30",
+    _REPORT_MD.name: "ee5f2c9dbacb39c679168bbe6591487f5cb8a6f6d92d7a6bea1fe1531f0d7480",
 }
 
 
@@ -65,9 +67,10 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
         head_sha="0" * 40,
         started_at="2026-08-11T00:00:00Z",
     )
-    expected_sha = _manifest_sha(load_manifest(str(_GOLDEN)))
+    # Metadata-only: compares generation-time sha to loader sha; never opens image bytes.
+    expected_sha = _manifest_sha(load_manifest(str(_GOLDEN), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("859a083e")
+    assert manifest_sha.startswith("83bfdc4e")
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
@@ -76,7 +79,10 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
 def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed() -> None:
     """Greenfield shape: no bare-string identities; sha was generation-time computed."""
     record = json.loads(_RUN.read_text())
-    assert record["provenance"]["manifest_sha256"] == _manifest_sha(load_manifest(str(_GOLDEN)))
+    # Metadata-only: provenance sha check against roster/entries; never opens image bytes.
+    assert record["provenance"]["manifest_sha256"] == _manifest_sha(
+        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    )
     assert len(record["items"]) == 37
     for item in record["items"]:
         for row in item["identities"]:

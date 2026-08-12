@@ -135,10 +135,26 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
   3. **Derived/source package-floor parity** (FIR-7-B9-02): both doors
      promote whole-component package-floor hits on the NC axis
      (``nc_model_derived``) as well as the AGPL axis
-     (``denylisted_package`` on derived). Whole-component (not
-     suffix-only) matching preserves BR-28 ``not-insightface`` admit on
-     weights doors; NC-only seeds (``antelopev2``, ``vec2face``, …) have
-     no package-floor backstop and hold via (1) alone.
+     (``denylisted_package`` on derived). Separator-aligned **suffix**
+     walk of each slash component promotes exact (a) and export-shaped
+     (b) NC package seeds so prefix-shielded spellings
+     (``myprefix_antelopev2``, ``org_antelopev2_int8``,
+     ``checkpoints_vec2face_trt``) reject on weights doors too. BR-28
+     ``not_<seed>`` forms (single leading segment ``not``) are carved
+     out so ``not-insightface`` / ``not-retinaface`` stay admitted on
+     doors; compact (e) glue is still not promoted on this path.
+  4. **Distinctive NC lineage package-floor backstop** (FIR-7-B9-02
+     follow-up): ``antelopev2``, ``retinaface``, ``arcface``,
+     ``buffalo_s``, ``buffalo_sc``, and ``vec2face`` are NC-axis
+     ``PACKAGE_DENYLIST`` seeds (same pattern as ``buffalo_l`` /
+     ``yolo_nas`` / ``insightface``) so the uniform floor scan covers
+     prefix-shielded row/package spellings. Bare ``buffalo`` is
+     **not** a family seed — generic-English compounds like
+     ``buffalo_bill_detector`` must stay admitted; the real
+     InsightFace packs are ``buffalo_l`` / ``buffalo_s`` /
+     ``buffalo_sc`` (and ``buffalo_l2`` on the NC-id surface). Compact
+     (e) over-block of ``myarcface`` (arcface ≥ 5 compact chars) is
+     deliberate consistent policy.
 
 **Honest lineage notes** (FIR-7-B6-02 / B9-03): ``yolop`` is hustvl
 BSD-3-Clause (exception); ``yolov2`` / ``yolov4`` are Darknet-era deny
@@ -863,6 +879,73 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
         spdx_id="Non-Commercial",
         reason=RejectionReason.NC_MODEL_DERIVED,
         notes="Buffalo weights and any output-derived data fail the audit.",
+    ),
+    # FIR-7-B9-02 follow-up: distinctive NC lineage package-floor backstops.
+    # These seeds exist on the NC model-id surface but previously had no
+    # PACKAGE_DENYLIST entry, so a leading junk segment defeated every door
+    # (uniform floor never saw them; whole-component had nothing to promote).
+    # Bare ``buffalo`` is intentionally NOT a seed — generic-English names
+    # like buffalo_bill_detector must stay admitted (BR-28); real packs are
+    # buffalo_l / buffalo_s / buffalo_sc (and buffalo_l2 on the NC-id set).
+    "buffalo_s": PackageDenylistEntry(
+        package_id="buffalo_s",
+        display_name="InsightFace buffalo_s",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "InsightFace buffalo_s pack: weights and output-derived data "
+            "are banned on the NC-weights axis"
+        ),
+    ),
+    "buffalo_sc": PackageDenylistEntry(
+        package_id="buffalo_sc",
+        display_name="InsightFace buffalo_sc",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "InsightFace buffalo_sc pack: weights and output-derived data "
+            "are banned on the NC-weights axis"
+        ),
+    ),
+    "antelopev2": PackageDenylistEntry(
+        package_id="antelopev2",
+        display_name="InsightFace antelopev2",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "InsightFace antelopev2 pack: weights and output-derived data "
+            "are banned on the NC-weights axis"
+        ),
+    ),
+    "retinaface": PackageDenylistEntry(
+        package_id="retinaface",
+        display_name="InsightFace RetinaFace",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "InsightFace RetinaFace detector: weights and output-derived "
+            "data are banned on the NC-weights axis"
+        ),
+    ),
+    "arcface": PackageDenylistEntry(
+        package_id="arcface",
+        display_name="InsightFace ArcFace",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "InsightFace ArcFace recognition: weights and output-derived "
+            "data are banned on the NC-weights axis"
+        ),
+    ),
+    "vec2face": PackageDenylistEntry(
+        package_id="vec2face",
+        display_name="vec2face",
+        spdx_id="Non-Commercial",
+        reason=RejectionReason.NC_MODEL_DERIVED,
+        notes=(
+            "vec2face synthetic-face lineage: weights and output-derived "
+            "data are banned on the NC-weights axis"
+        ),
     ),
     # Deci YOLO-NAS — code is Apache-2.0, but pretrained weights are
     # non-commercial (super-gradients LICENSE.YOLONAS.md). Denied on the
@@ -2559,8 +2642,10 @@ def _reject_non_string(
 # yolox_yolop_ultralytics admits; disable fail-closed scan bounds →
 # non-shrinking strip admits (synthetic invariant probe; FIR-7-B9-04);
 # disable NC structural match → yolo_nas_l_int8 / yolo_nas_l_trt admit on
-# weights doors. Every surviving flag must change ≥ 1 pinned outcome when
-# flipped alone (no-op flags are TEST-15 violations).
+# weights doors; disable NC package component-suffix walk →
+# myprefix_antelopev2 admits on weights doors (FIR-7-B9-02 follow-up).
+# Every surviving flag must change ≥ 1 pinned outcome when flipped alone
+# (no-op flags are TEST-15 violations).
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
@@ -2570,6 +2655,12 @@ _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED: bool = True
 _EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED: bool = True
 _SCAN_FAIL_CLOSED_BOUNDS_ENABLED: bool = True  # defensive invariant (B9-04)
 _NC_STRUCTURAL_MATCH_ENABLED: bool = True
+# FIR-7-B9-02 follow-up: separator-aligned suffix walk inside
+# ``_whole_component_nc_package_hit`` so prefix-shielded NC package seeds
+# (``myprefix_antelopev2``) reject on weights doors. When False, only the
+# whole slash-component is tested (export-shaped ``insightface_trt`` still
+# rejects; prefix forms admit — red-proof cell).
+_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
@@ -3068,51 +3159,78 @@ def _nc_package_rest_is_export_shaped(rest: str) -> bool:
 def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
     """Whole-component NC package-floor hit for weights doors (FIR-7-B9-02).
 
-    Unlike :func:`_package_denylist_hit`, this does **not** run the outer
-    separator-aligned suffix walk or exception residual strip. Each slash
-    component is tested only as a whole token under deny rules (a)/(b)/(c)/
-    (d)/(e), then filtered so only **export-shaped** (b) residuals promote.
-    That rejects ``insightface_trt`` / ``buffalo_l_trt`` while leaving
-    suffix-only forms like ``not_insightface`` and name-continuations like
-    ``insightface_free`` clean on weights doors (BR-28). NC-only seeds
-    without a package entry (``antelopev2``, ``vec2face``) return None —
-    structural tag-strip membership must hold them alone.
+    Unlike :func:`_package_denylist_hit`, this does **not** run exception
+    residual strip or promote compact (e) glue. Each slash component is
+    tested as a whole token under deny rules, then — when
+    ``_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED`` — every separator-aligned
+    **suffix** of that component is tested the same way. Promotion is
+    limited to exact/compact (a) and **export-shaped** (b) residuals so
+    ``insightface_trt`` / ``buffalo_l_trt`` / ``myprefix_antelopev2`` /
+    ``org_antelopev2_int8`` reject while name-continuations like
+    ``insightface_free`` stay clean. BR-28 ``not_<seed>`` forms (single
+    leading segment ``not``) are carved out so ``not_insightface`` /
+    ``not-retinaface`` remain admitted on weights doors; row/package
+    floor still rejects them via the uniform scanner (unchanged).
     """
     c = canonical(value)
     if c is None or not c:
         return None
     if "/" in c:
-        candidates = [p for p in c.split("/") if p]
+        components = [p for p in c.split("/") if p]
     else:
-        candidates = [c]
+        components = [c]
     seen: set[str] = set()
-    for cand in candidates:
-        if cand in seen:
+    for comp in components:
+        if comp in seen:
             continue
-        seen.add(cand)
-        matched = _best_family_seed_match(
-            cand, PACKAGE_DENYLIST, for_deny=True
+        seen.add(comp)
+        segments = [s for s in comp.split("_") if s]
+        if not segments:
+            continue
+        # Whole component first; then shorter separator-aligned suffixes
+        # when the B9-02 follow-up flag is on (prefix-shield close).
+        suffix_starts = (
+            range(len(segments))
+            if _NC_PACKAGE_COMPONENT_SUFFIX_ENABLED
+            else range(0, 1)
         )
-        if matched is None:
-            continue
-        seed_c, _seed_k, entry = matched
-        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
-            continue
-        # Exact / compact (a): always promote.
-        cand_k = _compact_canonical(cand)
-        seed_k = _compact_canonical(seed_c)
-        if cand == seed_c or cand_k == seed_k or cand == seed_k or cand_k == seed_c:
-            return entry  # type: ignore[no-any-return]
-        # (b) separator-boundary: promote only export-shaped residuals so
-        # name-continuations (insightface_free) and (e) glue over-matches
-        # (insightfaces_r_us) stay clean on weights doors (BR-28).
-        boundary = seed_c + "_"
-        if cand.startswith(boundary) and len(cand) > len(boundary):
-            rest = cand[len(boundary) :]
-            if _nc_package_rest_is_export_shaped(rest):
+        for i in suffix_starts:
+            cand = "_".join(segments[i:])
+            if not cand:
+                continue
+            # BR-28 negation carve-out: ``not_<seed>`` / ``not_<seed>_<tags>``
+            # stay clean on weights doors. Only a single leading ``not``
+            # segment is carved out — ``myprefix_antelopev2`` still rejects.
+            if i == 1 and segments[0] == "not":
+                continue
+            matched = _best_family_seed_match(
+                cand, PACKAGE_DENYLIST, for_deny=True
+            )
+            if matched is None:
+                continue
+            seed_c, _seed_k, entry = matched
+            if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
+                continue
+            # Exact / compact (a): always promote.
+            cand_k = _compact_canonical(cand)
+            seed_k = _compact_canonical(seed_c)
+            if (
+                cand == seed_c
+                or cand_k == seed_k
+                or cand == seed_k
+                or cand_k == seed_c
+            ):
                 return entry  # type: ignore[no-any-return]
-        # Do not promote (c)/(d)/(e)-only hits on the weights doors.
-        continue
+            # (b) separator-boundary: promote only export-shaped residuals so
+            # name-continuations (insightface_free) and (e) glue over-matches
+            # (insightfaces_r_us) stay clean on weights doors (BR-28).
+            boundary = seed_c + "_"
+            if cand.startswith(boundary) and len(cand) > len(boundary):
+                rest = cand[len(boundary) :]
+                if _nc_package_rest_is_export_shaped(rest):
+                    return entry  # type: ignore[no-any-return]
+            # Do not promote (c)/(d)/(e)-only hits on the weights doors.
+            continue
     return None
 
 

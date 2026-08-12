@@ -692,9 +692,11 @@ class TestSyntheticFailClosedAndRowValidation:
 
     def test_explicit_synthetic_category_unknown_source_pending(self) -> None:
         # Caller SYNTHETIC_SOURCE + unknown source, no derived tag: sole fail
-        # path is the synthetic door's pending default.
+        # path is the synthetic door's pending default. Prefer a token that
+        # does not hit the NC package floor (vec2face-successor is now an
+        # NC floor hit via the vec2face seed — B9-02 follow-up).
         row = {
-            "source": "vec2face-successor",
+            "source": "mysteryganv2",
             "license": "Apache-2.0",
             "derived_from_model": "",
         }
@@ -1171,6 +1173,11 @@ class TestEntryPointParityAndCommonNcGate:
             assert result.reason is policy.RejectionReason.UNKNOWN_SOURCE
 
     def test_br23_synthetic_parity_with_audit_synthetic_source(self) -> None:
+        # Scalar synthetic door reports registry PENDING. Row path through
+        # SYNTHETIC_SOURCE also runs the package-identity floor (RV-10); after
+        # B9-02 follow-up, bare ``vec2face`` is an NC package seed so the row
+        # reports ``nc_model_derived`` (floor outranks the door-local pending
+        # reason — complete mediation, not a parity regression).
         row = {
             "source": "vec2face",
             "license": "Apache-2.0",
@@ -1182,7 +1189,7 @@ class TestEntryPointParityAndCommonNcGate:
         via_door = policy.audit_synthetic_source("vec2face")
         assert via_row.ok is False
         assert via_door.ok is False
-        assert via_row.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert via_row.reason is policy.RejectionReason.NC_MODEL_DERIVED
         assert via_door.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
 
     def test_br23_model_ingest_parity_vendor_missing(self) -> None:
@@ -1313,7 +1320,10 @@ class TestUnregisteredSourceFailClosed:
             "synthface3",
             "mysteryganv2",
             "my-synthetic-gan",
-            "vec2face-successor",
+            # vec2face-successor: after B9-02 follow-up the vec2face package
+            # floor seed claims it (seed_ + rest) with nc_model_derived —
+            # stricter and correct; keep a pure-unknown token here.
+            "unknown-synthetic-gan-v9",
         ],
     )
     def test_br22_unregistered_sources_pending(self, source: str) -> None:
@@ -1325,6 +1335,23 @@ class TestUnregisteredSourceFailClosed:
         result = policy.audit_provenance_row(row)
         assert result.ok is False, f"expected PENDING for {source!r}, got {result}"
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_br22_vec2face_successor_is_nc_package_floor(self) -> None:
+        """vec2face-successor is no longer a pure-unknown pending cell.
+
+        B9-02 follow-up: ``vec2face`` package-floor seed matches via (b)
+        separator-boundary; TRAINING_DATA reports nc_model_derived.
+        """
+        row = {
+            "source": "vec2face-successor",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        hit = policy._package_denylist_hit("vec2face-successor")
+        assert hit is not None and hit.package_id == "vec2face"
 
     def test_br22_control_with_derived_also_pending(self) -> None:
         # Dual fault: unknown source + unregistered derived. Floor registration
@@ -4948,18 +4975,19 @@ class TestRv11SyntheticSourceAxisTaintReasonFidelity:
     FIR-7-B2-04: the NC cell must use a source that is NC-model-derived on the
     source-taint axis but NOT in PACKAGE_DENYLIST — otherwise the RV-10 package
     floor supplies nc_model_derived under an RV-11 neuter and the cell is
-    vacuous. ``retinaface`` is on the NC seed set and absent from
-    PACKAGE_DENYLIST (verified by construction).
+    vacuous. Bare ``buffalo`` is on the NC seed set and deliberately absent
+    from PACKAGE_DENYLIST (B9-02 follow-up: no generic-English buffalo family
+    seed; verified by construction).
     """
 
     @pytest.mark.parametrize(
         ("source", "expected_reason"),
         [
             ("ffhq", policy.RejectionReason.RESEARCH_ONLY_SOURCE),
-            # Not buffalo_l: that token is also in PACKAGE_DENYLIST, so the
-            # package floor would keep the cell green under an RV-11 neuter
-            # (FIR-7-B2-04 / TEST-15).
-            ("retinaface", policy.RejectionReason.NC_MODEL_DERIVED),
+            # Not buffalo_l / retinaface / antelopev2: those are now (or were)
+            # PACKAGE_DENYLIST NC seeds, so the package floor would keep the
+            # cell green under an RV-11 neuter (FIR-7-B2-04 / TEST-15).
+            ("buffalo", policy.RejectionReason.NC_MODEL_DERIVED),
         ],
     )
     def test_synthetic_door_reports_source_axis_taint(
@@ -7553,23 +7581,273 @@ class TestB806StructuralNcDoors:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Disable structural NC alone → export-tag cells admit (TEST-15)."""
-        tokens = ("yolo_nas_l_int8", "yolo_nas_l_trt", "antelopev2_trt")
+        # Size-tagged Deci cells are strip-only: whole-component does not
+        # promote ``yolo_nas`` + ``l_trt`` (rest is not pure export-shaped).
+        # Bare ``antelopev2_trt`` now rejects via B9-02 package-floor
+        # whole-component (a)/(b) even with structural NC off — same class
+        # as insightface_trt.
+        tokens = ("yolo_nas_l_int8", "yolo_nas_l_trt")
         for token in tokens:
             assert policy.audit_derived_from_model(token).ok is False, (
                 f"precondition: {token!r} must reject with structural NC on"
             )
         monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
         for token in tokens:
-            # insightface_trt may still reject via whole-component package
-            # NC promotion; antelopev2/yolo_nas_l_trt are strip-only.
             assert policy.audit_derived_from_model(token).ok is True, (
                 f"red-proof: with structural NC off, {token!r} must admit"
             )
         # Bare pinned NC seed still rejects via exact membership.
         assert policy.audit_derived_from_model("yolo_nas_l").ok is False
         assert policy.audit_derived_from_model("buffalo_l").ok is False
-        # Package-floor export-shaped NC still rejects without structural strip.
+        # Package-floor export-shaped NC still rejects without structural strip
+        # (includes antelopev2 after B9-02 follow-up floor backstop).
         assert policy.audit_derived_from_model("insightface_trt").ok is False
+        assert policy.audit_derived_from_model("antelopev2_trt").ok is False
+
+
+class TestB902PrefixShieldedNcFloor:
+    """FIR-7-B9-02 follow-up: prefix-shielded NC seeds get package-floor backstop.
+
+    Floor-less NC lineage names (antelopev2 / retinaface / arcface /
+    buffalo_s / buffalo_sc / vec2face) previously admitted under any
+    leading junk segment: no PACKAGE_DENYLIST entry → uniform floor miss,
+    and whole-component NC promotion had nothing to promote. After the
+    backstop, both ``_package_denylist_hit`` and
+    ``_whole_component_nc_package_hit`` fire on every witness; TRAINING_DATA
+    rows + both weights doors report ``nc_model_derived``.
+
+    Bare ``buffalo`` is intentionally not a family seed (generic-English
+    ``buffalo_bill_detector`` must stay admitted). Compact ``myarcface``
+    over-blocks via rule (e) (arcface ≥ 5 compact chars) — deliberate.
+    Red-proven: disable ``_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED`` alone →
+    one prefix witness admits on weights doors.
+    """
+
+    PREFIX_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("myprefix_antelopev2", "antelopev2"),
+        ("org_antelopev2_int8", "antelopev2"),
+        ("myprefix_retinaface", "retinaface"),
+        ("myprefix_arcface", "arcface"),
+        ("myprefix_buffalo_sc", "buffalo_sc"),
+        ("myprefix_buffalo_s", "buffalo_s"),
+        ("myprefix_vec2face", "vec2face"),
+        ("checkpoints_vec2face_trt", "vec2face"),
+    )
+
+    # Doors must still admit these; buffalo_bill also admits on package rows.
+    DOOR_ADMIT_COUNTERS: ClassVar[tuple[str, ...]] = (
+        "buffalo_bill_detector",
+        "not_insightface",
+        "not-insightface",
+        "sam",
+        "timm",
+        "sam_onnx",
+        "blazeface_int8",
+        "mediapipe/blazeface",
+        "dcface/gen1",
+        "notdcface/x",
+    )
+
+    NEW_FLOOR_SEEDS: ClassVar[tuple[str, ...]] = (
+        "antelopev2",
+        "retinaface",
+        "arcface",
+        "buffalo_s",
+        "buffalo_sc",
+        "vec2face",
+    )
+
+    @pytest.mark.parametrize(
+        "token,expected_seed",
+        PREFIX_WITNESSES,
+        ids=[t[0] for t in PREFIX_WITNESSES],
+    )
+    def test_prefix_witness_hits_package_floor_and_whole_component(
+        self, token: str, expected_seed: str
+    ) -> None:
+        floor = policy._package_denylist_hit(token)
+        assert floor is not None, f"{token!r} must hit package floor"
+        assert floor.package_id == expected_seed, (
+            f"{token!r}: floor seed {floor.package_id!r} != {expected_seed!r}"
+        )
+        assert floor.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        whole = policy._whole_component_nc_package_hit(token)
+        assert whole is not None, (
+            f"{token!r} must hit whole-component NC package path"
+        )
+        assert whole.package_id == expected_seed, (
+            f"{token!r}: whole seed {whole.package_id!r} != {expected_seed!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "token,expected_seed",
+        PREFIX_WITNESSES,
+        ids=[t[0] for t in PREFIX_WITNESSES],
+    )
+    def test_prefix_witness_rejects_weights_doors(
+        self, token: str, expected_seed: str
+    ) -> None:
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False, f"derived_from_model({token!r}) must reject"
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert expected_seed in derived.detail, (
+            f"derived detail must name lineage {expected_seed!r}: {derived.detail!r}"
+        )
+        source = policy.audit_source(token)
+        assert source.ok is False, f"audit_source({token!r}) must reject"
+        assert source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert expected_seed in source.detail, (
+            f"source detail must name lineage {expected_seed!r}: {source.detail!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "token,expected_seed",
+        PREFIX_WITNESSES,
+        ids=[t[0] for t in PREFIX_WITNESSES],
+    )
+    def test_prefix_witness_rejects_training_data_row(
+        self, token: str, expected_seed: str
+    ) -> None:
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, (
+            f"{token!r} admitted on TRAINING_DATA row; floor miss"
+        )
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {result.reason} "
+            f"({result.detail})"
+        )
+        assert expected_seed in result.detail, (
+            f"row detail must name lineage {expected_seed!r}: {result.detail!r}"
+        )
+
+    @pytest.mark.parametrize("token", DOOR_ADMIT_COUNTERS)
+    def test_counter_pins_still_admit_on_weights_doors(self, token: str) -> None:
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is True, (
+            f"counter-pin {token!r} must pass derived_from_model; "
+            f"got {derived.reason} ({derived.detail})"
+        )
+        source = policy.audit_source(token)
+        assert source.ok is True, (
+            f"counter-pin {token!r} must pass audit_source; "
+            f"got {source.reason} ({source.detail})"
+        )
+
+    def test_buffalo_bill_admits_on_training_data_package_row(self) -> None:
+        """Generic-English buffalo must not become a family seed."""
+        assert "buffalo" not in policy.PACKAGE_DENYLIST, (
+            "bare 'buffalo' must not be a PACKAGE_DENYLIST seed "
+            "(buffalo_bill_detector / generic-English pin)"
+        )
+        assert policy._package_denylist_hit("buffalo_bill_detector") is None
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": "buffalo_bill_detector",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is True, (
+            f"buffalo_bill_detector must admit on TRAINING_DATA package row; "
+            f"got {result.reason} ({result.detail})"
+        )
+
+    def test_not_insightface_row_rejection_unchanged(self) -> None:
+        """BR-28: doors admit; package floor still rejects (pre-existing)."""
+        assert policy.audit_derived_from_model("not_insightface").ok is True
+        floor = policy._package_denylist_hit("not_insightface")
+        assert floor is not None
+        assert floor.package_id == "insightface"
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": "not_insightface",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_myarcface_compact_suffix_overblock_is_deliberate(self) -> None:
+        """arcface ≥ 5 compact chars → rule (e) over-blocks myarcface on floor."""
+        assert policy._COMPACT_SUFFIX_MIN_SEED_LEN == 5
+        assert len(policy._compact_canonical("arcface")) >= 5
+        hit = policy._package_denylist_hit("myarcface")
+        assert hit is not None, "myarcface must hit arcface via compact (e)"
+        assert hit.package_id == "arcface"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        # Weights doors do not promote (e)-only hits (BR-28 precision).
+        assert policy.audit_derived_from_model("myarcface").ok is True
+        row = {
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "package": "myarcface",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("seed", NEW_FLOOR_SEEDS)
+    def test_new_floor_entry_note_names_own_lineage(self, seed: str) -> None:
+        entry = policy.PACKAGE_DENYLIST[seed]
+        assert entry.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        note = entry.notes.casefold()
+        # Own lineage token must appear; no cross-talk to a sibling seed.
+        assert seed.replace("_", "") in note.replace("_", "") or seed in note, (
+            f"{seed!r} notes must name its own lineage: {entry.notes!r}"
+        )
+        siblings = [s for s in self.NEW_FLOOR_SEEDS if s != seed]
+        for other in siblings:
+            # Avoid trivial substring false positives (buffalo_s vs buffalo_sc).
+            if other in seed or seed in other:
+                continue
+            assert other not in note, (
+                f"{seed!r} notes must not name sibling {other!r}: {entry.notes!r}"
+            )
+
+    def test_red_proof_prefix_shield_component_suffix_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable NC package component-suffix alone → prefix cell admits.
+
+        Red-proven (TEST-15): exactly one flag flip. Export-shaped whole-
+        component hits (insightface_trt) and bare NC seeds still reject.
+        """
+        witness = "myprefix_antelopev2"
+        assert policy.audit_derived_from_model(witness).ok is False, (
+            f"precondition: {witness!r} must reject with suffix walk on"
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"precondition: {witness!r} must still hit uniform package floor"
+        )
+        monkeypatch.setattr(policy, "_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED", False)
+        assert policy.audit_derived_from_model(witness).ok is True, (
+            f"red-proof: with component-suffix off, {witness!r} must admit "
+            "on weights doors"
+        )
+        assert policy.audit_source(witness).ok is True
+        # Uniform floor path is independent of the door suffix-walk flag.
+        assert policy._package_denylist_hit(witness) is not None
+        # Sibling export-shaped whole-component path still rejects.
+        assert policy.audit_derived_from_model("insightface_trt").ok is False
+        assert policy.audit_derived_from_model("buffalo_l").ok is False
+        # Bare new-floor seed still rejects via exact whole-component (a).
+        assert policy.audit_derived_from_model("antelopev2").ok is False
 
 
 class TestB807DerivedDoorResidualNcParity:
@@ -7709,6 +7987,7 @@ class TestA901FlagIndependence:
         "_EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED",
         "_SCAN_FAIL_CLOSED_BOUNDS_ENABLED",
         "_NC_STRUCTURAL_MATCH_ENABLED",
+        "_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED",
     )
 
     def test_no_generalized_suffix_flag_remains(self) -> None:
@@ -7738,6 +8017,8 @@ class TestA901FlagIndependence:
             "yolo_nas_l_int8",
             "yolo_nas_l_trt",
             "buffalo_l",
+            # B9-02 follow-up: prefix-shield cell gated by component-suffix walk.
+            "myprefix_antelopev2",
         )
 
         def snapshot() -> dict[str, object]:

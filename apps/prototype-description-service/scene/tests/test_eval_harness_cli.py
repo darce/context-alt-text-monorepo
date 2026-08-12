@@ -5165,3 +5165,84 @@ def test_score_face_freeze_certification_exits_zero_when_bytes_match(
     assert "matches --expect-report" in out
     assert "freeze-certification" in out.lower()
     assert "byte-stable" in out.lower() or "bit-identical" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 Wave C · lane cx6 — gate-prefix contract (VLM6-R2-F-01 / F-03)
+# ---------------------------------------------------------------------------
+
+
+def test_score_face_failed_items_shares_caption_gate_prefix(tmp_path, monkeypatch):
+    """VLM6-R2-F-03 / rg-015 / TEST-15: face failed-items uses shared prefix.
+
+    Pre-fix face emitted ``score-face gate failed:`` so
+    ``grep "failed-items gate"`` missed face entirely. Shared constant
+    ``SCORE_GATE_PREFIX_FAILED_ITEMS`` must appear on both paths; face-specific
+    tokens live in the suffix only.
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness.cli import SCORE_GATE_PREFIX_FAILED_ITEMS
+
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run-fi.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "face-man-fi.json"
+    man_path.write_text(json.dumps(manifest))
+
+    real_face_once = cli_mod._face_score_once
+
+    def _inject_failed(record_arg, manifest_arg, **kwargs):
+        json_doc, md_doc = real_face_once(record_arg, manifest_arg, **kwargs)
+        corrupted = json.loads(json_doc)
+        counts = dict(corrupted.get("counts") or {})
+        # Keep scored > 0 so zero-scored does not fire first; failed > 0 trips
+        # the failed-items class (same order as caption score).
+        scored_n = int(counts.get("scored") or 0)
+        counts["failed"] = 1
+        if scored_n <= 0:
+            counts["scored"] = 1
+            counts["total"] = max(int(counts.get("total") or 0), 1)
+        corrupted["counts"] = counts
+        return json.dumps(corrupted, indent=2, sort_keys=True) + "\n", md_doc
+
+    monkeypatch.setattr(cli_mod, "_face_score_once", _inject_failed)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path)])
+    assert exc.value.code != 0
+    msg = str(exc.value)
+    assert SCORE_GATE_PREFIX_FAILED_ITEMS in msg, (
+        f"face failed-items must share caption prefix {SCORE_GATE_PREFIX_FAILED_ITEMS!r}; "
+        f"got: {msg!r}"
+    )
+    assert "failed-items gate" in msg
+    # Divergent historical prefix must not return (grep contract).
+    assert not msg.startswith("score-face gate failed:")
+    assert "score-face" in msg  # distinguishing suffix still present
+
+
+def test_score_gate_prefixes_documented_in_readme():
+    """VLM6-R2-F-01 / rg-006: every SCORE_GATE_PREFIX_* appears in the README.
+
+    Load-bearing drift guard: a new gate prefix constant without a README row
+    fails this test. Reads the frozen set from cli.py — does not hard-code the
+    prefix list in the test body (would drift with the production set).
+    """
+    from scripts.eval_harness.cli import SCORE_GATE_PREFIXES
+
+    readme_path = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "eval_harness"
+        / "README.md"
+    )
+    assert readme_path.is_file(), f"missing eval-harness README at {readme_path}"
+    readme = readme_path.read_text(encoding="utf-8")
+    missing = sorted(p for p in SCORE_GATE_PREFIXES if p not in readme)
+    assert not missing, (
+        "Undocumented score* gate prefix(es) — add each to README.md "
+        "§ 'Score non-zero exit prefixes' (rg-006):\n  - "
+        + "\n  - ".join(missing)
+    )
+    # Sanity: the frozenset is the durable contract surface (non-empty).
+    assert len(SCORE_GATE_PREFIXES) >= 15

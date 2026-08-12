@@ -308,25 +308,42 @@ Stdout always prints a one-line summary including `verdict=…` and
 
 ### Score non-zero exit prefixes
 
-Content gates fire **after** the report is on disk. Prefixes are class-unique:
+Content gates fire **after** the report is on disk. Prefixes are class-unique
+module constants in `cli.py` (`SCORE_GATE_PREFIX_*` / `SCORE_GATE_PREFIXES`).
+**Caption and face share the same prefix for a given class** (VLM6-R2-F-03 /
+rg-015) so one log grep (e.g. `failed-items gate`) catches both paths; any
+face-specific token is a **suffix** field, never a divergent prefix. A unit
+test asserts every constant appears in this table — adding a gate without a
+README row fails CI.
 
-| Gate / class | Exit message prefix | When it fires |
-| --- | --- | --- |
-| schema hard-key | `score schema error:` | Required dotted path missing or wrong type (`provenance.manifest_matches_fetch`, `caption.must_right_failed_images`, `verdict.wrong_name_rate`). Folded into `verdict.reasons` before write. |
-| failed-items | `score failed-items gate:` | `counts.failed > 0` — partial corpus must not look like full-corpus evidence. |
-| truncation | `score truncation gate:` | Run-record media-id multiset differs from score-time manifest (`corpus.media_id_missing` / `media_id_extra`). |
-| manifest-mismatch | `score manifest-mismatch gate:` | Run-record provenance missing fetch-time `manifest_sha256` (record not self-consistent). **Not** a hard fail on score-time file sha vs fetch-time sha (that flag stays informational). |
-| empty-rubric | `score empty-rubric gate:` | `must_right_defined_images == 0` **or** `easy_wrong_defined_images == 0` (independent; either vacuity fails closed). |
-| must-right failures | `score must-right failures gate:` | `--rubric-gate enforce` (default) and `must_right_failed_images > 0`. Bypass only via explicit `--rubric-gate skip` (artifact says `pass_ungated`). |
-| wrong-name floor vacuity | `score wrong-name floor vacuity gate:` | Images scored but `identification.evaluated_images == 0` (floor would be vacuous). |
-| wrong-name floor | `score wrong-name floor gate:` | Wrong-name floor breached (count when floor is 0.0; unrounded rate otherwise). Ignore-list pairs still count toward the rate. |
-| category vacuity / not_ready | `score category-vacuity gate:` | Critical scored slice has π=0 (positional, placement, fabricated-fact traps, identity_ordering, detection/ID P/R, caption scalars) or sample size below the score-pass floor — artifact `verdict=not_ready`, never `pass`. |
-| quality floor | `score quality-floor gate:` | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Folded into `verdict=fail` reasons **and** exits non-zero (same path as category-vacuity / `not_ready`). Distinct from vacuity (`not_ready` = not measured). |
+| Gate / class | Exit message prefix | When it fires | Operator action |
+| --- | --- | --- | --- |
+| schema hard-key | `score schema error:` | Required dotted path missing or wrong type (`provenance.manifest_matches_fetch`, `caption.must_right_failed_images`, `verdict.wrong_name_rate`). Folded into `verdict.reasons` before write. | Fix report schema / scorer field rename; re-score. |
+| aborted-record | `score aborted-record gate:` | Run-record has `aborted=true` (partial evidence). Shared by `score` and `score-face` (face suffix: `score-face:`). | Re-fetch the incomplete run; do not certify partial records. |
+| zero-scored | `score zero-scored gate:` | `counts.scored == 0` and no failed-items class applies (empty items only). Shared by caption/face. | Inspect run-record items; re-fetch or fix corpus paths. |
+| failed-items | `score failed-items gate:` | `counts.failed > 0` — partial corpus must not look like full-corpus evidence. **Shared by caption and face** (face message includes `score-face:` suffix). | Inspect `failures[]` in the written report; fix remote/NFC errors; re-fetch. |
+| truncation | `score truncation gate:` | Run-record media-id multiset differs from score-time manifest (`corpus.media_id_missing` / `media_id_extra`). Caption path. | Score against the same manifest used at fetch, or re-fetch full corpus (not `--limit N` archival stubs). |
+| manifest-mismatch | `score manifest-mismatch gate:` | Run-record provenance missing fetch-time `manifest_sha256` (record not self-consistent). **Not** a hard fail on score-time file sha vs fetch-time sha alone. | Re-fetch so the record carries fetch-time provenance. |
+| manifest-drift | `score manifest-drift gate:` | Score-time manifest digest ≠ fetch-time digest (`manifest_matches_fetch=false`) and `--allow-manifest-relabel` was **not** set. | Re-score with the fetch-time manifest, or pass `--allow-manifest-relabel` only for archival non-comparable relabel. |
+| manifest-relabel | `score manifest-relabel gate:` | Archival path: `--allow-manifest-relabel` produced `verdict=non_comparable`. Exit non-zero so it is never mistaken for adoption-ready. | Treat as archival only; `compare` rejects it. Do not promote. |
+| empty-rubric | `score empty-rubric gate:` | `must_right_defined_images == 0` **or** `easy_wrong_defined_images == 0` (independent; either vacuity fails closed). Adoption gate (soft under `--freeze-certification`). | Author Must-Right / Easy-Wrong labels on the golden corpus. |
+| must-right failures | `score must-right failures gate:` | `--rubric-gate enforce` (default) and `must_right_failed_images > 0`. Bypass only via explicit `--rubric-gate skip` (artifact says `pass_ungated`). | Fix captions / model; or `--rubric-gate skip` for harness shakedown only. |
+| wrong-name floor vacuity | `score wrong-name floor vacuity gate:` | Images scored but `identification.evaluated_images == 0` (floor would be vacuous). | Enable recognition on scored images or fix identification sampling. |
+| wrong-name floor | `score wrong-name floor gate:` | Wrong-name floor breached (count when floor is 0.0; unrounded rate otherwise). Ignore-list pairs still count toward the rate. | Remove hallucinated names; triage ignore-list only with documented rationale. |
+| category vacuity / not_ready | `score category-vacuity gate:` | Critical scored slice has π=0 (positional, placement, fabricated-fact traps, identity_ordering, detection/ID P/R, caption scalars) or sample size below the score-pass floor — artifact `verdict=not_ready`, never `pass`. | Enlarge / rebalance corpus so critical categories are measurable. |
+| quality floor | `score quality-floor gate:` | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Folded into `verdict=fail` reasons **and** exits non-zero. Distinct from vacuity (`not_ready` = not measured). | Fix model quality on the failing slice; do not adopt. |
+| freeze-cert refused | `score freeze-certification refused:` | `--freeze-certification` but a post-cert fold re-serialised the document (certified bytes ≠ written bytes). | Fix schema/evidence/relabel fold ordering; do not stamp a freeze over degraded bytes. |
+| face-report readback | `score face-report-readback gate:` | `score-face` only: written face-report JSON cannot be read back or is not an object (serialisation / IO). | Investigate write path / disk; re-run score-face. |
+
+Integrity gates (aborted / zero-scored / failed-items / truncation / manifest-* /
+schema / freeze-cert refused / face-report readback) always set exit status,
+including under `--freeze-certification`. Adoption gates (empty-rubric /
+must-right / wrong-name / quality-floor / category-vacuity) are soft under
+`--freeze-certification` and hard otherwise.
 
 The original S2A “five named gates” are failed-items, manifest-mismatch,
-empty-rubric, must-right failures, and wrong-name floor; truncation, vacuity,
-quality floors, and schema hard-keys are additional class-unique exits on the
-same path.
+empty-rubric, must-right failures, and wrong-name floor; the rest are
+additional class-unique exits on the same path.
 
 Pre-gate hard failures (no report write for that invocation):
 

@@ -2326,6 +2326,14 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $result;
             }
 
+            // Real mysqli returns int rows-affected for UPDATE. Coerce boolean-true
+            // default success to 0 so seed row-count checks match production.
+            // (INSERT left alone: 0 is falsy and would break truthy-success checks.)
+            if ($result === true && preg_match('/^UPDATE\b/i', $normalizedSql)) {
+                $this->rows_affected = 0;
+                return 0;
+            }
+
             $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT|ALTER)\b/i', $normalizedSql) ? 1 : 0;
             return $result;
         }
@@ -2420,6 +2428,11 @@ if (!isset($GLOBALS['wpdb'])) {
                 $normalizedSql,
                 $indexMatches
             )) {
+                // Test injection: null SHOW INDEX without poisoning SHOW COLUMNS
+                // (FIX-2 / LO-03 probe failure vs empty result set).
+                if (!empty($GLOBALS['__ac_show_index_returns_null'])) {
+                    return null;
+                }
                 $tableName = $indexMatches[1];
                 $keyName = $indexMatches[2] ?? null;
                 $results = [];

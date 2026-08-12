@@ -140,6 +140,41 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertStringContainsString('projected=1 observed=0', $log);
     }
 
+    /**
+     * Mapper-level densify for top-unlabeled: a sparse members map (cluster UUID
+     * with no key) plus a non-null preview_limit must treat observed zero as
+     * authoritative over a stale projected identity_count. Does not go through
+     * ClusterFacade so facade densify cannot mask a missing preview_limit.
+     */
+    public function testMapTopUnlabeledClustersTreatsSparseMissingKeyAsEmptyWhenPreviewLimitSet(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        // Sparse map: cluster-stale-empty has no key at all (not even []).
+        $sparse_members = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-empty',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            $sparse_members,
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(1, $payload);
+        $this->assertSame(0, $payload[0]['identity_count'], 'observed empty after densify must win over projected count');
+        $this->assertSame([], $payload[0]['representatives']);
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-stale-empty', $log);
+        $this->assertStringContainsString('projected=7 observed=0', $log);
+    }
+
     public function testMapClusterListKeepsProjectedCountWhenMembersNotFetched(): void
     {
         $GLOBALS['__ac_error_log'] = [];

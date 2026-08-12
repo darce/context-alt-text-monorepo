@@ -749,6 +749,97 @@ class LifecycleManagerTest extends TestCase
     }
 
     /**
+     * FIX-1 / OBS-08: a successful UPDATE that touches 0 rows while sentinels remain
+     * must refuse the fingerprint stamp (zero-row seed is not success).
+     * TEST-15: goes red when seed treats $wpdb->query() === 0 as success.
+     */
+    public function testMaybeUpgradeDoesNotStampWhenAssignedAtSeedTouchesZeroOfExpectedRows(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $countSql = $wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($countSql);
+        $this->assertIsString($seedSql);
+
+        // Pre-count reports sentinels exist; UPDATE "succeeds" but matches nothing.
+        $wpdb->queryResults[trim((string) $countSql)] = 60;
+        $wpdb->queryResults[trim((string) $seedSql)] = 0;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'zero-row seed against non-zero sentinel count must not stamp acx_version'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'zero-row seed against non-zero sentinel count must not stamp fingerprint'
+        );
+        $joined = \implode("\n", $this->getErrorLog());
+        $this->assertStringContainsString('row-count mismatch', $joined);
+        $this->assertStringContainsString('expected 60', $joined);
+        $this->assertStringContainsString('affected 0', $joined);
+    }
+
+    /**
+     * FIX-1 happy path: matching pre-count and affected rows still stamps.
+     */
+    public function testMaybeUpgradeStampsWhenAssignedAtSeedRowCountsMatch(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $countSql = $wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($countSql);
+        $this->assertIsString($seedSql);
+
+        $wpdb->queryResults[trim((string) $countSql)] = 3;
+        $wpdb->queryResults[trim((string) $seedSql)] = 3;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
+    }
+
+    /**
      * E21-14-BR-02 / rg-005: every key in build_projection_schema_statements must be applied.
      * Goes red if a table is added to the map but never passed to dbDelta.
      */

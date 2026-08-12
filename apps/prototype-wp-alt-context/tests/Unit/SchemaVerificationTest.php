@@ -426,6 +426,50 @@ SQL;
         }
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
     }
+
+    /**
+     * FIX-2 / OBS-08: null from SHOW INDEX is a failed probe, not "index absent".
+     * Must refuse the stamp so legacy idx_name is not silently left in place.
+     * TEST-15: goes red when null is treated as empty-result success.
+     */
+    public function testMaybeUpgradeDoesNotStampWhenLegacyIndexProbeReturnsNull(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+        // Index is present on the live install, but the SHOW INDEX probe fails.
+        // Scoped flag so SHOW COLUMNS verification still runs (global null would
+        // mask the probe failure behind a later verifier error).
+        $wpdb->tableIndexes['wp_acx_persons'] = ['idx_name', 'idx_normalized_name'];
+        $GLOBALS['__ac_show_index_returns_null'] = true;
+        $wpdb->last_error = '';
+
+        try {
+            $this->manager->maybe_upgrade();
+        } finally {
+            unset($GLOBALS['__ac_show_index_returns_null']);
+        }
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'failed index probe must not stamp acx_version'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'failed index probe must not stamp fingerprint'
+        );
+        $joined = \implode("\n", $this->getErrorLog());
+        $this->assertStringContainsString('legacy-index probe failed', $joined);
+        $this->assertStringContainsString('idx_name', $joined);
+        $this->assertStringContainsString('query did not execute', $joined);
+        $this->assertContains(
+            'idx_name',
+            $wpdb->tableIndexes['wp_acx_persons'] ?? [],
+            'failed probe must not DROP INDEX'
+        );
+    }
 }
 
 /**

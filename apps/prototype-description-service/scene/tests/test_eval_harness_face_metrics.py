@@ -10,10 +10,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scripts.eval_harness.face_assignment import FaceDecision
+from scripts.eval_harness.face_assignment import FaceDecision, collect_matched_faces, score_face_assignment
 from scripts.eval_harness import face_metrics as face_metrics_mod
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
+    POSITIONAL_EVAL_NOT_EVALUABLE,
+    POSITIONAL_EVAL_SCORED,
+    POSITIONAL_VACUITY_SIGNAL,
     SAMPLING_FRAME_FACE_ID,
     SAMPLING_FRAME_UNKNOWN_REJECTION,
     UNLABELED_COHORT_KEY,
@@ -29,20 +32,12 @@ from scripts.eval_harness.face_metrics import (
     labeled_left_to_right,
     latency_summary,
     nearest_rank_percentile,
+    normalized_centre_order_key,
     positional_identification,
     predicted_left_to_right,
+    predicted_names_for_positional,
     sort_identity_rows_by_normalized_centre,
     wire_bbox_normalized_centre,
-)
-
-# Optional symbols (TEST-15: unfixed code must collect then fail assertions).
-predicted_names_for_positional = getattr(face_metrics_mod, "predicted_names_for_positional", None)
-POSITIONAL_EVAL_SCORED = getattr(face_metrics_mod, "POSITIONAL_EVAL_SCORED", "scored")
-POSITIONAL_EVAL_NOT_EVALUABLE = getattr(face_metrics_mod, "POSITIONAL_EVAL_NOT_EVALUABLE", "not_evaluable")
-POSITIONAL_VACUITY_SIGNAL = getattr(
-    face_metrics_mod,
-    "POSITIONAL_VACUITY_SIGNAL",
-    "positional identification not evaluable on this corpus, π=0 for box-grounded identity claims",
 )
 
 # --- detection level (identity-agnostic) ---
@@ -273,8 +268,8 @@ def test_face_unknown_rejection_stranger_label_goes_red():
             s_max=0.9,
         )
     ]
-    clean_rate = face_unknown_rejection(clean).rate
-    bad = face_unknown_rejection(polluted)
+    clean_rate = face_unknown_rejection(clean, missed_stranger_gt=0).rate
+    bad = face_unknown_rejection(polluted, missed_stranger_gt=0)
     assert clean_rate == 1.0
     assert bad.false_accepts == 1
     assert bad.rate < 1.0
@@ -286,7 +281,7 @@ def test_face_unknown_rejection_ignores_named_probes():
         _dec(media_id=1, true_name="Alice", decision="accept", predicted_name="Alice"),
         _dec(media_id=2, true_name=None, decision="reject"),
     ]
-    result = face_unknown_rejection(decisions)
+    result = face_unknown_rejection(decisions, missed_stranger_gt=0)
     assert result.n == 1
     assert result.correct_rejects == 1
 
@@ -313,6 +308,19 @@ def test_face_unknown_rejection_missed_stranger_gt_counts_against_rate():
     assert "missed" in SAMPLING_FRAME_UNKNOWN_REJECTION.lower()
     assert "full_corpus_including_unpublishable" not in SAMPLING_FRAME_UNKNOWN_REJECTION
     assert with_misses.sampling_frame == SAMPLING_FRAME_UNKNOWN_REJECTION
+
+
+def test_face_unknown_rejection_requires_missed_stranger_gt():
+    """S3-03 / AUDIT-07: production-shaped call without attributed misses must fail.
+
+    Pre-fix fail-open default of 0 published rate=1.0 with n=3 while 50
+    strangers were unattributed. Post-fix: missing kwarg is TypeError.
+    """
+    matched = [
+        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(3)
+    ]
+    with pytest.raises(TypeError, match="missed_stranger_gt"):
+        face_unknown_rejection(matched)  # type: ignore[call-arg]
 
 
 # --- clustering (single-linkage) ---
@@ -715,7 +723,10 @@ def test_unknown_rejection_error_target_discloses_trial_dependence():
     assert "n=43" in UNKNOWN_REJECTION_ERROR_TARGET
     assert "independent" in UNKNOWN_REJECTION_ERROR_TARGET
     assert "effective" in UNKNOWN_REJECTION_ERROR_TARGET
-    result = face_unknown_rejection([_dec(media_id=1, true_name=None, decision="reject")])
+    result = face_unknown_rejection(
+        [_dec(media_id=1, true_name=None, decision="reject")],
+        missed_stranger_gt=0,
+    )
     assert "independent" in result.error_target
 
 
@@ -786,6 +797,34 @@ def test_wire_bbox_normalized_centre_converts_pixel_corner():
     )
 
 
+def test_wire_bbox_normalized_centre_rejects_degenerate_box_size():
+    """S3-07: w<=0 / h<=0 is unpositionable None (not a fabricated centre)."""
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 0, "height": 10},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 100, "y": 0, "width": -40, "height": 10},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 10, "height": 0},
+            image_width=200,
+            image_height=100,
+        )
+        is None
+    )
+
+
 def test_predicted_left_to_right_matches_centre_not_corner_order():
     """Corner-x and centre-x disagree: wide-left vs narrow-right → centre order wins."""
     # Image 400px wide.
@@ -808,12 +847,15 @@ def test_predicted_left_to_right_matches_centre_not_corner_order():
         "Narrow",
         "Wide",
     ]
-    # Canonical alias used by production callers (VLM6-B-03).
-    if predicted_names_for_positional is not None:
-        assert predicted_names_for_positional(identities, image_width=400, image_height=200) == [
-            "Narrow",
-            "Wide",
-        ]
+    # S3-06: canonical alias is a hard import and shares one implementation.
+    assert predicted_names_for_positional is predicted_left_to_right or (
+        predicted_names_for_positional(identities, image_width=400, image_height=200)
+        == predicted_left_to_right(identities, image_width=400, image_height=200)
+    )
+    assert predicted_names_for_positional(identities, image_width=400, image_height=200) == [
+        "Narrow",
+        "Wide",
+    ]
     # Without image size both fall to unpositioned → alpha: "Narrow" < "Wide".
     # Use names that reverse under alpha to prove the unpositioned path.
     swapped_names = [
@@ -834,6 +876,98 @@ def test_predicted_left_to_right_matches_centre_not_corner_order():
         "Aardvark",  # alpha fallback among unpositioned
         "Zebra",
     ]
+
+
+def test_centre_x_tie_both_apis_share_one_order_key():
+    """S3-01 / rg-005: identical centre-x, different centre-y → one shared order.
+
+    Pre-fix: predicted_left_to_right sorted (cx, name) → [Alice, Bob] while
+    sort_identity_rows_by_normalized_centre sorted (cx, cy, name) → [Bob, Alice].
+    Post-fix: both use normalized_centre_order_key → same L→R sequence.
+    """
+    rows = [
+        {"name": "Alice", "bbox": {"x": 90, "y": 200, "width": 20, "height": 20}},  # cx=100 cy=210
+        {"name": "Bob", "bbox": {"x": 90, "y": 10, "width": 20, "height": 20}},  # cx=100 cy=20
+    ]
+    predicted = predicted_left_to_right(rows, image_width=200, image_height=400)
+    sorted_rows = sort_identity_rows_by_normalized_centre(
+        rows, image_width=200, image_height=400
+    )
+    row_names = [r["name"] for r in sorted_rows]
+    assert predicted == row_names
+    assert predicted == ["Bob", "Alice"]  # lower centre-y first
+    # Shared pure key is the single definition (no third fork).
+    assert normalized_centre_order_key(0.5, 0.05, "Bob") < normalized_centre_order_key(
+        0.5, 0.525, "Alice"
+    )
+
+
+def test_labeled_left_to_right_tie_stable_across_input_order():
+    """S3-02: exact-x ties use secondary keys; input array order must not decide.
+
+    Pre-fix: stable sort on x alone → input order wins on pure ties.
+    Post-fix: (x, y, name) matches predicted path → same sequence either way.
+    """
+    order_a = [{"name": "Bob", "x": 0.5, "y": 0.1}, {"name": "Alice", "x": 0.5, "y": 0.1}]
+    order_b = [{"name": "Alice", "x": 0.5, "y": 0.1}, {"name": "Bob", "x": 0.5, "y": 0.1}]
+    assert labeled_left_to_right(order_a) == labeled_left_to_right(order_b)
+    assert labeled_left_to_right(order_a) == ["Alice", "Bob"]  # name tie-break
+    # Pure-x tie without y still name-stable (y defaults to 0.0).
+    bare_a = [{"name": "Bob", "x": 0.5}, {"name": "Alice", "x": 0.5}]
+    bare_b = [{"name": "Alice", "x": 0.5}, {"name": "Bob", "x": 0.5}]
+    assert labeled_left_to_right(bare_a) == labeled_left_to_right(bare_b) == ["Alice", "Bob"]
+
+
+def test_missed_gt_named_only_stranger_not_id_fn():
+    """S3-04 / EVAL-16 / EVAL-19: unmatched stranger GT is not identification FN.
+
+    Zero detections, GT = named Alice + anonymous stranger:
+    - assignment.missed_gt == 1 (Alice only)
+    - assignment.missed_stranger_gt == 1
+    - face_identification_pr FN folds named misses only
+    """
+    run_items = [
+        {
+            "media_id": 1,
+            "path": "a.jpg",
+            "image_size": [100, 100],
+            "faces": [],
+        }
+    ]
+    gt = {
+        1: [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": "Alice"},
+            {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1, "name": None},
+        ]
+    }
+    matched, associations, false_det, missed_named, missed_stranger = collect_matched_faces(
+        run_items, gt
+    )
+    assert matched == []
+    assert false_det == 0
+    assert missed_named == 1
+    assert missed_stranger == 1
+    assert len(associations[1].unmatched_gt) == 2
+
+    assignment = score_face_assignment(run_items, gt, k_folds=2)
+    assert assignment.missed_gt == 1
+    assert assignment.missed_stranger_gt == 1
+
+    pr_named = face_identification_pr(
+        assignment.decisions,
+        missed_gt=assignment.missed_gt,
+        unmatched_detections=assignment.false_detections,
+    )
+    assert pr_named.false_negatives == 1  # Alice only
+    assert pr_named.missed_gt == 1
+
+    # Contrasting wrong unit: feeding both misses would inflate FN (pre-fix).
+    pr_inflated = face_identification_pr(
+        [],
+        missed_gt=2,  # Alice + stranger — wrong observation unit
+        unmatched_detections=0,
+    )
+    assert pr_inflated.false_negatives == 2
 
 
 def test_predicted_left_to_right_dedupes_leftmost_like_labeled():

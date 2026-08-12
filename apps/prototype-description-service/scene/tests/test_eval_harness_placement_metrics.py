@@ -1,5 +1,6 @@
 """VLM-6 S1: spatial-relation placement correctness metric."""
 
+import scripts.eval_harness.placement_metrics as placement_metrics_mod
 import pytest
 
 from scripts.eval_harness.manifest import SpatialFact, SpatialRelation
@@ -9,6 +10,13 @@ from scripts.eval_harness.placement_metrics import (
     placement_accuracy,
     score_placement,
 )
+
+
+def test_module_docstring_states_viewer_left_convention():
+    """S3-08: relations are image/viewer-left, not anatomical left."""
+    doc = placement_metrics_mod.__doc__ or ""
+    assert "viewer-left" in doc
+    assert "anatomical" in doc
 
 
 def _fact(subject, relation, reference=None, phrases=None, reference2=None):

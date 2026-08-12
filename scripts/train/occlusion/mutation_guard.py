@@ -97,7 +97,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1651  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1720  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -191,6 +191,8 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestA1002DenyFirstOrdering::test_ultralytics_artifact_forms_deny_on_training_data_row[yoloseg]',
     'test_license_policy.py::TestA1002DenyFirstOrdering::test_ultralytics_artifact_forms_deny_on_training_data_row[yoloseg_v8]',
     'test_license_policy.py::TestA1002DenyFirstOrdering::test_ultralytics_artifact_forms_deny_on_training_data_row[yolosg]',
+    'test_license_policy.py::TestA123SharedWeightsDoorHelper::test_doors_agree_on_dual_axis_and_nc_only',
+    'test_license_policy.py::TestA123SharedWeightsDoorHelper::test_helper_exists_and_both_doors_call_it',
     'test_license_policy.py::TestA301ToolingScalarDenylistFold::test_tooling_scalar_denylisted_package[ultralytics-yolo]',
     'test_license_policy.py::TestA301ToolingScalarDenylistFold::test_tooling_scalar_denylisted_package[yolo-v8]',
     'test_license_policy.py::TestA301ToolingScalarDenylistFold::test_tooling_scalar_denylisted_package[yolo_v8]',
@@ -301,6 +303,73 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB1105CompactMembershipNoteParity::test_compact_and_underscore_note_parity[yolonasposel-yolo_nas_pose_l]',
     'test_license_policy.py::TestB1106InsightfaceNoteWording::test_buffalo_l_keeps_historical_buffalo_wording',
     'test_license_policy.py::TestB1106InsightfaceNoteWording::test_insightface_note_names_model_zoo_not_buffalo_pack',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_deny_has_folded_ab_claim_load_bearing_for_yolo_x',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_elevated_deny_c_hits_compact_debris_directly',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_elevated_c_alone_turns_compact_pins_red',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_red_proof_steal_alone_turns_long_rem_pins_red',
+    'test_license_policy.py::TestB121ElevatedDenyCompactCloser::test_steal_owns_long_rem_only',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[hustvl_yolos]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[hustvl_yolos_tiny]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[megvii_yolox_s]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[myyolo]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[ppyolo]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[ppyoloe]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[ppyolov2]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolodummy]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolof_r101]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolof_r50]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolop]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolop_v3]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolopv2]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolos-tiny]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolos_base]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_admit_pins_survive_reconstitution[yolos_small]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_full_row_and_doors_deny_separator_twins',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[checkpoints_yolos_eg]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[hustvl_yolos_eg]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[megvii_yolos_eg]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[yolof_ree]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[yolop_ose]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[yolos_eg]',
+    'test_license_policy.py::TestB122SeparatorTwinReconstitution::test_separator_twins_deny[yolos_eg_v8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[org/yolosv8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[weights_yolosv8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolofv2]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolopv8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolos0g]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolos1eg]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolos8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolos_v8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yoloseg1]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yolosv8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yoloxs2]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_digit_laundering_denies[yoloxv8]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_no_global_digit_wildcard',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[hustvl/yolos-small]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[ppyoloe]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolof_r50]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolopv2]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolos-tiny]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolos_base]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolox_darknet]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolox_nano]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yolox_s]',
+    'test_license_policy.py::TestB123PerFamilyCompactTags::test_real_family_tags_admit[yoloxs]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_family_compact_tag_table_pin',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolos_x]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosb]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolose]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosl]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosm]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosn]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolost]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yolos_letter_twins_deny[yolosx]',
+    'test_license_policy.py::TestB124YolosSizeLetterTwins::test_yoloxs_real_size_admits',
+    'test_license_policy.py::TestB125CarveOutTest15Debts::test_free_and_blah_outside_nc_trailing_shield_tags',
+    'test_license_policy.py::TestB125CarveOutTest15Debts::test_red_proof_elevated_c_flag_is_load_bearing',
+    'test_license_policy.py::TestB125CarveOutTest15Debts::test_red_proof_steal_flag_is_load_bearing',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_exact_ultralytics_buffalo_still_agpl_precedence',
+    'test_license_policy.py::TestB126AgplAdjacentGluePrefix::test_ultralyticsplus_buffalo_l_is_nc_not_agpl',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-bytes]',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-dict]',
     'test_license_policy.py::TestB201PackageIdentityNonStringFailClosed::test_non_string_package_invalid_row_every_door[model_ingest-empty-list]',
@@ -2262,12 +2331,14 @@ def _m15_pending_reason_swap(src: str) -> str:
 def _m16_denylist_reason_swap(src: str) -> str:
     """RF-02: denylist still hits, reason demoted (GATE-34 axis).
 
-    Wave F8 (B11-02) split the derived-door floor promotion into an
-    AGPL-first branch and an NC-floor branch (both use ``floor.reason``).
-    Mutate **both** derived-path sites; the twin sites on ``audit_source``
-    are left alone so the kill stays on GATE-34 derived-path pins.
+    Wave F8 (B11-02) split floor promotion into an AGPL-first branch and an
+    NC-floor branch (both use ``floor.reason``). Wave F9 (A12-3) extracted
+    both into the shared ``_audit_weights_lineage_token`` helper (detail
+    uses ``{field}=`` so one edit site feeds both doors). Mutate **both**
+    branches in that helper; derived-door GATE-34 victims remain sufficient
+    (a source-only twin mutant is structurally impossible — FIR-7-A12-3).
     """
-    # AGPL-first membership-path precedence branch (FIR-7-B11-02).
+    # AGPL-first membership-path precedence branch (FIR-7-B11-02 / A12-3).
     old_agpl = (
         "    if (\n"
         "        floor is not None\n"
@@ -2276,7 +2347,7 @@ def _m16_denylist_reason_swap(src: str) -> str:
         "        return _fail(\n"
         "            floor.reason,\n"
         "            detail=(\n"
-        '                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "\n'
+        '                f"{field}={text!r} hits PACKAGE_DENYLIST entry "\n'
     )
     new_agpl = (
         "    if (\n"
@@ -2286,18 +2357,17 @@ def _m16_denylist_reason_swap(src: str) -> str:
         "        return _fail(\n"
         "            RejectionReason.UNREGISTERED_DERIVED_MODEL,  # MUTATION M16: reason swap\n"
         "            detail=(\n"
-        '                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "\n'
+        '                f"{field}={text!r} hits PACKAGE_DENYLIST entry "\n'
     )
     src = _replace_unique(src, old_agpl, new_agpl, "M16")
-    # NC-axis floor branch (comment makes the derived-path site unique vs
-    # the audit_source twin).
+    # NC-axis floor branch (comment + shared-helper {field}= form).
     old_nc = (
         "    # NC-axis floor promotion (no AGPL hit; membership missed).\n"
         "    if floor is not None:\n"
         "        return _fail(\n"
         "            floor.reason,\n"
         "            detail=(\n"
-        '                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "\n'
+        '                f"{field}={text!r} hits PACKAGE_DENYLIST entry "\n'
     )
     new_nc = (
         "    # NC-axis floor promotion (no AGPL hit; membership missed).\n"
@@ -2305,7 +2375,7 @@ def _m16_denylist_reason_swap(src: str) -> str:
         "        return _fail(\n"
         "            RejectionReason.UNREGISTERED_DERIVED_MODEL,  # MUTATION M16: reason swap\n"
         "            detail=(\n"
-        '                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "\n'
+        '                f"{field}={text!r} hits PACKAGE_DENYLIST entry "\n'
     )
     return _replace_unique(src, old_nc, new_nc, "M16")
 
@@ -2768,6 +2838,27 @@ MUTATIONS: list[Mutation] = [
             "test_c_shaped_door_promotion_via_monkeypatch",
             "test_not_insightface_door_admit_is_deliberate",
             "test_scrfd_rejects_rows_and_doors",
+            # Wave F9 (B12-1..B12-6 / A12-3): elevated deny-(c) / steal
+            # red-proofs, separator-twin reconstitution, per-family digit
+            # laundering / YOLOS letter twins, B12-5 flag load-bearing pins,
+            # shared-door helper parity, and AGPL-glue exact pin all die when
+            # the hit helper always misses (they precondition on a denylist
+            # hit). Shape of _package_denylist_hit unchanged; new deny
+            # witnesses join the M14 victim set so attribution stays
+            # strong-form (RV-07).
+            "test_steal_owns_long_rem_only",
+            "test_red_proof_elevated_c_alone_turns_compact_pins_red",
+            "test_red_proof_steal_alone_turns_long_rem_pins_red",
+            "test_deny_has_folded_ab_claim_load_bearing_for_yolo_x",
+            "test_separator_twins_deny",
+            "test_full_row_and_doors_deny_separator_twins",
+            "test_digit_laundering_denies",
+            "test_yolos_letter_twins_deny",
+            "test_yoloxs_real_size_admits",
+            "test_red_proof_elevated_c_flag_is_load_bearing",
+            "test_red_proof_steal_flag_is_load_bearing",
+            "test_doors_agree_on_dual_axis_and_nc_only",
+            "test_exact_ultralytics_buffalo_still_agpl_precedence",
         ),
     ),
     Mutation(
@@ -2787,11 +2878,12 @@ MUTATIONS: list[Mutation] = [
         name="M16",
         description="denylist reason→UNREGISTERED_DERIVED_MODEL (RF-02 / GATE-34)",
         apply="m16",
-        # Wave F8: both AGPL-first and NC-floor floor.reason sites on
-        # audit_derived_from_model are mutated (B11-02 split). Kill set is
-        # GATE-34 plus every pin that asserts the honest denylisted_package
-        # / nc_model_derived reason on the derived door-promotion path
-        # (RV-07). audit_source twin sites are intentionally not mutated.
+        # Wave F9 (A12-3): both AGPL-first and NC-floor floor.reason sites
+        # live in shared _audit_weights_lineage_token (one edit, both doors).
+        # Kill set is GATE-34 plus every pin that asserts the honest
+        # denylisted_package / nc_model_derived reason on either door-
+        # promotion path (RV-07). Source-door BR-24 / B12-6 AGPL pins join
+        # because the shared helper is the sole reason-emission site.
         expected_victims=(
             "test_gate34_audit_derived_from_model_denylisted_package",
             "test_gate34_training_data_row_derived_ultralytics_reason",
@@ -2807,6 +2899,9 @@ MUTATIONS: list[Mutation] = [
             "test_multi_segment_under_junk_prefix_rejects_rows_and_doors",
             "test_c_shaped_door_promotion_via_monkeypatch",
             "test_scrfd_rejects_rows_and_doors",
+            # Wave F9 (A12-3): source-door reason pins now share the helper.
+            "test_br24_ultralytics_source_field_fails_denylisted",
+            "test_exact_ultralytics_buffalo_still_agpl_precedence",
         ),
     ),
     Mutation(

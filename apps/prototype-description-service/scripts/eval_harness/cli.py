@@ -243,7 +243,7 @@ def _fold_manifest_drift_into_verdict(
             f"fetched under {fetch_sha}; numbers are not adoption-comparable (EVAL-13)"
         )
         prior = [r for r in (verdict.get("reasons") or []) if r != reason]
-        verdict["verdict"] = _VERDICT_NON_COMPARABLE
+        verdict["verdict"] = ScoreVerdict.NON_COMPARABLE.value
         verdict["reasons"] = [reason] + prior
         scored["verdict"] = verdict
         return None
@@ -252,7 +252,7 @@ def _fold_manifest_drift_into_verdict(
         f"but fetched under {fetch_sha} (manifest_matches_fetch=false); numbers are not "
         f"comparable to a baseline scored on the fetch-time corpus (EVAL-13). "
         f"Pass --allow-manifest-relabel only for archival relabelling (persists "
-        f"verdict={_VERDICT_NON_COMPARABLE}, rejected by compare)"
+        f"verdict={ScoreVerdict.NON_COMPARABLE.value}, rejected by compare)"
     )
 
 
@@ -335,7 +335,7 @@ def fetch_run_record(
     images_dir: str,
     client: Any,
     *,
-    head_sha: str,
+    head_sha: str | None,
     limit: int | None = None,
     stall_limit: int = DEFAULT_STALL_LIMIT,
     started_at: str = "1970-01-01T00:00:00Z",
@@ -643,11 +643,25 @@ def _require_live_env() -> tuple[str, str, str]:
     return base_url, api_key, tenant_id
 
 
-def _head_sha() -> str:
+def _head_sha() -> str | None:
+    """Resolve live git HEAD, or None when unresolvable (never fabricate).
+
+    Unresolvable means missing git binary, non-repo cwd, or rev-parse failure.
+    Callers store null in provenance — not ``\"unknown\"`` or forty zeros
+    (HARM-03 / RV2-06 / S4-06 / rg-015).
+    """
     try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+        return None
+    if not out or out == "0" * 40:
+        return None
+    return out
 
 
 def _images_dir() -> str:
@@ -1272,10 +1286,6 @@ _COMMITTED_SCORE_REPORT_MARKERS: tuple[str, ...] = (
     "/docs/tasks/vlm/bakeoff-results",
     "docs/tasks/vlm/bakeoff-results",
 )
-# Distinct non-gated verdict for archival relabel (VLM6-F-03 / EVAL-13). compare
-# refuses this status — it is not an adoption-eligible pass. Alias of the enum
-# member so production stays on one vocabulary (S2-09 / sr-007).
-_VERDICT_NON_COMPARABLE = ScoreVerdict.NON_COMPARABLE.value
 # golden.json harness size — not Golden-100; adoption PASS is refused (EVAL-04).
 _HARNESS_ANCHOR_CORPUS_SIZE = 37
 
@@ -1537,9 +1547,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Archival relabel path: verdict is non_comparable and must not green-exit as
     # a certifiable pass (compare rejects it; process still exits non-zero so an
     # operator cannot mistake it for adoption-ready output).
-    if (scored.get("verdict") or {}).get("verdict") == _VERDICT_NON_COMPARABLE:
+    if (scored.get("verdict") or {}).get("verdict") == ScoreVerdict.NON_COMPARABLE.value:
         _score_gate_fail(
-            f"score manifest-relabel gate: verdict={_VERDICT_NON_COMPARABLE} "
+            f"score manifest-relabel gate: verdict={ScoreVerdict.NON_COMPARABLE.value} "
             f"(archival relabel only; not adoption-comparable; see {json_path})"
         )
     # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
@@ -1646,6 +1656,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # scoring-path bytes match the freeze (fx8); integrity failures still
     # non-zero so process exit matches the integrity half of the artifact.
     verdict_value = (scored.get("verdict") or {}).get("verdict")
+    # RV1-01 / S2-02 / EVAL-04: quality-floor breaches are stamped into the
+    # artifact as verdict=fail + quality-floor: reasons by report.py, but were
+    # never wired into the exit path. Sample-size vacuity (not_ready) already
+    # exits non-zero; quality floors must use the same gate machinery so a
+    # shell that keys on score's exit status cannot green-light a failing run.
+    # Soft under --freeze-certification (return above). Class-unique prefix
+    # ``score quality-floor gate:`` matches the exit-prefix table in README.
+    verdict_reasons = list((scored.get("verdict") or {}).get("reasons") or [])
+    quality_floor_reasons = [r for r in verdict_reasons if str(r).startswith("quality-floor:")]
+    if quality_floor_reasons:
+        reason_hint = "; ".join(quality_floor_reasons[:3])
+        _score_gate_fail(
+            f"score quality-floor gate: {reason_hint} "
+            f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {json_path})"
+        )
     if verdict_value == ScoreVerdict.NOT_READY.value:
         reasons = list((scored.get("verdict") or {}).get("reasons") or [])
         reason_hint = "; ".join(reasons[:3]) if reasons else "category claim units π=0"
@@ -2242,9 +2267,9 @@ def _cmd_compare(args: argparse.Namespace) -> None:
             f"pass_ungated / non_comparable / fail baselines cannot certify a candidate)"
         )
     c_verdict = (candidate.get("verdict") or {}).get("verdict")
-    if c_verdict == _VERDICT_NON_COMPARABLE:
+    if c_verdict == ScoreVerdict.NON_COMPARABLE.value:
         sys.exit(
-            f"compare adoption gate: candidate verdict={_VERDICT_NON_COMPARABLE} "
+            f"compare adoption gate: candidate verdict={ScoreVerdict.NON_COMPARABLE.value} "
             f"(archival relabel; not adoption-comparable)"
         )
     # fail is still comparable for regression reporting; other statuses block.

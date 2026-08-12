@@ -321,7 +321,7 @@ Content gates fire **after** the report is on disk. Prefixes are class-unique:
 | wrong-name floor vacuity | `score wrong-name floor vacuity gate:` | Images scored but `identification.evaluated_images == 0` (floor would be vacuous). |
 | wrong-name floor | `score wrong-name floor gate:` | Wrong-name floor breached (count when floor is 0.0; unrounded rate otherwise). Ignore-list pairs still count toward the rate. |
 | category vacuity / not_ready | `score category-vacuity gate:` | Critical scored slice has π=0 (positional, placement, fabricated-fact traps, identity_ordering, detection/ID P/R, caption scalars) or sample size below the score-pass floor — artifact `verdict=not_ready`, never `pass`. |
-| quality floor | (folded into `verdict=fail` reasons) | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Distinct from vacuity (`not_ready` = not measured). |
+| quality floor | `score quality-floor gate:` | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Folded into `verdict=fail` reasons **and** exits non-zero (same path as category-vacuity / `not_ready`). Distinct from vacuity (`not_ready` = not measured). |
 
 The original S2A “five named gates” are failed-items, manifest-mismatch,
 empty-rubric, must-right failures, and wrong-name floor; truncation, vacuity,

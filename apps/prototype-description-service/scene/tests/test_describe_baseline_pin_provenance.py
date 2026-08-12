@@ -12,11 +12,20 @@ and pin mode must be an explicit ``--pin``/``--no-pin`` flag so empty-string
 ``--live-head-sha`` cannot silently exit pin mode (RV2-05).
 
 Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-008, rg-015, sr-006.
+RV3-05: when git is available and the cwd is a work tree, an explicit SHA must
+also resolve via ``git rev-parse --verify <sha>^{commit}`` — arbitrary 40-hex
+is not enough.
+
+HARM-03 / RV2-06: unresolvable HEAD is ``None`` everywhere (cli / fusion_runner /
+describe_baseline); never ``\"unknown\"`` or forty zeros.
+
+Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-008, rg-015, sr-006, sr-007.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,8 +44,20 @@ from scripts.eval_harness.promote_atomic import validate_live_head_sha
 
 _GOLDEN = Path(__file__).resolve().parent / "seed" / "golden.json"
 _ZERO_SHA = "0" * 40
-_REAL_SHA = "a" * 40
 _CANONICAL_TS = "2026-08-11T00:00:00Z"
+
+
+def _worktree_head_sha() -> str:
+    """Canonical 40-char HEAD from the active worktree (never invent)."""
+    out = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert len(out) == 40 and all(c in "0123456789abcdef" for c in out.lower())
+    assert out != _ZERO_SHA
+    return out.lower()
 
 
 def test_s4_04_pin_mode_nulls_head_sha_and_started_at(tmp_path: Path) -> None:
@@ -102,9 +123,38 @@ def test_s4_06_resolve_head_sha_refuses_forty_zero_sentinel() -> None:
 
 
 def test_s4_06_resolve_head_sha_accepts_real_sha() -> None:
-    """Guard must not reject everything — genuine resolvable SHA still passes."""
-    assert db.resolve_head_sha(_REAL_SHA) == _REAL_SHA
-    assert db.resolve_head_sha(_REAL_SHA.upper()) == _REAL_SHA  # lowercased
+    """RV3-05 (a): genuine worktree HEAD passes git rev-parse --verify.
+
+    Pre-fix used ``\"a\"*40`` and only checked format round-trip — that documented
+    the weak contract. This pins the tightened contract against a real commit.
+    """
+    real = _worktree_head_sha()
+    assert db.resolve_head_sha(real) == real
+    assert db.resolve_head_sha(real.upper()) == real  # lowercased + verified
+
+
+def test_rv3_05_resolve_head_sha_refuses_arbitrary_40_hex() -> None:
+    """RV3-05: format-valid but non-existent commit is refused when git can answer."""
+    fake = "a" * 40
+    # Sanity: worktree HEAD is not the fabricated hex (or test is vacuous).
+    assert fake != _worktree_head_sha()
+    with pytest.raises(SystemExit, match="not a resolvable commit") as excinfo:
+        db.resolve_head_sha(fake)
+    assert fake in str(excinfo.value)
+
+
+def test_rv3_05_resolve_head_sha_degrades_without_git(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When git binary is missing, format-valid SHA is accepted (sane degrade)."""
+    import scripts.eval_harness.describe_baseline as db_mod
+
+    def _no_git(*_a, **_k):
+        raise OSError("git missing")
+
+    monkeypatch.setattr(db_mod.subprocess, "run", _no_git)
+    fake = "deadbeef" * 5
+    assert db.resolve_head_sha(fake) == fake
 
 
 def test_s4_06_resolve_head_sha_unset_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,3 +277,57 @@ def test_rv2_05_cli_live_head_requires_no_pin(tmp_path: Path) -> None:
                 _REAL_SHA,
             ]
         )
+def test_rv2_06_cli_head_sha_returns_none_on_git_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cli._head_sha: git failure → None (never \"unknown\" or forty zeros)."""
+    from scripts.eval_harness import cli as cli_mod
+
+    def _boom(*_a, **_k):
+        raise OSError("git missing")
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _boom)
+    got = cli_mod._head_sha()
+    assert got is None
+    assert got != "unknown"
+    assert got != _ZERO_SHA
+
+
+def test_rv2_06_fusion_head_sha_returns_none_on_git_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fusion_runner._head_sha: git failure → None (never forty zeros)."""
+    from scripts.eval_harness import fusion_runner as fr
+
+    def _boom(*_a, **_k):
+        raise FileNotFoundError("git missing")
+
+    monkeypatch.setattr(fr.subprocess, "check_output", _boom)
+    got = fr._head_sha()
+    assert got is None
+    assert got != _ZERO_SHA
+
+
+def test_rv2_06_no_head_sha_path_emits_forty_zeros(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cross-module: unresolvable HEAD never travels as the fabricated sentinel."""
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness import fusion_runner as fr
+
+    def _cli_boom(*_a, **_k):
+        raise OSError("no git")
+
+    def _fr_boom(*_a, **_k):
+        raise FileNotFoundError("no git")
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _cli_boom)
+    monkeypatch.setattr(fr.subprocess, "check_output", _fr_boom)
+    monkeypatch.delenv("HEAD_SHA", raising=False)
+    monkeypatch.setattr(db, "HEAD_SHA", None)
+
+    for value in (cli_mod._head_sha(), fr._head_sha(), db.resolve_head_sha(None)):
+        assert value is None or value != _ZERO_SHA
+        assert value != _ZERO_SHA
+        # And never the pre-fix string encodings of "absent".
+        assert value not in ("unknown", "")

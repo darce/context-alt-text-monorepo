@@ -1494,8 +1494,12 @@ def _audit_clearance_decision(
     decision = entry.verification.clearance_decision
     if not decision:
         return None
-    if row_clearance and str.strip(str(row_clearance)) == decision:
-        return None
+    # FIR-7-RV-13: exact match on the canonical lower-case token only —
+    # case-fold drift (e.g. upper-cased decision string) is refused.
+    if row_clearance is not None:
+        supplied = str.strip(str(row_clearance))
+        if supplied == decision:
+            return None
     label = source_label or entry.source_id
     return _fail(
         RejectionReason.PENDING_LEGAL_CLEARANCE,
@@ -2337,8 +2341,11 @@ def audit_occluder_asset(asset: Mapping[str, Any]) -> LicenseAuditResult:
             )
     else:
         photo_raw = None
+    # FIR-7-RV-13: exact match on the canonical lower-case token only.
+    # Case-fold drift (e.g. photo_clearance='CLEARED') is refused — same
+    # fail-closed discipline as clearance_decision on the lineage axis.
     photo_token = _row_photo_clearance_token(asset)
-    photo = _normalize_token(photo_token) if photo_token else ""
+    photo = photo_token if photo_token else ""
     if photo not in OCCLUDER_ALLOWED_CLEARANCES:
         return _fail(
             RejectionReason.UNCLEARED_OCCLUDER_ASSET,

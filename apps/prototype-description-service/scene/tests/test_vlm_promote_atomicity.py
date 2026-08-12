@@ -844,13 +844,124 @@ def test_vlm6_r2_b02_scavenge_does_not_reclaim_under_live_lock(
     # The invariant under test is mid-lock survival, already asserted above.
 
 
-def test_vlm6_r2_b02_journal_tmp_is_unique() -> None:
-    """Journal write tmp must not be a single fixed ``.{journal}.tmp`` name."""
-    src = inspect.getsource(promote._write_promote_journal)
-    assert ".tmp" in src
-    # Fixed single-name pattern that concurrent writers clobber.
-    assert 'f".{ns.journal_name}.tmp"' not in src
-    assert "uuid" in src or "getpid" in src
+def test_vlm6_r2_b02_journal_tmp_is_unique_behavioural(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent journal writers must use distinct tmp paths (RE-02 / TEST-15).
+
+    Replaces the source-string greptest that stayed green under a concat fixed-tmp
+    mutant (``dest_dir / ("." + ns.journal_name + ".tmp")``). Observe the real
+    tmp paths written at runtime; a fixed-tmp regression collides and goes red.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    tmp_paths: list[str] = []
+    lock = threading.Lock()
+    real_write_text = Path.write_text
+
+    def spy_write_text(self: Path, data, *args, **kwargs):  # noqa: ANN001
+        if str(self).endswith(".tmp"):
+            with lock:
+                tmp_paths.append(str(self.resolve()))
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", spy_write_text)
+
+    n_writers = 8
+    barrier = threading.Barrier(n_writers)
+    errors: list[BaseException] = []
+
+    def writer(i: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            promote._write_promote_journal(
+                dest,
+                CAPTION_PROMOTE,
+                {
+                    "stage": str(dest / f"{CAPTION_PROMOTE.stage_prefix}{i}"),
+                    "names": ["man.json"],
+                    "phase": "staged",
+                },
+            )
+        except BaseException as exc:  # noqa: BLE001 — collect for assertion
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert errors == [], f"journal writers raised: {errors!r}"
+    assert len(tmp_paths) == n_writers, (
+        f"expected {n_writers} tmp writes, got {len(tmp_paths)}: {tmp_paths}"
+    )
+    assert len(set(tmp_paths)) == n_writers, (
+        f"journal tmp paths must be unique per writer; collisions in {tmp_paths}"
+    )
+
+
+def test_vlm6_r2_b02_journal_tmp_fixed_mutant_goes_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TEST-15 control: fixed journal tmp must fail the uniqueness contract."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    tmp_paths: list[str] = []
+    lock = threading.Lock()
+    real_write_text = Path.write_text
+
+    def spy_write_text(self: Path, data, *args, **kwargs):  # noqa: ANN001
+        if str(self).endswith(".tmp"):
+            with lock:
+                tmp_paths.append(str(self.resolve()))
+        return real_write_text(self, data, *args, **kwargs)
+
+    def fixed_tmp_write(
+        dest_dir: Path, ns: promote.PromoteNamespace, payload: dict
+    ) -> None:
+        body = dict(payload)
+        body["generator"] = ns.generator
+        path = dest_dir / ns.journal_name
+        # Concat form that defeats the old source greptest (RE-02 mutant).
+        tmp = dest_dir / ("." + ns.journal_name + ".tmp")
+        tmp.write_text(json.dumps(body, sort_keys=True) + "\n")
+        os.replace(tmp, path)
+
+    monkeypatch.setattr(Path, "write_text", spy_write_text)
+    monkeypatch.setattr(promote, "_write_promote_journal", fixed_tmp_write)
+
+    n_writers = 6
+    barrier = threading.Barrier(n_writers)
+
+    def writer(i: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            promote._write_promote_journal(
+                dest,
+                CAPTION_PROMOTE,
+                {
+                    "stage": str(dest / f"{CAPTION_PROMOTE.stage_prefix}{i}"),
+                    "names": ["man.json"],
+                    "phase": "staged",
+                },
+            )
+        except OSError:
+            # Clobber races are expected under the fixed-tmp mutant.
+            pass
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    # Fixed tmp → every writer shares one path → uniqueness contract fails.
+    assert tmp_paths, "mutant must still write at least one tmp"
+    assert len(set(tmp_paths)) < n_writers, (
+        f"fixed-tmp mutant must collide; paths={tmp_paths}"
+    )
 
 
 def test_vlm6_cx3_validate_live_head_sha_no_verify_git_param() -> None:
@@ -861,3 +972,257 @@ def test_vlm6_cx3_validate_live_head_sha_no_verify_git_param() -> None:
     )
     # Positional + git_cwd only.
     assert list(sig.parameters) == ["raw", "git_cwd"]
+
+
+# ---------------------------------------------------------------------------
+# wE3 Wave E — journal trust + lock scope (RC-01..05, CDX-04/05, RE-02)
+# ---------------------------------------------------------------------------
+
+
+def test_rc01_hostile_stage_refuses_and_preserves_external(tmp_path: Path) -> None:
+    """RC-01: journal stage outside dest must not install or delete external trees."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    old = _seed_old(dest)
+    victim = tmp_path / "important_data"
+    victim.mkdir()
+    for name in _NAMES:
+        (victim / name).write_text(f"EVIL_{name}")
+    (victim / "precious.txt").write_text("KEEPME")
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {
+            "stage": str(victim),
+            "names": list(_NAMES),
+            "phase": "installing",
+        },
+    )
+
+    with pytest.raises(PromoteError, match="stage escapes dest|does not match namespace"):
+        recover_promote(dest, CAPTION_PROMOTE)
+
+    assert victim.is_dir(), "must not delete external stage tree"
+    assert (victim / "precious.txt").read_text() == "KEEPME"
+    assert _is_all_old(_read_named(dest), old), "must not install from external stage"
+    assert (dest / CAPTION_PROMOTE.journal_name).is_file(), "preserve journal evidence"
+
+
+def test_rc01_stage_wrong_prefix_refused(tmp_path: Path) -> None:
+    """RC-01: stage under dest but wrong prefix is refused."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    old = _seed_old(dest)
+    stage = dest / "not-a-stage-prefix"
+    stage.mkdir()
+    for name in _NAMES:
+        (stage / name).write_text(f"NEW_{name}")
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {"stage": str(stage), "names": list(_NAMES), "phase": "installing"},
+    )
+    with pytest.raises(PromoteError, match="does not match namespace prefix"):
+        recover_promote(dest, CAPTION_PROMOTE)
+    assert stage.is_dir()
+    assert _is_all_old(_read_named(dest), old)
+
+
+def test_rc02_unhashable_phase_is_promote_error(tmp_path: Path) -> None:
+    """RC-02: list/dict phase must raise PromoteError, never TypeError."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}phase"
+    stage.mkdir()
+    for name in _NAMES:
+        (stage / name).write_text(f"NEW_{name}")
+        (dest / name).write_text(f"OLD_{name}")
+    journal_path = dest / CAPTION_PROMOTE.journal_name
+    journal_path.write_text(
+        json.dumps(
+            {
+                "stage": str(stage),
+                "names": list(_NAMES),
+                "phase": ["installing"],
+                "generator": "caption",
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(PromoteError, match="unknown phase"):
+        recover_promote(dest, CAPTION_PROMOTE)
+    assert journal_path.is_file()
+    assert stage.is_dir()
+
+
+def test_rc03_legacy_message_names_real_clear_path(tmp_path: Path) -> None:
+    """RC-03: legacy refuse must name a real clearable path, not a fake recover API."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    legacy = dest / LEGACY_PROMOTE_JOURNAL
+    legacy.write_text('{"phase":"installing"}\n')
+    with pytest.raises(PromoteError, match="legacy promote journal") as excinfo:
+        recover_promote(dest, CAPTION_PROMOTE)
+    msg = str(excinfo.value)
+    assert str(legacy) in msg
+    assert "recover under the old layout" not in msg
+    assert "remove" in msg.lower()
+    assert "no automated recovery" in msg.lower() or "manual" in msg.lower()
+    # Clearable: after operator removes legacy, promote proceeds.
+    legacy.unlink()
+    src = tmp_path / "src"
+    _seed_new(src)
+    _seed_old(dest)
+    atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+    assert _is_all_new(_read_named(dest), {n: f"NEW_{n}" for n in _NAMES})
+
+
+def test_rc04_pathlike_names_refuse_promote_error(tmp_path: Path) -> None:
+    """RC-04: path-like journal names must raise PromoteError, not FileNotFoundError."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    stage = dest / f"{CAPTION_PROMOTE.stage_prefix}escape"
+    stage.mkdir()
+    name = "sub/../../escape_target.json"
+    # Plant a file where stage/name would resolve so incomplete-stage is not the gate.
+    target = stage / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("ESCAPE")
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {"stage": str(stage), "names": [name], "phase": "installing"},
+    )
+    with pytest.raises(PromoteError, match="unsafe promote name"):
+        recover_promote(dest, CAPTION_PROMOTE)
+    assert (dest / CAPTION_PROMOTE.journal_name).is_file()
+    assert stage.is_dir()
+
+
+def test_rc04_pathlike_names_refuse_on_atomic_promote(tmp_path: Path) -> None:
+    """RC-04: atomic_promote also rejects path-like caller names."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    dest.mkdir()
+    src.mkdir()
+    bad = "sub/file.json"
+    (src / "sub").mkdir()
+    (src / bad).write_text("x")
+    with pytest.raises(PromoteError, match="unsafe promote name"):
+        atomic_promote(src, dest, [bad], CAPTION_PROMOTE)
+
+
+def test_rc05_ghost_installing_names_journal_and_clear_path(tmp_path: Path) -> None:
+    """RC-05: ghost installing+missing stage error must name journal + clear steps."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    old = _seed_old(dest)
+    ghost = dest / f"{CAPTION_PROMOTE.stage_prefix}ghost"
+    journal_path = dest / CAPTION_PROMOTE.journal_name
+    _write_journal(
+        dest,
+        CAPTION_PROMOTE,
+        {
+            "stage": str(ghost),
+            "names": list(_NAMES),
+            "phase": "installing",
+        },
+    )
+    with pytest.raises(PromoteError, match="stage dir missing") as excinfo:
+        recover_promote(dest, CAPTION_PROMOTE)
+    msg = str(excinfo.value)
+    assert str(journal_path) in msg or CAPTION_PROMOTE.journal_name in msg
+    assert "remove" in msg.lower()
+    assert _is_all_old(_read_named(dest), old)
+    # Clearable after operator removes journal.
+    journal_path.unlink()
+    src = tmp_path / "src"
+    new = _seed_new(src)
+    atomic_promote(src, dest, list(_NAMES), CAPTION_PROMOTE)
+    assert _is_all_new(_read_named(dest), new)
+
+
+def test_cdx04_promoting_tmp_is_namespace_scoped(tmp_path: Path) -> None:
+    """CDX-04: caption and face install temps must not share .<stem>.promoting."""
+    name = "shared-stem.json"
+    cap_tmp = promote._promoting_tmp(tmp_path, CAPTION_PROMOTE, name)
+    face_tmp = promote._promoting_tmp(tmp_path, FACE_PROMOTE, name)
+    assert cap_tmp != face_tmp
+    assert CAPTION_PROMOTE.generator in cap_tmp.name
+    assert FACE_PROMOTE.generator in face_tmp.name
+    assert cap_tmp.name != f".{name}.promoting"
+    assert face_tmp.name != f".{name}.promoting"
+
+
+def test_cdx04_concurrent_caption_face_same_stem_no_hybrid(tmp_path: Path) -> None:
+    """CDX-04: concurrent caption+face promote of same stem must not hybridize bytes."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    name = "shared-stem.json"
+    (dest / name).write_text("OLD")
+    # Distinct payloads large enough that interleaved writes would hybridize.
+    caption_body = ("C" * 64 + "\n") * 64
+    face_body = ("F" * 64 + "\n") * 64
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def worker(ns: promote.PromoteNamespace, body: str) -> None:
+        src = tmp_path / f"src-{ns.generator}"
+        src.mkdir(exist_ok=True)
+        (src / name).write_text(body)
+        try:
+            barrier.wait(timeout=5)
+            atomic_promote(src, dest, [name], ns)
+        except BaseException as exc:  # noqa: BLE001
+            with lock:
+                errors.append(exc)
+
+    t1 = threading.Thread(target=worker, args=(CAPTION_PROMOTE, caption_body))
+    t2 = threading.Thread(target=worker, args=(FACE_PROMOTE, face_body))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    assert errors == [], f"cross-namespace promote errors: {errors!r}"
+    final = (dest / name).read_text()
+    assert final in {caption_body, face_body}, (
+        f"dest hybridized or corrupt (len={len(final)}); "
+        f"head={final[:40]!r}"
+    )
+    # No leftover shared-stem promoting temps.
+    residue = [p.name for p in dest.iterdir() if "promoting" in p.name]
+    assert residue == [], f"promoting residue left: {residue}"
+
+
+def test_cdx05_reserved_lock_name_refused(tmp_path: Path) -> None:
+    """CDX-05: atomic_promote must refuse names that replace the lock pathname."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    dest.mkdir()
+    src.mkdir()
+    lock_name = f".vlm-{CAPTION_PROMOTE.generator}-promote.lock"
+    (src / lock_name).write_text("NEWLOCKBODY")
+    # Seed lock inode so we can detect replacement if refusal regresses.
+    lock_path = dest / lock_name
+    lock_path.write_text("ORIGINAL")
+    inode_before = lock_path.stat().st_ino
+
+    with pytest.raises(PromoteError, match="reserved promote name"):
+        atomic_promote(src, dest, [lock_name], CAPTION_PROMOTE)
+
+    assert lock_path.read_text() == "ORIGINAL"
+    assert lock_path.stat().st_ino == inode_before
+
+
+def test_cdx05_reserved_journal_name_refused(tmp_path: Path) -> None:
+    """CDX-05: journal filename must not be installable as an artifact name."""
+    dest = tmp_path / "dest"
+    src = tmp_path / "src"
+    dest.mkdir()
+    src.mkdir()
+    jname = CAPTION_PROMOTE.journal_name
+    (src / jname).write_text("{}")
+    with pytest.raises(PromoteError, match="reserved promote name"):
+        atomic_promote(src, dest, [jname], CAPTION_PROMOTE)

@@ -1153,8 +1153,8 @@ def test_converge_runtime_edge_apply_gate_refuses_dev_fir_before_any_ship(
     """Gate r08117ab7 RA-02/RB-02: dev-fir edge drift + no lever fails closed.
 
     The edge IS fir's ingress. Refusal must fire BEFORE any remote mutation
-    (no env compose ship, no unit ship, no daemon-reload) so a refused run
-    leaves zero partial remote state.
+    (no env compose ship, no unit ship, no daemon-reload, no .bak backup)
+    so a refused run leaves zero partial remote state (r0811e5db V-03).
     """
     log = _run_converge_runtime("dev-fir", tmp_path, edge_apply=None)
     proc = _run_converge_runtime.last_proc  # type: ignore[attr-defined]
@@ -1162,10 +1162,16 @@ def test_converge_runtime_edge_apply_gate_refuses_dev_fir_before_any_ship(
     assert proc.returncode != 0, combined
     assert "ACX_EDGE_APPLY=1" in combined, combined
     assert "caddy edge drift detected" in combined, combined
-    # Zero ship / daemon-reload calls — probes only (sha256sum / NetworkSettings).
+    # Zero ship / daemon-reload / bak-class mutation — probes only
+    # (sha256sum / NetworkSettings). A regression that moves the `.bak`
+    # backup step above the gate must not stay green (V-03).
     assert "sudo cp '/tmp/" not in log, f"refusal must not ship any file: {log}"
     assert "daemon-reload" not in log, f"refusal must not daemon-reload: {log}"
+    assert ".bak" not in log, f"refusal must not write .bak backups: {log}"
+    assert "sudo cp " not in log, f"refusal must not sudo-cp anything: {log}"
+    assert "systemctl" not in log, f"refusal must not touch systemctl: {log}"
     assert "docker compose -f docker-compose.caddy.yml up -d" not in log
+    assert "caddy reload" not in log, f"refusal must not reload caddy: {log}"
 
 
 def test_converge_runtime_checksum_ssh_failure_is_not_drift(tmp_path: Path) -> None:
@@ -1193,20 +1199,38 @@ def _run_converge_check(
     edge_membership: str = "MEMBER",
     ssh_rc: int = 0,
     match_repo: bool = True,
+    ssh_fail_match: str | None = None,
+    tmpdir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Source converge_check with a recording/controlled fake ssh.
 
     match_repo=True: cat repo files back (clean content). False: empty body
     (content drift). edge_membership: MEMBER|MISSING|NOCADDY for the net probe.
-    ssh_rc: forced exit code for all ssh calls (255 = transport failure).
+    ssh_rc: forced exit code (255 = transport failure).
+    ssh_fail_match: if set, only remote commands matching this glob-ish
+    substring return ssh_rc; all other arms succeed (selective transport so
+    later edge/membership arms are reachable — r0811e5db V-01). If None and
+    ssh_rc!=0, every ssh call fails (blanket).
+    tmpdir: if set, exported as TMPDIR so mktemp files land in a hermetic dir.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     # NetworkSettings must be matched BEFORE docker-compose.caddy.yml because
     # the membership probe command embeds the compose filename.
+    if ssh_fail_match is not None:
+        # Selective: only the matching arm gets the forced rc.
+        fail_guard = f"""
+case "$*" in
+  *{ssh_fail_match}*) exit {ssh_rc} ;;
+esac
+"""
+    elif ssh_rc != 0:
+        fail_guard = f'if [ "{ssh_rc}" -ne 0 ]; then exit {ssh_rc}; fi\n'
+    else:
+        fail_guard = ""
     if match_repo:
         ssh_body = f"""#!/bin/sh
-if [ "{ssh_rc}" -ne 0 ]; then exit {ssh_rc}; fi
+{fail_guard}
 case "$*" in
   *NetworkSettings*) echo "{edge_membership}"; exit 0 ;;
   *docker-compose.env.yml*) cat "$REPO_ENV_COMPOSE" ;;
@@ -1219,7 +1243,7 @@ exit 0
 """
     else:
         ssh_body = f"""#!/bin/sh
-if [ "{ssh_rc}" -ne 0 ]; then exit {ssh_rc}; fi
+{fail_guard}
 case "$*" in
   *NetworkSettings*) echo "{edge_membership}"; exit 0 ;;
 esac
@@ -1240,6 +1264,9 @@ exit 0
         f"converge_check {env_arg}"
     )
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    if tmpdir is not None:
+        tmpdir.mkdir(exist_ok=True)
+        env["TMPDIR"] = str(tmpdir)
     return subprocess.run(
         ["/bin/bash", "-c", script],
         env=env,
@@ -1376,19 +1403,92 @@ def test_converge_check_membership_member_is_clean(tmp_path: Path) -> None:
 
 
 def test_converge_check_ssh_transport_failure_is_not_drift(tmp_path: Path) -> None:
-    """RA-03/RB-04: ssh rc=255 on converge_check must fail as transport error.
+    """RA-03/RB-04 + r0811e5db V-01: selective edge-arm ssh rc=255 is transport.
 
-    Never take the 'runtime drift detected' path — empty stdin from a transport
-    blip must not be misread as whole-file drift.
+    Fake ssh SUCCEEDS for env-compose/unit arms and only returns 255 when the
+    remote command references the shared edge Caddyfile. That forces the
+    failure through _check_remote_file's edge arm (not the first env-compose
+    arm), so dropping the rc==255 branch or reverting edge arms to
+    `ssh cat | diff` both go RED. Must name the transport-error path, never
+    'runtime drift detected'.
     """
-    proc = _run_converge_check("dev", tmp_path, ssh_rc=255)
+    proc = _run_converge_check(
+        "dev",
+        tmp_path,
+        ssh_rc=255,
+        ssh_fail_match="/opt/acx-backend/Caddyfile",
+    )
     combined = proc.stdout + proc.stderr
     assert proc.returncode != 0, combined
-    assert "transport failure" in combined.lower() or "ssh exit 255" in combined, (
-        combined
+    assert "transport failure" in combined.lower(), combined
+    assert "ssh exit 255" in combined, combined
+    assert "shared edge Caddyfile" in combined, (
+        f"failure must be the edge Caddyfile arm, not an earlier arm: {combined}"
     )
     assert "runtime drift detected" not in combined, (
         f"transport failure must not report as drift: {combined}"
+    )
+
+
+def test_converge_check_membership_ssh_transport_failure_is_not_drift(
+    tmp_path: Path,
+) -> None:
+    """r0811e5db V-01: selective membership-probe ssh rc=255 is transport.
+
+    Env-compose/unit/edge file arms succeed (match_repo content); only the
+    NetworkSettings membership probe returns 255. Must abort as transport
+    error, never as 'runtime drift detected'.
+    """
+    proc = _run_converge_check(
+        "dev",
+        tmp_path,
+        ssh_rc=255,
+        ssh_fail_match="NetworkSettings",
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "transport failure" in combined.lower(), combined
+    assert "ssh exit 255" in combined, combined
+    assert "caddy edge network membership" in combined, (
+        f"failure must be the membership probe arm: {combined}"
+    )
+    assert "runtime drift detected" not in combined, (
+        f"membership transport failure must not report as drift: {combined}"
+    )
+
+
+def test_converge_check_cleans_tempfile_on_fail_paths(tmp_path: Path) -> None:
+    """r0811e5db V-02: converge_check must not leak mktemp files on fail paths.
+
+    fail() exits without running RETURN traps, so every abort path (ssh
+    transport rc=255, and content-drift + later fail) must still rm the
+    remote_tmp. Point TMPDIR at a hermetic dir and assert it is empty after.
+    """
+    # (a) forced ssh rc=255 on the first arm (blanket) — early transport fail.
+    leak_a = tmp_path / "tmpdir_transport"
+    leak_a.mkdir()
+    proc_a = _run_converge_check("dev", tmp_path, ssh_rc=255, tmpdir=leak_a)
+    assert proc_a.returncode != 0, proc_a.stdout + proc_a.stderr
+    leftovers_a = list(leak_a.iterdir())
+    assert leftovers_a == [], (
+        f"transport-fail path leaked temp files: {leftovers_a}"
+    )
+
+    # (b) content drift (empty remote) → later `runtime drift detected` fail.
+    leak_b = tmp_path / "tmpdir_drift"
+    leak_b.mkdir()
+    # Use a fresh bindir path segment so we don't clash with (a)'s bin.
+    drift_root = tmp_path / "drift_run"
+    drift_root.mkdir()
+    proc_b = _run_converge_check(
+        "dev", drift_root, match_repo=False, tmpdir=leak_b
+    )
+    assert proc_b.returncode != 0, proc_b.stdout + proc_b.stderr
+    combined_b = proc_b.stdout + proc_b.stderr
+    assert "runtime drift detected" in combined_b, combined_b
+    leftovers_b = list(leak_b.iterdir())
+    assert leftovers_b == [], (
+        f"drift-fail path leaked temp files: {leftovers_b}"
     )
 
 

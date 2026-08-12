@@ -115,12 +115,26 @@ class AssociationPair:
 
 @dataclass(frozen=True)
 class AssociationResult:
-    """§C outcomes for one image."""
+    """§C outcomes for one image.
+
+    ``geometry_incomplete_gt`` lists GT indices excluded from spatial matching
+    because their centre is incomplete (null / non-numeric ``y`` — FaceBox
+    allows optional y for order_degraded observability). Those indices are
+    **not** detector FNs: they must not appear in ``unmatched_gt``. Consumers
+    that ignore ``geometry_incomplete_gt`` / ``association_complete`` cannot
+    tell a complete association from a degraded one (rg-015 / S2-07).
+    """
 
     pairs: tuple[AssociationPair, ...]  # accepted pairs (IoU >= threshold)
     unmatched_detections: tuple[int, ...]  # false detections (det-PR FP)
-    unmatched_gt: tuple[int, ...]  # missed GT (det-PR FN)
+    unmatched_gt: tuple[int, ...]  # missed *complete* GT (det-PR FN)
     ious: tuple[tuple[int, int, float], ...]  # (det_i, gt_j, iou) for audit
+    geometry_incomplete_gt: tuple[int, ...] = ()  # excluded null/invalid-y GT
+
+    @property
+    def association_complete(self) -> bool:
+        """True iff every GT box had complete geometry for IoU matching."""
+        return len(self.geometry_incomplete_gt) == 0
 
 
 def gt_box_name(gt: Any) -> str | None:
@@ -135,11 +149,48 @@ def gt_box_name(gt: Any) -> str | None:
     return named_box_name(gt)
 
 
-def _gt_fields(gt: Any) -> tuple[float, float, float, float, str | None]:
-    """Extract centre box + name from FaceBox-like or mapping."""
+def _gt_y_optional(gt: Any) -> float | None:
+    """Extract optional centre-y; None / blank / non-numeric → missing.
+
+    FaceBox.y is ``float | None`` (VLM6-R2-G-01 / wF4). Association cannot
+    invent a vertical centre; blank strings and non-numerics share the
+    missing branch with explicit null (same coercion as labeled_order RA-04).
+    """
     if isinstance(gt, Mapping):
-        return float(gt["x"]), float(gt["y"]), float(gt["w"]), float(gt["h"]), gt_box_name(gt)
-    return float(gt.x), float(gt.y), float(gt.w), float(gt.h), gt_box_name(gt)
+        y = gt.get("y")
+    else:
+        y = getattr(gt, "y", None)
+    if y is None:
+        return None
+    if isinstance(y, str) and not y.strip():
+        return None
+    try:
+        return float(y)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gt_fields(gt: Any) -> tuple[float, float | None, float, float, str | None]:
+    """Extract centre box + name from FaceBox-like or mapping.
+
+    ``y`` may be None (geometry incomplete for IoU). ``x``/``w``/``h`` remain
+    required — missing those still raises (schema-required fields).
+    """
+    if isinstance(gt, Mapping):
+        return (
+            float(gt["x"]),
+            _gt_y_optional(gt),
+            float(gt["w"]),
+            float(gt["h"]),
+            gt_box_name(gt),
+        )
+    return (
+        float(gt.x),
+        _gt_y_optional(gt),
+        float(gt.w),
+        float(gt.h),
+        gt_box_name(gt),
+    )
 
 
 def associate_detections(
@@ -151,9 +202,13 @@ def associate_detections(
 ) -> AssociationResult:
     """Match detector pixel-corner boxes to GT normalized-centre boxes (§C).
 
-    - Exactly 1 GT box → highest-IoU detection (if ≥ threshold).
-    - ≥2 GT boxes → Hungarian maximizing total IoU (GRPH-07); no greedy path.
+    - Exactly 1 **complete** GT box → highest-IoU detection (if ≥ threshold).
+    - ≥2 complete GT boxes → Hungarian maximizing total IoU (GRPH-07).
     - Accept pair iff IoU ≥ ``iou_threshold`` (default 0.5).
+    - GT with null/invalid ``y`` is **excluded** from spatial matching and
+      stamped on ``geometry_incomplete_gt`` (never matched on x alone, never
+      counted as detector FN via ``unmatched_gt``). Fail-closed: consumers
+      must read the stamp (rg-015 / DIAG-03 / S2-07).
     """
     n_det = len(detections_bbox_px)
     n_gt = len(gt_boxes)
@@ -166,48 +221,70 @@ def associate_detections(
             unmatched_gt=(),
             ious=(),
         )
+
+    # Partition complete vs geometry-incomplete GT before any float(y) IoU path.
+    complete_indices: list[int] = []
+    incomplete_indices: list[int] = []
+    gt_px_by_orig: dict[int, list[float]] = {}
+    gt_names: list[str | None] = [None] * n_gt
+    for j, gt in enumerate(gt_boxes):
+        cx, cy, w, h, name = _gt_fields(gt)
+        gt_names[j] = name
+        if cy is None:
+            incomplete_indices.append(j)
+            continue
+        complete_indices.append(j)
+        gt_px_by_orig[j] = gt_normalized_centre_to_pixel_corner(
+            cx=cx, cy=cy, w=w, h=h, image_size=image_size
+        )
+
+    incomplete_t = tuple(incomplete_indices)
+
     if n_det == 0:
+        # Complete GT are detector FNs; incomplete GT are geometry stamp only.
         return AssociationResult(
             pairs=(),
             unmatched_detections=(),
-            unmatched_gt=tuple(range(n_gt)),
+            unmatched_gt=tuple(complete_indices),
             ious=(),
+            geometry_incomplete_gt=incomplete_t,
         )
 
-    gt_px: list[list[float]] = []
-    gt_names: list[str | None] = []
-    for gt in gt_boxes:
-        cx, cy, w, h, name = _gt_fields(gt)
-        gt_px.append(
-            gt_normalized_centre_to_pixel_corner(
-                cx=cx, cy=cy, w=w, h=h, image_size=image_size
-            )
+    n_complete = len(complete_indices)
+    if n_complete == 0:
+        # All GT geometry-incomplete: every detection is unmatched FP; no pairs.
+        return AssociationResult(
+            pairs=(),
+            unmatched_detections=tuple(range(n_det)),
+            unmatched_gt=(),
+            ious=(),
+            geometry_incomplete_gt=incomplete_t,
         )
-        gt_names.append(name)
 
     # Detector boxes are already pixel-corner — no centre→corner shift (§A0).
-    iou_matrix = np.zeros((n_det, n_gt), dtype=np.float64)
+    # IoU matrix is det × *complete* GT only; columns remap to original indices.
+    iou_matrix = np.zeros((n_det, n_complete), dtype=np.float64)
     iou_audit: list[tuple[int, int, float]] = []
     for i in range(n_det):
-        for j in range(n_gt):
-            val = iou_pixel_corner(detections_bbox_px[i], gt_px[j])
-            iou_matrix[i, j] = val
+        for col, j in enumerate(complete_indices):
+            val = iou_pixel_corner(detections_bbox_px[i], gt_px_by_orig[j])
+            iou_matrix[i, col] = val
             iou_audit.append((i, j, val))
 
-    candidate_pairs: list[tuple[int, int, float]] = []
-    if n_gt == 1:
-        # Exactly-1 GT: highest-IoU detection only.
+    candidate_pairs: list[tuple[int, int, float]] = []  # (det, orig_gt, iou)
+    if n_complete == 1:
+        # Exactly-1 complete GT: highest-IoU detection only.
         best_i = int(np.argmax(iou_matrix[:, 0]))
         best_iou = float(iou_matrix[best_i, 0])
         if best_iou >= iou_threshold:
-            candidate_pairs.append((best_i, 0, best_iou))
+            candidate_pairs.append((best_i, complete_indices[0], best_iou))
     else:
-        # ≥2 GT: Hungarian maximize total IoU (cost = -IoU). GRPH-07.
+        # ≥2 complete GT: Hungarian maximize total IoU (cost = -IoU). GRPH-07.
         row_ind, col_ind = linear_sum_assignment(-iou_matrix)
         for r, c in zip(row_ind, col_ind, strict=True):
             iou_val = float(iou_matrix[r, c])
             if iou_val >= iou_threshold:
-                candidate_pairs.append((int(r), int(c), iou_val))
+                candidate_pairs.append((int(r), complete_indices[int(c)], iou_val))
 
     matched_det = {p[0] for p in candidate_pairs}
     matched_gt = {p[1] for p in candidate_pairs}
@@ -218,8 +295,9 @@ def associate_detections(
     return AssociationResult(
         pairs=pairs,
         unmatched_detections=tuple(i for i in range(n_det) if i not in matched_det),
-        unmatched_gt=tuple(j for j in range(n_gt) if j not in matched_gt),
+        unmatched_gt=tuple(j for j in complete_indices if j not in matched_gt),
         ious=tuple(sorted(iou_audit)),
+        geometry_incomplete_gt=incomplete_t,
     )
 
 
@@ -509,9 +587,10 @@ class AssignmentResult:
     tau_op: float  # median(τ_k); context + clustering cut only
     association_by_media: dict[int, AssociationResult] = field(default_factory=dict)
     false_detections: int = 0
-    # Named unmatched GT only (S3-04 / EVAL-16 / EVAL-19) — feeds
+    # Named unmatched *complete* GT only (S3-04 / EVAL-16 / EVAL-19) — feeds
     # face_identification_pr FN fold-in. Stranger misses live on
-    # missed_stranger_gt for unknown-rejection.
+    # missed_stranger_gt for unknown-rejection. Geometry-incomplete GT
+    # (null y) are NOT FNs — see geometry_incomplete_gt.
     missed_gt: int = 0
     missed_stranger_gt: int = 0
     excluded_single_face_recall: tuple[MatchedFace, ...] = ()
@@ -523,6 +602,11 @@ class AssignmentResult:
     effective_k: int = K_FOLDS
     # FIR5RR-07: provenance of the τ_k values (see TauFitStatus).
     tau_fit_status: TauFitStatus = "fitted"
+    # Wave G wG2: boxes excluded from §C because y is null/invalid. Not FNs.
+    # association_incomplete_media counts media with any such box so report
+    # consumers can refuse to treat detection P/R as complete (rg-015 / S2-07).
+    geometry_incomplete_gt: int = 0
+    association_incomplete_media: int = 0
 
 
 def global_fold_ranks(
@@ -575,10 +659,14 @@ def collect_matched_faces(
     Returns ``(matched, associations, false_detections, missed_gt,
     missed_stranger_gt)``.
 
-    ``missed_gt`` counts **named** unmatched GT only (``true_name is not None``)
-    so identification P/R FN fold-in matches the headline path (S3-04 /
-    EVAL-16 / EVAL-19). ``missed_stranger_gt`` counts unmatched anonymous GT
-    (``true_name is None``) for ``face_unknown_rejection`` (S3-03).
+    ``missed_gt`` counts **named** unmatched *complete* GT only
+    (``true_name is not None``) so identification P/R FN fold-in matches the
+    headline path (S3-04 / EVAL-16 / EVAL-19). ``missed_stranger_gt`` counts
+    unmatched anonymous complete GT for ``face_unknown_rejection`` (S3-03).
+    Geometry-incomplete boxes (null/invalid y) are **not** FNs — they are
+    stamped on each ``AssociationResult.geometry_incomplete_gt`` (wG2 /
+    rg-015). Callers that need corpus-level totals sum those fields (or use
+    ``score_face_assignment`` which propagates them onto ``AssignmentResult``).
     """
     matched: list[MatchedFace] = []
     associations: dict[int, AssociationResult] = {}
@@ -596,9 +684,8 @@ def collect_matched_faces(
         associations[media_id] = assoc
         false_det += len(assoc.unmatched_detections)
         for gi in assoc.unmatched_gt:
-            # Name only — do not float()-coerce coords. Unmatched GT may omit y
-            # (VLM6-R2-G-01 order_degraded trap media; zero-det path never enters
-            # associate_detections' _gt_fields loop).
+            # Complete GT only (associate_detections already excluded null-y).
+            # Name only — no float()-coerce of coords.
             name = gt_box_name(gt_boxes[gi])
             if name is not None:
                 missed_named += 1
@@ -767,6 +854,8 @@ def score_face_assignment(
         run_items, gt_by_media
     )
     result = assign_open_set_kfold(matched, k_folds=k_folds, tau_grid=tau_grid)
+    geom_incomplete = sum(len(a.geometry_incomplete_gt) for a in associations.values())
+    incomplete_media = sum(1 for a in associations.values() if a.geometry_incomplete_gt)
     return AssignmentResult(
         matched=result.matched,
         decisions=result.decisions,
@@ -780,6 +869,8 @@ def score_face_assignment(
         requested_k=result.requested_k,
         effective_k=result.effective_k,
         tau_fit_status=result.tau_fit_status,
+        geometry_incomplete_gt=geom_incomplete,
+        association_incomplete_media=incomplete_media,
     )
 
 

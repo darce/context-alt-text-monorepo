@@ -20,6 +20,8 @@ under dest with the namespace stage prefix; ``names`` must be plain basenames
 that do not collide with lock/journal/stage infrastructure (RC-04, CDX-05);
 ``phase`` must be a known string (RC-02). Install temps are unique per
 namespace + process so caption/face cannot share ``.<stem>.promoting`` (CDX-04).
+Final destination basenames that already carry a foreign-namespace provenance
+stamp are refused rather than last-writer-wins overwritten (wE3 residual / wF3).
 
 Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-002, rg-006, rg-008, sr-006.
 """
@@ -245,6 +247,89 @@ def _promoting_tmp(dest_dir: Path, ns: PromoteNamespace, name: str) -> Path:
     them clobber each other. Namespace + pid keep temps disjoint.
     """
     return dest_dir / f".{ns.generator}-{os.getpid():x}-{name}.promoting"
+
+
+# provenance.generator module paths → promote namespace.generator token.
+# Anchor run-records (and face run-records) stamp these; used to refuse
+# cross-namespace final-dest overwrite when basenames collide (wE3 / wF3).
+_PROVENANCE_GENERATOR_TO_NS: dict[str, str] = {
+    "scripts.eval_harness.generate_determinism_anchor": CAPTION_PROMOTE.generator,
+    "scripts.eval_harness.generate_face_determinism_anchor": FACE_PROMOTE.generator,
+    CAPTION_PROMOTE.generator: CAPTION_PROMOTE.generator,
+    FACE_PROMOTE.generator: FACE_PROMOTE.generator,
+}
+
+
+def _infer_artifact_namespace(path: Path) -> str | None:
+    """Return promote namespace generator for a stamped artifact, or None.
+
+    Only positively identified foreign stamps block overwrite. Unstamped plain
+    files (unit-test payloads, non-anchor JSON) remain last-writer-wins so
+    CDX-04 temp-hybridization coverage is unchanged. Fail-closed applies to the
+    real generator collision class: caption vs face run-records that share a
+    basename under one ``out_dir`` (wE3 residual).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    gen: Any = None
+    prov = data.get("provenance")
+    if isinstance(prov, dict):
+        gen = prov.get("generator")
+    if gen is None:
+        gen = data.get("generator")
+    if not isinstance(gen, str) or not gen:
+        return None
+    mapped = _PROVENANCE_GENERATOR_TO_NS.get(gen)
+    if mapped is not None:
+        return mapped
+    # Substring fallback for renamed module paths that still name the generator.
+    if "generate_face_determinism_anchor" in gen:
+        return FACE_PROMOTE.generator
+    if "generate_determinism_anchor" in gen:
+        return CAPTION_PROMOTE.generator
+    return None
+
+
+def _refuse_foreign_dest_overwrite(
+    dest_dir: Path, names: list[str], ns: PromoteNamespace
+) -> None:
+    """Refuse installing over a dest basename owned by the other generator (wF3).
+
+    Temps are namespace-scoped (CDX-04); final dest paths are not. Caption and
+    face both emit ``{stem}.json`` run-records, so the same ``--stem`` under a
+    shared ``out_dir`` silently last-writer-wins. Detect foreign
+    ``provenance.generator`` (or top-level ``generator``) on an existing dest
+    file and hard-refuse (fail-closed) rather than clobber.
+
+    Same-namespace regeneration (identical generator stamp) is allowed.
+    Unstamped dest files remain last-writer-wins so CDX-04 concurrent
+    plain-payload hybrid coverage is unchanged. Face manifests currently lack
+    a generator stamp — residual if ``--manifest-stem`` collides with a caption
+    basename without a stamped run-record present (cross-lane to face generator).
+    """
+    for name in names:
+        dest = dest_dir / name
+        if not dest.is_file():
+            continue
+        owner = _infer_artifact_namespace(dest)
+        if owner is None or owner == ns.generator:
+            continue
+        raise PromoteError(
+            f"refuse to overwrite {dest} owned by foreign generator namespace "
+            f"{owner!r} with {ns.generator!r} promote of basename {name!r}; "
+            f"choose a distinct --stem (or manifest-stem) so caption and face "
+            f"artifacts cannot share a final path under the same out_dir "
+            f"(wE3 residual / wF3 fail-closed; promote temps are already "
+            f"namespace-scoped under CDX-04)"
+        )
 
 
 @contextmanager
@@ -481,6 +566,9 @@ def atomic_promote(
     )
     with _namespace_lock(dest_dir, ns):
         _recover_promote_unlocked(dest_dir, ns)
+        # Cross-namespace final-dest collision: refuse before staging bytes so
+        # a caption/face shared --stem cannot silent-clobber (wF3 / wE3 residual).
+        _refuse_foreign_dest_overwrite(dest_dir, safe_names, ns)
 
         token = f"{os.getpid():x}-{id(safe_names):x}-{len(safe_names):x}-{uuid.uuid4().hex[:8]}"
         stage = dest_dir / f"{ns.stage_prefix}{token}"
@@ -641,20 +729,27 @@ def validate_live_head_sha(
     *,
     git_cwd: Path | None = None,
 ) -> str | None:
-    """Validate ``--live-head-sha`` (S4-06 / RV2-04 / RV2-05).
+    """Validate ``--live-head-sha`` (S4-06 / RV2-04 / RV2-05 / wE2 refuse-uniform).
 
     Thin delegating wrapper over ``provenance_sha.normalize_head_sha`` — name
     retained so generators keep importing this symbol.
 
     - ``None`` → ``None`` (caller omitted the flag)
-    - empty / whitespace-only → refuse (RV2-05: do not silently exit pin mode)
-    - forty-zero sentinel → refuse (S4-06)
+    - empty / whitespace-only → refuse ``SystemExit`` (RV2-05: do not silently
+      exit pin mode)
+    - forty-zero sentinel → refuse ``SystemExit`` (S4-06)
     - must be 40 lowercase hex chars (uppercased input accepted + lowercased)
-    - git verify is **always on** with degrade when git is missing / not a repo
-      (fx6 reconciliation with ``resolve_head_sha``; RV3-05 / rg-015). Callers
-      cannot opt out — the ``verify_git`` parameter was removed (VLM6-R2-B-04 /
+    - git verify is **always on and refuse-uniform**: missing git binary, cwd
+      not a work tree, foreign ``GIT_*`` overrides, impostor ``git`` on PATH,
+      non-resolvable commit, and non-SHA verify stdout all raise ``SystemExit``
+      — never silent format-only accept / degrade (wE2 / RD-01..06 / CDX-02/03 /
+      RE-03 / RV3-05 / rg-015 / S2-07). Callers cannot opt out; the
+      ``verify_git`` parameter was removed from this wrapper (VLM6-R2-B-04 /
       cx3 delegated cleanup for cx4 VLM6-R2-D-03) so fabricated SHAs cannot slip
       through a false flag.
+
+    Callers must treat refusal as ``SystemExit`` (or let it propagate), not as a
+    degraded ``None`` / accepted hex string.
     """
     from scripts.eval_harness.provenance_sha import normalize_head_sha
 

@@ -448,6 +448,55 @@ def test_apply_face_gate_is_pure_and_deterministic() -> None:
     assert pack["caption"] == "Caitlin Weaver on the peninsula."  # input never mutated
 
 
+def test_apply_face_gate_keys_on_normalized_name_not_raw_str() -> None:
+    """Padded GT box name must still intersect roster form (wE4 residual / wF2).
+
+    Pre-fix: matched keyed by raw ``str(name)`` so ``\" Alice \"`` never
+    intersected roster ``\"Alice\"`` — gate silently under-counted eligible.
+    """
+    pack = {
+        "caption": "Alice is on the left.",
+        "people_present": "Alice",
+        "description": "Alice stands near the water.",
+    }
+    face_boxes = [
+        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": " Alice ", "source": "iptc"},
+    ]
+    roster = ["Alice", "Bob Builder"]
+    out_pack, stamp = _apply_face_gate(pack, face_boxes, roster)
+    assert stamp["eligible_names"] == ["Alice"], (
+        f"padded face-box name must match roster Alice; got stamp={stamp!r}"
+    )
+    assert stamp["suppressed_names"] == []
+    assert out_pack["people_present"].startswith("Alice,")
+
+
+def test_apply_face_gate_keys_bom_zwsp_name_to_roster() -> None:
+    """BOM/ZWSP-prefixed box names normalize to roster form under named_box_name."""
+    pack = {"caption": "Alice waves.", "people_present": "Alice"}
+    face_boxes = [
+        {"x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1, "name": "\ufeffAlice", "source": "iptc"},
+    ]
+    _out, stamp = _apply_face_gate(pack, face_boxes, ["Alice"])
+    assert stamp["eligible_names"] == ["Alice"], stamp
+
+
+def test_apply_face_gate_detects_roster_normalization_collision() -> None:
+    """Normalizing both sides must not silently merge distinct roster strings.
+
+    If ``\"Alice\"`` and ``\"Alice \"`` both appear on the roster they collapse to
+    one key after namedness normalization — fail closed with ValueError rather
+    than change identity counts by merge (wave F fail-closed posture).
+    """
+    pack = {"caption": "Alice is here.", "people_present": "Alice"}
+    face_boxes = [
+        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Alice", "source": "iptc"},
+    ]
+    colliding_roster = ["Alice", "Alice "]
+    with pytest.raises(ValueError, match="collision|normalize"):
+        _apply_face_gate(pack, face_boxes, colliding_roster)
+
+
 # --- Score side: additive fields, old records unchanged -----------------------
 
 

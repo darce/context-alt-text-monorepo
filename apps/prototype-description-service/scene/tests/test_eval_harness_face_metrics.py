@@ -23,6 +23,12 @@ from scripts.eval_harness.face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    labeled_left_to_right,
+    latency_summary,
+    nearest_rank_percentile,
+    predicted_left_to_right,
+    sort_identity_rows_by_normalized_centre,
+    wire_bbox_normalized_centre,
 )
 
 # --- detection level (identity-agnostic) ---
@@ -683,3 +689,135 @@ def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():
     # Stranger not counted anywhere.
     total_n = sum(pr.n_named_probes for pr in rollup.by_cohort.values())
     assert total_n == 2
+
+
+# ---------------------------------------------------------------------------
+# VLM6-R4-08 / VLM6-RH-03 / VLM6-RH-04 — L→R order + shared latency schema
+# ---------------------------------------------------------------------------
+
+
+def test_labeled_left_to_right_all_anonymous_is_empty_not_none():
+    """Boxes present, all strangers → established empty order ([]), not unknown."""
+    boxes = [{"name": None, "x": 0.2, "y": 0.5, "w": 0.1, "h": 0.1}, {"name": "", "x": 0.8}]
+    assert labeled_left_to_right(boxes) == []
+
+
+def test_labeled_left_to_right_named_but_missing_x_is_none():
+    """VLM6-R4-08: named boxes with no x are malformed GT → exclude (None), not []."""
+    assert labeled_left_to_right([{"name": "A"}, {"name": "B"}]) is None
+    assert labeled_left_to_right([{"name": "A", "x": None}, {"name": "B", "y": 0.5}]) is None
+
+
+def test_labeled_left_to_right_partial_x_keeps_named_with_coords():
+    """Named box missing x is dropped; named-with-x still establishes order."""
+    boxes = [
+        {"name": "NoX"},  # dropped
+        {"name": "Right", "x": 0.8},
+        {"name": "Left", "x": 0.2},
+    ]
+    assert labeled_left_to_right(boxes) == ["Left", "Right"]
+
+
+def test_wire_bbox_normalized_centre_converts_pixel_corner():
+    """VLM6-RH-03: absolute-pixel corner → normalized centre."""
+    # corner (100,50) size 200x100 on 1000x500 → centre (200,100) → (0.2, 0.2)
+    cx, cy = wire_bbox_normalized_centre(
+        {"x": 100, "y": 50, "width": 200, "height": 100},
+        image_width=1000,
+        image_height=500,
+    )
+    assert cx == pytest.approx(0.2)
+    assert cy == pytest.approx(0.2)
+    assert (
+        wire_bbox_normalized_centre(
+            {"x": 0, "y": 0, "width": 10, "height": 10},
+            image_width=None,
+            image_height=100,
+        )
+        is None
+    )
+
+
+def test_predicted_left_to_right_matches_centre_not_corner_order():
+    """Corner-x and centre-x disagree: wide-left vs narrow-right → centre order wins."""
+    # Image 400px wide.
+    # Wide face: corner x=100, w=200 → centre 200 → norm 0.5
+    # Narrow face: corner x=150, w=50 → centre 175 → norm 0.4375  (LEFT of wide)
+    # Corner-x sort would put Wide first (100 < 150); centre sort puts Narrow first.
+    identities = [
+        {
+            "name": "Wide",
+            "bbox": {"x": 100, "y": 0, "width": 200, "height": 100},
+            "unpositioned": False,
+        },
+        {
+            "name": "Narrow",
+            "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
+            "unpositioned": False,
+        },
+    ]
+    assert predicted_left_to_right(identities, image_width=400, image_height=200) == [
+        "Narrow",
+        "Wide",
+    ]
+    # Without image size both fall to unpositioned → alpha: "Narrow" < "Wide".
+    # Use names that reverse under alpha to prove the unpositioned path.
+    swapped_names = [
+        {
+            "name": "Zebra",
+            "bbox": {"x": 100, "y": 0, "width": 200, "height": 100},
+        },
+        {
+            "name": "Aardvark",
+            "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
+        },
+    ]
+    assert predicted_left_to_right(swapped_names, image_width=400, image_height=200) == [
+        "Aardvark",  # centre-left
+        "Zebra",
+    ]
+    assert predicted_left_to_right(swapped_names, image_width=None, image_height=None) == [
+        "Aardvark",  # alpha fallback among unpositioned
+        "Zebra",
+    ]
+
+
+def test_predicted_left_to_right_dedupes_leftmost_like_labeled():
+    """VLM6-R4-08: predicted duplicate names keep leftmost only (mirrors labeled)."""
+    identities = [
+        {"name": "A", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": "A", "bbox": {"x": 50, "y": 0, "width": 10, "height": 10}},
+        {"name": "B", "bbox": {"x": 100, "y": 0, "width": 10, "height": 10}},
+    ]
+    assert predicted_left_to_right(identities, image_width=200, image_height=100) == ["A", "B"]
+
+
+def test_sort_identity_rows_preserves_duplicates_reorders_by_centre():
+    """face_pass storage keeps multiset; only sort key is corrected."""
+    rows = [
+        {"name": "Wide", "bbox": {"x": 100, "y": 0, "width": 200, "height": 100}},
+        {"name": "Narrow", "bbox": {"x": 150, "y": 0, "width": 50, "height": 100}},
+        {"name": "Wide", "bbox": {"x": 300, "y": 0, "width": 20, "height": 100}},
+    ]
+    ordered = sort_identity_rows_by_normalized_centre(rows, image_width=400, image_height=200)
+    assert [r["name"] for r in ordered] == ["Narrow", "Wide", "Wide"]
+
+
+def test_latency_summary_schema_and_throughput():
+    """VLM6-RH-04: one nested schema with n/mean/min/p50/p95/p99/max + throughput."""
+    assert latency_summary([]) is None
+    block = latency_summary([1.0, 2.0, 10.0], unit="s", wall_clock_s=30.0, throughput_n=3)
+    assert block is not None
+    assert block["unit"] == "s"
+    assert block["n"] == 3
+    assert block["mean"] == pytest.approx(4.333, abs=0.001)
+    assert block["min"] == 1.0
+    assert block["p50"] == 2.0
+    assert block["p95"] == 10.0
+    assert block["p99"] == 10.0
+    assert block["max"] == 10.0
+    assert block["wall_clock_s"] == 30.0
+    assert block["images_per_min"] == 6.0  # 3 images / 0.5 min
+    assert nearest_rank_percentile([1.0, 2.0, 10.0], 0.50) == 2.0
+    with pytest.raises(ValueError):
+        nearest_rank_percentile([], 0.5)

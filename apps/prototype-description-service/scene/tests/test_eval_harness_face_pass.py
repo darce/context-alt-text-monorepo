@@ -367,6 +367,7 @@ def test_resume_preserves_errored_rows_not_retried_this_run(tmp_path):
 
 def test_summarize_reports_latency_percentiles():
     # Execution stats: per-call analyze latency as PERCENTILES (PERF-01), from open-loop timing.
+    # elapsed_ms is converted to seconds for the shared latency_summary schema (VLM6-RH-04).
     rows = [
         FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None, elapsed_ms=100.0),
         FacePassRow("s2", "b.jpg", "localwp_uploads", 900_001, 0, [], None, elapsed_ms=300.0),
@@ -374,15 +375,18 @@ def test_summarize_reports_latency_percentiles():
     ]
     s = summarize(rows)
     assert (s["scanned"], s["ok"], s["errors"]) == (3, 2, 1)
-    lat = s["latency_ms"]
+    lat = s["latency"]
+    assert lat is not None
+    assert lat["unit"] == "s"
     assert lat["n"] == 3  # latency measured on ok AND errored calls
-    assert lat["p50"] == 100.0 and lat["p95"] == 300.0 and lat["max"] == 300.0
+    assert lat["p50"] == 0.1 and lat["p95"] == 0.3 and lat["max"] == 0.3
+    assert lat["p99"] == 0.3 and lat["min"] == 0.05
 
 
 def test_summarize_latency_none_on_legacy_rows_without_timing():
-    # Rows from the pre-elapsed_ms schema carry no timing -> latency_ms is None, not a crash.
+    # Rows from the pre-elapsed_ms schema carry no timing -> latency is None, not a crash.
     s = summarize([FacePassRow("s1", "a.jpg", "localwp_uploads", 900_000, 2, [], None)])
-    assert s["latency_ms"] is None and s["ok"] == 1
+    assert s["latency"] is None and s["ok"] == 1
 
 
 def test_load_face_pass_rows_backfills_missing_elapsed_ms(tmp_path):
@@ -423,7 +427,7 @@ def test_summary_counts_crowds_and_errors():
         "with_faces": 1,
         "crowds": 1,
         "faces_found": 4,
-        "latency_ms": None,  # these rows carry no elapsed_ms (legacy shape)
+        "latency": None,  # these rows carry no elapsed_ms (legacy shape)
     }
 
 

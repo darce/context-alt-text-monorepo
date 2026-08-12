@@ -126,7 +126,7 @@ def test_run_skips_already_done_ids_and_records_missing_files(corpus, tmp_path, 
         (2, corpus / "2026" / "07" / "img-2.png"),
         (3, corpus / "missing.png"),  # not on disk: written with explicit error
     ]
-    # Fixed monotonic pair so mean_latency_s is an independent literal.
+    # Fixed monotonic pair so latency.mean is an independent literal.
     ticks = iter([100.0, 101.5])  # one caption => latency 1.5s
     monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
     seen: list[int] = []
@@ -137,11 +137,16 @@ def test_run_skips_already_done_ids_and_records_missing_files(corpus, tmp_path, 
         "missing": 1,
         "captioned_ok": 1,
         "errors": 1,  # A-04: missing-on-disk increments errors
-        "mean_latency_s": 1.5,
-        "min_latency_s": 1.5,
-        "max_latency_s": 1.5,
-        "p50_latency_s": 1.5,
-        "p95_latency_s": 1.5,
+        "latency": {
+            "unit": "s",
+            "n": 1,
+            "mean": 1.5,
+            "min": 1.5,
+            "p50": 1.5,
+            "p95": 1.5,
+            "p99": 1.5,
+            "max": 1.5,
+        },
     }
     assert len(seen) == 1
     recorded = [json.loads(ln) for ln in out.read_text().splitlines()]
@@ -166,17 +171,22 @@ def test_latency_aggregates_use_three_distinct_values(corpus, tmp_path, monkeypa
     monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
     summary = _run(rows, lambda p: "A photo.", out)
     assert summary["captioned_ok"] == 3
-    assert summary["mean_latency_s"] == pytest.approx(4.333, abs=0.001)  # (1+2+10)/3
-    assert summary["min_latency_s"] == 1.0
-    assert summary["max_latency_s"] == 10.0
-    assert summary["p50_latency_s"] == 2.0
-    assert summary["p95_latency_s"] == 10.0
+    lat = summary["latency"]
+    assert lat is not None
+    assert lat["unit"] == "s"
+    assert lat["n"] == 3
+    assert lat["mean"] == pytest.approx(4.333, abs=0.001)  # (1+2+10)/3
+    assert lat["min"] == 1.0
+    assert lat["max"] == 10.0
+    assert lat["p50"] == 2.0
+    assert lat["p95"] == 10.0
+    assert lat["p99"] == 10.0
     # Prove they are not all the same number (the old single-caption tautology).
     values = [
-        summary["mean_latency_s"],
-        summary["min_latency_s"],
-        summary["max_latency_s"],
-        summary["p50_latency_s"],
+        lat["mean"],
+        lat["min"],
+        lat["max"],
+        lat["p50"],
     ]
     assert len(set(values)) == 4
 
@@ -329,7 +339,38 @@ def test_model_specs_mirror_profiles_registry():
     assert MODEL_SPECS["base-ft"].model_id == small.model_id
     assert MODEL_SPECS["base-ft"].revision == small.model_revision
     assert MODEL_SPECS["large-ft"].model_id == large.model_id
-    assert MODEL_SPECS["large-ft"].revision == large.model_revision  # unpinned: logged at load
+    assert MODEL_SPECS["large-ft"].revision == large.model_revision  # unpinned until enablement
+
+
+def test_main_refuses_unpinned_large_ft_before_load(tmp_path, monkeypatch, capsys):
+    """VLM6-RH-09: --model large-ft fails at parse time, never calls load_captioner."""
+    tsv = tmp_path / "a.tsv"
+    tsv.write_text("1\t2026/07/img-1.png\n")
+    called: list[object] = []
+
+    def _boom(spec):  # pragma: no cover — must not be reached
+        called.append(spec)
+        raise AssertionError("load_captioner must not run for unpinned large-ft")
+
+    monkeypatch.setattr("scripts.eval_harness.florence_describe.load_captioner", _boom)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "--images-dir",
+                str(tmp_path),
+                "--tsv",
+                str(tsv),
+                "--out-jsonl",
+                str(tmp_path / "out.jsonl"),
+                "--model",
+                "large-ft",
+            ]
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "no pinned revision" in err
+    assert "large-ft" in err
+    assert called == []
 
 
 def test_main_requires_paths(capsys):

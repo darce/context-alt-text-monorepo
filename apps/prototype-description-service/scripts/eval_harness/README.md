@@ -297,8 +297,8 @@ on disk (`*-report.json`). Fields:
 
 | Field | Meaning |
 | --- | --- |
-| `verdict` | `pass` \| `fail` \| `pass_ungated` (`pass_ungated` only when `--rubric-gate skip` and no other reasons). |
-| `reasons` | Machine-readable list of every condition that would force a non-zero exit (failed-items, truncation, manifest-mismatch, empty-rubric, must-right failures, wrong-name floor / vacuity, schema hard-key errors). |
+| `verdict` | `pass` \| `fail` \| `pass_ungated` \| `not_ready` \| `non_comparable`. `pass_ungated` only when `--rubric-gate skip` and no other reasons. `not_ready` when a critical scored category has sampling π=0 (category vacuity / undersized sample) — never adoption-eligible. `non_comparable` is archival manifest-relabel only (`--allow-manifest-relabel`); `compare` rejects it. |
+| `reasons` | Machine-readable list of every condition that would force a non-zero exit (failed-items, truncation, manifest-mismatch, empty-rubric, must-right failures, wrong-name floor / vacuity, quality-floor breaches on critical slices, category-vacuity / sample-size, schema hard-key errors). |
 | `wrong_name_rate` / `wrong_name_rate_floor` | Display rate (rounded) + floor constant; gate decisions use count / unrounded rate, not the rounded display. |
 | `rubric_gate` | Operator-declared mode stamped into the artifact (`enforce` \| `skip`). |
 | `insertion_rate`, `mean_gated_score`, `must_right_failed_images` | Reported metrics mirrored for operator triage. |
@@ -320,10 +320,13 @@ Content gates fire **after** the report is on disk. Prefixes are class-unique:
 | must-right failures | `score must-right failures gate:` | `--rubric-gate enforce` (default) and `must_right_failed_images > 0`. Bypass only via explicit `--rubric-gate skip` (artifact says `pass_ungated`). |
 | wrong-name floor vacuity | `score wrong-name floor vacuity gate:` | Images scored but `identification.evaluated_images == 0` (floor would be vacuous). |
 | wrong-name floor | `score wrong-name floor gate:` | Wrong-name floor breached (count when floor is 0.0; unrounded rate otherwise). Ignore-list pairs still count toward the rate. |
+| category vacuity / not_ready | `score category-vacuity gate:` | Critical scored slice has π=0 (positional, placement, fabricated-fact traps, identity_ordering, detection/ID P/R, caption scalars) or sample size below the score-pass floor — artifact `verdict=not_ready`, never `pass`. |
+| quality floor | (folded into `verdict=fail` reasons) | Measured critical slice is total failure: `position_accuracy` / `placement.accuracy` at the degenerate floor, or `fabricated_fact_rate` at the ceiling. Distinct from vacuity (`not_ready` = not measured). |
 
 The original S2A “five named gates” are failed-items, manifest-mismatch,
-empty-rubric, must-right failures, and wrong-name floor; truncation, vacuity, and
-schema hard-keys are additional class-unique exits on the same path.
+empty-rubric, must-right failures, and wrong-name floor; truncation, vacuity,
+quality floors, and schema hard-keys are additional class-unique exits on the
+same path.
 
 Pre-gate hard failures (no report write for that invocation):
 

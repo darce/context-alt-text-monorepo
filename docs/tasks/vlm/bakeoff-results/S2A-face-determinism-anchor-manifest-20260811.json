@@ -240,6 +240,75 @@
         "source": "localwp"
       },
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.2,
+          "name": null,
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.7,
+          "y": 0.1
+        }
+      ],
+      "face_count": 1,
+      "media_id": 9,
+      "must_right": [],
+      "path": "localwp/uploads/stranger-fn-miss.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.2,
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.1,
+          "y": 0.1
+        },
+        {
+          "h": 0.2,
+          "name": null,
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.7,
+          "y": 0.7
+        }
+      ],
+      "face_count": 2,
+      "media_id": 10,
+      "must_right": [],
+      "path": "localwp/uploads/mixed-fn-miss.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
     }
   ],
   "manifest_version": 2,

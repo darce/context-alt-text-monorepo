@@ -381,6 +381,28 @@
       "media_id": 3,
       "model_id": "synthetic-face-anchor",
       "path": "localwp/uploads/stranger-party.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 9,
+      "model_id": "synthetic-face-anchor",
+      "path": "localwp/uploads/stranger-fn-miss.jpg"
+    },
+    {
+      "embedding_dim": 8,
+      "faces": [],
+      "image_size": [
+        100,
+        100
+      ],
+      "media_id": 10,
+      "model_id": "synthetic-face-anchor",
+      "path": "localwp/uploads/mixed-fn-miss.jpg"
     }
   ],
   "kind": "face_run_record",
@@ -416,9 +438,9 @@
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
     "head_sha": null,
     "leg": "candidate",
-    "manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
+    "manifest_sha256": "021109aab319b7d26946ac569b1481f579917458bce6be7c2f5713edd2509a5e",
     "model_id": "synthetic-face-anchor",
-    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; failures[] declared gap — score-face hard-exits on counts.failed>0)",
     "started_at": null
   },
   "schema": "acx-eval/v1"

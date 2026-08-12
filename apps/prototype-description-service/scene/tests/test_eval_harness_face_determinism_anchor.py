@@ -65,11 +65,15 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # Manifest digest unchanged (corpus body byte-identical); run/report/md moved.
 # Regenerated hx1 (wave-C regen) after gx4 S4-04 pin-mode started_at:null +
 # S4-05 MD head_sha null rendering. Manifest digest still unchanged.
+# Regenerated fx5 (wave-B): HARM-05 corpus extension (unmatched stranger GT + mixed
+# named/anonymous miss) + HARM-01/HARM-09 published metrics (fn folds stranger
+# misses; slices.unknown_rejection.missed_stranger_gt). Digests taken from
+# sha256sum of generator output — never hand-typed.
 _FROZEN_DIGESTS = {
-    _MANIFEST.name: "1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958",
-    _RUN.name: "a5264540eb1fe7aa12227d8c8da5776a4ae2790cf9b6f606899a0fc48c3685c5",
-    _REPORT_JSON.name: "fbea3c228f527d657d85c511a093ec8c0959cbeed0850fe5f996b95b85037449",
-    _REPORT_MD.name: "537446ccc8f96704a93aaeb9e027662b9995bc5daffddf4c876cb48ae97be760",
+    _MANIFEST.name: "67685bb703a516f7a0651fdae90cc3f316b6929831f293030f5b6aa67d766103",
+    _RUN.name: "43d160d63b188eb0f5b3b04deef48c17fe60af958e134421a1816bb098f86ef5",
+    _REPORT_JSON.name: "faf72705b708e77b57ec9255c7c5d9292b7d366f77348cac7a657db7ff394e52",
+    _REPORT_MD.name: "cc60073dd1f126517370e5832cae142201b89df22b8fe49d6aec2e299bc06b7d",
 }
 
 
@@ -118,7 +122,8 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     # Metadata-only: synthetic face anchor has no image files; sha over metadata only.
     expected_sha = _manifest_sha(load_manifest(str(_MANIFEST), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("19861fed")
+    # Prefix of generation-time sha over the extended HARM-05 corpus (not a digest pin).
+    assert manifest_sha.startswith("021109aa")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -140,6 +145,97 @@ def test_face_run_record_is_synthetic_dim8_no_real_embeddings() -> None:
         assert item["embedding_dim"] == _EMBEDDING_DIM
         for face in item.get("faces") or []:
             assert len(face["embedding"]) == _EMBEDDING_DIM
+
+
+def test_face_anchor_corpus_includes_unmatched_stranger_gt() -> None:
+    """HARM-05: corpus must include unmatched anonymous GT (HARM-01 fn population).
+
+    Pre-extension freeze had only a *matched* stranger + a *named* miss — so
+    ``fn = missed_gt + missed_stranger_gt`` and ``fn = missed_gt`` agreed, and
+    regenerating could not detect a HARM-01 regression (TEST-15 / EVAL-13).
+    """
+    from scripts.eval_harness.generate_face_determinism_anchor import (
+        build_face_anchor_run_record,
+        build_synthetic_face_manifest,
+    )
+
+    raw = build_synthetic_face_manifest()
+    # Pair media_id → detection count from the run-record builder.
+    record = build_face_anchor_run_record(
+        manifest_sha256="0" * 64,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+    )
+    det_by_media = {int(i["media_id"]): len(i.get("faces") or []) for i in record["items"]}
+
+    pure_stranger_miss = 0
+    mixed_named_and_stranger_miss = 0
+    for entry in raw["entries"]:
+        mid = int(entry["media_id"])
+        boxes = list(entry.get("face_boxes") or [])
+        anon = [b for b in boxes if not b.get("name")]
+        named = [b for b in boxes if b.get("name")]
+        n_det = det_by_media.get(mid, 0)
+        if anon and n_det == 0 and not named:
+            pure_stranger_miss += 1
+        if anon and named and n_det == 0:
+            mixed_named_and_stranger_miss += 1
+    assert pure_stranger_miss >= 1, "need ≥1 pure unmatched-anonymous-GT image (HARM-05)"
+    assert mixed_named_and_stranger_miss >= 1, (
+        "need ≥1 image mixing named-unmatched + anonymous-unmatched (HARM-05)"
+    )
+
+
+def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HARM-05 / TEST-15: pre-HARM-01 named-only FN must mismatch the freeze.
+
+    Watches the assertion fail: if the corpus again lacks unmatched stranger GT,
+    pre- and post-HARM-01 formulas agree and this control goes green falsely.
+    """
+    from scripts.eval_harness import report as report_mod
+
+    def _pre_harm01_detection(assignment):  # type: ignore[no-untyped-def]
+        tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
+        fp = int(assignment.false_detections)
+        # Pre-HARM-01: named misses only — stranger misses invisible to detection.
+        fn = int(assignment.missed_gt)
+        precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+        recall = (tp / (tp + fn)) if (tp + fn) else 0.0
+        return {"precision": precision, "recall": recall, "tp": tp, "fp": fp, "fn": fn}
+
+    freeze = json.loads(_REPORT_JSON.read_text())
+    # Freeze must itself exercise the stranger-miss population (else control is vacuous).
+    unk = (freeze.get("slices") or {}).get("unknown_rejection") or {}
+    assert int(unk.get("missed_stranger_gt") or 0) >= 1, (
+        "committed freeze has no missed_stranger_gt — corpus extension missing "
+        "or freeze not regenerated (HARM-05 vacuity)"
+    )
+    post_fn = int((freeze.get("detection") or {}).get("fn") or 0)
+
+    monkeypatch.setattr(report_mod, "_detection_from_assignment", _pre_harm01_detection)
+    manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
+    record = json.loads(_RUN.read_text())
+    synth, real = occlusion_inputs_from_record(record, manifest)
+    json_doc, _ = build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=_manifest_sha(manifest),
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
+    rescored = json.loads(json_doc)
+    pre_fn = int((rescored.get("detection") or {}).get("fn") or 0)
+    # Discrimination: named-only FN under-counts vs identity-agnostic freeze.
+    assert pre_fn < post_fn, (
+        f"pre-HARM-01 fn={pre_fn} did not under-count post freeze fn={post_fn}; "
+        "corpus does not discriminate HARM-01 (TEST-15)"
+    )
+    assert rescored["detection"] != freeze["detection"], (
+        "pre-HARM-01 re-score matched freeze detection — regression undetectable"
+    )
 
 
 def test_coverage_gaps_enumerate_every_vacuous_or_live_slice() -> None:

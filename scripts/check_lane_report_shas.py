@@ -29,9 +29,11 @@ require a digest **shape**, not just an adjacent label (RV4-02):
 * A bare 7–12 hex token after ``golden sha is`` / ``fetch sha`` / ``manifest
   sha`` / ``freeze … sha`` is a **commit citation** and must resolve (RV4-02).
 
-Unicode evasion (RV4-03): each line is NFKC-normalised and Cf (format) characters
-(soft hyphen, ZWSP, …) are stripped before scanning. Homoglyph / confusable
-hex-lookalike runs next to commit vocabulary fail closed rather than vanishing.
+Unicode evasion (RV4-03 / VLM6-R2-G-03): each line is NFKC-normalised and Cf
+(format) characters (soft hyphen, ZWSP, …) are stripped before scanning.
+Homoglyph / confusable hex-lookalike runs are examined on **every** line
+unconditionally — commit vocabulary may annotate context but never gates
+whether a lookalike SHA is reported.
 
 HTML comments are **not** a skip channel (S5-01). Unresolvable hex inside
 ``<!-- ... -->`` fails the same way as visible prose. Foreign SHAs that
@@ -91,7 +93,8 @@ _SHA256SUM_LISTING_AFTER = re.compile(r"^(?:…|\.\.\.)\s+\S")
 # Minimum hex length treated as a content-digest shape when a digest label is present.
 _DIGEST_MIN_HEX_LEN = 16
 
-# Commit / SHA vocabulary — homoglyph runs next to these fail closed (RV4-03).
+# Commit / SHA vocabulary — optional annotation context only (VLM6-R2-G-03).
+# Homoglyph detection is unconditional; this pattern must never gate reporting.
 _COMMIT_VOCAB = re.compile(
     r"(?i)\b(?:"
     r"commit|sha(?:256)?|sandbox|landing|history-stripped|"
@@ -329,16 +332,20 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
                 f"(or add `{_IGNORE_MARKER}` on the nearest token if it is deliberately foreign)"
             )
 
-        # Homoglyph SHAs: fail loudly when commit vocabulary is present and the
-        # lookalike did not yield a normal ASCII hex token (RV4-03).
-        if _COMMIT_VOCAB.search(line):
-            for run in _homoglyph_sha_runs(line):
-                violations.append(
-                    f"{rel}:{lineno}: homoglyph / non-ASCII hex-lookalike `{run}` "
-                    f"adjacent to commit vocabulary — refuse to treat lookalike SHAs "
-                    f"as invisible; use ASCII hex or mark deliberately foreign tokens "
-                    f"with `{_IGNORE_MARKER}`"
-                )
+        # Homoglyph SHAs: examine every line unconditionally (VLM6-R2-G-03).
+        # Commit vocabulary annotates context only — never gates detection.
+        for run in _homoglyph_sha_runs(line):
+            vocab_note = (
+                " adjacent to commit vocabulary"
+                if _COMMIT_VOCAB.search(line)
+                else ""
+            )
+            violations.append(
+                f"{rel}:{lineno}: homoglyph / non-ASCII hex-lookalike `{run}`"
+                f"{vocab_note} — refuse to treat lookalike SHAs as invisible; "
+                f"use ASCII hex or mark deliberately foreign tokens with "
+                f"`{_IGNORE_MARKER}`"
+            )
 
     if in_block_comment:
         violations.append(

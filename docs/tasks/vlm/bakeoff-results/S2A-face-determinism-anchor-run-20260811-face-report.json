@@ -3,9 +3,9 @@
     "failed": 0,
     "matched_faces": 6,
     "named_matched": 5,
-    "scored": 8,
+    "scored": 10,
     "stranger_matched": 1,
-    "total": 8
+    "total": 10
   },
   "decisions": [
     {
@@ -106,10 +106,10 @@
     }
   ],
   "detection": {
-    "fn": 1,
+    "fn": 4,
     "fp": 1,
     "precision": 0.8571428571428571,
-    "recall": 0.8571428571428571,
+    "recall": 0.6,
     "tp": 6
   },
   "failures": [],
@@ -124,7 +124,7 @@
       "unknown_rejection"
     ],
     "identification_detection_coupling": {
-      "detection_recall": 0.8571428571428571,
+      "detection_recall": 0.6,
       "detection_recall_coupling_flag": true,
       "flag": "identification recall is computed only over faces this leg detected and §C-matched (enrolled); weak detection can inflate id-recall on the easy detected subset — report id-recall ALONGSIDE detection-recall",
       "identification_recall": 0.6666666666666666,
@@ -202,7 +202,7 @@
     },
     "leg": "candidate",
     "manifest_matches_fetch": true,
-    "manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
+    "manifest_sha256": "021109aab319b7d26946ac569b1481f579917458bce6be7c2f5713edd2509a5e",
     "model": {
       "embedding_dims": [
         8
@@ -213,7 +213,7 @@
       ]
     },
     "model_id": "synthetic-face-anchor",
-    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; failures[] declared gap — score-face hard-exits on counts.failed>0)",
     "protocol_id": "fir-5-face-bakeoff-v0.11.0",
     "sampling_frames": {
       "clustering": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
@@ -222,10 +222,10 @@
       "occlusion_recovery": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
       "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
     },
-    "score_manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
+    "score_manifest_sha256": "021109aab319b7d26946ac569b1481f579917458bce6be7c2f5713edd2509a5e",
     "started_at": null,
     "tau_fit_status": "fitted",
-    "total_gt_boxes": 7,
+    "total_gt_boxes": 10,
     "zero_box_corpus": false
   },
   "report_kind": "face_bakeoff",
@@ -313,16 +313,16 @@
     },
     "full_corpus_identification": {
       "detection_recall_coupling_flag": true,
-      "fn": 2,
+      "fn": 3,
       "fp": 1,
-      "missed_gt": 1,
+      "missed_gt": 2,
       "n_named_probes": 5,
       "n_recall_eligible": 5,
       "precision": 0.8,
       "precision_denominator": 5,
       "precision_numerator": 4,
-      "recall": 0.6666666666666666,
-      "recall_denominator": 6,
+      "recall": 0.5714285714285714,
+      "recall_denominator": 7,
       "recall_numerator": 4,
       "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
       "tp": 4,
@@ -475,13 +475,14 @@
       "error_target": "Wilson_95_halfwidth_le_15pct_at_p0.5 (n=43 → ±14.3%); assumes independent trials — stranger probes cluster within images/individuals, so effective n may be lower and the half-width optimistic (trial dependence disclosed)",
       "false_accepts": 0,
       "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
-      "n": 1,
+      "missed_stranger_gt": 2,
+      "n": 3,
       "n_floor": 43,
-      "rate": 1.0,
-      "rate_denominator": 1,
+      "rate": 0.3333333333333333,
+      "rate_denominator": 3,
       "rate_numerator": 1,
       "reasons": [
-        "n=1<43"
+        "n=3<43"
       ],
       "sampling_frame": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions",
       "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"

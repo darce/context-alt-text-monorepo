@@ -34,6 +34,7 @@ from recognition.infrastructure.face_pipeline.ort_adapters import (
 )
 
 from .face_assignment import associate_detections
+from .face_metrics import named_box_name
 from .face_run_record import (
     build_face_detection,
     build_face_run_item,
@@ -277,7 +278,10 @@ def build_occlusion_twin_pairs(
     n_specs = 0
     n_cached = 0
     for entry in entries:
-        if not any(box.name for box in entry.face_boxes):
+        # Namedness predicate (not raw truthiness): whitespace-only / Cf-only
+        # names are anonymous — any(box.name) would spuriously open the twin
+        # universe for corpora with no actually-named boxes (wE4 residual / wF2).
+        if not any(named_box_name(box) for box in entry.face_boxes):
             continue  # no named GT faces → no twin universe on this entry
         try:
             image_path = _resolve_image(images_root, entry.path)

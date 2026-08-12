@@ -2109,7 +2109,7 @@ def test_score_run_record_wires_positional_into_report():  # A-02
 
 def test_identity_names_preserves_left_to_right_not_alphabetical():
     """Normalizer keeps stored L→R order; three names beat reverse-alpha (A-11)."""
-    from scripts.eval_harness.cli import identity_names
+    from scripts.eval_harness.report import identity_names
 
     # Alpha: Amy Mid, Cam Left, Zoe Right. Reverse: Zoe, Cam, Amy. L→R: Cam, Amy, Zoe.
     raw = [
@@ -2124,14 +2124,14 @@ def test_identity_names_preserves_left_to_right_not_alphabetical():
 
 
 def test_identity_names_rejects_bare_string_shape():  # A-06
-    from scripts.eval_harness.cli import identity_names
+    from scripts.eval_harness.report import identity_names
 
     with pytest.raises(TypeError, match="dict identity row"):
         identity_names(["Zoe Left", "Amy Right"])
 
 
 def test_identity_names_rejects_empty_name_and_non_dict():  # A-06
-    from scripts.eval_harness.cli import identity_names
+    from scripts.eval_harness.report import identity_names
 
     with pytest.raises(ValueError, match="empty/missing"):
         identity_names([{"name": "", "bbox": None, "unpositioned": True}])
@@ -2141,7 +2141,7 @@ def test_identity_names_rejects_empty_name_and_non_dict():  # A-06
 
 def test_identity_names_rejects_non_list_top_level():  # A-15
     """Top-level non-list identities must raise TypeError (not silently return [])."""
-    from scripts.eval_harness.cli import identity_names
+    from scripts.eval_harness.report import identity_names
 
     for bad in (None, "Zoe Alone", {"name": "dict-not-list"}):
         with pytest.raises(TypeError, match="list of dict rows"):
@@ -2531,6 +2531,35 @@ def test_predicted_order_degraded_excluded_from_positional():  # VLM6-R4-06
     )
 
 
+def test_unknown_identity_ordering_stamp_raises():  # VLM6-RH-06
+    """A typo'd ordering stamp must go loud, not take neither branch.
+
+    RED before the enum move: ``"degrade"`` matched neither raw-string arm, so
+    both counters stayed 0 and the A-07 surface reported a clean run. The
+    exhaustive comparison is the only thing that can fail here (sr-007).
+    """
+    record, entries = _identity_scoring_pair()
+    record["items"][0]["identity_ordering"] = "degrade"  # one char short
+    with pytest.raises(ReportError, match="unknown identity_ordering"):
+        score_run_record(record, entries)
+
+
+def test_absent_identity_ordering_stamp_is_legal():  # VLM6-RH-06 discrimination
+    """Discrimination control: ``None`` means "fetch never stamped", not a typo.
+
+    Without this the guard above could be satisfied by rejecting everything,
+    which would break the committed anchor (37/37 unstamped).
+    """
+    record, entries = _identity_scoring_pair()
+    record["items"][0].pop("identity_ordering", None)
+    scored = score_run_record(record, entries)
+    ordering = scored["faces"]["identity_ordering"]
+    # Unstamped is not "positional" — it is unproven, and the R2-04 fold reports
+    # it as degraded via the exclusion count rather than a silent 0/0.
+    assert ordering["positional_images"] == 0
+    assert ordering["degraded_images"] >= 1
+
+
 def test_strata_by_difficulty_and_domain():  # VLM6-R4-05
     """Caption gate must emit per-difficulty / per-domain blocks with n."""
     record, entries = _run_record(), _manifest_entries()
@@ -2581,3 +2610,18 @@ def test_identity_names_lives_on_report_module():  # VLM6-RH-07
     assert names == ["Zoe Alone"]
     with pytest.raises(TypeError, match="list of dict rows"):
         report_identity_names("not-a-list")
+
+
+def test_identity_names_has_exactly_one_definition():  # VLM6-RH-07 residual
+    """cli and describe_baseline must re-export report's function, not clone it.
+
+    The first RH-07 fix removed the import cycle by copying the body into both
+    modules. The contract tests above then exercised the ``cli`` clone while
+    scoring ran the ``report`` one, so a regression in the copy that actually
+    scores could not go red. Identity comparison is the only assertion that
+    fails when someone re-clones (equal behaviour today, divergent tomorrow).
+    """
+    from scripts.eval_harness import cli as cli_mod
+    from scripts.eval_harness import report as report_mod
+
+    assert cli_mod.identity_names is report_mod.identity_names

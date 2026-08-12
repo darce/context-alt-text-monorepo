@@ -53,11 +53,15 @@ _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-face-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 
 # File digests of the committed face quadruple — update only when intentionally regenerating.
+# Regenerated for VLM6-R2-06: the face markdown carried no fetch-manifest provenance at
+# all, so corpus drift was undisclosed on the identity path. Only the .md digest moved —
+# manifest, run-record and report JSON are byte-identical, which is the evidence that
+# disclosure changed and scoring did not.
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958",
     _RUN.name: "38a5168d051bc830ec1503a59858ff76e532807b9fbb7a8ccb1aaafadf7c10ff",
     _REPORT_JSON.name: "dcee8efa6aa0846c2ef22f054030bc5ee921093f20043f0d498247d471c29442",
-    _REPORT_MD.name: "212c46a0cb615432b87b3d2e0b7acaeb31429df51873aeea7d93daf6e8420368",
+    _REPORT_MD.name: "c29cc8591ba2b9fa560d8504deb3273bafeb499760f27a8475c3168594d59718",
 }
 
 

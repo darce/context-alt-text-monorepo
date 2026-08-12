@@ -28,7 +28,6 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from statistics import mean, median
 
 HERE = Path(__file__).resolve().parent
 SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
@@ -130,11 +129,15 @@ def _done_ids() -> set[int]:
     return ids
 
 
-def _pct(vals: list[float], q: float) -> float | None:
-    if not vals:
-        return None
-    s = sorted(vals)
-    return round(s[min(len(s) - 1, int(q * len(s)))], 3)
+def _latency_line(block: dict | None) -> str:
+    """Render the canonical latency block (VLM6-RH-04). ``None`` = no timed samples."""
+    if not block:
+        return "- describe latency: no timed samples · wall-clock: n/a"
+    return (
+        f"- describe latency ({block['unit']}): n={block['n']} mean={block['mean']} "
+        f"p50={block['p50']} p95={block['p95']} p99={block['p99']} max={block['max']} · "
+        f"wall-clock: {block.get('wall_clock_s')}s · throughput: {block.get('images_per_min')} images/min"
+    )
 
 
 # Structured mask/sunglasses notation derived from the caption. Word-boundary anchored
@@ -203,8 +206,10 @@ def _write_report(
     cost_per_image_usd: float | None = None,
     uploads: Path | None = None,
 ) -> None:
-    # Shared with report.py scoring (sr-007): one normalizer for both identity shapes.
-    from scripts.eval_harness.cli import identity_names
+    # Import from report, not cli: report owns the single definition (VLM6-RH-07).
+    # Going via cli would pull the whole argparse entrypoint in for one normalizer.
+    from scripts.eval_harness.face_metrics import latency_summary
+    from scripts.eval_harness.report import identity_names
 
     rows = [json.loads(ln) for ln in JSONL.read_text().splitlines() if ln.strip()] if JSONL.exists() else []
     if not rows:
@@ -238,15 +243,17 @@ def _write_report(
         "distinct_named_identities": len({n for r in ok for n in identity_names(r.get("identities"))}),
         "images_with_mask": sum(1 for r in ok if "mask" in r.get("caption_flags", [])),
         "images_with_sunglasses": sum(1 for r in ok if "sunglasses" in r.get("caption_flags", [])),
-        "describe_latency_s": {
-            "mean": round(mean(lat), 3) if lat else None,
-            "p50": round(median(lat), 3) if lat else None,
-            "p95": _pct(lat, 0.95),
-            "p99": _pct(lat, 0.99),
-            "max": round(max(lat), 3) if lat else None,
-        },
-        "wall_clock_s": round(wall, 1),
-        "images_per_min": round(len(rows) / (wall / 60), 1) if wall > 0 else None,
+        # Canonical cross-runner block (VLM6-RH-04): same schema face_pass and
+        # florence_describe emit, so bake-off numbers stack in one table without a
+        # per-runner adapter. Replaces the old flat describe_latency_s +
+        # top-level wall_clock_s/images_per_min — runs recorded before this change
+        # (e.g. vlm-baseline-descriptions-20260716.json) carry the old shape.
+        "latency": latency_summary(
+            lat,
+            unit="s",
+            wall_clock_s=wall,
+            throughput_n=len(rows),
+        ),
         "cost_per_image_usd": cost_fields["cost_per_image_usd"],
         "total_cost_usd": cost_fields["total_cost_usd"],
         "base_url": BAKEOFF_BASE_URL or os.environ.get("ACX_EVAL_BASE_URL"),
@@ -277,10 +284,7 @@ def _write_report(
         f"- progress: **{summary['described_ok']}/{summary['total']}** described "
         f"({summary['errors']} errors) · images_with_faces: {summary['images_with_faces']} · "
         f"distinct named identities: {summary['distinct_named_identities']}",
-        f"- describe latency (s): mean={summary['describe_latency_s']['mean']} "
-        f"p50={summary['describe_latency_s']['p50']} p95={summary['describe_latency_s']['p95']} "
-        f"p99={summary['describe_latency_s']['p99']} max={summary['describe_latency_s']['max']}",
-        f"- wall-clock: {summary['wall_clock_s']}s · throughput: {summary['images_per_min']} images/min",
+        _latency_line(summary["latency"]),
         cost_line,
         f"- caption-derived flags (first-pass; operator tags = ground truth): "
         f"**mask={summary['images_with_mask']}**, **sunglasses={summary['images_with_sunglasses']}**",

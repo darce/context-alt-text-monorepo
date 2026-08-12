@@ -45,10 +45,13 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # ANCHOR_MISMATCH message — deliberate scoring change, stale freeze. The run-record
 # digest is unchanged (4c80fdbf), which is the evidence that only scoring moved:
 # the recorded model output is byte-identical, so this is not corruption.
+# Regenerated again for VLM6-R4-03: the markdown now discloses that placement is
+# vacuous (claims=0). Run-record and report JSON digests are unchanged — only the
+# .md moved, which is the evidence that disclosure changed and scoring did not.
 _FROZEN_DIGESTS = {
     _RUN.name: "4c80fdbf08d1599268d54e684505cdf6cfd33a91d2010151ea572f914e23573a",
     _REPORT_JSON.name: "1c627ec2dd28c843082a871c1ac75b8999f2cae25eb1e4606e1b658893168f64",
-    _REPORT_MD.name: "46e1e485bebfb97efaba3abba32a4fa592262ac9d9a03471cfd75ddcf705c83c",
+    _REPORT_MD.name: "97d6132b6842175ec624776347af0596248fc702fc05564e6bbb04a5e3856dcb",
 }
 
 

@@ -283,7 +283,28 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "k_folds",
         "tau_fit_status",
         "sampling_frames",
+        # RF-15: operator-facing sample-size caveat (not a gate change).
+        "low_sample_warning",
+        "quality_floor_caveat",
     }
+)
+
+# Closed enum for face tau_fit_status (RB-06 fail-closed on allow-listed free text).
+_TAU_FIT_STATUS_PUBLIC_VALUES: frozenset[str] = frozenset(
+    {"fitted", "mid_grid_unfitted", "error"}
+)
+
+# Minimum length for path-basename stems considered as identity scrub targets
+# (RF-13: short stems like "al" / "img" over-scrub unrelated free text).
+_FACE_PATH_STEM_SCRUB_MIN_LEN = 8
+
+# Absolute / home-path shapes in free text (RB-03) — not key-name gated.
+_OPERATOR_PATH_IN_TEXT_RE = re.compile(
+    r"(?:"
+    r"/(?:home|Users|var|tmp|opt|private|ops|root|usr|etc|data|mnt)(?:/[\w.\-@+]*)*"
+    r"|file://[^\s\"'`]+"
+    r"|[A-Za-z]:\\[^\s\"'`]+"
+    r")"
 )
 
 # PUBLIC per-image is fail-closed allow-list (VLM6-A-01 / rg-015). Name-bearing
@@ -435,6 +456,7 @@ def _publishable_media_ids(manifest_entries: list[dict[str, Any]]) -> set[int]:
 
 def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
     """Fail-closed allow-list projection for PUBLIC provenance (VLM6-R3-01 / R4-07)."""
+    known_sampling_frames = frozenset(FACE_BAKEOFF_SAMPLING_FRAMES.values())
     out: dict[str, Any] = {}
     for key in _PUBLIC_PROVENANCE_ALLOW_FIELDS:
         if key not in provenance:
@@ -451,8 +473,75 @@ def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
                 else:
                     model_out[mk] = mv
             out[key] = model_out
+        elif key == "tau_fit_status":
+            # RB-06: closed enum only — hostile free text must not ride the allow-list.
+            if isinstance(value, str) and value in _TAU_FIT_STATUS_PUBLIC_VALUES:
+                out[key] = value
+            elif value is not None:
+                out[key] = "<redacted>"
+        elif key == "sampling_frames" and isinstance(value, Mapping):
+            # RB-06: only known protocol frame strings pass; anything else is opaque.
+            frames_out: dict[str, Any] = {}
+            for fk, fv in value.items():
+                if isinstance(fv, str) and fv in known_sampling_frames:
+                    frames_out[str(fk)] = fv
+                elif isinstance(fv, str):
+                    frames_out[str(fk)] = "<redacted>"
+                else:
+                    frames_out[str(fk)] = fv
+            out[key] = frames_out
         else:
             out[key] = value
+    return out
+
+
+def _is_absolute_path_string(text: str) -> bool:
+    """True when *text* is itself an absolute filesystem / file:// path."""
+    if not text:
+        return False
+    if text.startswith("file://"):
+        return True
+    if text.startswith("/"):
+        return True
+    return len(text) > 2 and text[1] == ":" and text[2] in "\\/"
+
+
+def _string_contains_operator_path(text: str) -> bool:
+    """True when free text embeds an operator absolute path (RB-03)."""
+    if not text:
+        return False
+    if _is_absolute_path_string(text.strip()):
+        return True
+    return _OPERATOR_PATH_IN_TEXT_RE.search(text) is not None
+
+
+def _normalize_face_boxes_for_order(face_boxes: Sequence[Any] | None) -> list[Any]:
+    """Normalize blank/non-numeric ``y`` to None before labeled_order (RA-04).
+
+    face_metrics treats only ``y is None`` as missing; ``y: ""`` raises ValueError.
+    Report normalizes at the consumer boundary (source fix is face_metrics / wE4).
+    """
+    if not face_boxes:
+        return []
+    out: list[Any] = []
+    for box in face_boxes:
+        if not isinstance(box, Mapping):
+            out.append(box)
+            continue
+        if "y" not in box:
+            out.append(box)
+            continue
+        y = box.get("y")
+        if y is None:
+            out.append(box)
+            continue
+        try:
+            float(y)  # noqa: B018 — validate only
+            out.append(box)
+        except (TypeError, ValueError):
+            normalized = dict(box)
+            normalized["y"] = None
+            out.append(normalized)
     return out
 
 
@@ -1702,12 +1791,18 @@ def score_run_record(
         present = list(entry["present_identities"])
         # VLM6-R2-G-01: prefer labeled_order so report can surface order_degraded
         # (y-missing per-box fallback). labeled_left_to_right is .names only.
-        order_result = labeled_order(entry.get("face_boxes") or [])
+        # RA-04: normalize blank/non-numeric y at this boundary (face_metrics raises).
+        order_result = labeled_order(_normalize_face_boxes_for_order(entry.get("face_boxes") or []))
         ordered_labeled = order_result.names
-        labeled_order_known = ordered_labeled is not None
+        # RA-01: order_degraded L→R is not full spatial GT — exclude from positional
+        # scoring (invented alpha order on missing-y must not yield position_accuracy).
+        # Disclosure stays on labeled_y_missing_* (S2-07: do not overload degraded_*).
         if order_result.order_degraded:
             labeled_y_missing_images += 1
             labeled_y_missing_paths.append(path)
+            labeled_order_known = False
+        else:
+            labeled_order_known = ordered_labeled is not None
         # VLM6-R4-06: predicted order is only spatial when the fetch stamp says so.
         # ``degraded`` means unpositioned rows were appended alphabetically — exclude
         # from positional scoring so the L→R swap metric is not contaminated.
@@ -1865,7 +1960,20 @@ def score_run_record(
             None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
         ),
         "model": _model_provenance(run_record["items"]),
+        # RF-15: surface sample-size / chance-floor caveats in operator-facing
+        # provenance (constants unchanged — disclosure only, not an sr-001 loosen).
+        "quality_floor_caveat": (
+            f"position_accuracy/placement floors are binary-chance "
+            f"({POSITION_ACCURACY_FLOOR}); accuracy at the floor fails the gate"
+        ),
     }
+    scored_n_for_sample = len(per_image)
+    if scored_n_for_sample < SCORE_PASS_MIN_SCORED_IMAGES:
+        provenance["low_sample_warning"] = (
+            f"scored={scored_n_for_sample} < SCORE_PASS_MIN_SCORED_IMAGES="
+            f"{SCORE_PASS_MIN_SCORED_IMAGES}; green gates on small n are not "
+            f"population evidence (AUDIT-07 / EVAL-03)"
+        )
 
     # Vacuity is per-rubric, not OR'd: emptying only must_right while easy_wrong
     # remains must still trip the empty-rubric gate (VLM-6 S2A F1-1 / r08116b50).
@@ -2261,7 +2369,11 @@ def _manifest_drift_line(prov: dict[str, Any]) -> str:
     Shared by the caption and face renderers so the face report cannot omit it.
     """
     matches = prov.get("manifest_matches_fetch")
-    line = f"- score manifest_sha256: `{prov.get('score_manifest_sha256', 'unknown')}` (matches fetch: {matches})"
+    # RB-05: never interpolate raw Python None/True/False into published markdown.
+    line = (
+        f"- score manifest_sha256: `{_fmt_prov(prov.get('score_manifest_sha256'))}` "
+        f"(matches fetch: {_fmt_prov(matches)})"
+    )
     if matches is False:
         return (
             f"{line}\n"
@@ -2294,6 +2406,12 @@ def _markdown(scored: dict[str, Any]) -> str:
         f"- images: {scored['counts']['scored']}/{scored['counts']['total']} scored, "
         f"{scored['counts']['failed']} failed",
     ]
+    # RF-15: low-sample / chance-floor caveats must be operator-visible, not
+    # source-comment-only.
+    if prov.get("low_sample_warning"):
+        lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
+    if prov.get("quality_floor_caveat"):
+        lines.append(f"- quality_floor_caveat: {_fmt_prov(prov.get('quality_floor_caveat'))}")
     verdict = scored.get("verdict") or {}
     if verdict:
         rate = verdict.get("wrong_name_rate")
@@ -3567,62 +3685,119 @@ def score_face_run_record(
     return _sort_nested_lists(report)
 
 
+def _face_publishable_identity_names(report: Mapping[str, Any]) -> set[str]:
+    """True names of publishable named decisions — the only identities PUBLIC may name."""
+    names: set[str] = set()
+    for d in report.get("decisions") or []:
+        if not isinstance(d, Mapping):
+            continue
+        if d.get("publishable") is True and isinstance(d.get("true_name"), str) and d["true_name"].strip():
+            names.add(d["true_name"])
+    return names
+
+
+def _harvest_name_cells_from_wrong_names(node: Any, names: set[str]) -> None:
+    """Recursively collect identity-like strings from wrong_names rows (RF-01)."""
+    if isinstance(node, Mapping):
+        for key, value in node.items():
+            if key in ("wrong_names", "ignored_wrong_names") and isinstance(value, list):
+                for pair in value:
+                    if not isinstance(pair, list | tuple):
+                        continue
+                    for cell in pair:
+                        if not isinstance(cell, str) or not cell.strip():
+                            continue
+                        if "/" in cell or "\\" in cell:
+                            continue
+                        lower = cell.lower()
+                        if any(lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                            continue
+                        # Skip pure ints encoded as strings / media tokens.
+                        if cell.startswith("media_id:"):
+                            continue
+                        names.add(cell)
+            else:
+                _harvest_name_cells_from_wrong_names(value, names)
+    elif isinstance(node, list):
+        for item in node:
+            _harvest_name_cells_from_wrong_names(item, names)
+
+
 def _face_private_identity_names_for_public_scrub(report: Mapping[str, Any]) -> list[str]:
     """Private roster names from a face report for free-text scrub (VLM6-R2-A-02).
 
     Face PUBLIC redaction has no separate manifest at the call site — names are
     recovered from decision rows / wrong_names before those surfaces are stripped.
-    Publishable named decisions keep their true/predicted names on purpose; only
-    non-publishable rows contribute scrub targets.
+
+    Publishable *true_name* values are not scrub targets (they ship on kept
+    decisions). Every other identity string — including private ``predicted_name``
+    / ``name_star`` on a publishable probe (CDX-01 / RB-04) and wrong_names cells
+    under any slice (RF-01 demographic copy) — is a scrub target.
+
+    Path-basename stems are **not** harvested as scrub targets (RF-13): short
+    stems over-scrub unrelated free text. Paths are handled by path redaction /
+    absolute-path free-text collapse instead (RB-03).
     """
+    publishable = _face_publishable_identity_names(report)
     names: set[str] = set()
     for d in report.get("decisions") or []:
         if not isinstance(d, Mapping):
             continue
-        if d.get("publishable") is True and d.get("true_name") is not None:
-            continue
         for key in ("true_name", "predicted_name", "name_star"):
             val = d.get(key)
-            if isinstance(val, str) and val.strip():
-                names.add(val)
-    slices = report.get("slices") if isinstance(report.get("slices"), Mapping) else {}
-    for block_key in ("headline_identification", "full_corpus_identification"):
-        block = slices.get(block_key) if isinstance(slices, Mapping) else None
-        if not isinstance(block, Mapping):
-            continue
-        for pair in list(block.get("wrong_names") or []) + list(block.get("ignored_wrong_names") or []):
-            if not isinstance(pair, list | tuple):
+            if not isinstance(val, str) or not val.strip():
                 continue
-            for cell in pair:
-                if isinstance(cell, str) and cell.strip() and "/" not in cell:
-                    lower = cell.lower()
-                    if not any(lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
-                        names.add(cell)
-    # Operator free-text (operator_note, path basenames) may embed identity
-    # strings not present on decision rows — harvest path basenames from
-    # non-publishable decisions/failures as extra scrub targets.
-    for d in report.get("decisions") or []:
-        if not isinstance(d, Mapping) or d.get("publishable") is True:
-            continue
-        path = d.get("path")
-        if isinstance(path, str) and path:
-            base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-            stem = base.rsplit(".", 1)[0] if "." in base else base
-            if stem and not stem.startswith("media_id:"):
-                names.add(stem)
+            # Keep publishable subjects; scrub every other identity reference.
+            if key == "true_name" and d.get("publishable") is True:
+                continue
+            if val in publishable:
+                continue
+            names.add(val)
+    slices = report.get("slices") if isinstance(report.get("slices"), Mapping) else {}
+    _harvest_name_cells_from_wrong_names(slices, names)
+    # Drop any publishable true names that wrong_names harvest may have re-added.
+    names -= publishable
+    # RF-13: never add short path stems. (Previous harvest of basenames is gone.)
+    _ = _FACE_PATH_STEM_SCRUB_MIN_LEN  # documented floor if stem harvest returns
     return sorted((n for n in names if n), key=len, reverse=True)
 
 
-def _scrub_face_public_free_text(obj: Any, names: Sequence[str]) -> Any:
-    """Apply shared ``_scrub_identity_names`` to free-text leaves (VLM6-R2-A-02).
+def _scrub_face_public_string(text: str, names: Sequence[str]) -> str:
+    """Scrub one free-text leaf: identity hits + absolute-path shapes (RB-01/03)."""
+    if not text:
+        return text
+    if text.startswith("media_id:") or text in (
+        "<path>",
+        "<absolute>",
+        "<error>",
+        "<redacted>",
+    ):
+        return text
+    if _is_absolute_path_string(text):
+        return "<absolute>"
+    if _string_contains_operator_path(text):
+        return "<redacted>"
+    if names:
+        scrubbed = _scrub_identity_names(text, names)
+        if scrubbed != text:
+            return "<redacted>"
+    return text
 
-    Intentional identity fields on *kept* publishable decision rows
-    (true_name / predicted_name / name_star) are preserved. Every other string
-    leaf is scrubbed; a hit collapses to ``<redacted>`` (same shape as
-    ``_public_free_text_value`` for non-path free text).
+
+def _scrub_face_public_free_text(
+    obj: Any,
+    names: Sequence[str],
+    *,
+    publishable_names: frozenset[str] | set[str] | None = None,
+) -> Any:
+    """Fail-closed free-text walk for face PUBLIC (VLM6-R2-A-02 / RF-02 / RB-01).
+
+    Walks dicts *and* list elements (including bare ``str``). Absolute paths in
+    any free-text leaf collapse (RB-03). Publishable decision ``true_name`` is
+    retained; ``predicted_name`` / ``name_star`` are retained only when the
+    referenced identity is itself a publishable subject (CDX-01 / RB-04).
     """
-    # Name-bearing keys on decision rows that PUBLIC deliberately retains for
-    # publishable celebs — do not blank them after the decision filter.
+    pub = frozenset(publishable_names or ())
     _keep_name_keys = frozenset({"true_name", "predicted_name", "name_star"})
 
     def _walk(node: Any, *, parent_is_decision: bool = False) -> Any:
@@ -3633,20 +3808,50 @@ def _scrub_face_public_free_text(obj: Any, names: Sequence[str]) -> Any:
             out: dict[str, Any] = {}
             for key, value in node.items():
                 if is_decision and key in _keep_name_keys and isinstance(value, str):
-                    out[key] = value
+                    if key == "true_name":
+                        # Kept decisions are publishable+named; true_name ships.
+                        out[key] = value
+                    elif value in pub:
+                        out[key] = value
+                    else:
+                        # Private gallery identity referenced from a publishable probe.
+                        out[key] = "<redacted>"
                 elif isinstance(value, str):
-                    scrubbed = _scrub_identity_names(value, names)
-                    out[key] = value if scrubbed == value else "<redacted>"
+                    out[key] = _scrub_face_public_string(value, names)
                 else:
                     out[key] = _walk(value, parent_is_decision=is_decision and key != "decisions")
             return out
         if isinstance(node, list):
-            return [_walk(v, parent_is_decision=parent_is_decision) for v in node]
+            # RB-01 / RF-02: bare str elements must scrub (not fall through).
+            return [
+                (
+                    _scrub_face_public_string(v, names)
+                    if isinstance(v, str)
+                    else _walk(v, parent_is_decision=parent_is_decision)
+                )
+                for v in node
+            ]
+        if isinstance(node, str):
+            return _scrub_face_public_string(node, names)
         return node
 
-    if not names:
-        return obj
+    # Always walk: path collapse is load-bearing even when the scrub roster is empty.
     return _walk(obj)
+
+
+def _clear_wrong_names_everywhere(node: Any) -> Any:
+    """Fail-closed: clear wrong_names under every dict, not two known keys (RF-01)."""
+    if isinstance(node, dict):
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            if key in ("wrong_names", "ignored_wrong_names"):
+                out[key] = []
+            else:
+                out[key] = _clear_wrong_names_everywhere(value)
+        return out
+    if isinstance(node, list):
+        return [_clear_wrong_names_everywhere(v) for v in node]
+    return node
 
 
 def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
@@ -3674,6 +3879,7 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
 
     # Collect private names + path→media map from the *pre-strip* report so
     # free-text scrub and media_id:N tokens still work after detail drop.
+    publishable_names = _face_publishable_identity_names(report)
     scrub_names = _face_private_identity_names_for_public_scrub(report)
     path_to_media: dict[str, int] = {}
     for row in list(report.get("decisions") or []) + list(report.get("failures") or []):
@@ -3708,15 +3914,12 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
     if isinstance(clustering, dict) and "labels" in clustering:
         clustering["labels"] = []
 
-    # (3) wrong_names rows [media_id, box_index, true, pred] can name a private
-    #     individual and carry no publishability signal ⇒ drop the detail from
-    #     BOTH identification slices (aggregate precision/recall already preserved
-    #     in each block). Same for ignored_wrong_names.
-    for key in ("headline_identification", "full_corpus_identification"):
-        block = slices.get(key)
-        if isinstance(block, dict):
-            block["wrong_names"] = []
-            block["ignored_wrong_names"] = []
+    # (3) wrong_names rows can name a private individual under *any* slice
+    #     (headline, full_corpus, demographic.by_cohort.*, …). Fail-closed
+    #     recursive clear — not a two-key enumeration (RF-01).
+    if isinstance(slices, dict):
+        redacted["slices"] = _clear_wrong_names_everywhere(slices)
+        slices = redacted["slices"]
 
     # (4) Failure rows embed media paths and carry no publishability signal ⇒ drop
     #     wholesale (operator-triage detail only). Aggregate failed-count stays in
@@ -3725,8 +3928,11 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
 
     # AUDIT-09/12: redaction strips decision rows but must retain denominators
     # for every published aggregate rate so n/N honesty survives public export.
+    # RB-02: do NOT copy free-text sampling_frame into preserved_* — that
+    # re-injects pre-scrub secrets after the free-text walk. Numeric denominators
+    # only; sampling_frame remains (and is scrubbed) on the slice blocks themselves.
     preserved: dict[str, Any] = {}
-    hl = slices.get("headline_identification")
+    hl = slices.get("headline_identification") if isinstance(slices, Mapping) else None
     if isinstance(hl, dict):
         preserved["headline_identification"] = {
             "precision_numerator": hl.get("precision_numerator"),
@@ -3735,17 +3941,15 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
             "recall_denominator": hl.get("recall_denominator"),
             "n_named_probes": hl.get("n_named_probes"),
             "n_recall_eligible": hl.get("n_recall_eligible"),
-            "sampling_frame": hl.get("sampling_frame"),
         }
-    unk = slices.get("unknown_rejection")
+    unk = slices.get("unknown_rejection") if isinstance(slices, Mapping) else None
     if isinstance(unk, dict):
         preserved["unknown_rejection"] = {
             "rate_numerator": unk.get("rate_numerator", unk.get("correct_rejects")),
             "rate_denominator": unk.get("rate_denominator", unk.get("n")),
             "n": unk.get("n"),
-            "sampling_frame": unk.get("sampling_frame"),
         }
-    full = slices.get("full_corpus_identification")
+    full = slices.get("full_corpus_identification") if isinstance(slices, Mapping) else None
     if isinstance(full, dict):
         preserved["full_corpus_identification"] = {
             "precision_numerator": full.get("precision_numerator"),
@@ -3754,9 +3958,8 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
             "recall_denominator": full.get("recall_denominator"),
             "n_named_probes": full.get("n_named_probes"),
             "n_recall_eligible": full.get("n_recall_eligible"),
-            "sampling_frame": full.get("sampling_frame"),
         }
-    occ = slices.get("occlusion")
+    occ = slices.get("occlusion") if isinstance(slices, Mapping) else None
     if isinstance(occ, dict):
         occ_pres: dict[str, Any] = {}
         for tag, block in occ.items():
@@ -3768,17 +3971,19 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
                     "rate_numerator": synth.get("rate_numerator", synth.get("n_correct")),
                     "rate_denominator": synth.get("rate_denominator", synth.get("n_eligible")),
                     "n_eligible": synth.get("n_eligible"),
-                    "sampling_frame": synth.get("sampling_frame"),
                 }
         if occ_pres:
             preserved["occlusion"] = occ_pres
 
     # (5) Shared PUBLIC boundary — same helpers as caption (rg-015). Allow-list
     #     drops base_url / cache_dir / operator_note / run_record_path / …;
-    #     path redaction collapses absolute paths; identity scrub hits free text.
+    #     path redaction collapses absolute paths; identity scrub hits free text
+    #     including list[str] leaves (RB-01) and non-path absolute paths (RB-03).
     redacted["provenance"] = _public_provenance(redacted.get("provenance") or {})
     redacted = _redact_public_paths(redacted, names=scrub_names, path_to_media=path_to_media)
-    redacted = _scrub_face_public_free_text(redacted, scrub_names)
+    redacted = _scrub_face_public_free_text(
+        redacted, scrub_names, publishable_names=publishable_names
+    )
 
     redacted["redaction"] = {
         "audience": "public",
@@ -3790,20 +3995,26 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
             "Aggregate rates (incl. unknown-rejection) preserved from full-corpus "
             "score with denominators retained under preserved_aggregate_denominators; "
             "every non-publishable per-face detail row + identity list "
-            "(clustering labels, wrong_names, failures) stripped; provenance allow-list "
-            "+ path redaction + identity scrub shared with caption PUBLIC "
-            "(_public_provenance / _redact_public_paths / _scrub_identity_names). "
-            "Fail-closed on missing provenance. Distinct from pre-score "
-            "_filter_for_public_audience / Audience.PUBLIC."
+            "(clustering labels, wrong_names under all slices, failures) stripped; "
+            "provenance allow-list + path redaction + identity scrub shared with "
+            "caption PUBLIC (_public_provenance / _redact_public_paths / "
+            "_scrub_face_public_free_text). Fail-closed structural walk (not key "
+            "enumeration). Distinct from pre-score _filter_for_public_audience / "
+            "Audience.PUBLIC."
         ),
     }
+    # RB-02: scrub the redaction envelope itself so a future free-text field
+    # cannot bypass the walk by being stamped after scrub.
+    redacted["redaction"] = _scrub_face_public_free_text(
+        redacted["redaction"], scrub_names, publishable_names=publishable_names
+    )
     # Do NOT drop unknown_rejection aggregates — they must stay.
     return _sort_nested_lists(redacted)
 
 
 def _fmt_rate_n_over_n(rate: Any, num: Any, den: Any) -> str:
-    """Format a published rate with explicit n/N (AUDIT-13)."""
-    return f"{_fmt(rate)} ({num}/{den})"
+    """Format a published rate with explicit n/N (AUDIT-13). RB-05: no raw None."""
+    return f"{_fmt(rate)} ({_fmt_prov(num)}/{_fmt_prov(den)})"
 
 
 def _markdown_face(scored: dict[str, Any]) -> str:
@@ -3829,43 +4040,49 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"total_gt_boxes: {_fmt_prov(prov.get('total_gt_boxes'))}",
         f"- images: {_fmt_prov(counts.get('scored'))}/{_fmt_prov(counts.get('total'))} scored, "
         f"{_fmt_prov(counts.get('failed'))} failed; matched_faces={_fmt_prov(counts.get('matched_faces'))}",
+    ]
+    if prov.get("low_sample_warning"):
+        lines.append(f"- ⚠️ **low_sample_warning**: {_fmt_prov(prov.get('low_sample_warning'))}")
+    if prov.get("quality_floor_caveat"):
+        lines.append(f"- quality_floor_caveat: {_fmt_prov(prov.get('quality_floor_caveat'))}")
+    lines += [
         "",
         "## Detection",
         "",
         f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
         f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))}) "
-        f"frame=`{det.get('sampling_frame', '')}`",
+        f"frame=`{_fmt_prov(det.get('sampling_frame'), default='')}`",
         "",
         "## Floor-gated slices",
         "",
     ]
     hl = slices.get("headline_identification") or {}
     lines.append(
-        f"- **headline_identification**: status=`{hl.get('status', hl.get('label', '?'))}` "
+        f"- **headline_identification**: status=`{_fmt_prov(hl.get('status', hl.get('label', '?')))}` "
         f"directional={_fmt_prov(hl.get('directional'))} "
         f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
         f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
         f"n_recall_eligible={_fmt_prov(hl.get('n_recall_eligible'))}/{_fmt_prov(hl.get('n_floor'))} "
-        f"frame=`{hl.get('sampling_frame', '')}`"
+        f"frame=`{_fmt_prov(hl.get('sampling_frame'), default='')}`"
     )
     unk = slices.get("unknown_rejection") or {}
     lines.append(
-        f"- **unknown_rejection**: status=`{unk.get('status', unk.get('label', '?'))}` "
+        f"- **unknown_rejection**: status=`{_fmt_prov(unk.get('status', unk.get('label', '?')))}` "
         f"directional={_fmt_prov(unk.get('directional'))} "
         f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
         f"n={_fmt_prov(unk.get('n'))}/{_fmt_prov(unk.get('n_floor'))} "
         f"missed_stranger_gt={_fmt_prov(unk.get('missed_stranger_gt'))} "
-        f"frame=`{unk.get('sampling_frame', '')}`"
+        f"frame=`{_fmt_prov(unk.get('sampling_frame'), default='')}`"
     )
     cl = slices.get("clustering") or {}
     lines.append(
-        f"- **clustering**: status=`{cl.get('status', cl.get('label', '?'))}` "
+        f"- **clustering**: status=`{_fmt_prov(cl.get('status', cl.get('label', '?')))}` "
         f"directional={_fmt_prov(cl.get('directional'))} "
         f"purity={_fmt(cl.get('purity'))} "
         f"false_merge={_fmt(cl.get('false_merge'))} false_split={_fmt(cl.get('false_split'))} "
         f"P_same={_fmt_prov(cl.get('p_same'))} P_diff={_fmt_prov(cl.get('p_diff'))} "
         f"M={_fmt_prov(cl.get('m_co_clustered'))} "
-        f"frame=`{cl.get('sampling_frame', '')}`"
+        f"frame=`{_fmt_prov(cl.get('sampling_frame'), default='')}`"
     )
     occ = slices.get("occlusion") or {}
     if occ:
@@ -3881,11 +4098,15 @@ def _markdown_face(scored: dict[str, Any]) -> str:
                 f"{_fmt_prov(synth.get('n_floor'), default=str(ELIGIBLE_PAIR_FLOOR))}"
             )
     lines += ["", "## Gate proposal (excludes DIRECTIONAL)", ""]
-    lines.append(f"- role: {gp.get('role')}")
-    lines.append(f"- release_surface: `{gp.get('release_surface', GATE_PROPOSAL_RELEASE_SURFACE)}`")
-    lines.append(f"- canon_version: `{gp.get('canon_version', FACE_BAKEOFF_CANON_VERSION)}`")
+    lines.append(f"- role: {_fmt_prov(gp.get('role'))}")
+    lines.append(
+        f"- release_surface: `{_fmt_prov(gp.get('release_surface'), default=GATE_PROPOSAL_RELEASE_SURFACE)}`"
+    )
+    lines.append(
+        f"- canon_version: `{_fmt_prov(gp.get('canon_version'), default=FACE_BAKEOFF_CANON_VERSION)}`"
+    )
     lines.append(f"- proposed_slices: {sorted((gp.get('proposed_slices') or {}).keys())}")
-    lines.append(f"- excluded_directional: {gp.get('excluded_directional')}")
+    lines.append(f"- excluded_directional: {_fmt_prov(gp.get('excluded_directional'))}")
     couple = gp.get("identification_detection_coupling") or {}
     lines.append(
         f"- id-recall: {_fmt(couple.get('identification_recall'))} "
@@ -3893,12 +4114,12 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         f"(coupling_flag={_fmt_prov(couple.get('detection_recall_coupling_flag'))}, "
         f"missed_gt={_fmt_prov(couple.get('missed_gt'))}, "
         f"unmatched_det={_fmt_prov(couple.get('unmatched_detections'))}) "
-        f"— {couple.get('flag', '')}"
+        f"— {_fmt_prov(couple.get('flag'), default='')}"
     )
-    lines.append(f"- p95 scan latency: {gp.get('p95_scan_latency')}")
+    lines.append(f"- p95 scan latency: {_fmt_prov(gp.get('p95_scan_latency'))}")
     lines.append("- scope amendments (operator ack required):")
     for a in gp.get("scope_amendments_for_operator_ack") or []:
-        lines.append(f"  - {a}")
+        lines.append(f"  - {_fmt_prov(a)}")
     if scored.get("redaction"):
         r = scored["redaction"]
         lines += [

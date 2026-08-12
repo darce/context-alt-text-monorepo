@@ -7,6 +7,10 @@ S4-06: ``describe_baseline.resolve_head_sha()`` refuses the fabricated 40-zero
 sentinel with SystemExit so a pinned fixture cannot be attributed to a non-
 existent commit.
 
+fx2: generator CLI ``--live-head-sha`` must share the same refuse rules (RV2-04)
+and pin mode must be an explicit ``--pin``/``--no-pin`` flag so empty-string
+``--live-head-sha`` cannot silently exit pin mode (RV2-05).
+
 Heuristics: TEST-15, AUDIT-07, EVAL-23, rg-008, rg-015, sr-006.
 """
 
@@ -18,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness import describe_baseline as db
+from scripts.eval_harness import generate_determinism_anchor as gen
 from scripts.eval_harness.generate_determinism_anchor import (
     _DEFAULT_CANONICAL_TIMESTAMP,
     _DEFAULT_FIXTURE_REVISION,
@@ -26,6 +31,7 @@ from scripts.eval_harness.generate_determinism_anchor import (
 from scripts.eval_harness.generate_face_determinism_anchor import (
     build_face_anchor_run_record,
 )
+from scripts.eval_harness.promote_atomic import validate_live_head_sha
 
 _GOLDEN = Path(__file__).resolve().parent / "seed" / "golden.json"
 _ZERO_SHA = "0" * 40
@@ -114,3 +120,110 @@ def test_s4_06_module_head_sha_default_is_not_forty_zeros() -> None:
     assert db.HEAD_SHA is None or (
         isinstance(db.HEAD_SHA, str) and db.HEAD_SHA != _ZERO_SHA
     )
+
+
+# --- RV2-04 / RV2-05: generator CLI live-head-sha + explicit pin flag ------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        _ZERO_SHA,
+        "deadbeef",
+        "None",
+        "not-a-sha-at-all!!!",
+        "0000000000000000000000000000000000000000",
+    ],
+)
+def test_rv2_04_validate_live_head_sha_refuses_fabrications(bad: str) -> None:
+    """Generator CLI path refuses the same fabrication class as S4-06 (RV2-04)."""
+    with pytest.raises(SystemExit) as excinfo:
+        validate_live_head_sha(bad)
+    msg = str(excinfo.value)
+    assert "live-head-sha" in msg.lower() or "40" in msg or "sentinel" in msg.lower()
+
+
+def test_rv2_04_validate_live_head_sha_accepts_real_hex() -> None:
+    assert validate_live_head_sha(_REAL_SHA) == _REAL_SHA
+    assert validate_live_head_sha(_REAL_SHA.upper()) == _REAL_SHA
+
+
+def test_rv2_05_empty_live_head_sha_refused() -> None:
+    """Empty string must not silently exit pin mode (RV2-05 / S4-04 reentry)."""
+    with pytest.raises(SystemExit, match="must not be empty"):
+        validate_live_head_sha("")
+    with pytest.raises(SystemExit, match="must not be empty"):
+        validate_live_head_sha("   ")
+
+
+def test_rv2_05_pin_mode_gated_on_flag_not_none_sentinel(tmp_path: Path) -> None:
+    """pin_live_provenance=True nulls clocks even if live_* were somehow passed.
+
+    Pre-fix gated on ``live_* is None``, so empty-string live_head_sha exited
+    pin mode and injected wall-clock started_at. Explicit flag is the gate.
+    """
+    run_path, report_json, _md, _sha = write_anchor(
+        manifest_path=_GOLDEN,
+        out_dir=tmp_path,
+        stem="pin-flag",
+        pin_live_provenance=True,
+        # Deliberately pass a value: pin flag must win (API ignores live under pin).
+        live_head_sha=_REAL_SHA,
+        live_started_at="2026-03-15T12:00:00Z",
+    )
+    for path in (run_path, report_json):
+        prov = json.loads(path.read_text())["provenance"]
+        assert prov["head_sha"] is None
+        assert prov["started_at"] is None
+
+
+def test_rv2_04_cli_refuses_bad_live_head_sha(tmp_path: Path) -> None:
+    """CLI main refuses fabricated --live-head-sha before any promote (RV2-04)."""
+    with pytest.raises(SystemExit) as excinfo:
+        gen.main(
+            [
+                "--manifest",
+                str(_GOLDEN),
+                "--out-dir",
+                str(tmp_path),
+                "--stem",
+                "cli-bad-sha",
+                "--no-pin",
+                "--live-head-sha",
+                _ZERO_SHA,
+            ]
+        )
+    assert "sentinel" in str(excinfo.value).lower() or "40-zero" in str(excinfo.value)
+
+
+def test_rv2_05_cli_refuses_empty_live_head_sha(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="must not be empty"):
+        gen.main(
+            [
+                "--manifest",
+                str(_GOLDEN),
+                "--out-dir",
+                str(tmp_path),
+                "--stem",
+                "cli-empty-sha",
+                "--no-pin",
+                "--live-head-sha",
+                "",
+            ]
+        )
+
+
+def test_rv2_05_cli_live_head_requires_no_pin(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="requires --no-pin"):
+        gen.main(
+            [
+                "--manifest",
+                str(_GOLDEN),
+                "--out-dir",
+                str(tmp_path),
+                "--stem",
+                "cli-pin-conflict",
+                "--live-head-sha",
+                _REAL_SHA,
+            ]
+        )

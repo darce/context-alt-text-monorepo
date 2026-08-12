@@ -46,6 +46,14 @@ reports per-mutant collateral (RF-03), strong-form victim attribution
 (FIR-7-RV-07: non-smoke axis kills re-run with victims deselected), and
 prints certification scope (RF-05).
 
+FIR-7-A12-3 (Wave F9): ``audit_derived_from_model`` and ``audit_source``
+share ``_audit_weights_lineage_token`` for the AGPL → NC membership →
+research → NC-floor sequence. A source-door-only (or derived-door-only)
+demotion of any branch is therefore **structurally impossible** — one
+edit site feeds both doors. M16's derived-door reason-swap victims remain
+sufficient; a parallel source-only mutant would be a no-op against the
+shared helper.
+
 Paths resolve from __file__ (never cwd) so this script runs as documented from
 the repo root or from this directory (rg-006).
 """

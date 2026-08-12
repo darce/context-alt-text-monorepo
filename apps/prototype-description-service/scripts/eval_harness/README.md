@@ -43,9 +43,10 @@ uv run python -m scripts.eval_harness.cli score \
 # make eval-anchor-check
 #
 # equivalent CLI (caption leg shown; face leg is the second half of the target).
-# --freeze-certification: exit code means scoring-path byte-stability only.
-# The freeze is a deliberately imperfect non-evidential fixture; adoption gates
-# are still printed (verdict / wrong_name_rate) but do not set the exit status.
+# --freeze-certification: exit code means scoring-path byte-stability after
+# measurement-integrity gates (aborted / failed-items / zero-scored / truncation /
+# manifest / schema). Adoption gates stay printed (verdict / wrong_name_rate)
+# but do not set the exit status.
 uv run --extra dev python -m scripts.eval_harness.cli score \
   --manifest scene/tests/seed/golden.json \
   --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
@@ -211,16 +212,18 @@ deliberately carries wrong-name deviations and vacuous categories
 (`verdict=fail`, `fabricated_fact_rate=None`) so the freeze is not a 1.000
 tautology.
 
-**Two contracts, two modes** (fx8):
+**Two contracts, two modes** (fx8 / gx1):
 
 | Mode | Flags | Exit code means |
 | --- | --- | --- |
-| Live adoption scoring | `score` (default) | Adoption quality: wrong-name floor, category vacuity, must-right, … (EVAL-04 / EVAL-23). Hard gates. |
-| Freeze byte-stability | `score --check-determinism --expect-report PATH --freeze-certification` | Scoring-path byte-stability only. Adoption outcomes are still **printed** (`verdict=…`, rates) but do **not** set exit status. |
+| Live adoption scoring | `score` (default) | Full surface: integrity **and** adoption (wrong-name floor, category vacuity, must-right, …) (EVAL-04 / EVAL-23). |
+| Freeze byte-stability | `score --check-determinism --expect-report PATH --freeze-certification` | Scoring-path byte-stability **after** measurement-integrity gates. Integrity (aborted / failed-items / zero-scored / truncation / manifest-mismatch / schema) still sets exit status. Adoption outcomes are still **printed** (`verdict=…`, rates) but do **not** set exit status. |
 
 `--freeze-certification` **requires** `--expect-report` (and therefore
 `--check-determinism`). Without an external freeze the flag would silently skip
-adoption gates with nothing left to certify (rejected).
+adoption gates with nothing left to certify (rejected). It does **not** skip
+integrity gates — byte-stability of a measurement that did not run is not a
+certification (gx1 / S1-01).
 
 Seed-stability alone (`--check-determinism` without a freeze) proves the scorer
 is hash-stable; it does **not** detect a corrupted run-record or report (parent
@@ -242,12 +245,14 @@ $ uv run --extra dev python -m scripts.eval_harness.cli score \
 determinism check passed [score]: cross-process re-score is bit-identical under varied PYTHONHASHSEED (baseline=randomized; child_seeds=0,1,42); matches --expect-report …/S2A-determinism-anchor-run-20260811-report.json
 …/S2A-determinism-anchor-run-20260811-report.md
 scored=37/37 … wrong_names=4 verdict=fail wrong_name_rate=0.1081 …
-freeze-certification passed [score]: scoring-path is byte-stable (matches --expect-report); nothing certified about model quality, face recognition, or adoption readiness (artifact verdict=fail; …)
+freeze-certification passed [score]: scoring-path is byte-stable (matches --expect-report); nothing certified about model quality, face recognition, or adoption readiness (artifact verdict=fail; integrity gates enforced above; adoption gates … not exit-determining)
 # EXIT_CODE:0
 # Note: EXIT 0 under --freeze-certification certifies scoring-path BYTE-STABILITY
-# only. The printed verdict=fail / wrong_name_rate are adoption signals, not
-# exit-determining here. Face P/R and fabricated-fact numbers in the freeze are
-# non-evidential / may be undefined (see provenance.coverage_gaps).
+# after integrity gates pass. The printed verdict=fail / wrong_name_rate are
+# adoption signals, not exit-determining here. An aborted / truncated / schema-
+# invalid record still exits non-zero under this flag (gx1). Face P/R and
+# fabricated-fact numbers in the freeze are non-evidential / may be undefined
+# (see provenance.coverage_gaps).
 # --rubric-gate skip matches the freeze stamp (rubric_gate=skip); it is not what
 # makes exit 0 — drop --freeze-certification and the wrong-name floor exits 1
 # (live adoption path stays hard — sr-001).

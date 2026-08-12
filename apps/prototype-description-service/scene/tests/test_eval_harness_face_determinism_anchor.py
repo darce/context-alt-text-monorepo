@@ -71,12 +71,16 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # sha256sum of generator output — never hand-typed.
 # Regenerated wF4: media 11 mixed-y order_degraded trap (VLM6-R2-G-01) +
 # provenance.corpus_traps disclosure (VLM6-R2-C-02). Manifest + run digests moved;
-# report digests intentionally NOT updated here (regen stage owns report freezes).
+# report digests intentionally NOT updated by wF4 (regen stage owns report freezes).
+# Regenerated wI2 (Wave I face regen): absorb wF4 corpus counts/traps, wG1
+# identity_ordering, wG2 detection.fn/recall (Alice null-y excluded), wH1
+# geometry_incomplete_* / association_complete + corrected detection sampling_frame.
+# Report digests only — man+run pins unchanged (wF4 inputs).
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
     _RUN.name: "20ed14fe53bf1554f0aa348f5b0270d426e68f31d9db9fec97f6bdfcee01adab",
-    _REPORT_JSON.name: "faf72705b708e77b57ec9255c7c5d9292b7d366f77348cac7a657db7ff394e52",
-    _REPORT_MD.name: "cc60073dd1f126517370e5832cae142201b89df22b8fe49d6aec2e299bc06b7d",
+    _REPORT_JSON.name: "c8e174db92b47d746c2497074d77f3197b016e4eec761ec1d5739488766058f6",
+    _REPORT_MD.name: "ff108e77facba690b79c94b5acaf37edbe5bf01784f526cccad80f4e3e5b8899",
 }
 
 
@@ -130,9 +134,7 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     assert manifest_sha.startswith("02003e25")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
-    # Report freezes are owned by the regeneration stage (wF4 must not rewrite them).
-    # After corpus extension they are intentionally stale — byte compare expected-red
-    # until regen; still assert man+run identity above (this lane's owned freeze).
+    # wI2 regenerated report freezes from the generator; man+run remain wF4 pins.
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
 

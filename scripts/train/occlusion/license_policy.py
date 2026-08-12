@@ -2011,6 +2011,53 @@ def _package_denylist_folded_index() -> dict[str, PackageDenylistEntry]:
     return index
 
 
+# FIR-7-B4-02: bounded Ultralytics family size / task tags stripped from a
+# folded token before re-probing the denylist index. Size tags include the
+# common n/s/m/l/x ladder plus YOLOv9's ``c`` (compact). Task tags are the
+# fixed Ultralytics task suffixes. Matching remains exact on the *residual*
+# (BR-50/52): stripping only helps when the residual is itself a seed.
+_FAMILY_SIZE_TAGS: frozenset[str] = frozenset({"n", "s", "m", "l", "x", "c"})
+_FAMILY_TASK_TAGS: frozenset[str] = frozenset({"seg", "pose", "obb", "cls", "det"})
+# Longest-first so ``pose`` is preferred over a trailing size letter if both
+# could apply on a compact form (defensive; task tags do not end in size tags).
+_FAMILY_TASK_TAGS_LONGEST_FIRST: tuple[str, ...] = tuple(
+    sorted(_FAMILY_TASK_TAGS, key=len, reverse=True)
+)
+_FAMILY_TAG_MAX_STRIPS: int = 2  # one size layer + one task layer
+
+
+def _strip_one_family_tag(token: str) -> str | None:
+    """Strip one size or task suffix layer from a folded token (FIR-7-B4-02).
+
+    Underscore-separated tails (canonical form) are preferred so
+    ``yolo_world_s`` → ``yolo_world`` and ``yolov8n_seg`` → ``yolov8n``.
+    On compact forms, task tags strip as whole suffixes; single-letter size
+    tags strip only when preceded by a digit (``yolo11n`` → ``yolo11``, but
+    ``fastsamx`` does not strip — residual would be confusable with size
+    creep on non-version tokens).
+    """
+    if not token:
+        return None
+    # Prefer underscore-separated trailing tag (post-canonical form).
+    if "_" in token:
+        head, _sep, tail = token.rpartition("_")
+        if tail in _FAMILY_TASK_TAGS or tail in _FAMILY_SIZE_TAGS:
+            return head or None
+    # Compact / no-separator form.
+    compact = token.replace("_", "")
+    for task in _FAMILY_TASK_TAGS_LONGEST_FIRST:
+        if compact.endswith(task) and len(compact) > len(task):
+            return compact[: -len(task)]
+    # Size tag only when the preceding character is a digit (version ladder).
+    if (
+        len(compact) >= 2
+        and compact[-1] in _FAMILY_SIZE_TAGS
+        and compact[-2].isdigit()
+    ):
+        return compact[:-1]
+    return None
+
+
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
     """Exact PACKAGE_DENYLIST lookup after separator/case fold (BR-51 / FIR-7-B3-01).
 
@@ -2018,6 +2065,11 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
     (NFKC, casefold, unify ``-``/``_``/``.``/space) then compact (drop
     underscores). ``yolo-v5`` hits the ``yolov5`` seed; ``yolodummy`` /
     ``myyolo`` do **not** hit ``yolo`` (no substring matching).
+
+    FIR-7-B4-02: after the exact folded probe, at most two family-tag strips
+    (size tag and/or task tag from a fixed set) re-probe the residual against
+    the same folded index. A hit counts only when the residual is itself a
+    denylisted seed.
     """
     c = canonical(value)
     if c is None or not c:
@@ -2026,18 +2078,35 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
     if "/" in c:
         candidates.extend(p for p in c.split("/") if p)
     index = _package_denylist_folded_index()
-    seen: set[str] = set()
-    for cand in candidates:
-        if cand in seen:
-            continue
-        seen.add(cand)
-        probes = (cand, _compact_canonical(cand), _resolve_model_key(cand))
+
+    def _probe(token: str) -> PackageDenylistEntry | None:
+        probes = (token, _compact_canonical(token), _resolve_model_key(token))
         for probe in probes:
             if not probe:
                 continue
             deny = index.get(probe) or index.get(_compact_canonical(probe))
             if deny is not None:
                 return deny
+        return None
+
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        hit = _probe(cand)
+        if hit is not None:
+            return hit
+        # Bounded family-tag folding: strip ≤2 size/task layers, re-probe.
+        residual = cand
+        for _ in range(_FAMILY_TAG_MAX_STRIPS):
+            stripped = _strip_one_family_tag(residual)
+            if stripped is None or stripped == residual:
+                break
+            residual = stripped
+            hit = _probe(residual)
+            if hit is not None:
+                return hit
     return None
 
 

@@ -428,19 +428,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--live-head-sha",
         default=None,
-        help="real 40-char git SHA for provenance.head_sha when --no-pin "
-        "(refuses empty string, forty zeros, non-hex; RV2-04 / RV2-05 / S4-06)",
+        help="real 40-char git SHA for provenance.head_sha when --no-pin. "
+        "Always verified via git rev-parse --verify <sha>^{commit} when a git "
+        "binary is available; refuses empty string, forty zeros, non-hex, and "
+        "format-valid hex that is not a resolvable commit. Degrades to "
+        "format-only only when the git binary is missing (FileNotFoundError/"
+        "ENOENT) — never when git is present but unhappy (VLM6-R2-D-01/02; "
+        "RV2-04 / RV2-05 / S4-06 / RV3-05 / rg-006 / rg-015)",
     )
     parser.add_argument(
         "--live-started-at",
         default=None,
         help="real ISO-8601 for provenance.started_at when --no-pin (not a sentinel)",
-    )
-    parser.add_argument(
-        "--verify-live-head-sha",
-        action="store_true",
-        default=False,
-        help="also require git rev-parse --verify <sha>^{commit} for --live-head-sha",
     )
     args = parser.parse_args(argv)
 
@@ -452,10 +451,9 @@ def main(argv: list[str] | None = None) -> int:
         canonical_timestamp = args.started_at
 
     # Validate / normalise live SHA at parse boundary (RV2-04 / RV2-05).
-    live_head = validate_live_head_sha(
-        args.live_head_sha,
-        verify_git=bool(args.verify_live_head_sha),
-    )
+    # Git verify is always on (VLM6-R2-D-01): no opt-out flag; call signature
+    # matches promote_atomic.validate_live_head_sha without verify_git=.
+    live_head = validate_live_head_sha(args.live_head_sha)
     if live_head is not None and args.pin:
         raise SystemExit(
             "--live-head-sha requires --no-pin (pin mode nulls contract head_sha; "

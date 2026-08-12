@@ -109,12 +109,15 @@ _OPPOSITE_REL: dict[SpatialRelation, SpatialRelation] = {
     SpatialRelation.BACKGROUND: SpatialRelation.FOREGROUND,
 }
 
-# Pair-order mid terms: primary token plus common one-word synonyms that still
-# keep word-boundary precision (no bare "front" alone for FOREGROUND pair path —
-# FOREGROUND/BACKGROUND use absolute multi-word patterns only).
+# Pair-order mid terms for entity…dir…entity matching (VLM6-B-06).
+# Bare "left"/"right" are intentionally excluded: "Alice left Bob at the
+# station" is a departure verb, not a placement claim. Absolute patterns
+# already avoid bare left/right for the same reason. Require unambiguous
+# placement constructions; longer phrases first so "to the left of" wins
+# over "left of". FOREGROUND/BACKGROUND use absolute multi-word patterns only.
 _PAIR_DIR_TERMS: dict[str, tuple[str, ...]] = {
-    "left": ("left",),
-    "right": ("right",),
+    "left": ("to the left of", "left of"),
+    "right": ("to the right of", "right of"),
     "above": ("above", "over"),
     "below": ("below", "under"),
 }
@@ -222,12 +225,22 @@ def _wb(text: str) -> str:
     return rf"(?<!\w){re.escape(text)}(?!\w)"
 
 
+def _mid_pattern(mid: str) -> str:
+    """Word-boundary pattern for a single- or multi-token pair mid term."""
+    parts = mid.split()
+    if len(parts) == 1:
+        return _wb(parts[0])
+    # Multi-word placement constructions ("to the left of"): boundary each token.
+    return r"\s+".join(_wb(p) for p in parts)
+
+
 def _ordered_triple(caption: str, left: str, mids: Sequence[str], right: str) -> str | None:
     """Return the mid term if ``left … mid … right`` appears within the window."""
     if not left or not right or not mids:
         return None
     for mid in mids:
-        pat = _wb(left) + rf".{{0,{_STRUCT_WINDOW}}}" + _wb(mid) + rf".{{0,{_STRUCT_WINDOW}}}" + _wb(right)
+        mid_pat = _mid_pattern(mid)
+        pat = _wb(left) + rf".{{0,{_STRUCT_WINDOW}}}" + mid_pat + rf".{{0,{_STRUCT_WINDOW}}}" + _wb(right)
         if re.search(pat, caption, flags=re.IGNORECASE | re.DOTALL):
             return mid
     return None

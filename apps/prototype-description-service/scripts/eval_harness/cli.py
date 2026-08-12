@@ -65,9 +65,11 @@ from .report import (
     build_face_reports,
     build_reports,
     face_wrong_name_rate,
+    fabricated_fact_is_vacuous,  # noqa: F401 — shared S2-01 predicate (score/compare)
     identity_names,  # noqa: F401 — re-export for external callers; report owns it (VLM6-RH-07)
     occlusion_inputs_from_record,
     score_run_record,
+    score_vacuous_category_labels,
 )
 from .report import (
     _markdown as _score_report_markdown,
@@ -1271,8 +1273,9 @@ _COMMITTED_SCORE_REPORT_MARKERS: tuple[str, ...] = (
     "docs/tasks/vlm/bakeoff-results",
 )
 # Distinct non-gated verdict for archival relabel (VLM6-F-03 / EVAL-13). compare
-# refuses this status — it is not an adoption-eligible pass.
-_VERDICT_NON_COMPARABLE = "non_comparable"
+# refuses this status — it is not an adoption-eligible pass. Alias of the enum
+# member so production stays on one vocabulary (S2-09 / sr-007).
+_VERDICT_NON_COMPARABLE = ScoreVerdict.NON_COMPARABLE.value
 # golden.json harness size — not Golden-100; adoption PASS is refused (EVAL-04).
 _HARNESS_ANCHOR_CORPUS_SIZE = 37
 
@@ -2165,55 +2168,28 @@ def _compare_protocol_mismatches(baseline: Mapping[str, Any], candidate: Mapping
 def _compare_vacuous_categories(doc: Mapping[str, Any], *, role: str) -> list[str]:
     """Categories whose claim units have π=0 must block adoption (AUDIT-07 / EVAL-23).
 
-    A gate that cannot observe a category must not certify it. None metrics and
-    zero-denominator regimes (placement claims=0, positional compared=0, no
-    fabricated-fact traps, no positional ordering images) are non-observable.
+    Shared with ``build_score_verdict`` via ``score_vacuous_category_labels`` /
+    ``fabricated_fact_is_vacuous`` (S2-01 / S2-06 / rg-005): score and compare
+    must not disagree on which axes are non-observable.
     """
-    vacuous: list[str] = []
-    place = doc.get("placement") if isinstance(doc.get("placement"), Mapping) else {}
-    if place.get("accuracy") is None or int(place.get("claims") or 0) == 0:
-        vacuous.append(f"{role}:placement (accuracy=None or claims=0; π=0 on spatial_facts)")
-    pos = (
-        ((doc.get("faces") or {}).get("identification") or {}).get("positional")
-        if isinstance(doc.get("faces"), Mapping)
-        else None
-    )
-    if not isinstance(pos, Mapping) or pos.get("position_accuracy") is None or int(pos.get("compared_images") or 0) == 0:
-        vacuous.append(f"{role}:positional_identification (position_accuracy=None or compared_images=0)")
-    ordering = (doc.get("faces") or {}).get("identity_ordering") if isinstance(doc.get("faces"), Mapping) else None
-    if not isinstance(ordering, Mapping) or int(ordering.get("positional_images") or 0) == 0:
-        vacuous.append(f"{role}:identity_ordering (positional_images=0; order metric non-observable)")
+    labels = score_vacuous_category_labels(doc, include_verdict_fields=True)
     hall = doc.get("hallucination") if isinstance(doc.get("hallucination"), Mapping) else {}
-    # fx4 may emit fabricated_fact_rate=None when traps are absent; treat None
-    # as not measurable on either rate field (never a clean zero-hallucination).
-    if (
-        int(hall.get("images_with_traps") or 0) == 0
-        or hall.get("fabricated_fact_rate_trapped") is None
-        or hall.get("fabricated_fact_rate") is None
-    ):
-        vacuous.append(
-            f"{role}:fabricated_fact (no trap denominator or rate=None; "
-            f"images_with_traps={int(hall.get('images_with_traps') or 0)})"
-        )
-    # Detection / identification P/R must be present numbers (None = not scored).
-    for path, label in (
-        (("faces", "detection", "precision"), "face_detection.precision"),
-        (("faces", "detection", "recall"), "face_detection.recall"),
-        (("faces", "identification", "precision"), "face_identification.precision"),
-        (("faces", "identification", "recall"), "face_identification.recall"),
-    ):
-        if _nested_number(doc, path) is None:
-            vacuous.append(f"{role}:{label} (None — category not observed)")
-    # Caption scalars that are None are likewise non-observable.
-    for path, label in (
-        (("caption", "insertion_rate"), "insertion_rate"),
-        (("caption", "mean_gated_score"), "mean_gated_score"),
-        (("caption", "must_right_failed_images"), "must_right_failed_images"),
-        (("verdict", "wrong_name_rate"), "wrong_name_rate"),
-    ):
-        if _nested_number(doc, path) is None:
-            vacuous.append(f"{role}:{label} (None — category not observed)")
-    return vacuous
+    traps = int(hall.get("images_with_traps") or 0)
+    out: list[str] = []
+    for label in labels:
+        if label == "placement":
+            out.append(f"{role}:placement (accuracy=None or claims=0; π=0 on spatial_facts)")
+        elif label == "positional_identification":
+            out.append(f"{role}:positional_identification (position_accuracy=None or compared_images=0)")
+        elif label == "identity_ordering":
+            out.append(f"{role}:identity_ordering (positional_images=0; order metric non-observable)")
+        elif label == "fabricated_fact":
+            out.append(
+                f"{role}:fabricated_fact (no trap denominator or rate=None; images_with_traps={traps})"
+            )
+        else:
+            out.append(f"{role}:{label} (None — category not observed)")
+    return out
 
 
 def _compare_harness_anchor_size(doc: Mapping[str, Any]) -> bool:

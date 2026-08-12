@@ -2333,9 +2333,11 @@ def test_public_report_redacts_absolute_local_paths():  # VLM6-R3
         assert "wp-context-alt-text" not in blob
         assert "wp-content/uploads" not in blob
     scored = json.loads(json_doc)
-    assert scored["per_image"][0]["path"] == "obama-podium.jpg"
-    # Basename retained so the public artifact stays legible.
-    assert "obama-podium.jpg" in json_doc
+    # S2-04: absolute paths must not collapse to identifying basenames; free-text
+    # paths emit opaque media_id tokens (S2-03).
+    assert scored["per_image"][0]["path"] == "media_id:10"
+    assert "obama-podium.jpg" not in json_doc
+    assert "/Users/daniel" not in json_doc
 
 
 def test_public_report_still_redacts_base_url():  # VLM6-R3-01 / VLM6-S5-BR-01
@@ -2388,7 +2390,7 @@ def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R
 
     RED before: labeled fell back to alphabetical present and would score if
     labeled_order_known were ever ignored. GREEN: excluded + empty comparison.
-    Also: 100% exclusion must populate identity_ordering.degraded_images (loud).
+    S2-07: exclusions surface as order_unknown_excluded, not degraded_images.
     """
     record, entries = _run_record(), _manifest_entries()
     assert all(not e.get("face_boxes") for e in entries)
@@ -2399,8 +2401,8 @@ def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R
     # Excluded images listed (legacy no-box entries).
     assert len(pos["excluded_images"]) >= 1
     ordering = scored["faces"]["identity_ordering"]
-    # RED without R2-04 fix: degraded_images=0 while excluded=N (silent vacuity).
-    assert ordering["degraded_images"] >= 1
+    # S2-07: true DEGRADED stamps only — bare exclusions are not degraded.
+    assert ordering["degraded_images"] == 0
     assert ordering["order_unknown_excluded"] >= 1
 
 
@@ -2756,13 +2758,8 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
     assert any("positional" in r.lower() for r in scored["verdict"]["reasons"])
 
 
-def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B-10 control
-    """When all gated categories are measurable, vacuity signal clears and pass is allowed.
-
-    Control for B-10: face_boxes (positional) + spatial_facts (placement) +
-    reference_facts trap (fabricated_fact) so every category has π>0; proves
-    the gate can go green and is not a permanent brick (TEST-15).
-    """
+def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
+    """Two-image measurable corpus that can honestly score verdict=pass (S2-05 min=2)."""
     record = {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -2798,6 +2795,31 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
                 "image_height": 200,
                 "error": None,
             },
+            {
+                "media_id": 2,
+                "path": "mock_images/carol-park.jpg",
+                "describe": {
+                    "alt_text_draft": "Carol Decoy stands left of Dana Friend in a park.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Carol Decoy",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Dana Friend",
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "image_width": 200,
+                "image_height": 200,
+                "error": None,
+            },
         ],
     }
     entries = [
@@ -2823,7 +2845,41 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
             ],
             "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
         },
+        {
+            "path": "mock_images/carol-park.jpg",
+            "media_id": 2,
+            "face_count": 2,
+            "present_identities": ["Carol Decoy", "Dana Friend"],
+            "must_right": ["Carol Decoy"],
+            "easy_wrong": ["Alice Example"],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Carol Decoy", "x": 0.2, "y": 0.4},
+                {"name": "Dana Friend", "x": 0.6, "y": 0.4},
+            ],
+            "spatial_facts": [
+                {
+                    "subject": "Carol Decoy",
+                    "relation": "left_of",
+                    "reference": "Dana Friend",
+                    "phrases": ["left of Dana Friend"],
+                }
+            ],
+            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
+        },
     ]
+    return record, entries
+
+
+def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B-10 control
+    """When all gated categories are measurable, vacuity signal clears and pass is allowed.
+
+    Control for B-10: face_boxes (positional) + spatial_facts (placement) +
+    reference_facts trap (fabricated_fact) so every category has π>0; proves
+    the gate can go green and is not a permanent brick (TEST-15).
+    S2-05: sample size must clear SCORE_PASS_MIN_SCORED_IMAGES (two images).
+    """
+    record, entries = _two_image_measurable_pass_pair()
     scored = score_run_record(record, entries)
     pos = scored["faces"]["identification"]["positional"]
     assert pos["compared_images"] >= 1
@@ -2832,20 +2888,20 @@ def test_score_run_record_positional_vacuity_absent_when_measurable():  # VLM6-B
     assert pos["vacuity_signal"] is None
     assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
     assert scored["hallucination"]["images_with_traps"] >= 1
+    assert scored["counts"]["scored"] >= 2
     assert scored["verdict"]["verdict"] == ScoreVerdict.PASS.value, scored["verdict"]["reasons"]
 
 
-def test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous():  # VLM6-C-05 / fx4
-    """None fabricated_fact_rate is not measurable — never a clean zero-hallucination pass.
-
-    Injects None on an otherwise-passable scored dict (TEST-15). Works for both
-    current 0.0 (traps present, none fired) and fx4's None (no traps).
-    """
-    from scripts.eval_harness.report import build_score_verdict
-
-    # Measurable positional + placement so only fabricated_fact vacuity fires.
-    scored = {
-        "counts": {"total": 1, "scored": 1, "failed": 0},
+def _passable_scored_dict(**hall_overrides: object) -> dict:
+    """Hand-built scored dict that clears every score vacuity + quality floor (S2-06)."""
+    hall = {
+        "fabricated_fact_rate": 0.0,
+        "fabricated_fact_rate_trapped": 0.0,
+        "images_with_traps": 1,
+    }
+    hall.update(hall_overrides)
+    return {
+        "counts": {"total": 2, "scored": 2, "failed": 0},
         "corpus": {"media_id_missing": 0, "media_id_extra": 0},
         "provenance": {"manifest_sha256": "a" * 64},
         "caption": {
@@ -2856,30 +2912,49 @@ def test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous():  # V
             "mean_gated_score": 1.0,
         },
         "faces": {
+            "detection": {"precision": 1.0, "recall": 1.0},
             "identification": {
-                "evaluated_images": 1,
+                "evaluated_images": 2,
                 "wrong_names": [],
                 "ignored_wrong_names": [],
+                "precision": 1.0,
+                "recall": 1.0,
                 "positional": {
-                    "compared_images": 1,
+                    "compared_images": 2,
                     "evaluable": True,
                     "status": "scored",
                     "excluded_images": [],
+                    "position_accuracy": 1.0,
                 },
             },
-            "identity_ordering": {"degraded_images": 0},
+            "identity_ordering": {
+                "degraded_images": 0,
+                "positional_images": 2,
+                "order_unknown_excluded": 0,
+            },
         },
-        "placement": {"claims": 1, "accuracy": 1.0, "abstained": 0, "images_scored": 1},
-        "hallucination": {
-            "fabricated_fact_rate": None,
-            "fabricated_fact_rate_trapped": None,
-            "images_with_traps": 0,
-        },
+        "placement": {"claims": 2, "accuracy": 1.0, "abstained": 0, "images_scored": 2},
+        "hallucination": hall,
     }
+
+
+def test_build_score_verdict_treats_fabricated_fact_rate_none_as_vacuous():  # VLM6-C-05 / fx4
+    """None fabricated_fact_rate is not measurable — never a clean zero-hallucination pass.
+
+    Injects None on an otherwise-passable scored dict (TEST-15). Works for both
+    current 0.0 (traps present, none fired) and fx4's None (no traps).
+    """
+    from scripts.eval_harness.report import build_score_verdict
+
+    scored = _passable_scored_dict(
+        fabricated_fact_rate=None,
+        fabricated_fact_rate_trapped=None,
+        images_with_traps=0,
+    )
     verdict = build_score_verdict(scored, rubric_gate="enforce")
     assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
     assert any("fabricated_fact" in r for r in verdict["reasons"])
-    # Control: numeric 0.0 is measurable clean (not vacuous).
+    # Control: numeric 0.0 is measurable clean (not vacuous) when traps>0.
     scored["hallucination"]["fabricated_fact_rate"] = 0.0
     scored["hallucination"]["fabricated_fact_rate_trapped"] = 0.0
     scored["hallucination"]["images_with_traps"] = 1
@@ -2982,73 +3057,17 @@ def test_score_verdict_pass_when_positional_and_placement_measurable():  # VLM6-
 
     Same clean identities as the vacuity test, but face_boxes + spatial_facts +
     reference_facts trap populate positional, placement, and fabricated_fact
-    denominators (π>0). Proves the gate can go green (TEST-15).
+    denominators (π>0). Proves the gate can go green (TEST-15). S2-05 requires
+    sample size ≥ SCORE_PASS_MIN_SCORED_IMAGES.
     """
-    record = {
-        "schema": "acx-eval/v1",
-        "kind": "run_record",
-        "provenance": {
-            "manifest_sha256": "m" * 64,
-            "base_url": "https://api.example.com",
-            "head_sha": "0" * 40,
-            "started_at": "2026-07-06T00:00:00Z",
-        },
-        "items": [
-            {
-                "media_id": 1,
-                "path": "mock_images/alice-pool.jpg",
-                "describe": {
-                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
-                    "visual_facts": {"objects": []},
-                },
-                "identities": [
-                    {
-                        "name": "Alice Example",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                    {
-                        "name": "Bob Builder",
-                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    },
-                ],
-                "face_count": 2,
-                "identity_ordering": "positional",
-                "error": None,
-            },
-        ],
-    }
-    entries = [
-        {
-            "path": "mock_images/alice-pool.jpg",
-            "media_id": 1,
-            "face_count": 2,
-            "present_identities": ["Alice Example", "Bob Builder"],
-            "must_right": ["Alice Example"],
-            "easy_wrong": ["Carol Decoy"],
-            "policy": {"recognition_enabled": True},
-            "face_boxes": [
-                {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
-            ],
-            "spatial_facts": [
-                {
-                    "subject": "Alice Example",
-                    "relation": "left_of",
-                    "reference": "Bob Builder",
-                    "phrases": ["left of Bob Builder"],
-                }
-            ],
-            "reference_facts": [dict(_MEASURABLE_TRAP_FACT)],
-        },
-    ]
+    record, entries = _two_image_measurable_pass_pair()
     scored = score_run_record(record, entries)
     assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert scored["placement"]["claims"] >= 1
     assert scored["placement"]["accuracy"] is not None
     assert scored["hallucination"]["fabricated_fact_rate"] == pytest.approx(0.0)
     assert scored["hallucination"]["images_with_traps"] >= 1
+    assert scored["counts"]["scored"] >= 2
     verdict = scored["verdict"]
     assert verdict["verdict"] == ScoreVerdict.PASS.value, verdict["reasons"]
     assert verdict["reasons"] == []
@@ -3176,10 +3195,11 @@ def test_absent_identity_ordering_stamp_is_legal():  # VLM6-RH-06 discrimination
     record["items"][0].pop("identity_ordering", None)
     scored = score_run_record(record, entries)
     ordering = scored["faces"]["identity_ordering"]
-    # Unstamped is not "positional" — it is unproven, and the R2-04 fold reports
-    # it as degraded via the exclusion count rather than a silent 0/0.
+    # Unstamped is not "positional" — it is unproven. S2-07: do not invent
+    # degraded_images from exclusions; order_unknown_excluded is the vacuity surface.
     assert ordering["positional_images"] == 0
-    assert ordering["degraded_images"] >= 1
+    assert ordering["degraded_images"] == 0
+    assert ordering["order_unknown_excluded"] >= 1
 
 
 def test_strata_by_difficulty_and_domain():  # VLM6-R4-05
@@ -3247,3 +3267,191 @@ def test_identity_names_has_exactly_one_definition():  # VLM6-RH-07 residual
     from scripts.eval_harness import report as report_mod
 
     assert cli_mod.identity_names is report_mod.identity_names
+
+
+# --- VLM6 gx2: honest adoption verdicts + real redaction (S2-01..07 / S4-05) ---
+
+
+def test_build_score_verdict_zero_fab_rate_with_zero_traps_is_vacuous():  # VLM6-S2-01
+    """Numeric fabricated_fact_rate=0.0 with images_with_traps=0 must not certify.
+
+    Pre-fix: fab_rate=0.0, traps=0 → verdict=pass (clean-zero lie). GREEN: not_ready.
+    """
+    from scripts.eval_harness.report import build_score_verdict
+
+    scored = _passable_scored_dict(
+        fabricated_fact_rate=0.0,
+        fabricated_fact_rate_trapped=0.0,
+        images_with_traps=0,
+    )
+    verdict = build_score_verdict(scored, rubric_gate="enforce")
+    assert verdict["verdict"] != ScoreVerdict.PASS.value
+    assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("fabricated_fact" in r for r in verdict["reasons"])
+    assert any("images_with_traps=0" in r for r in verdict["reasons"])
+
+
+def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # VLM6-S2-02
+    """Total failure on critical slices is fail (measured and bad), not pass.
+
+    Pre-fix each mutation certified pass. Floors are named constants at the
+    degenerate extreme (position/placement <= 0.0, fab_rate >= 1.0).
+    """
+    from scripts.eval_harness.report import (
+        FABRICATED_FACT_RATE_CEILING,
+        PLACEMENT_ACCURACY_FLOOR,
+        POSITION_ACCURACY_FLOOR,
+        build_score_verdict,
+    )
+
+    cases = [
+        (
+            "position",
+            lambda s: s["faces"]["identification"]["positional"].update({"position_accuracy": 0.0}),
+            "position_accuracy",
+            POSITION_ACCURACY_FLOOR,
+        ),
+        (
+            "placement",
+            lambda s: s["placement"].update({"accuracy": 0.0}),
+            "placement.accuracy",
+            PLACEMENT_ACCURACY_FLOOR,
+        ),
+        (
+            "fabricated",
+            lambda s: s["hallucination"].update(
+                {"fabricated_fact_rate": 1.0, "fabricated_fact_rate_trapped": 1.0, "images_with_traps": 2}
+            ),
+            "fabricated_fact_rate",
+            FABRICATED_FACT_RATE_CEILING,
+        ),
+    ]
+    for label, mut, token, _threshold in cases:
+        scored = _passable_scored_dict()
+        mut(scored)
+        verdict = build_score_verdict(scored, rubric_gate="enforce")
+        assert verdict["verdict"] == ScoreVerdict.FAIL.value, f"{label}: {verdict}"
+        assert any("quality-floor" in r and token in r for r in verdict["reasons"]), verdict["reasons"]
+
+
+def test_public_redaction_scrubs_free_text_identity_names_everywhere():  # VLM6-S2-03 / S2-04
+    """Identity names in path / short_error / failures must be absent from PUBLIC blob.
+
+    Assert on the whole serialized document — not key-by-key — so a future free-text
+    allow-list key cannot re-open the leak (TEST-15 / S2-03 shape fix).
+    """
+    from scripts.eval_harness.report import _redact_caption_report_for_public
+
+    private = "Jane Doe Private"
+    record, entries = _audience_fixtures()
+    # Publishable row with name embedded in free-text path + short_error.
+    record["items"] = [record["items"][0]]
+    record["items"][0]["path"] = f"celebs01/{private}-with-obama.jpg"
+    entries = [entries[0]]
+    entries[0]["path"] = f"celebs01/{private}-with-obama.jpg"
+    local = score_run_record(record, entries)
+    assert local["per_image"], "fixture must produce a scored row"
+    local["per_image"][0]["path"] = f"celebs01/{private}-with-obama.jpg"
+    local["per_image"][0]["short_error"] = f"short compression failed involving {private}"
+    local["failures"] = [
+        {
+            "path": f"/home/op/uploads/{private}.jpg",
+            "media_id": 10,
+            "error": f"timeout while describing {private}",
+            "secret_extra": f"should drop but names {private}",
+        }
+    ]
+    # Pre-redaction control: name is live in the local document.
+    assert private in json.dumps(local)
+
+    redacted = _redact_caption_report_for_public(local, run_record=record, manifest_entries=entries)
+    blob = json.dumps(redacted)
+    assert private not in blob
+    assert f"/home/op/uploads/{private}.jpg" not in blob
+    assert f"{private}.jpg" not in blob
+    # Free-text path is opaque media_id token (S2-04: not identifying basename).
+    assert redacted["per_image"][0]["path"] == "media_id:10"
+    assert redacted["per_image"][0]["short_error"] in ("<redacted>", "<error>")
+    assert redacted["failures"]
+    fail = redacted["failures"][0]
+    assert "secret_extra" not in fail
+    assert private not in json.dumps(fail)
+    assert fail["path"] == "media_id:10"
+
+
+def test_score_and_compare_agree_on_vacuous_fabricated_fact():  # VLM6-S2-01 / S2-06
+    """score verdict and compare share one vacuity predicate for fab_rate/traps."""
+    from scripts.eval_harness.cli import _compare_vacuous_categories
+    from scripts.eval_harness.report import (
+        build_score_verdict,
+        fabricated_fact_is_vacuous,
+        score_vacuous_category_labels,
+    )
+
+    scored = _passable_scored_dict(
+        fabricated_fact_rate=0.0,
+        fabricated_fact_rate_trapped=0.0,
+        images_with_traps=0,
+    )
+    assert fabricated_fact_is_vacuous(scored["hallucination"]) is True
+    labels = score_vacuous_category_labels(scored, include_verdict_fields=False)
+    assert "fabricated_fact" in labels
+    verdict = build_score_verdict(scored, rubric_gate="enforce")
+    assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
+    # Stamp verdict so compare's include_verdict_fields path is live.
+    scored_with_verdict = {**scored, "verdict": verdict}
+    compare_msgs = _compare_vacuous_categories(scored_with_verdict, role="candidate")
+    assert any("fabricated_fact" in m for m in compare_msgs)
+
+
+def test_single_image_measurable_corpus_is_not_ready():  # VLM6-S2-05
+    """One-item measurable corpus must not earn adoption pass (sample-size floor)."""
+    record, entries = _two_image_measurable_pass_pair()
+    record["items"] = record["items"][:1]
+    entries = entries[:1]
+    scored = score_run_record(record, entries)
+    assert scored["counts"]["scored"] == 1
+    assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert scored["placement"]["claims"] >= 1
+    assert scored["hallucination"]["images_with_traps"] >= 1
+    assert scored["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("sample-size" in r for r in scored["verdict"]["reasons"])
+
+
+def test_order_unknown_excluded_not_folded_into_degraded_images():  # VLM6-S2-07
+    """Positional exclusions must not invent degraded_images contract metadata."""
+    record, entries = _run_record(), _manifest_entries()
+    assert all(not e.get("face_boxes") for e in entries)
+    scored = score_run_record(record, entries)
+    ordering = scored["faces"]["identity_ordering"]
+    assert ordering["order_unknown_excluded"] >= 1
+    assert ordering["degraded_images"] == 0
+    assert ordering["degraded_paths"] == []
+
+
+def test_markdown_renders_null_provenance_as_null_not_none():  # VLM6-S4-05
+    """JSON null provenance must render as the token null, not Python None."""
+    from scripts.eval_harness.report import _fmt_prov, _markdown
+
+    assert _fmt_prov(None) == "null"
+    assert _fmt_prov("abc") == "abc"
+    record, entries = _two_image_measurable_pass_pair()
+    scored = score_run_record(record, entries)
+    scored["provenance"]["head_sha"] = None
+    scored["provenance"]["started_at"] = None
+    md = _markdown(scored)
+    assert "started_at: null" in md
+    assert "started_at: None" not in md
+    assert "head_sha: `null`" in md
+    assert "head_sha: `None`" not in md
+
+
+def test_score_verdict_enum_includes_non_comparable():  # VLM6-S2-09
+    assert ScoreVerdict.NON_COMPARABLE.value == "non_comparable"
+    assert set(ScoreVerdict) >= {
+        ScoreVerdict.PASS,
+        ScoreVerdict.FAIL,
+        ScoreVerdict.PASS_UNGATED,
+        ScoreVerdict.NOT_READY,
+        ScoreVerdict.NON_COMPARABLE,
+    }

@@ -49,6 +49,7 @@ from pathlib import Path
 try:
     from scripts.eval_harness.face_metrics import latency_summary as _latency_summary
 except ImportError:  # pragma: no cover — standalone single-file deploy path
+
     def _latency_summary(  # type: ignore[misc]
         values: list[float],
         *,
@@ -83,6 +84,7 @@ except ImportError:  # pragma: no cover — standalone single-file deploy path
             else:
                 out["images_per_min"] = None
         return out
+
 
 CAPTION_TASK = "<MORE_DETAILED_CAPTION>"
 DEFAULT_STALL_LIMIT = 5  # parity with scripts.eval_harness.cli.DEFAULT_STALL_LIMIT
@@ -177,9 +179,7 @@ DoneKey = tuple[int, str, str, str, str]
 
 def _row_resume_key(row: dict) -> DoneKey | None:
     """Extract a resume key from a JSONL row, or None if incomplete/unusable."""
-    if not all(
-        k in row for k in ("attachment_id", "model_id", "model_version", "model_revision", "task")
-    ):
+    if not all(k in row for k in ("attachment_id", "model_id", "model_version", "model_revision", "task")):
         return None
     revision = row["model_revision"]
     if revision is None:
@@ -255,7 +255,7 @@ def _rewrite_jsonl_dropping_retry_errors(
         if key is not None and key in retry_keys and row.get("error"):
             continue  # will be re-appended by this run
         kept.append(json.dumps(row))
-    jsonl_path.write_text(("\n".join(kept) + ("\n" if kept else "")))
+    jsonl_path.write_text("\n".join(kept) + ("\n" if kept else ""))
 
 
 # ---------------------------------------------------------------------- model

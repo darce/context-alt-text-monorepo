@@ -601,9 +601,7 @@ def test_resolve_verified_image_rejects_sha_drift(tmp_path):
     from scripts.eval_harness.manifest import resolve_verified_image
 
     data = _valid_manifest_dict()
-    entry = load_manifest(
-        _write_manifest(tmp_path, data), skip_hash_verification=True
-    ).entries[0]
+    entry = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     images = tmp_path / "images"
     (images / "mock_images").mkdir(parents=True)
     (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
@@ -615,9 +613,7 @@ def test_resolve_verified_image_returns_path_when_pin_matches(tmp_path):
     from scripts.eval_harness.manifest import resolve_verified_image
 
     data = _valid_manifest_dict()
-    entry = load_manifest(
-        _write_manifest(tmp_path, data), skip_hash_verification=True
-    ).entries[0]
+    entry = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True).entries[0]
     images = tmp_path / "images"
     (images / "mock_images").mkdir(parents=True)
     target = images / "mock_images" / "scene-001.jpg"

@@ -53,7 +53,13 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": [{"name": "Alice Example", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
                 "face_count": 1,
                 "error": None,
             },
@@ -68,7 +74,13 @@ def _run_record() -> dict:
                     "model_version": "1",
                     "cached": True,
                 },
-                "identities": [{"name": "Alice Example", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],  # wrong name: Bob labeled
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],  # wrong name: Bob labeled
                 "face_count": 1,
                 "error": None,
             },
@@ -323,7 +335,13 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
                 "describe": {"alt_text_draft": "Ryann and friends.", "visual_facts": {"objects": []}},
-                "identities": [{"name": "Ryann Wiseman", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                "identities": [
+                    {
+                        "name": "Ryann Wiseman",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
                 "face_count": 3,
                 "error": None,
             },
@@ -650,7 +668,13 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                     "model_version": "1",
                     "cached": False,
                 },
-                "identities": [{"name": _PUBLIC_NAME, "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                "identities": [
+                    {
+                        "name": _PUBLIC_NAME,
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
                 "face_count": 1,
                 "error": None,
             },
@@ -666,7 +690,13 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
                     "cached": False,
                 },
                 # Wrong name asserted — must never leak into a public report.
-                "identities": [{"name": "Wrong Celebrity", "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0}, "unpositioned": False}],
+                "identities": [
+                    {
+                        "name": "Wrong Celebrity",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
                 "face_count": 1,
                 "error": None,
             },
@@ -980,13 +1010,10 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     # Gate proposal EXCLUDES every DIRECTIONAL slice (SC4)
     gp = scored["gate_proposal"]
     assert gp["proposed_slices"] == {} or all(
-        not (scored["slices"].get(k) or {}).get("directional", True)
-        for k in gp["proposed_slices"]
+        not (scored["slices"].get(k) or {}).get("directional", True) for k in gp["proposed_slices"]
     )
     for name in ("headline_identification", "unknown_rejection", "clustering"):
-        assert name in gp["excluded_directional"] or any(
-            name in e for e in gp["excluded_directional"]
-        )
+        assert name in gp["excluded_directional"] or any(name in e for e in gp["excluded_directional"])
     # Coupling flag + p95 deferral + scope amendments + protocol disclosures present
     assert "identification_recall" in gp["identification_detection_coupling"]
     assert "detection_recall" in gp["identification_detection_coupling"]
@@ -1154,9 +1181,7 @@ def test_occlusion_twin_scored_at_source_identity_heldout_tau_in_report():
     # Fixture preconditions: fold taus split around tau_op.
     assert sorted(scored["tau"]["tau_k"]) == pytest.approx([0.40, 0.55])
     assert scored["tau"]["tau_op"] == pytest.approx(0.475)
-    bob_tau = next(
-        d["tau_k"] for d in scored["decisions"] if d["true_name"] == "Bob Z"
-    )
+    bob_tau = next(d["tau_k"] for d in scored["decisions"] if d["true_name"] == "Bob Z")
     assert bob_tau == pytest.approx(0.55)  # Bob's held-out fold τ_k ≠ τ_op
     synth = scored["slices"]["occlusion"]["masked"]["synthetic"]
     assert synth["n_eligible"] == 1
@@ -1309,9 +1334,7 @@ def test_demographic_cohorts_inherit_coupling_and_new_disclosures_present():
     every scored face artifact."""
     face_run, manifest = _face_fixture_corpus()
     scored = score_face_run_record(face_run, manifest)
-    parent_coupling = scored["slices"]["full_corpus_identification"][
-        "detection_recall_coupling_flag"
-    ]
+    parent_coupling = scored["slices"]["full_corpus_identification"]["detection_recall_coupling_flag"]
     for cohort, block in scored["slices"]["demographic"]["by_cohort"].items():
         assert block["missed_gt"] is None, cohort
         assert block["unmatched_detections"] is None, cohort
@@ -1403,9 +1426,7 @@ def test_publishability_private_stranger_scored_then_redacted():
     scored = score_face_run_record(face_run, manifest)
     unk = scored["slices"]["unknown_rejection"]
     assert unk["n"] >= 1
-    assert any(
-        d["true_name"] is None and "localwp" in d["path"] for d in scored["decisions"]
-    )
+    assert any(d["true_name"] is None and "localwp" in d["path"] for d in scored["decisions"])
     redacted = redact_face_report_for_public(scored)
     # Aggregate rates preserved
     assert redacted["slices"]["unknown_rejection"]["n"] == unk["n"]
@@ -1471,9 +1492,7 @@ def test_publishability_named_private_source_redacted():
     assert jane_rows, "named private person must be scored into the full corpus"
     assert all(d["publishable"] is False for d in jane_rows)
     # The fixture path is the fail-open vector: no substring the old heuristic keyed on.
-    assert not any(
-        tok in d["path"] for d in jane_rows for tok in ("operator", "localwp", "uploads")
-    )
+    assert not any(tok in d["path"] for d in jane_rows for tok in ("operator", "localwp", "uploads"))
     assert "Jane Roster" in json.dumps(scored)  # present somewhere pre-redaction
 
     redacted = redact_face_report_for_public(scored)
@@ -1484,18 +1503,12 @@ def test_publishability_named_private_source_redacted():
     assert "corpus/private/jane-02.jpg" not in blob
     # Publishable celeb detail survives; every surviving row is publishable + named.
     assert redacted["decisions"]
-    assert all(
-        d.get("publishable") is True and d.get("true_name") is not None
-        for d in redacted["decisions"]
-    )
+    assert all(d.get("publishable") is True and d.get("true_name") is not None for d in redacted["decisions"])
     # Per-face clustering labels stripped (aggregate-only public artifact).
     assert redacted["slices"]["clustering"]["labels"] == []
     # Aggregate rates preserved (unknown-rejection count/rate unchanged by redaction).
     assert redacted["slices"]["unknown_rejection"]["n"] == scored["slices"]["unknown_rejection"]["n"]
-    assert (
-        redacted["slices"]["unknown_rejection"]["rate"]
-        == scored["slices"]["unknown_rejection"]["rate"]
-    )
+    assert redacted["slices"]["unknown_rejection"]["rate"] == scored["slices"]["unknown_rejection"]["rate"]
 
 
 def test_sort_nested_lists_preserves_fixed_schema_row_order():
@@ -1751,6 +1764,7 @@ def test_latency_excludes_cache_hits():  # VLM6-R4-04
     assert all_cache["images_timed"] == 0
     assert all_cache["cache_hits_excluded"] == 1
     assert all_cache["percentile_caveat"] == "no_live_timings"
+
 
 # --- Identity shape normalizer (dict rows vs legacy name strings) ------------
 
@@ -2152,9 +2166,7 @@ def test_score_run_record_surfaces_placement_accuracy():  # VLM6-R4-02
             "phrases": ["left of Bob Builder"],
         }
     ]
-    record["items"][0]["describe"]["alt_text_draft"] = (
-        "Alice Example stands left of Bob Builder by a pool."
-    )
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example stands left of Bob Builder by a pool."
     # Drop the error item so aggregates are clean.
     record["items"] = [record["items"][0]]
     scored = score_run_record(record, entries)
@@ -2181,9 +2193,7 @@ def test_score_run_record_surfaces_placement_wrong_claim():  # VLM6-R4-02
         }
     ]
     # Inverted claim.
-    record["items"][0]["describe"]["alt_text_draft"] = (
-        "Alice Example stands right of Bob Builder by a pool."
-    )
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example stands right of Bob Builder by a pool."
     record["items"] = [record["items"][0]]
     scored = score_run_record(record, entries)
     assert scored["placement"]["accuracy"] == pytest.approx(0.0)
@@ -2212,9 +2222,7 @@ def test_score_run_record_surfaces_hallucination_fabricated_facts():  # VLM6-R2-
             "phrases": ["pool"],
         },
     ]
-    record["items"][0]["describe"]["alt_text_draft"] = (
-        "Alice Example relaxes by a pool next to a red sports car."
-    )
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example relaxes by a pool next to a red sports car."
     record["items"] = [record["items"][0]]
     scored = score_run_record(record, entries)
     assert "hallucination" in scored
@@ -2314,9 +2322,10 @@ def test_gated_score_components_surfaced_on_caption_block():
     scored = score_run_record(record, entries)
     assert "gated_score_scored" in scored["caption"]
     assert "gated_score_excluded" in scored["caption"]
-    assert scored["caption"]["gated_score_scored"] + scored["caption"]["gated_score_excluded"] == scored[
-        "counts"
-    ]["scored"]
+    assert (
+        scored["caption"]["gated_score_scored"] + scored["caption"]["gated_score_excluded"]
+        == scored["counts"]["scored"]
+    )
     _json_doc, md = build_reports(record, entries)
     assert "excluded=" in md
 
@@ -2374,33 +2383,24 @@ def test_public_local_roster_name_on_publishable_item_scrubbed():  # VLM6-R3-02 
     record["items"][0]["describe"]["alt_text_draft"] = f"{private_name} at a podium."
     # Full roster includes private name so caption hallucination gate can trip.
     roster = [_PUBLIC_NAME, private_name, _LOCAL_NAME]
-    local_json, _ = build_reports(
-        record, entries, audience=Audience.LOCAL, manifest_roster=roster
-    )
+    local_json, _ = build_reports(record, entries, audience=Audience.LOCAL, manifest_roster=roster)
     local = json.loads(local_json)
     # Control: LOCAL must see the private assertion (proves the fixture is live).
     assert private_name in local_json
     assert any(
-        private_name in (row.get("hallucinated_names") or [])
-        or private_name in (row.get("wrong_name_hits") or [])
+        private_name in (row.get("hallucinated_names") or []) or private_name in (row.get("wrong_name_hits") or [])
         for row in local["per_image"]
         if row["media_id"] == 10
-    ) or any(
-        pair[1] == private_name
-        for pair in (local["faces"]["identification"].get("wrong_names") or [])
-    )
+    ) or any(pair[1] == private_name for pair in (local["faces"]["identification"].get("wrong_names") or []))
 
-    pub_json, pub_md = build_reports(
-        record, entries, audience=Audience.PUBLIC, manifest_roster=roster
-    )
+    pub_json, pub_md = build_reports(record, entries, audience=Audience.PUBLIC, manifest_roster=roster)
     for blob in (pub_json, pub_md):
         assert private_name not in blob
         assert _LOCAL_NAME not in blob
     pub = json.loads(pub_json)
     assert pub["faces"]["identification"]["wrong_names"] == []
     assert all(
-        not (row.get("hallucinated_names") or []) and not (row.get("wrong_name_hits") or [])
-        for row in pub["per_image"]
+        not (row.get("hallucinated_names") or []) and not (row.get("wrong_name_hits") or []) for row in pub["per_image"]
     )
     # Aggregates preserved from full-corpus score (not zeroed by redaction).
     assert "precision" in pub["faces"]["identification"]
@@ -2443,12 +2443,8 @@ def test_public_aggregate_parity_with_private_manifest_entries():  # VLM6-R3-03
                 },
             }
         )
-    local = json.loads(
-        build_reports(record, entries, audience=Audience.LOCAL)[0]
-    )
-    pub = json.loads(
-        build_reports(record, entries, audience=Audience.PUBLIC)[0]
-    )
+    local = json.loads(build_reports(record, entries, audience=Audience.LOCAL)[0])
+    pub = json.loads(build_reports(record, entries, audience=Audience.PUBLIC)[0])
     # Aggregate parity: PUBLIC must not look perfect while LOCAL fails.
     assert local["caption"]["name_precision"] == pub["caption"]["name_precision"]
     assert local["caption"]["wrong_name_image_rate"] == pub["caption"]["wrong_name_image_rate"]
@@ -2475,9 +2471,7 @@ def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-0
         "sha256": "a" * 64,
     }
     record["provenance"]["totally_unknown_future_key"] = "should-never-publish"
-    record["items"][0]["describe"]["model_id"] = (
-        "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
-    )
+    record["items"][0]["describe"]["model_id"] = "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     prov = scored["provenance"]
@@ -2583,9 +2577,7 @@ def test_identity_names_lives_on_report_module():  # VLM6-RH-07
     """report.identity_names is the scoring normalizer (no cli import cycle)."""
     from scripts.eval_harness.report import identity_names as report_identity_names
 
-    names = report_identity_names(
-        [{"name": "Zoe Alone", "bbox": None, "unpositioned": True}]
-    )
+    names = report_identity_names([{"name": "Zoe Alone", "bbox": None, "unpositioned": True}])
     assert names == ["Zoe Alone"]
     with pytest.raises(TypeError, match="list of dict rows"):
         report_identity_names("not-a-list")

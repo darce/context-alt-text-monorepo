@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 from scene.application.seeded_adapter import SeededDescriptionAdapter
-
 from scripts.eval_harness.cli import _manifest_sha, _serialize_score_docs
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.report import score_run_record
@@ -171,9 +170,7 @@ def write_anchor(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate a re-scorable offline seeded determinism anchor (VLM-6 F4)."
-    )
+    parser = argparse.ArgumentParser(description="Generate a re-scorable offline seeded determinism anchor (VLM-6 F4).")
     parser.add_argument(
         "--manifest",
         type=Path,

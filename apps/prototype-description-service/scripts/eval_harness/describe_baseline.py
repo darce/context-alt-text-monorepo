@@ -19,6 +19,7 @@ Fail-closed (VLM6-RH-01 / RH-02):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -123,10 +124,9 @@ def _done_ids() -> set[int]:
     ids: set[int] = set()
     for line in JSONL.read_text().splitlines():
         if line.strip():
-            try:
+            # Tolerate a torn last line (partially flushed JSONL append).
+            with contextlib.suppress(Exception):
                 ids.add(int(json.loads(line)["media_id"]))
-            except Exception:  # noqa: BLE001 — tolerate a torn last line
-                pass
     return ids
 
 
@@ -221,7 +221,9 @@ def _write_report(
     with_faces = [r for r in ok if int(r.get("face_count") or 0) > 0]
     completed = [r["completed_at"] for r in rows if r.get("completed_at")]
     wall = (max(completed) - min(completed)) if len(completed) >= 2 else 0.0
-    models = sorted({(r.get("describe") or {}).get("model_id") for r in ok if (r.get("describe") or {}).get("model_id")})
+    models = sorted(
+        {(r.get("describe") or {}).get("model_id") for r in ok if (r.get("describe") or {}).get("model_id")}
+    )
     # All rows: runner bills every describe attempt, including failed ones (A-13).
     paid_describe_calls = _paid_describe_calls(rows)
     cost_fields = cost_report_fields(

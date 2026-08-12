@@ -92,8 +92,7 @@ FACE_BAKEOFF_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "identity centroid (EMB-02); weighted/medoid prototypes are FIR-6-owned",
     "open-set accept is raw cosine vs τ with no ambiguity/margin penalty "
     "(EMB-09); product ternary accept|suggest|reject is FIR-6-owned",
-    "impostors are pooled zero-effort strangers rather than matched non-mates "
-    "(CAL-04 posture declared in FIR-6 plan)",
+    "impostors are pooled zero-effort strangers rather than matched non-mates (CAL-04 posture declared in FIR-6 plan)",
     "pooled decisions mix heterogeneous per-fold τ_k (subject-disjoint folds; "
     "fit galleries restricted to fit identities — CAL-07)",
     "identification P/R runs only over §C-matched named decisions; missed "
@@ -248,9 +247,7 @@ def identity_names(identities: object) -> list[str]:
     reverse). Greenfield: only dict rows with a non-empty ``name`` are accepted.
     """
     if not isinstance(identities, list):
-        raise TypeError(
-            f"identities must be a list of dict rows, got {type(identities).__name__}"
-        )
+        raise TypeError(f"identities must be a list of dict rows, got {type(identities).__name__}")
     names: list[str] = []
     for index, entry in enumerate(identities):
         if not isinstance(entry, dict):
@@ -260,10 +257,7 @@ def identity_names(identities: object) -> list[str]:
             )
         name = entry.get("name")
         if not name:
-            raise ValueError(
-                f"identities[{index}] has empty/missing 'name' "
-                f"(keys present: {sorted(entry)!r})"
-            )
+            raise ValueError(f"identities[{index}] has empty/missing 'name' (keys present: {sorted(entry)!r})")
         names.append(str(name))
     return names
 
@@ -284,9 +278,7 @@ def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
             model_out: dict[str, Any] = {}
             for mk, mv in value.items():
                 if mk in ("model_ids", "adapters", "model_versions") and isinstance(mv, list):
-                    model_out[mk] = [
-                        _public_safe_path(str(x)) if isinstance(x, str) else x for x in mv
-                    ]
+                    model_out[mk] = [_public_safe_path(str(x)) if isinstance(x, str) else x for x in mv]
                 elif isinstance(mv, str):
                     model_out[mk] = _public_safe_path(mv)
                 else:
@@ -315,6 +307,7 @@ def _redact_caption_report_for_public(
     redacted = copy.deepcopy(scored)
     entries = _entry_index(manifest_entries)
     publishable_ids = _publishable_media_ids(manifest_entries)
+
     # VLM6-LC-INT-01: publishability is conferred by being a SUBJECT of a
     # publishable image (present_identities / must_right) and revoked by being a
     # subject of any non-publishable one. ``easy_wrong`` is the decoy field — it
@@ -324,17 +317,12 @@ def _redact_caption_report_for_public(
     # ``per_identity`` with full tp/fp/precision/recall. Fail-closed both ways:
     # a decoy never confers publishability, and never revokes it either.
     def _subject_names(entry: Mapping[str, Any]) -> list[str]:
-        return [
-            str(n)
-            for n in (list(entry.get("present_identities") or []) + list(entry.get("must_right") or []))
-        ]
+        return [str(n) for n in (list(entry.get("present_identities") or []) + list(entry.get("must_right") or []))]
 
     publishable_subjects: set[str] = set()
     private_subjects: set[str] = set()
     for e in manifest_entries:
-        target = (
-            publishable_subjects if int(e["media_id"]) in publishable_ids else private_subjects
-        )
+        target = publishable_subjects if int(e["media_id"]) in publishable_ids else private_subjects
         target.update(_subject_names(e))
     publishable_names = publishable_subjects - private_subjects
 
@@ -348,23 +336,17 @@ def _redact_caption_report_for_public(
             unknown_media_items += 1
         elif media_id not in publishable_ids:
             withheld_items += 1
-    withheld_manifest_entries = sum(
-        1 for e in manifest_entries if int(e["media_id"]) not in publishable_ids
-    )
+    withheld_manifest_entries = sum(1 for e in manifest_entries if int(e["media_id"]) not in publishable_ids)
 
     # Provenance: allow-list only (unknown keys dropped, not deny-listed).
     redacted["provenance"] = _public_provenance(redacted.get("provenance") or {})
 
-    publishable_paths = {
-        str(e["path"]) for e in manifest_entries if int(e["media_id"]) in publishable_ids
-    }
+    publishable_paths = {str(e["path"]) for e in manifest_entries if int(e["media_id"]) in publishable_ids}
 
     def _keep_publishable_paths(paths: list[Any]) -> list[Any]:
         kept: list[Any] = []
         for p in paths:
-            if isinstance(p, str) and p in publishable_paths:
-                kept.append(p)
-            elif not isinstance(p, str):
+            if isinstance(p, str) and p in publishable_paths or not isinstance(p, str):
                 kept.append(p)
         return kept
 
@@ -374,25 +356,17 @@ def _redact_caption_report_for_public(
     identification["wrong_names"] = []
     identification["ignored_wrong_names"] = []
     per_identity = identification.get("per_identity") or {}
-    identification["per_identity"] = {
-        name: stats for name, stats in per_identity.items() if name in publishable_names
-    }
+    identification["per_identity"] = {name: stats for name, stats in per_identity.items() if name in publishable_names}
     # Path lists can name local-only media — keep publishable paths only.
-    identification["excluded_images"] = _keep_publishable_paths(
-        list(identification.get("excluded_images") or [])
-    )
+    identification["excluded_images"] = _keep_publishable_paths(list(identification.get("excluded_images") or []))
     positional = identification.get("positional") or {}
     if positional:
-        positional["excluded_images"] = _keep_publishable_paths(
-            list(positional.get("excluded_images") or [])
-        )
+        positional["excluded_images"] = _keep_publishable_paths(list(positional.get("excluded_images") or []))
         identification["positional"] = positional
     faces["identification"] = identification
     ordering = faces.get("identity_ordering") or {}
     if ordering:
-        ordering["degraded_paths"] = _keep_publishable_paths(
-            list(ordering.get("degraded_paths") or [])
-        )
+        ordering["degraded_paths"] = _keep_publishable_paths(list(ordering.get("degraded_paths") or []))
         faces["identity_ordering"] = ordering
     redacted["faces"] = faces
 
@@ -423,9 +397,7 @@ def _redact_caption_report_for_public(
     kept_failures: list[dict[str, Any]] = []
     for fail in redacted.get("failures") or []:
         media_id = int(fail.get("media_id", -1))
-        if media_id not in entries:
-            kept_failures.append(fail)
-        elif media_id in publishable_ids:
+        if media_id not in entries or media_id in publishable_ids:
             kept_failures.append(fail)
     redacted["failures"] = kept_failures
 
@@ -561,10 +533,7 @@ def _validate_identities_element_types(identities: Any, *, context: str) -> None
                 "greenfield rejects bare-string identity lists"
             )
         if "name" not in entry:
-            raise ReportError(
-                f"{context}[{index}] is missing required key 'name' "
-                f"(keys present: {sorted(entry)!r})"
-            )
+            raise ReportError(f"{context}[{index}] is missing required key 'name' (keys present: {sorted(entry)!r})")
 
 
 def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -650,9 +619,7 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     def _item_has_timing(item: dict[str, Any], describe: Mapping[str, Any]) -> bool:
         passes = describe.get("passes")
         if isinstance(passes, list) and passes:
-            return any(
-                isinstance(p, dict) and isinstance(p.get("latency_s"), int | float) for p in passes
-            )
+            return any(isinstance(p, dict) and isinstance(p.get("latency_s"), int | float) for p in passes)
         return isinstance(item.get("latency_s"), int | float)
 
     for item in items:
@@ -797,16 +764,11 @@ def build_score_verdict(
     media_id_missing = int(corpus.get("media_id_missing") or 0)
     media_id_extra = int(corpus.get("media_id_extra") or 0)
     if media_id_missing or media_id_extra:
-        reasons.append(
-            f"truncation: media-id multiset differs "
-            f"(missing={media_id_missing}, extra={media_id_extra})"
-        )
+        reasons.append(f"truncation: media-id multiset differs (missing={media_id_missing}, extra={media_id_extra})")
 
     fetch_manifest_sha = (scored.get("provenance") or {}).get("manifest_sha256")
     if not fetch_manifest_sha:
-        reasons.append(
-            "manifest-mismatch: run-record provenance missing fetch-time manifest_sha256"
-        )
+        reasons.append("manifest-mismatch: run-record provenance missing fetch-time manifest_sha256")
 
     must_right_defined = int(caption.get("must_right_defined_images") or 0)
     easy_wrong_defined = int(caption.get("easy_wrong_defined_images") or 0)
@@ -818,9 +780,7 @@ def build_score_verdict(
     must_right_failed = int(caption.get("must_right_failed_images") or 0)
     # enforce only — skip is an explicit operator exemption (F1b-2 / F1-12).
     if rubric_gate != "skip" and must_right_failed > 0:
-        reasons.append(
-            f"must-right failures: {must_right_failed} image(s) failed Must-Right"
-        )
+        reasons.append(f"must-right failures: {must_right_failed} image(s) failed Must-Right")
 
     # Vacuity only when images were scored but none entered identification
     # (recognition_enabled false). All-failed runs are the failed-items class.
@@ -1250,9 +1210,7 @@ def score_run_record(
     if eval_mode == "name_ablation":
         ablation_gates = [_ablation_gate(s) for s in caption_scores]
         gated_agg_values = [g for g in ablation_gates if g is not None]
-        gated_mean = (
-            round(sum(gated_agg_values) / len(gated_agg_values), 4) if gated_agg_values else None
-        )
+        gated_mean = round(sum(gated_agg_values) / len(gated_agg_values), 4) if gated_agg_values else None
         gated_scored_n = len(gated_agg_values)
         gated_excluded_n = len(caption_scores) - gated_scored_n
     else:
@@ -1516,9 +1474,7 @@ def _stratum_blocks(
                 "n": len(rows),
                 "mean_gated_score": (round(sum(gated) / len(gated), 4) if gated else None),
                 "wrong_name_images": wrong_name_images,
-                "placement_accuracy": (
-                    round(sum(place_acc) / len(place_acc), 4) if place_acc else None
-                ),
+                "placement_accuracy": (round(sum(place_acc) / len(place_acc), 4) if place_acc else None),
                 "positional": (
                     {
                         "compared_images": pos.compared_images,
@@ -1585,21 +1541,15 @@ def _markdown(scored: dict[str, Any]) -> str:
         unknown_n = redaction.get("unknown_media_items", 0)
         withheld_manifest = redaction.get("withheld_manifest_entries")
         redaction_bits = [
-            f"withheld {redaction['withheld_items']} of {redaction['total_items']} items "
-            "(local-only / non-publishable)"
+            f"withheld {redaction['withheld_items']} of {redaction['total_items']} items (local-only / non-publishable)"
         ]
         if unknown_n:
-            redaction_bits.append(
-                f"{unknown_n} unknown-media item(s) (corpus integrity, not privacy)"
-            )
+            redaction_bits.append(f"{unknown_n} unknown-media item(s) (corpus integrity, not privacy)")
         if withheld_manifest is not None:
             redaction_bits.append(
-                f"withheld_manifest_entries={withheld_manifest}/"
-                f"{redaction.get('total_manifest_entries', '?')}"
+                f"withheld_manifest_entries={withheld_manifest}/{redaction.get('total_manifest_entries', '?')}"
             )
-        lines.append(
-            f"- redaction: audience=`{redaction['audience']}` — " + "; ".join(redaction_bits)
-        )
+        lines.append(f"- redaction: audience=`{redaction['audience']}` — " + "; ".join(redaction_bits))
     if "seeded" in model.get("adapters", []):
         lines.append(
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
@@ -1877,9 +1827,7 @@ def build_reports(
 # Floor units (§Headline / floor policy). Under-floor → DIRECTIONAL only (SC4).
 # Error targets are Wilson 95% half-widths at p̂=0.5 (scope sizing table).
 HEADLINE_ID_RECALL_ELIGIBLE_FLOOR = 100
-HEADLINE_ID_ERROR_TARGET = (
-    "Wilson_95_halfwidth_le_10pct_at_p0.5 (n≈96–100 → ±9.8%)"
-)
+HEADLINE_ID_ERROR_TARGET = "Wilson_95_halfwidth_le_10pct_at_p0.5 (n≈96–100 → ±9.8%)"
 DIRECTIONAL_LABEL = "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
 GATING_LABEL = "gating_candidate"  # only when floor met; FIR-6 operator decides
 WILSON_Z = 1.96
@@ -2271,9 +2219,7 @@ def build_real_occlusion_pairs(
         entry = entry_by_id.get(int(item["media_id"]))
         if entry is None:
             continue
-        occ_tags = [
-            t for t in (str(tag) for tag in (entry.get("tags") or [])) if t in _OCCLUSION_TAG_VALUES
-        ]
+        occ_tags = [t for t in (str(tag) for tag in (entry.get("tags") or [])) if t in _OCCLUSION_TAG_VALUES]
         if not occ_tags:
             continue
         boxes = list(entry.get("face_boxes") or [])
@@ -2290,9 +2236,7 @@ def build_real_occlusion_pairs(
             boxes,
             list(item.get("image_size") or [1, 1]),
         )
-        emb_by_gt = {
-            p.gt_index: [float(v) for v in faces[p.det_index]["embedding"]] for p in assoc.pairs
-        }
+        emb_by_gt = {p.gt_index: [float(v) for v in faces[p.det_index]["embedding"]] for p in assoc.pairs}
         for gt_index, box in named:
             name = box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None)
             for tag in occ_tags:
@@ -2397,18 +2341,12 @@ def score_face_run_record(
     # Coupling counts are headline-scoped (not full-corpus) so the honesty flag
     # matches the published rate's sampling frame (FIR5V11-05 / REF-27).
     celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
-    headline_decisions = [
-        d
-        for d in assignment.decisions
-        if d.media_id in celebs01_ids and d.true_name is not None
-    ]
-    headline_missed_gt, headline_unmatched, headline_assoc_notes = (
-        _association_counts_for_media(
-            assignment,
-            celebs01_ids,
-            gt_by_media=gt_by_media,
-            probe_media_ids={d.media_id for d in headline_decisions},
-        )
+    headline_decisions = [d for d in assignment.decisions if d.media_id in celebs01_ids and d.true_name is not None]
+    headline_missed_gt, headline_unmatched, headline_assoc_notes = _association_counts_for_media(
+        assignment,
+        celebs01_ids,
+        gt_by_media=gt_by_media,
+        probe_media_ids={d.media_id for d in headline_decisions},
     )
     headline_id = face_identification_pr(
         headline_decisions,
@@ -2432,9 +2370,7 @@ def score_face_run_record(
     if tau_unfitted:
         headline_reasons.append(tau_unfitted_reason)
     headline_floor_met = (
-        not zero_box_corpus
-        and not tau_unfitted
-        and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+        not zero_box_corpus and not tau_unfitted and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
     )
     headline_status = _slice_status(
         meets_floor=headline_floor_met,
@@ -2517,9 +2453,7 @@ def score_face_run_record(
         "directional_reasons": list(demo.directional_reasons),
         "status": DIRECTIONAL_LABEL,
         "label": DIRECTIONAL_LABEL,
-        "by_cohort": {
-            cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())
-        },
+        "by_cohort": {cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())},
     }
 
     # Occlusion slices (synthetic + real divergence).
@@ -2533,14 +2467,15 @@ def score_face_run_record(
     # entity-disjoint if the identity entered fit galleries).
     tau_by_identity = _tau_by_identity_from_decisions(assignment.decisions)
     tau_fallback_identities = frozenset(
-        {f.true_name for f in assignment.matched if f.true_name is not None}
-        - set(tau_by_identity)
+        {f.true_name for f in assignment.matched if f.true_name is not None} - set(tau_by_identity)
     )
     occlusion_out: dict[str, Any] = {}
     occlusion_pairs_by_tag = occlusion_pairs_by_tag or {}
     real_occlusion_pairs_by_tag = real_occlusion_pairs_by_tag or {}
     walk_stability_by_tag = walk_stability_by_tag or {}
-    for tag in sorted(set(occlusion_pairs_by_tag) | set(real_occlusion_pairs_by_tag) | {"masked", "sunglasses", "occlusion_other"}):
+    for tag in sorted(
+        set(occlusion_pairs_by_tag) | set(real_occlusion_pairs_by_tag) | {"masked", "sunglasses", "occlusion_other"}
+    ):
         synth_inputs = list(occlusion_pairs_by_tag.get(tag) or [])
         real_inputs = list(real_occlusion_pairs_by_tag.get(tag) or [])
         ws = walk_stability_by_tag.get(tag) or {}
@@ -2597,19 +2532,12 @@ def score_face_run_record(
             n_real=real_acc.n_eligible if real_acc is not None else 0,
         )
         # Auto-demote synthetic when divergence fires.
-        synth_directional = (
-            bool(synth_acc.directional)
-            or zero_box_corpus
-            or divergence["auto_demote"]
-            or tau_unfitted
-        )
+        synth_directional = bool(synth_acc.directional) or zero_box_corpus or divergence["auto_demote"] or tau_unfitted
         synth_reasons = list(synth_acc.directional_reasons)
         if zero_box_corpus:
             synth_reasons.append("zero_box_corpus")
         if divergence["auto_demote"]:
-            synth_reasons.append(
-                f"synthetic_real_divergence d={divergence['d']}>threshold={divergence['threshold']}"
-            )
+            synth_reasons.append(f"synthetic_real_divergence d={divergence['d']}>threshold={divergence['threshold']}")
         if tau_unfitted:
             synth_reasons.append(tau_unfitted_reason)
         status = _slice_status(meets_floor=not synth_directional, reasons=synth_reasons)
@@ -2764,9 +2692,7 @@ def score_face_run_record(
         **fetch_provenance,
         "score_manifest_sha256": score_manifest_sha256,
         "manifest_matches_fetch": (
-            None
-            if score_manifest_sha256 is None
-            else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
+            None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
         ),
         "model": {
             "model_ids": model_ids,
@@ -2933,9 +2859,7 @@ def redact_face_report_for_public(report: dict[str, Any]) -> dict[str, Any]:
             if isinstance(synth, dict):
                 occ_pres[str(tag)] = {
                     "rate_numerator": synth.get("rate_numerator", synth.get("n_correct")),
-                    "rate_denominator": synth.get(
-                        "rate_denominator", synth.get("n_eligible")
-                    ),
+                    "rate_denominator": synth.get("rate_denominator", synth.get("n_eligible")),
                     "n_eligible": synth.get("n_eligible"),
                     "sampling_frame": synth.get("sampling_frame"),
                 }

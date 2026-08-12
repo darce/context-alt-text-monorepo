@@ -212,8 +212,7 @@ def _validate_names_elements(names: Any, *, context: str) -> list[dict[str, Any]
             )
         if "name" not in entry:
             raise ValueError(
-                f"{context}: names[{index}] is missing required key 'name' "
-                f"(keys present: {sorted(entry)!r})"
+                f"{context}: names[{index}] is missing required key 'name' (keys present: {sorted(entry)!r})"
             )
         validated.append(entry)
     return validated
@@ -240,9 +239,7 @@ def load_face_pass_rows(path: Path) -> list[FacePassRow]:
         if not isinstance(raw, dict) or not (_REQUIRED_ROW_FIELDS <= set(raw) <= _ROW_FIELDS):
             continue
         raw = dict(raw)
-        raw["names"] = _validate_names_elements(
-            raw.get("names"), context=f"{path}:{line_no}"
-        )
+        raw["names"] = _validate_names_elements(raw.get("names"), context=f"{path}:{line_no}")
         rows.append(FacePassRow(**raw))
     return rows
 
@@ -312,9 +309,7 @@ def run_face_pass(
                 image_width, image_height = _image_dimensions(image_bytes)
                 job_id = client.analyze([(media_id, image_path.name, image_bytes)])
                 client.wait_job(job_id)
-                names, face_count, _ordering = _extract_identities(
-                    client.media_identities([media_id]), media_id
-                )
+                names, face_count, _ordering = _extract_identities(client.media_identities([media_id]), media_id)
                 names = sort_identity_rows_by_normalized_centre(
                     names, image_width=image_width, image_height=image_height
                 )

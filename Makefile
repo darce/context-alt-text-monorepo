@@ -600,9 +600,11 @@ dev-stop:
 # eval-tenant key, never the demo tenant's), ACX_EVAL_TENANT_ID (eval tenant
 # UUID, required by all live subcommands), GOLDEN_IMAGES_DIR. Details:
 # apps/prototype-description-service/scripts/eval_harness/README.md
+# --check-determinism is on by default (seed-stability after the live fetch);
+# offline freeze compare is a separate target: make eval-anchor-check.
 .PHONY: eval-captions
 eval-captions:
-	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS)
+	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run --check-determinism $(EVAL_ARGS)
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

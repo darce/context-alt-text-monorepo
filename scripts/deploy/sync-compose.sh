@@ -12,15 +12,15 @@
 
 set -euo pipefail
 
-ENV="${ENV:?ENV must be set (dev|staging|prod)}"
+ENV="${ENV:?ENV must be set (dev|dev-fir|staging|prod)}"
 OCI_HOST="${OCI_HOST:-129.213.40.111}"
 OCI_USER="${OCI_USER:-ubuntu}"
 SOURCE="${SOURCE:-apps/prototype-description-service/docker-compose.env.yml}"
 ADMIN_SOURCE="${ADMIN_SOURCE:-apps/prototype-description-service/docker-compose.admin.yml}"
 
 case "$ENV" in
-  dev|staging|prod) COMPOSE_DIR="/opt/acx-backend/$ENV" ;;
-  *) echo "ERROR: ENV must be dev|staging|prod (got: $ENV)" >&2; exit 2 ;;
+  dev|dev-fir|staging|prod) COMPOSE_DIR="/opt/acx-backend/$ENV" ;;
+  *) echo "ERROR: ENV must be dev|dev-fir|staging|prod (got: $ENV)" >&2; exit 2 ;;
 esac
 
 if [[ "$ENV" == "prod" && "${CONFIRM:-}" != "PROD" ]]; then

@@ -144,13 +144,13 @@ PASS: S4-06 write refuses forty zeros
 ### 3.4 Generator determinism (hashseed 0 vs 1 → byte-identical tmp)
 
 ```
-cap/stem.json: match=True sha=d105f3adccb2f574
-cap/stem-report.json: match=True sha=1dea1f8d98bfb55d
-cap/stem-report.md: match=True sha=d2eeee5558f240e1
-face/mstem.json: match=True sha=1209733ed2b62e83
-face/fstem.json: match=True sha=a5264540eb1fe7aa
-face/fstem-face-report.json: match=True sha=fbea3c228f527d65
-face/fstem-face-report.md: match=True sha=6452cc66134ec07d
+cap/stem.json: match=True (truncated digest omitted; read from artifact)
+cap/stem-report.json: match=True (truncated digest omitted; read from artifact)
+cap/stem-report.md: match=True (truncated digest omitted; read from artifact)
+face/mstem.json: match=True (truncated digest omitted; read from artifact)
+face/fstem.json: match=True (truncated digest omitted; read from artifact)
+face/fstem-face-report.json: match=True (truncated digest omitted; read from artifact)
+face/fstem-face-report.md: match=True (truncated digest omitted; read from artifact)
 PASS: hashseed 0/1 byte-identical for caption+face generators
 ```
 

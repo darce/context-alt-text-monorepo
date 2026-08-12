@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from scripts.eval_harness.face_metrics import named_box_name
 from scripts.eval_harness.report import (
     DIRECTIONAL_LABEL,
     FACE_BAKEOFF_CANON_VERSION,
@@ -20,8 +21,10 @@ from scripts.eval_harness.report import (
     Audience,
     ReportError,
     ScoreVerdict,
+    _build_single_subject_cohort_by_media,
     _latency_summary,
     build_face_reports,
+    build_real_occlusion_pairs,
     build_reports,
     redact_face_report_for_public,
     score_face_run_record,
@@ -4352,3 +4355,82 @@ def test_path_basename_stems_not_over_scrubbed():  # RF-13
     red = redact_face_report_for_public(report)
     # Unrelated protocol free text must survive (not collapsed by stem over-scrub).
     assert red["protocol_disclosures"] == ["alignment image_count check"]
+
+
+def test_single_subject_cohort_namedness_agrees_with_face_metrics():  # wE4 → wF1
+    """Cohort builder must use named_box_name — not raw name truthiness.
+
+    Contract (TEST-06): agreement with face_metrics.named_box_name, not a
+    hardcoded expected set. Whitespace-only ``"   "`` and ZWSP-prefixed
+    ``"\\u200bAlice"`` must not diverge from the shared predicate.
+    TEST-15: pre-fix raw ``if name`` counts whitespace as named.
+    """
+    cases = [
+        {"name": "   ", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "\u200bAlice", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "Alice", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "\u200b", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+    ]
+    for i, box in enumerate(cases):
+        mid = i + 1
+        entries = [
+            {
+                "media_id": mid,
+                "demographic_cohort": f"cohort-{mid}",
+                "provenance": {"source": "celeb"},
+                "face_boxes": [box],
+                "face_count": 1,
+            }
+        ]
+        cohort = _build_single_subject_cohort_by_media(entries)
+        pred_named = named_box_name(box) is not None
+        in_cohort = mid in cohort
+        assert in_cohort is pred_named, (
+            f"media_id={mid} name={box['name']!r}: cohort={in_cohort} "
+            f"named_box_name={named_box_name(box)!r}"
+        )
+
+
+def test_occlusion_named_filter_agrees_with_face_metrics():  # wE4 → wF1
+    """Real-occlusion named filter + true_name must share named_box_name.
+
+    Agreement with face_metrics (TEST-06), not a hardcoded name list.
+    TEST-15: pre-fix raw truthiness admits whitespace-only / format-only.
+    """
+    boxes = [
+        {"name": "   ", "x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1},
+        {"name": "\u200bAlice", "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "Bob", "x": 0.8, "y": 0.5, "w": 0.1, "h": 0.1},
+        {"name": "\u200b", "x": 0.1, "y": 0.1, "w": 0.05, "h": 0.05},
+    ]
+    expected_names = [named_box_name(b) for b in boxes if named_box_name(b) is not None]
+    assert expected_names  # fixture sanity: at least one named box
+    manifest = {
+        "entries": [
+            {
+                "media_id": 1,
+                "path": "celebs01/occ.jpg",
+                "tags": ["masked"],
+                "face_boxes": boxes,
+                "face_count": len(boxes),
+                "present_identities": ["Alice", "Bob"],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            }
+        ]
+    }
+    record = {
+        "items": [
+            {
+                "media_id": 1,
+                "faces": [],
+                "image_size": [100, 100],
+                "error": None,
+            }
+        ]
+    }
+    pairs = build_real_occlusion_pairs(record, manifest)
+    true_names = [p["true_name"] for p in pairs.get("masked", [])]
+    assert true_names == expected_names, (
+        f"occlusion true_names={true_names!r} vs named_box_name path={expected_names!r}"
+    )

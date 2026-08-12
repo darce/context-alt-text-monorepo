@@ -61,7 +61,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
-    labeled_left_to_right,
+    labeled_order,
     positional_identification,
     predicted_names_for_positional,
 )
@@ -136,6 +136,15 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     "unknown_rejection": SAMPLING_FRAME_UNKNOWN_REJECTION,
     "occlusion_recovery": SAMPLING_FRAME_OCCLUSION_RECOVERY,
     "clustering": SAMPLING_FRAME_CLUSTERING,
+    # VLM6-R2-C-02: detection P/R population (named + anonymous GT boxes).
+    # Same string shape as other FACE_BAKEOFF_SAMPLING_FRAMES entries.
+    "detection": (
+        "all_gt_boxes_on_scoreable_media_via_association: named and anonymous "
+        "GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; "
+        "FN=unmatched GT (named missed_gt + missed_stranger_gt); "
+        "FP=unmatched detections; error-item media excluded from association "
+        "(listed in failures); tp+fn equals GT boxes that reached association"
+    ),
 }
 
 EVAL_MODES = ("standard", "context_distractor", "name_ablation")
@@ -747,6 +756,11 @@ def _redact_caption_report_for_public(
     ordering = faces.get("identity_ordering") or {}
     if ordering:
         ordering["degraded_paths"] = _public_path_list(list(ordering.get("degraded_paths") or []))
+        # VLM6-R2-G-01 / A-02: GT-side y-missing path list — same PUBLIC scrub
+        # as degraded_paths (operator filesystem paths must not leak).
+        ordering["labeled_y_missing_paths"] = _public_path_list(
+            list(ordering.get("labeled_y_missing_paths") or [])
+        )
         faces["identity_ordering"] = ordering
     redacted["faces"] = faces
 
@@ -891,7 +905,9 @@ def _redact_public_paths(
                     out[key] = value
                 else:
                     out[key] = _public_list_path(value, names, path_to_media=path_to_media)
-            elif key in ("excluded_images", "degraded_paths") and isinstance(value, list):
+            elif key in ("excluded_images", "degraded_paths", "labeled_y_missing_paths") and isinstance(
+                value, list
+            ):
                 out[key] = [
                     (
                         _public_list_path(v, names, path_to_media=path_to_media)
@@ -1515,6 +1531,9 @@ def score_run_record(
     detections: list[ImageDetection] = []
     identifications: list[ImageIdentities] = []
     positional_items: list[ImageIdentities] = []
+    # VLM6-R2-G-01: GT-side y-missing disclosure (not predicted DEGRADED stamp).
+    labeled_y_missing_images = 0
+    labeled_y_missing_paths: list[str] = []
     failures: list[dict[str, Any]] = []
     distractor_injected = 0
     distractor_taken = 0
@@ -1681,8 +1700,14 @@ def score_run_record(
         if pos_predicted is None:
             pos_predicted = predicted_names
         present = list(entry["present_identities"])
-        ordered_labeled = labeled_left_to_right(entry.get("face_boxes") or [])
+        # VLM6-R2-G-01: prefer labeled_order so report can surface order_degraded
+        # (y-missing per-box fallback). labeled_left_to_right is .names only.
+        order_result = labeled_order(entry.get("face_boxes") or [])
+        ordered_labeled = order_result.names
         labeled_order_known = ordered_labeled is not None
+        if order_result.order_degraded:
+            labeled_y_missing_images += 1
+            labeled_y_missing_paths.append(path)
         # VLM6-R4-06: predicted order is only spatial when the fetch stamp says so.
         # ``degraded`` means unpositioned rows were appended alphabetically — exclude
         # from positional scoring so the L→R swap metric is not contaminated.
@@ -2011,11 +2036,15 @@ def score_run_record(
             # stamp was DEGRADED — not positional exclusions. Vacuity of
             # face_boxes-absent images is ``order_unknown_excluded`` (own counter;
             # rg-015: do not invent contract metadata by overloading degraded).
+            # VLM6-R2-G-01: labeled_y_missing_* is GT-side order_degraded (missing
+            # y on named face_boxes) — a different condition from degraded_images.
             "identity_ordering": {
                 "positional_images": ordering_positional,
                 "degraded_images": ordering_degraded,
                 "degraded_paths": list(degraded_paths),
                 "order_unknown_excluded": len(positional.excluded_images),
+                "labeled_y_missing_images": labeled_y_missing_images,
+                "labeled_y_missing_paths": list(labeled_y_missing_paths),
             },
         },
         "per_image": per_image,
@@ -2500,6 +2529,13 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"(missing/malformed bbox → not pure L→R): "
             + ", ".join(f"`{p}`" for p in ordering.get("degraded_paths", [])),
         ]
+    # VLM6-R2-G-01: GT-side y-missing is its own counter (not degraded_images).
+    if ordering.get("labeled_y_missing_images"):
+        lines += [
+            f"- ⚠ labeled L→R y-missing (order_degraded) on "
+            f"{ordering['labeled_y_missing_images']} image(s): "
+            + ", ".join(f"`{p}`" for p in ordering.get("labeled_y_missing_paths", [])),
+        ]
     # S2-07: exclusions are their own counter — do not overload degraded_images.
     if ordering.get("order_unknown_excluded"):
         lines += [
@@ -2913,6 +2949,9 @@ def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
 
     Invariant: ``tp + fn`` equals the number of GT boxes that reached association
     (pairs + unmatched_gt across ``association_by_media``).
+
+    VLM6-R2-C-02: publish ``sampling_frame`` (string, same shape as floor-gated
+    slices) so operators can tell the population behind precision/recall.
     """
     tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
     fp = int(assignment.false_detections)
@@ -2926,6 +2965,7 @@ def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
         "tp": tp,
         "fp": fp,
         "fn": fn,
+        "sampling_frame": FACE_BAKEOFF_SAMPLING_FRAMES["detection"],
     }
 
 
@@ -3793,7 +3833,8 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         "## Detection",
         "",
         f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
-        f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))})",
+        f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))}) "
+        f"frame=`{det.get('sampling_frame', '')}`",
         "",
         "## Floor-gated slices",
         "",

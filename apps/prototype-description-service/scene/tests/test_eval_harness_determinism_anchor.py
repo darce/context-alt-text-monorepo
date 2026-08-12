@@ -22,8 +22,12 @@ from scripts.eval_harness.cli import (
     _manifest_sha,
 )
 from scripts.eval_harness.generate_determinism_anchor import (
+    _CORPUS_TRAPS,
     _coverage_gaps,
+    _DEFAULT_MANIFEST_STEM,
     _DEFAULT_STEM,
+    _TRAP_MEDIA_ID,
+    build_caption_anchor_manifest,
     build_run_record,
     write_anchor,
 )
@@ -39,39 +43,27 @@ from scripts.eval_harness.report import score_run_record
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]  # monorepo root
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]  # apps/prototype-description-service
+# Shared 37-entry seed (zero face_boxes) — unit tests of helpers; not the freeze corpus.
 _GOLDEN = _SERVICE_ROOT / "scene" / "tests" / "seed" / "golden.json"
 _ANCHOR_DIR = _REPO_ROOT / "docs" / "tasks" / "vlm" / "bakeoff-results"
 _STEM = _DEFAULT_STEM
+_MAN_STEM = _DEFAULT_MANIFEST_STEM
+# Freeze corpus: golden + media 39 mixed-y trap (wG3). Score-time man is this, not golden.
+_MAN = _ANCHOR_DIR / f"{_MAN_STEM}.json"
 _RUN = _ANCHOR_DIR / f"{_STEM}.json"
 _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 
-# File digests of the committed triple — update only when intentionally regenerating.
-# Regenerated VLM6-lb1 after default-on hash verification unblocked the generator
-# (manifest_sha256 prefix 83bfdc4e; prior freeze 859a083e was stale vs current golden/schema).
-# Regenerated again after the wave-C merge: scoring gained `strata`, `placement`,
-# `hallucination`, positional `compared_images`/`excluded_images`, and the
-# `wrong_name_images`/`wrong_name_assertions` verdict split. Cause (2) of the
-# ANCHOR_MISMATCH message — deliberate scoring change, stale freeze. The run-record
-# digest is unchanged (4c80fdbf), which is the evidence that only scoring moved:
-# the recorded model output is byte-identical, so this is not corruption.
-# Regenerated again for VLM6-R4-03: the markdown now discloses that placement is
-# vacuous (claims=0). Run-record and report JSON digests are unchanged — only the
-# .md moved, which is the evidence that disclosure changed and scoring did not.
-# Regenerated again for VLM6-R2-03: provenance gained `note` + `coverage_gaps`
-# (derived from the manifest, not hand-stamped) so an operator reading the anchor
-# alone learns which scorers the corpus leaves nothing to assert against. Here the
-# .md digest is the one that did NOT move — the disclosure is in the two JSON
-# documents' provenance, and the scored markdown is byte-identical.
-# Regenerated fx7 (this lane's branch) after vacuity honesty + seeded deviation
-# + centre-order positional + category-vacuity verdict wiring landed. Headline
-# moves: detection/identification leave 1.0, fabricated_fact_rate 0.0→None,
-# verdict pass_ungated→fail (seeded wrong names + vacuity), head_sha→null +
-# fixture_revision, coverage_gaps structured with demographic_cohort.
-# Regenerated hx1 (wave-C regen) after gx2 S2-06/S2-07 vacuity honesty + gx4
-# S4-04 pin-mode started_at:null. Cause (2) only — see .s2a/vlm6-hx1-report.md.
+# File digests of the committed freeze set — update man+run when intentionally
+# regenerating the corpus; report digests are owned by the regen stage.
+# wG3: caption freeze corpus extended with media 39 G-01 mixed-y trap so
+# labeled_y_missing_images is freeze-observable (was structural 0 on golden).
+# Man+run digests moved; report digests deliberately unchanged (regen stage).
+# Prior run digest d105f3ad… was the pre-trap 37-item golden-scored record.
 _FROZEN_DIGESTS = {
-    _RUN.name: "d105f3adccb2f5745e221d518649217562b836436569889b19a2c2471156dbe9",
+    _MAN.name: "2eae07326bd5a63834fe838de9fbc4e46ab71599ed213c6eacb1fd66757c57b7",
+    _RUN.name: "b5c3040aad98939b71c2242ed2cdbd8efcdb4a51bd65ec8f5f45e8a1a70e58cf",
+    # Report digests still pin the pre-wG3 freeze (regen stage owns refresh).
     _REPORT_JSON.name: "c2fcfa3407ff62254556201cc35dfcb25eb4a46105e0764fe4b25a347423b0e6",
     _REPORT_MD.name: "dc7bf05496e37883bbe3e4cdf336f63a4e5bd489ed14aaf7bfcf439e04e14f3b",
 }
@@ -195,19 +187,29 @@ def test_committed_anchor_digests_match_frozen(name: str, expected: str) -> None
 
 
 def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -> None:
-    """Generator is the source of truth — re-run must match the freeze byte-for-byte."""
+    """Generator is the source of truth — re-run must match the freeze byte-for-byte.
+
+    Man+run are this lane's pin (wG3 extended corpus). Report artifacts are owned
+    by the regen stage — until regen, report byte-identity is expected-red
+    (stale freeze vs live re-score of 38-entry man + pre-existing field drift).
+    """
     run_path, report_json, report_md, manifest_sha = write_anchor(
         manifest_path=_GOLDEN,
         out_dir=tmp_path,
         stem=_STEM,
+        manifest_stem=_MAN_STEM,
         head_sha="0" * 40,
         started_at="2026-08-11T00:00:00Z",
     )
-    # Metadata-only: compares generation-time sha to loader sha; never opens image bytes.
-    expected_sha = _manifest_sha(load_manifest(str(_GOLDEN), skip_hash_verification=True))
+    man_path = tmp_path / _MAN.name
+    assert man_path.is_file(), "write_anchor must promote the caption-anchor manifest"
+    # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
+    expected_sha = _manifest_sha(load_manifest(str(_MAN), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("83bfdc4e")
+    assert manifest_sha.startswith("7462d325")
+    assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
+    # Report identity: expected-red until regen stage (do NOT regenerate here).
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
     assert report_md.read_bytes() == _REPORT_MD.read_bytes()
 
@@ -215,16 +217,20 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
 def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed() -> None:
     """Greenfield shape: no bare-string identities; sha was generation-time computed."""
     record = json.loads(_RUN.read_text())
-    # Metadata-only: provenance sha check against roster/entries; never opens image bytes.
+    # Metadata-only: provenance sha check against freeze man; never opens image bytes.
     assert record["provenance"]["manifest_sha256"] == _manifest_sha(
-        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+        load_manifest(str(_MAN), skip_hash_verification=True)
     )
-    assert len(record["items"]) == 37
+    assert len(record["items"]) == 38  # golden 37 + G-01 trap media 39
+    assert any(int(i["media_id"]) == _TRAP_MEDIA_ID for i in record["items"])
     for item in record["items"]:
         for row in item["identities"]:
             assert isinstance(row, dict)
             assert "name" in row
         assert (item.get("describe") or {}).get("adapter") == "seeded"
+    # Synthetic dim-8 is face-corpus territory; caption run stays seeded describe path.
+    assert record["provenance"]["predictions_source"] == "ground_truth_derived_fixture"
+    assert record["provenance"]["face_metrics_evidential"] is False
 
 
 def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> None:
@@ -246,7 +252,7 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     with pytest.raises(SystemExit) as exc:
         _check_score_determinism_cross_process(
             run_copy,
-            str(_GOLDEN),
+            str(_MAN),
             rubric_gate="skip",
             expect_report=corrupt_expect,
         )
@@ -268,7 +274,12 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
 
 
 def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Clean --expect-report against the committed freeze still exits green (discrimination)."""
+    """Clean --expect-report against the committed freeze still exits green (discrimination).
+
+    Pre-regen this is expected-red: committed report is stale vs the extended
+    corpus (and vs pre-existing scoring-field drift). The test remains so regen
+    restores green without rewriting the control.
+    """
     run_copy = tmp_path / _RUN.name
     run_copy.write_bytes(_RUN.read_bytes())
     # Copy freeze into tmp so we never risk writing beside committed artifacts.
@@ -277,7 +288,7 @@ def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: py
 
     json_doc, _md = _check_score_determinism_cross_process(
         run_copy,
-        str(_GOLDEN),
+        str(_MAN),
         rubric_gate="skip",
         expect_report=expect_copy,
     )
@@ -312,7 +323,7 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     with pytest.raises(SystemExit) as exc:
         _check_score_determinism_cross_process(
             run_copy,
-            str(_GOLDEN),
+            str(_MAN),
             rubric_gate="skip",
             expect_report=expect_copy,
         )
@@ -332,25 +343,35 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
 
 
 def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
-    """The anchor must name what the corpus leaves unscored, in the anchor itself.
+    """The freeze corpus must name what it leaves unscored, in the anchor itself.
 
-    Generator-side disclosure (fresh run) must include every SHIPPED registry
-    field with populated/threshold counts — not a boolean that hides under-
-    sampled fields (VLM6-C-01 / C-02).
+    Freeze man is golden+trap (38 entries). face_boxes is 1/38 (trap only) —
+    still below the slice threshold, not a certified sampling frame (EVAL-03).
+    Other registry fields stay 0/38. golden.json itself remains 0/37 face_boxes.
     """
-    # Prefer generator output over the frozen committed artifact (regen deferred).
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
     gaps = compute_corpus_coverage_gaps(manifest.entries)
     assert set(gaps) == set(SHIPPED_CORPUS_COVERAGE_GAPS)
     assert "demographic_cohort" in gaps  # VLM6-C-02: registry-driven
-    for field, info in gaps.items():
+    assert gaps["face_boxes"]["populated"] == 1  # media 39 trap only
+    assert gaps["face_boxes"]["total"] == 38
+    assert gaps["face_boxes"]["below_threshold"] is True  # 1 < 5
+    assert gaps["face_boxes"]["pi_zero"] is False
+    assert "1/38" in gaps["face_boxes"]["reason"]
+    for field in ("spatial_facts", "reference_facts", "demographic_cohort"):
+        info = gaps[field]
         assert info["populated"] == 0
-        assert info["total"] == 37
+        assert info["total"] == 38
         assert info["threshold"] == METRIC_BACKING_SLICE_THRESHOLD
         assert info["below_threshold"] is True
         assert info["pi_zero"] is True
-        assert "0/37" in info["reason"]
+        assert "0/38" in info["reason"]
     assert "right-names-on-wrong-faces" in gaps["face_boxes"]["reason"]
+    # Seed golden stays structurally blind (shared fixture not bent).
+    golden = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    g_gaps = compute_corpus_coverage_gaps(golden.entries)
+    assert g_gaps["face_boxes"]["populated"] == 0
+    assert g_gaps["face_boxes"]["total"] == 37
 
 
 def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VLM6-C-01 / TEST-15
@@ -519,8 +540,14 @@ def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3
 
 
 def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
-    """require_metric_backing is exercised by the generator, not only unit tests."""
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    """require_metric_backing is exercised by the generator, not only unit tests.
+
+    Freeze corpus has 1/38 face_boxes (trap) so face_boxes is no longer
+    corpus-vacuous for require_metric_backing (is_vacuous ⇔ populated==0). It
+    remains under-sampled in coverage_gaps (1 < threshold 5). Other registry
+    fields stay refused.
+    """
+    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -529,9 +556,20 @@ def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
         started_at="2026-08-11T00:00:00Z",
     )
     refusals = record["provenance"]["metric_backing_refusals"]
-    for field in ("face_boxes", "spatial_facts", "reference_facts", "demographic_cohort"):
+    assert "face_boxes" not in refusals  # 1 trap entry → not vacuous; still under-sampled
+    for field in ("spatial_facts", "reference_facts", "demographic_cohort"):
         assert field in refusals
         assert "vacuous" in refusals[field] or "0/" in refusals[field]
+    # Golden-alone path still refuses face_boxes (shared seed untouched).
+    golden = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    g_record = build_run_record(
+        golden,
+        fixture_revision="0" * 40,
+        canonical_timestamp="2026-08-11T00:00:00Z",
+        head_sha="",
+        started_at="2026-08-11T00:00:00Z",
+    )
+    assert "face_boxes" in g_record["provenance"]["metric_backing_refusals"]
 
 
 def test_generator_md_renders_coverage_gaps(tmp_path: Path):  # VLM6-E-04
@@ -540,6 +578,7 @@ def test_generator_md_renders_coverage_gaps(tmp_path: Path):  # VLM6-E-04
         manifest_path=_GOLDEN,
         out_dir=tmp_path,
         stem=_STEM,
+        manifest_stem=_MAN_STEM,
         head_sha="0" * 40,
         started_at="2026-08-11T00:00:00Z",
     )
@@ -548,3 +587,132 @@ def test_generator_md_renders_coverage_gaps(tmp_path: Path):  # VLM6-E-04
     assert "face_boxes" in md
     assert "non-evidential" in md
     assert "demographic_cohort" in md
+
+
+def test_caption_anchor_corpus_includes_mixed_y_order_degraded_trap() -> None:
+    """VLM6-R2-G-01 / wG3: ≥1 freeze image with named missing-y + sibling named with-y.
+
+    Pre-extension caption golden had zero face_boxes, so labeled_y_missing_images
+    was structurally 0 — the same blindness wF4 closed on the face corpus
+    (DBG-11 / TEST-15). Shape must be *mixed* (not all-missing).
+    """
+    from scripts.eval_harness.face_metrics import labeled_order, named_box_name
+
+    raw = build_caption_anchor_manifest(
+        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    )
+    record = json.loads(_RUN.read_text())
+    run_ids = {int(i["media_id"]) for i in record["items"]}
+
+    mixed = 0
+    for entry in raw["entries"]:
+        mid = int(entry["media_id"])
+        assert mid in run_ids, f"manifest media_id={mid} missing from run-record"
+        boxes = list(entry.get("face_boxes") or [])
+        named_with_y = 0
+        named_missing_y = 0
+        for b in boxes:
+            if named_box_name(b) is None:
+                continue
+            if b.get("y") is None:
+                named_missing_y += 1
+            else:
+                named_with_y += 1
+        if named_with_y >= 1 and named_missing_y >= 1:
+            lo = labeled_order(boxes)
+            assert lo.order_degraded is True
+            assert lo.y_missing_count >= 1
+            mixed += 1
+    assert mixed >= 1, (
+        "need ≥1 image with named box missing y + sibling named box with y "
+        "(VLM6-R2-G-01 caption freeze observability)"
+    )
+    # Committed freeze man must carry the same trap (not only the builder).
+    committed = load_manifest(str(_MAN), skip_hash_verification=True)
+    assert any(int(e.media_id) == _TRAP_MEDIA_ID for e in committed.entries)
+
+
+def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEST-15 / wG3 acceptance: constant-0 aggregation must diverge after extension.
+
+    Pre-extension (Task 1): live counter was 0, so wiring aggregation to constant 0
+    was invisible. Against the extended caption freeze man the live counter is ≥1;
+    the same mutation yields 0 and is therefore freeze-detectable.
+
+    Separating from pre-existing report-freeze staleness: this control scores
+    live vs mutated aggregation on the extended man+run only — it does not
+    compare to the committed report digest (regen stage).
+    """
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+    from scripts.eval_harness import report as report_mod
+
+    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    record = json.loads(_RUN.read_text())
+    entries = [e.model_dump() for e in manifest.entries]
+    roster = sorted(set(manifest.roster))
+    sha = record["provenance"]["manifest_sha256"]
+
+    live = score_run_record(
+        record,
+        entries,
+        score_manifest_sha256=sha,
+        manifest_roster=roster,
+        rubric_gate="skip",
+    )["faces"]["identity_ordering"]
+    live_n = int(live["labeled_y_missing_images"])
+    assert live_n >= 1, (
+        f"extended caption corpus must make labeled_y_missing_images non-zero; "
+        f"got {live_n} (trap media missing or y not actually omitted)"
+    )
+    assert live.get("labeled_y_missing_paths"), "paths must name the degraded image(s)"
+    # Trap is scored-but-disclosed, not folded into absence-only order_unknown:
+    # order_unknown still counts every image lacking usable L→R (incl. the trap).
+    assert int(live["order_unknown_excluded"]) == 38
+    assert int(live["positional_images"]) == 0
+
+    real_lo = labeled_order
+
+    def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
+        """Regression shape: strip order_degraded (constant-0 counter)."""
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(
+            names=result.names, y_missing_count=0, order_degraded=False
+        )
+
+    monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
+    blind = score_run_record(
+        record,
+        entries,
+        score_manifest_sha256=sha,
+        manifest_roster=roster,
+        rubric_gate="skip",
+    )["faces"]["identity_ordering"]
+    blind_n = int(blind["labeled_y_missing_images"])
+    assert blind_n == 0, "mutation must force counter to 0"
+    assert blind_n != live_n, (
+        f"constant-0 mutation still matches live ({live_n}) — freeze cannot see "
+        "labeled_y_missing regressions (TEST-15 blindness not closed)"
+    )
+
+
+def test_corpus_traps_disclose_deliberate_caption_trap_media() -> None:
+    """VLM6-R2-C-02 / EVAL-03: trap inventory on caption run-record provenance.
+
+    Operators reading labeled_y_missing_images=1 need the sampling frame (which
+    media, which gate). GoldenManifest extra=forbid blocks a top-level field —
+    inventory lives on run-record provenance (wF4 precedent; do not bend model).
+    """
+    record = json.loads(_RUN.read_text())
+    traps = list((record.get("provenance") or {}).get("corpus_traps") or [])
+    assert traps, "provenance.corpus_traps must disclose deliberate trap media"
+    # Generator constant filtered to present media must agree with committed stamp.
+    present = {int(i["media_id"]) for i in record["items"]}
+    expected = [t for t in _CORPUS_TRAPS if int(t["media_id"]) in present]
+    assert traps == expected
+    by_id = {int(t["media_id"]): t for t in traps}
+    assert _TRAP_MEDIA_ID in by_id
+    t = by_id[_TRAP_MEDIA_ID]
+    assert "VLM6-R2-G-01" in str(t.get("kind") or "")
+    assert "labeled_y_missing" in str(t.get("trips") or "")

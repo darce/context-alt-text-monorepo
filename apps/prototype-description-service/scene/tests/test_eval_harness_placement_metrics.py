@@ -142,6 +142,35 @@ def test_paraphrased_correct_pair_order_scores_correct():
     assert s.accuracy == 1.0
 
 
+def test_bare_left_verb_departure_is_not_placement():
+    """VLM6-B-06: 'Alice left Bob at the station' is departure, not LEFT_OF.
+
+    Pre-fix: bare mid-token 'left' matched entity…left…entity → accuracy=1.0.
+    Post-fix: require 'left of' / 'to the left of'; departure → abstention.
+    """
+    facts = [_fact("Alice", SpatialRelation.LEFT_OF, "Bob")]
+    s = score_placement("Alice left Bob at the station.", spatial_facts=facts)
+    assert s.correct == []
+    assert s.wrong == []
+    assert s.claims == 0
+    assert s.accuracy is None
+    assert s.abstained == ["Alice left_of Bob"]
+
+
+def test_genuine_placement_phrasings_still_match_pair_order():
+    """VLM6-B-06: unambiguous placement constructions still score correct."""
+    facts = [_fact("Alice", SpatialRelation.LEFT_OF, "Bob")]
+    for caption in (
+        "Alice to the left of Bob.",
+        "Alice is left of Bob.",
+        "Bob to the right of Alice.",  # inverse wording, same relation
+    ):
+        s = score_placement(caption, spatial_facts=facts)
+        assert s.correct == ["Alice left_of Bob"], caption
+        assert s.accuracy == 1.0, caption
+        assert s.claims == 1, caption
+
+
 def test_paraphrased_absolute_wrong_scores_wrong():
     """Subject-centric absolute placement that contradicts the fact scores wrong.
 

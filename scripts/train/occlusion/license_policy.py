@@ -97,11 +97,20 @@ pretrained weights are non-commercial (Deci ``LICENSE.YOLONAS.md``) — the
 same NC-weights axis already enforced for ``insightface`` / ``buffalo_l``.
 Previously listing it as an Apache-2.0 exception was a policy error.
 
-**Structural NC door matching** (FIR-7-B8-06): ``audit_derived_from_model``
-and ``audit_source`` match NC model ids with the **same** structural family
-rules (a)/(b)/(c)/(d')/(e) used by the package floor, so export/quant/size
-tags (``yolo_nas_l_int8``, ``buffalo_l_onnx``) cannot shield an NC seed on
-those doors. Exact-set membership alone was a treadmill.
+**Structural NC door matching** (FIR-7-B8-06 / B8-07): weights-lineage
+doors (``audit_derived_from_model`` / ``audit_source``) keep exact
+``NC_MODEL_IDS_EXPANDED`` membership first (BR-28 precision), then:
+
+  1. progressive strip of trailing export/quant/runtime shield tags
+     (``int8``, ``onnx``, …) and re-check exact membership — closes
+     ``yolo_nas_l_int8`` / ``buffalo_l_onnx`` without prefix-overmatch on
+     ``buffalo_bill_detector`` / ``not-insightface``;
+  2. when an exception-family component is present, promote a package-floor
+     ``nc_model_derived`` hit so residual NC compounds
+     (``yolox_s_buffalo_l`` / ``yolox_s_yolo_nas``) reject on the derived
+     door too.
+
+Exact-set membership alone was a treadmill for open-ended export tags.
 
 **Honest lineage notes** (FIR-7-B6-02): ``yolop`` is hustvl BSD-3-Clause
 (exception); ``yolov2`` / ``yolov4`` are Darknet-era deny seeds with their

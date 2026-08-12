@@ -5740,3 +5740,76 @@ class TestB401PackageIdentityCanonicalNoneFailClosed:
         assert result.reason is not policy.RejectionReason.MISSING_INGEST_ENTRY
 
 
+# ---------------------------------------------------------------------------
+# FIR-7-B4-02 — Ultralytics size/task-tag family folding
+# ---------------------------------------------------------------------------
+
+
+class TestB402UltralyticsFamilyTagFolding:
+    """FIR-7-B4-02: bounded size/task-tag strip re-probes the folded denylist.
+
+    Measured pre-fix ADMITs: yolov8n-seg, yolo11n, yolo-world-s, yolov5n,
+    yolov9c, etc. Folding strips at most two fixed-tag layers; a hit counts
+    only when the residual is itself a denylisted seed (BR-50/52: yolodummy
+    still admits).
+
+    Red-proven: disabling the suffix-strip re-probe re-admits the witnesses.
+    """
+
+    FAMILY_TAG_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yolov8n-seg",
+        "yolov8s-seg",
+        "yolov8m-pose",
+        "yolov8l-obb",
+        "yolov8x-cls",
+        "yolo11n",
+        "yolo11s",
+        "yolo12n",
+        "yolo-world-s",
+        "yolov5n",
+        "yolov9c",
+    )
+
+    @pytest.mark.parametrize("token", FAMILY_TAG_WITNESSES)
+    def test_family_tag_token_denylisted_package(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit package denylist after tag fold"
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        assert result.ok is False, f"family-tag token {token!r} admitted"
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}: expected denylisted_package, got {result.reason} "
+            f"({result.detail})"
+        )
+
+    @pytest.mark.parametrize(
+        "token",
+        ("yolodummy", "myyolo", "yolo-nas", "sam", "fastsamx", "timm"),
+    )
+    def test_family_tag_negatives_do_not_hit(self, token: str) -> None:
+        """BR-50/52 + bounded tags: unknown residuals and non-seeds admit."""
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must NOT hit package denylist"
+        )
+        row = {
+            "source": "self-generated",
+            "license": "MIT",
+            "derived_from_model": "",
+            "package": token,
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.TRAINING_DATA
+        )
+        if not result.ok:
+            assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"{token!r} incorrectly denylisted: {result.detail}"
+            )
+
+

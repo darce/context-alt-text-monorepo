@@ -25,7 +25,7 @@ Benchmark every A10-fittable open-weight VLM candidate (13 models incl. Florence
 
 ## Problem Statement
 
-The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality ceiling long since passed) and Qwen3-VL-30B-A3B Q4 on the GPU path. The `gpu_phi4` profile is a dead stub: research verdict (3-0 verified) says Phi-4-multimodal loses to every 2025-class candidate on the metric that matters most for alt-text (HallusionBench 40.5 vs 49–63.8). Now that the A10 burst host exists (VLM-3), the model choice has never been validated against the current field, and the 38-image golden manifest is too small and too easy to discriminate hallucination behavior between strong candidates.
+The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality ceiling long since passed) and Qwen3-VL-30B-A3B Q4 on the GPU path. The `gpu_phi4` profile is a dead stub: research verdict (3-0 verified) says Phi-4-multimodal loses to every 2025-class candidate on the metric that matters most for alt-text (HallusionBench 40.5 vs 49–63.8). Now that the A10 burst host exists (VLM-3), the model choice has never been validated against the current field, and the 37-image golden manifest (media_ids 1–38 with media_id 22 absent) is too small and too easy to discriminate hallucination behavior between strong candidates.
 
 ## Constraints
 
@@ -45,7 +45,7 @@ The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality
 
 ## Terminology
 
-- **Golden-100**: the expanded 100-image evaluation corpus (supersedes the 38-image golden manifest). Face identity ground truth is curated for all 100 images; the original golden-38 subset is additionally scored on its own for historical comparability.
+- **Golden-100**: the expanded 100-image evaluation corpus (supersedes the 37-image golden manifest). Face identity ground truth is curated for all 100 images; the original golden-37 subset (media_ids 1–38 with media_id 22 absent — max id is not the count) is additionally scored on its own for historical comparability.
 - **Serving gate**: 60-minute timebox to stand up a candidate's serving stack on the bake host; failure is recorded, not debugged.
 - **Tier gate (latency)**: GPU async tier ≤ 170 s p95/image — derived from the adapter timeout chain (`ACX_GPU_CONNECT_TIMEOUT_SECONDS=5` + `ACX_GPU_READ_TIMEOUT_SECONDS=175` in `scene/config/settings.py`; a model whose p95 approaches the read timeout will fail live traffic). CPU inline tier ≤ 20 s p95/image (established inline bar, E19-1). *Intake assumption*: the 170 s async bar is a ceiling, not a target — operator may tighten it in S5 when ranking.
 - **Anchor**: a model run for reference, not competing for adoption (both incumbents + Phi-4).
@@ -54,7 +54,7 @@ The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality
 
 - `scene/infrastructure/vlm/florence_local_adapter.py:33` defaults to `microsoft/Florence-2-base-ft`; `florence_large` is a 503 stub (`scene/config/profiles.py:79`); `gpu_phi4` is a 503 stub (`profiles.py:89`).
 - `gpu_qwen30b` / `gpu_qwen30b_ensemble` profiles (`profiles.py:101-119`) serve Qwen3-VL-30B-A3B Q4_K_M via `gpu_remote_adapter.py` against the llama.cpp endpoint on the burst host.
-- Eval harness (`scripts/eval_harness/`: `cli.py`, `manifest.py`, `caption_metrics.py`, `draft_labels.py`, `report.py`) scores captions + face P/R against the 38-image golden manifest v2 (populated by VLM-2C, incl. phrase boxes); deterministic offline re-score exists (`score --check-determinism`).
+- Eval harness (`scripts/eval_harness/`: `cli.py`, `manifest.py`, `caption_metrics.py`, `draft_labels.py`, `report.py`) scores captions + face P/R against the 37-image golden manifest v2 (populated by VLM-2C, incl. phrase boxes; media_ids 1–38 with media_id 22 absent); offline seed-stability exists (`score --check-determinism`) and the freeze compare is `score --check-determinism --expect-report <report>` / monorepo-root `make eval-anchor-check`.
 - `scripts/benchmark_local_vlm.py` exists for ad-hoc local model timing (E19-1 era); it is not corpus-scoring.
 - A10 burst infra: `infra/oci/GPU-BURST-PROVISIONING.md`, `oci_core_instance.acx_gpu_burst` in `infra/oci/main.tf` (shape `VM.GPU.A10.1`).
 - Phi-4 has one CPU anchor datapoint (924 s/image, E19-1 memo); never run on GPU.
@@ -73,7 +73,7 @@ A decision memo ranks 13 candidates + 2 incumbent anchors on identical Golden-10
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | -------- | ----- | ---------------- | --------------- | --------------------- | ------------ |
-| Golden manifest schema (v2) | eval harness | `scripts/eval_harness/manifest.py` | additive: difficulty/domain tags, reference-facts field; **face identity ground truth curated for all 100 images** (present-identity labels + `face_count` incl. strangers, roster-validated — the existing manifest fields, extended to the new 62) | yes — the original golden-38 subset is still scored and reported separately for historical comparability; a test pins the golden-38 subset membership | `score --check-determinism` on the pre-expansion run record + golden-38 subset-pin test |
+| Golden manifest schema (v2) | eval harness | `scripts/eval_harness/manifest.py` | additive: difficulty/domain tags, reference-facts field; **face identity ground truth curated for all 100 images** (present-identity labels + `face_count` incl. strangers, roster-validated — the existing manifest fields, extended to the new 63) | yes — the original golden-37 subset is still scored and reported separately for historical comparability; a test pins the golden-37 subset membership | `score --check-determinism --expect-report <S0 freeze report>` (or `make eval-anchor-check`) on the pre-expansion run record + golden-37 subset-pin test |
 | `ACX_DESCRIPTION_ADAPTER` profile enum | scene config | `scene/config/profiles.py` | add winner profile(s); delete `GPU_PHI4` | no (greenfield policy; stub was never servable) | `scene/tests/test_description_profiles.py` updated in same slice |
 | GPU serving endpoint | bake host (llama.cpp / vLLM) | `gpu_remote_adapter.py` request shape | none for GGUF winners; new vLLM-OpenAI variant only if a non-GGUF model wins | yes — adapter contract tests | `scene/tests/test_gpu_remote_adapter.py` |
 
@@ -107,7 +107,7 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 | ------- | ---- | ------ |
 | eval corpus | `scripts/eval_harness/manifest.py` | additive schema: `difficulty`, `domain`, `reference_facts` fields |
 | eval scoring | `scripts/eval_harness/caption_metrics.py` | hallucination metric: fabricated-fact count vs `reference_facts` |
-| eval labeling | `scripts/eval_harness/draft_labels.py` | draft reference-facts generation for the 62 new images |
+| eval labeling | `scripts/eval_harness/draft_labels.py` | draft reference-facts generation for the 63 new images |
 | eval labeling | `scripts/eval_harness/export_identities.py` (new) | pull curated identities from `/media/identities`, match by sha256/filename, write labels into golden.json |
 | bench driver | `scripts/eval_harness/bakeoff_runner.py` (new) | registry-driven serve→warm→run→collect loop; per-image open-loop timing |
 | candidate registry | `scripts/eval_harness/bakeoff_candidates.yaml` (new) | model id, revision pin, quant artifact, serving recipe, prompt template, tier |
@@ -133,7 +133,7 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 
 - Deterministic tests:
   - `uv run --locked --extra dev pytest scene/tests scripts/eval_harness -q` (from `apps/prototype-description-service`)
-  - `uv run python -m scripts.eval_harness.cli score --run-record <pre-expansion record> --check-determinism` (manifest schema change must not perturb old scores)
+  - `uv run python -m scripts.eval_harness.cli score --run-record <pre-expansion record> --check-determinism --expect-report <S0 freeze report>` (or monorepo-root `make eval-anchor-check`) — seed-stability alone is not a freeze compare; the expect-report leg is what proves a schema change did not perturb old scores
 - Runtime-parity / environment checks:
   - S3: incumbent anchor (`gpu_qwen30b`) scored first in-window — this run *establishes* the GPU incumbent baseline (no separate S0 GPU baseline exists) and validates the harness end-to-end on live GPU serving; a repeated-image determinism spot-check must be bit-identical before candidate runs proceed
   - S6: full eval-harness run on the adopted profile via the live service path (eval tenant)
@@ -146,16 +146,16 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 
 ### Slice 0: Determinism anchor
 
-**Goal**: Freeze a pre-expansion 38-image run record on the current manifest so S1's additive schema change can be proven not to perturb scoring (`score --check-determinism`, bit-identical). This is a harness/determinism anchor, **not** an incumbent quality baseline. Neither incumbent is quality-baselined here: prod ships the model-free `seeded` adapter (the recognition image is torch-free by design — `.env.prod.example`; florence is not deployed anywhere), and standalone incumbent runs on hastily-provisioned hosts would be cross-condition confounds ([TEST-08] determinism, [PERF-03] coordinated omission). Both incumbent quality baselines are captured in-tier, anchor-first, on the same corpus/harness as their candidates: `florence_small` → S4 CPU pass; `gpu_qwen30b` → S3 GPU window. No florence deploy and no A10 boot in S0.
+**Goal**: Freeze a pre-expansion 37-image run record **and report** on the current manifest (media_ids 1–38 with media_id 22 absent). Two distinct gates, do not conflate them: (1) `score --check-determinism` / default `make eval-captions` certifies **seed-stability** — cross-process re-score of the record in hand is bit-identical under varied `PYTHONHASHSEED`; it does **not** read a freeze and will still pass if a manifest/schema edit changes scores as long as the scorer agrees with itself. (2) S1's proof that an additive schema change did not perturb scoring is `score --check-determinism --expect-report <committed freeze report>` (or monorepo-root `make eval-anchor-check`), which fails closed on `ANCHOR_MISMATCH` when the re-score diverges from the freeze. This is a harness/determinism anchor, **not** an incumbent quality baseline. Neither incumbent is quality-baselined here: prod ships the model-free `seeded` adapter (the recognition image is torch-free by design — `.env.prod.example`; florence is not deployed anywhere), and standalone incumbent runs on hastily-provisioned hosts would be cross-condition confounds ([TEST-08] determinism, [PERF-03] coordinated omission). Both incumbent quality baselines are captured in-tier, anchor-first, on the same corpus/harness as their candidates: `florence_small` → S4 CPU pass; `gpu_qwen30b` → S3 GPU window. No florence deploy and no A10 boot in S0.
 
 Changes:
 
-- None (measurement only): full 38-image `make eval-captions` against the current prod `seeded` profile — served live on `acx-backend` (= `api.altcontext.com`, the single running backend VM; "prod" and the dev VM are the same host, distinguished only by the `--env` DSN label). Eval tenant + key minted via the remote `/admin` console (`RECOGNITION_ADMIN_TOKEN`; `POST /admin/tenants` → `POST /admin/tenants/{id}/keys` — the JSON path sidesteps the browser form's same-origin CSRF guard that a tunnel trips). The `seeded` record re-scores bit-identical, and its face detection/ID P/R are **real** (the recognition pipeline runs regardless of caption adapter), so the 38-image face baseline is genuine; the caption metrics are model-free stub numbers by construction.
+- None (measurement only): full 37-image `make eval-captions` (passes `--check-determinism` by default) against the current prod `seeded` profile — served live on `acx-backend` (= `api.altcontext.com`, the single running backend VM; "prod" and the dev VM are the same host, distinguished only by the `--env` DSN label). Eval tenant + key minted via the remote `/admin` console (`RECOGNITION_ADMIN_TOKEN`; `POST /admin/tenants` → `POST /admin/tenants/{id}/keys` — the JSON path sidesteps the browser form's same-origin CSRF guard that a tunnel trips). The `seeded` record re-scores bit-identical under seed-stability, and its face detection/ID P/R are **real** (the recognition pipeline runs regardless of caption adapter), so the 37-image face baseline is genuine; the caption metrics are model-free stub numbers by construction.
 - Follow-up (tech debt, deferred): `make eval-tenant ENV=…` helper that wraps the two `/admin` calls and emits `ACX_EVAL_*` exports, consolidating the tenant/key path onto the remote console as the canonical surface (the 3 CLI façades already share one minter). Tracked in handoff, not built in this slice.
 
 Proof:
 
-- Run record + report promoted to `docs/tasks/vlm/bakeoff-results/` (out/ is gitignored); `score --check-determinism` bit-identical; `test_result` handoff events.
+- Run record + report promoted to `docs/tasks/vlm/bakeoff-results/` (out/ is gitignored); seed-stability via `score --check-determinism` (or default `make eval-captions`); freeze compare via `score --check-determinism --expect-report <promoted report>` / `make eval-anchor-check`; `test_result` handoff events.
 
 ### Slice 1: Golden-100 corpus
 
@@ -163,7 +163,7 @@ Proof:
 
 Changes:
 
-- **Procurement of the 62 new images** (three sources, in priority order; every image gets a `provenance` manifest entry — source, URL/path, license — plus `sha256` and the next stable synthetic `media_id` continuing golden.json v2's scheme, which currently ends at `media_id` 38):
+- **Procurement of the 63 new images** (100 − 37 current; three sources, in priority order; every image gets a `provenance` manifest entry — source, URL/path, license — plus `sha256` and the next stable synthetic `media_id` continuing golden.json v2's scheme, which currently ends at `media_id` 38 with 37 entries — media_id 22 is absent):
   1. **Existing fixture pool** (`GOLDEN_IMAGES_DIR` extras, `mock_entities` face crops) — roster-identity images come ONLY from here or other consented/mock-entity material, because identification ground truth requires known people.
   2. **LocalWP uploads** (`~/Development/wp-context-alt-text/app/public/wp-content/uploads`, copy-only, PII/license screen) — product-realistic scenes; expected to cover people/dense-scene/product strata.
   3. **Gap-fill for hard strata** (occlusion, mirrors, crowds, abstract, art, B&W, animals — mostly absent from 1–2): CC0/public-domain sources only (Wikimedia Commons, Openverse CC0 filter, operator's own photos), source URL + license recorded per image. Faces in gap-fill images are strangers by definition: they contribute to `face_count`/true-rejection only, never to identity labels.
@@ -173,7 +173,7 @@ Changes:
 
 - Stratify across people/faces, **crowds, occlusion, mirrors/reflections, animals/pets, art (paintings/illustration), abstract imagery, black-and-white**, dense scenes, text-in-image, charts/screenshots, products, low-light/blur. Every stratum gets ≥5 images; per-domain counts reported in the slice decision.
 - License/PII screen every new image; record provenance per image in the manifest.
-- `manifest.py`: additive `difficulty`/`domain`/`reference_facts` fields. **Face identity ground truth for all 100 images**: present-identity labels + `face_count` (incl. non-roster strangers) curated per image using the existing manifest v2 fields; roster extended if new recurring people are added; golden-38 subset membership pinned by test so historical face P/R stays comparable.
+- `manifest.py`: additive `difficulty`/`domain`/`reference_facts` fields. **Face identity ground truth for all 100 images**: present-identity labels + `face_count` (incl. non-roster strangers) curated per image using the existing manifest v2 fields; roster extended if new recurring people are added; golden-37 subset membership pinned by test so historical face P/R stays comparable.
 - Reference facts: `draft_labels.py` drafts all 100; **operator confirms a 20% stratified sample plus every people/faces and text-in-image entry**; agent drafts are accepted for the remainder. Sample disagreement >10% escalates to a full operator pass (owner: operator; est. 1–2 h at sample scope).
 - **Dogfooded face curation (shipped naming flow)**: provision a dedicated eval tenant on the existing dev/staging stack (`scripts/provision_demo.py` flow). Point the **existing** LocalWP install (`~/Development/wp-context-alt-text`, no new instance) at that tenant via `ACX_RECOGNITION_URL` / the `acx_recognition_base_url` filter + eval-tenant API key (**operator-performed** — agents never modify LocalWP config, per plugin-boundary rule; revert the setting after curation). Upload Golden-100 through the plugin so the recognition service's HDBSCAN clustering (`recognition/infrastructure/clustering/hdbscan_adapter.py`) proposes entity clusters, and **curate them in the plugin's shipped naming flow** (the E21-13 walkthrough surface) — this dogfoods the exact product curation path. Then a new export step (`scripts/eval_harness/` addition) reads curated identities back via the `/media/identities` endpoint (already consumed by `cli.py:231`), matches service media rows to golden.json entries by `sha256`/filename, and writes confirmed identity labels into the manifest. Corpus separation is manifest + tenant-scoped — no WP media-library "gallery" grouping is needed; WP is the curation UI, not the corpus organizer. The bench runner (S2/S3) still reads local files + manifest and never touches WP. **Anti-circularity rule**: service clustering output is a *draft only* — human confirmation is what makes it ground truth; recognition metrics are always scored against the curated truth, never against the service's own uncurated output. This doubles as an end-to-end exercise of the ingest→embed→cluster pipeline on hard strata.
 - **Spatial-relation facts**: for multi-face images, derive relative-placement facts (left-of / right-of / between, foreground/background) from the curated face boxes; captions claiming placements are scored for placement correctness alongside fabricated-fact rate.
@@ -187,7 +187,7 @@ Changes:
 
 Proof:
 
-- `score --check-determinism` bit-identical on the S0 run record; new-manifest validation test green; corpus stats table (per-domain counts) in the slice decision.
+- `score --check-determinism --expect-report <S0 freeze report>` (or `make eval-anchor-check`) bit-identical on the S0 run record against the committed freeze — not seed-stability alone; new-manifest validation test green; corpus stats table (per-domain counts) in the slice decision.
 
 ### Slice 2: Bench harness + registry (offload candidate)
 
@@ -242,7 +242,7 @@ Changes:
 
 - `VLM-6-bakeoff-decision-memo.md`: hallucination-first ranking; per-candidate scores/latency/VRAM/serving friction/license/lab; explicit downside for each winner [ARCH-06]; disposition for every non-winner; tier gates applied (GPU ≤170 s p95 per the timeout-chain derivation, CPU ≤20 s p95).
 - **Caption gallery (durable artifact, browser-rendered)**: `docs/tasks/vlm/bakeoff-results/caption-gallery.html` — self-contained HTML (thumbnails embedded as data URIs, no external assets) that opens directly in a browser: one section per image (reference thumbnail + ground-truth facts + curated face identities) with every model's caption side by side and its per-image scores. Generated by a `report.py` extension so it regenerates from run records. This is the retrospective surface: any scored result traces back to its image, model, prompt, and raw generation — and it is the first artifact to publish on the research hub (RND-1).
-- **Metrics reported**: fabricated-fact rate (hallucination, primary); caption metrics; face detection precision/recall; face identification **precision/recall/accuracy** (micro + per-identity macro, full-100 and golden-38 subset); **spatial-relation placement correctness** for multi-face images; per-domain accuracy breakdowns.
+- **Metrics reported**: fabricated-fact rate (hallucination, primary); caption metrics; face detection precision/recall; face identification **precision/recall/accuracy** (micro + per-identity macro, full-100 and golden-37 subset); **spatial-relation placement correctness** for multi-face images; per-domain accuracy breakdowns.
 
 Proof:
 
@@ -272,21 +272,22 @@ Proof:
 
 ### Checklist for Slice 0: Determinism anchor
 
-- [x] Full 38-image `make eval-captions` run on the current manifest (prod `seeded`, eval tenant `7e1bea2f…`)
-- [x] `score --check-determinism` bit-identical on the run record
+- [x] Full 37-image `make eval-captions` run on the current manifest (prod `seeded`, eval tenant `7e1bea2f…`; target now defaults `--check-determinism`)
+- [x] Seed-stability: `score --check-determinism` bit-identical on the run record (cross-process re-score only — not a freeze compare)
+- [x] Freeze compare path documented for S1: `score --check-determinism --expect-report <promoted report>` / `make eval-anchor-check`
 - [x] Run record + report promoted to `docs/tasks/vlm/bakeoff-results/`; `test_result` events captured
 - [x] Both incumbent quality baselines confirmed deferred in-tier (florence_small → S4, gpu_qwen30b → S3); no florence deploy / no S0 GPU boot
 
 ### Checklist for Slice 1: Golden-100 corpus
 
-- [ ] 62 new images selected, stratified (incl. occlusion/mirrors/crowds/abstract/art/B&W/animals ≥5 each), license/PII-screened, provenance recorded
+- [ ] 63 new images selected, stratified (incl. occlusion/mirrors/crowds/abstract/art/B&W/animals ≥5 each), license/PII-screened, provenance recorded
 - [ ] Manifest schema extended (additive) + reference facts confirmed for all 100
 - [ ] Eval tenant provisioned; LocalWP pointed at it; Golden-100 uploaded via plugin; clusters curated in the shipped naming flow
 - [ ] FIR-1 capture (during this pass): per-entry `domain` tags in golden.json; ALL face boxes persisted (named + strangers); operator tagged detector-missed faces; curation tenant `4ddf8f36…` RETAINED (not disposed); full-res originals kept
 - [ ] Identity-export step implemented (/media/identities → golden.json by sha256 match); ground truth confirmed for all 100
 - [ ] Spatial-relation facts derived from curated face boxes for multi-face images
 - [ ] Hallucination + placement-correctness metrics implemented with unit tests
-- [ ] Determinism check bit-identical on pre-expansion record; golden-38 subset-pin test green
+- [ ] Freeze compare (`--check-determinism --expect-report` / `make eval-anchor-check`) bit-identical on pre-expansion record; golden-37 subset-pin test green
 
 ### Checklist for Slice 2: Bench harness + registry
 

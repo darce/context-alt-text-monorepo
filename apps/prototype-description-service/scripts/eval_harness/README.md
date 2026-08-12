@@ -2,8 +2,9 @@
 
 Scores generated image descriptions (deterministic tier, assessment §6c tiers
 1–2, 5–6) and face-recognition P/R (detection + identification, micro +
-per-identity macro) against the 38-image golden manifest. Runs on the laptop;
-**all inference happens on the remote OCI service** (concurrency 1).
+per-identity macro) against the 37-image golden manifest (media_ids 1–38 with
+media_id 22 absent). Runs on the laptop; **all inference happens on the remote
+OCI service** (concurrency 1).
 
 ## Setup
 
@@ -26,26 +27,28 @@ cd apps/prototype-description-service   # load-bearing: repo root has a differen
 # one-time: seed the eval tenant (idempotent — safe to re-run)
 uv run python -m scripts.eval_harness.cli seed-roster --entities "$GOLDEN_IMAGES_DIR/mock_entities"
 
-# full run (fetch + score); or from repo root: make eval-captions
-uv run python -m scripts.eval_harness.cli run
+# full run (fetch + score + seed-stability); or from repo root: make eval-captions
+# (make eval-captions passes --check-determinism by default)
+uv run python -m scripts.eval_harness.cli run --check-determinism
 
 # smoke: 3 images
-uv run python -m scripts.eval_harness.cli run --limit 3
+uv run python -m scripts.eval_harness.cli run --limit 3 --check-determinism
 
 # offline re-score of a recorded run (report write + score gates)
 uv run python -m scripts.eval_harness.cli score \
   --run-record scripts/eval_harness/out/run-<stamp>.json
 
-# optional: cross-process determinism certification (score / run / score-face only)
-# Requires a run-record whose identities are dict rows and whose
-# provenance.manifest_sha256 matches the score-time manifest. The S2A seeded
-# determinism anchor (bakeoff-results/) is the committed green path — see
-# § Score gates below. Legacy curated baselines still fail on bare-string identities.
-uv run python -m scripts.eval_harness.cli score \
+# operator surface for the committed freeze (seed-stability + --expect-report):
+# from monorepo root — this is the documented path; do not invent sibling paths.
+# make eval-anchor-check
+#
+# equivalent CLI (caption leg shown; face leg is the second half of the target):
+uv run --extra dev python -m scripts.eval_harness.cli score \
   --manifest scene/tests/seed/golden.json \
   --run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
   --rubric-gate skip \
-  --check-determinism
+  --check-determinism \
+  --expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
 ```
 
 
@@ -151,9 +154,11 @@ computed at generation time (`859a083e…`). Seeded-stub scoring requires
 
 Seed-stability alone (`--check-determinism` without a freeze) proves the scorer
 is hash-stable; it does **not** detect a corrupted run-record or report (parent
-and children all read the same file). Use **`--expect-report`** for the third
-outcome against the committed freeze (F5 / B-06) — opt-in path, no sibling
-filename inference.
+and children all read the same file), and it does **not** catch a schema or
+manifest edit that still re-scores consistently. Use **`--expect-report`** for
+the third outcome against the committed freeze (F5 / B-06) — opt-in path, no
+sibling filename inference. Operator default for the freeze is monorepo-root
+`make eval-anchor-check` (not a hand-assembled flag pair).
 
 ```text
 $ cd apps/prototype-description-service

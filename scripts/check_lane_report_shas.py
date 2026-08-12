@@ -13,8 +13,8 @@ the lane has no way to know its destination SHA at write time.
 So verify at the destination instead. Every candidate hex token that is not an
 explicitly excluded content digest is resolved against this repo; unresolvable
 tokens fail the guard. Missing or unreadable target paths also fail closed
-(VLM6-D-03) — CI must not print "N file(s) checked, all resolve" for files that
-were never opened.
+(VLM6-D-03) — CI must not print resolution claims for files that were never
+opened.
 
 Narrow content-digest exclusions (justified, per-token — not whole-line vetoes):
 
@@ -22,17 +22,15 @@ Narrow content-digest exclusions (justified, per-token — not whole-line vetoes
 * Tokens labelled ``manifest_sha256`` / ``msha=`` (manifest content digests)
 * Tokens labelled as fetch/golden/score-time/model_dump sha prefixes
 * Tokens that open a ``sha256sum``-style digest listing (``deadbeef…  path``)
-* Full-width / ASCII ellipsis truncated digest prefixes in those contexts
+* Full-width / ASCII ellipsis truncated digest prefixes **only** when a digest
+  label (``_BEFORE_DIGEST``) or sha256sum-listing context also matches (S5-03).
+  Bare ``commit `abc1234…``` is still required to resolve.
 
-Two escapes remain for citations that are deliberately unresolvable:
-
-* HTML comments. A correction annotation ("the lane cited ``ac2740b``, which
-  resolves nowhere here") must be able to quote the bad SHA without the guard
-  re-flagging the very thing it documents. Only the comment span is skipped —
-  a citation *outside* the comment on the same line is still checked (VLM6-D-05).
-* An explicit inline ``sha-guard:ignore`` marker on the non-comment portion of
-  the line, for prose that names a foreign-repo or sandbox commit on purpose
-  and says so.
+HTML comments are **not** a skip channel (S5-01). Unresolvable hex inside
+``<!-- ... -->`` fails the same way as visible prose. Foreign SHAs that
+genuinely must be shown belong in **visible** prose with ``sha-guard:ignore``
+scoped to the nearest token (S5-07). An unclosed ``<!--`` is a hard violation
+(S5-02) — the guard refuses to claim resolution for a partially scanned file.
 
 Usage:
     scripts/check_lane_report_shas.py [path ...]   # default: **/.s2a/*.md
@@ -73,6 +71,8 @@ _BEFORE_DIGEST = re.compile(
 )
 # Truncated digest prefix: ``deadbeef…`` / ``deadbeef...`` / ``deadbeef…  path``
 _AFTER_DIGEST_LISTING = re.compile(r"^(?:…|\.\.\.)")
+# sha256sum-style listing remainder: ellipsis, whitespace, path-like token.
+_SHA256SUM_LISTING_AFTER = re.compile(r"^(?:…|\.\.\.)\s+\S")
 
 
 def _resolves(repo: Path, token: str) -> bool:
@@ -90,91 +90,111 @@ def _is_content_digest(line: str, start: int, end: int) -> bool:
 
     Exclusion is per-token and prefix-driven (AUDIT-07: name the sampling frame).
     A neighbouring ``digest`` word alone does **not** exempt other tokens on the line.
+    Bare commit + ellipsis is **not** a digest (S5-03) — ellipsis exclusion requires
+    a ``_BEFORE_DIGEST`` label or a sha256sum-listing path remainder.
     """
     before = line[:start]
     after = line[end:]
     if _BEFORE_DIGEST.search(before):
         return True
-    # Truncated digest prefix from sha256sum / report tables: token… rest
+    # Truncated digest prefix only with digest label or sha256sum ``hex…  path``.
     if _AFTER_DIGEST_LISTING.match(after):
-        return True
+        if _BEFORE_DIGEST.search(before):
+            return True
+        if _SHA256SUM_LISTING_AFTER.match(after):
+            return True
     return False
 
 
-def _strip_html_comments(line: str) -> str:
-    """Replace HTML comment spans with spaces (preserve offsets for messaging).
+def _ignored_token_spans(line: str) -> set[tuple[int, int]]:
+    """Return hex-token spans covered by a nearest-token ``sha-guard:ignore`` (S5-07)."""
+    markers = [m.start() for m in re.finditer(re.escape(_IGNORE_MARKER), line)]
+    if not markers:
+        return set()
+    tokens = [(m.start(1), m.end(1)) for m in _HEX.finditer(line)]
+    if not tokens:
+        return set()
+    ignored: set[tuple[int, int]] = set()
+    marker_len = len(_IGNORE_MARKER)
+    for mp in markers:
+        best: tuple[int, int] | None = None
+        best_dist: int | None = None
+        for ts, te in tokens:
+            if te <= mp:
+                dist = mp - te
+            elif ts >= mp + marker_len:
+                dist = ts - (mp + marker_len)
+            else:
+                dist = 0
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best = (ts, te)
+        if best is not None:
+            ignored.add(best)
+    return ignored
 
-    A citation outside ``<!-- ... -->`` on the same line remains visible to the
-    scanner; only the comment body is blanked (VLM6-D-05).
-    """
-    out: list[str] = []
+
+def _comment_state_after_line(line: str, in_block_comment: bool) -> bool:
+    """Advance HTML-comment open/close state across one line (S5-02)."""
     i = 0
     n = len(line)
+    in_comment = in_block_comment
     while i < n:
-        open_at = line.find("<!--", i)
-        if open_at < 0:
-            out.append(line[i:])
-            break
-        out.append(line[i:open_at])
-        close_at = line.find("-->", open_at + 4)
-        if close_at < 0:
-            # Unclosed comment: blank the rest of the line.
-            out.append(" " * (n - open_at))
-            break
-        # Keep length so column positions stay meaningful; blank the span.
-        out.append(" " * (close_at + 3 - open_at))
-        i = close_at + 3
-    return "".join(out)
+        if in_comment:
+            close_at = line.find("-->", i)
+            if close_at < 0:
+                return True
+            i = close_at + 3
+            in_comment = False
+        else:
+            open_at = line.find("<!--", i)
+            if open_at < 0:
+                return False
+            i = open_at + 4
+            in_comment = True
+    return in_comment
 
 
-def scan_file(repo: Path, path: Path) -> list[str]:
-    """Return violation messages for one report file.
+def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
+    """Return (violation messages, citation tokens checked) for one report file.
 
     Raises OSError on unreadable paths — callers treat that as a hard failure.
+    HTML comments are scanned (S5-01); an unclosed comment is itself a violation
+    (S5-02).
     """
     violations: list[str] = []
+    tokens_checked = 0
     rel = path.relative_to(repo) if path.is_absolute() and repo in path.parents else path
     text = path.read_text(encoding="utf-8")
     in_block_comment = False
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line
-        # Multi-line HTML comments: blank interior lines entirely.
-        if in_block_comment:
-            if "-->" in line:
-                # Close; keep any trailing non-comment text.
-                after = line.split("-->", 1)[1]
-                in_block_comment = False
-                line = after
-            else:
-                continue
-        if "<!--" in line:
-            # May open (and possibly close) on this line.
-            stripped = _strip_html_comments(line)
-            # Detect unclosed open: raw had <!-- and strip blanked through EOL
-            # without a closing --> after the last open.
-            last_open = line.rfind("<!--")
-            last_close = line.rfind("-->")
-            if last_open >= 0 and last_close < last_open:
-                in_block_comment = True
-            line = stripped
+        in_block_comment = _comment_state_after_line(raw_line, in_block_comment)
 
-        if _IGNORE_MARKER in line:
-            continue
-
-        for match in _HEX.finditer(line):
+        ignored = _ignored_token_spans(raw_line)
+        for match in _HEX.finditer(raw_line):
             token = match.group(1)
+            start, end = match.start(1), match.end(1)
             if _ALL_DIGITS.match(token):
                 continue
-            if _is_content_digest(line, match.start(1), match.end(1)):
+            if (start, end) in ignored:
                 continue
+            if _is_content_digest(raw_line, start, end):
+                continue
+            tokens_checked += 1
             if _resolves(repo, token):
                 continue
             violations.append(
                 f"{rel}:{lineno}: cited commit `{token}` does not resolve — "
                 f"resolve it against `git log` in this worktree, or drop the citation "
-                f"(or add `{_IGNORE_MARKER}` if it is deliberately foreign)"
+                f"(or add `{_IGNORE_MARKER}` on the nearest token if it is deliberately foreign)"
             )
-    return violations
+
+    if in_block_comment:
+        violations.append(
+            f"{rel}: unclosed HTML comment — refusing to claim SHA citations resolve "
+            f"for a partially scanned file"
+        )
+    return violations, tokens_checked
 
 
 def _repo_root() -> Path:
@@ -211,8 +231,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         targets = sorted(repo.glob(".s2a/*.md")) + sorted(repo.glob("*/.s2a/*.md"))
 
+    if args.scan_staged and not targets:
+        # S5-04 / AUDIT-07: never claim resolution over an empty sample.
+        print("0 staged lane reports; nothing to check")
+        return 0
+
     violations: list[str] = []
     checked = 0
+    tokens_checked = 0
     for path in targets:
         if not path.is_file():
             # VLM6-D-03: missing path is an error, not a silent skip.
@@ -222,10 +248,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             continue
         try:
-            violations.extend(scan_file(repo, path))
+            file_violations, file_tokens = scan_file(repo, path)
         except OSError as exc:
             violations.append(f"{path}: unreadable ({exc}) — refusing to claim resolution")
             continue
+        violations.extend(file_violations)
+        tokens_checked += file_tokens
         checked += 1
 
     if violations:
@@ -234,12 +262,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {v}", file=sys.stderr)
         print(
             "\nA lane's sandbox-clone SHA is not the SHA the work landed under. "
-            "Use `git log --diff-filter=A -- <report>` to find the real one.",
+            "Use `git log --diff-filter=A -- <report>` to find the real one. "
+            "Do not hide unresolvable tokens in HTML comments — quote them in visible "
+            f"prose with `{_IGNORE_MARKER}` on the nearest token if deliberately foreign.",
             file=sys.stderr,
         )
         return 1
 
-    print(f"lane report SHA citations: {checked} file(s) checked, all resolve")
+    # S5-05: never claim "all resolve" when zero tokens were examined.
+    if tokens_checked == 0:
+        print(
+            f"lane report SHA citations: {checked} file(s), 0 citations found (none to resolve)"
+        )
+    else:
+        print(
+            f"lane report SHA citations: {checked} file(s), {tokens_checked} citation(s) resolved"
+        )
     return 0
 
 

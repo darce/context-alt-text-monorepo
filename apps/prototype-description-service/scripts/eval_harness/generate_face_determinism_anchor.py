@@ -94,6 +94,12 @@ _GT_BOX_FN = {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
 _GT_BOX_STRANGER_FN = {"x": 0.7, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
 # Second locus used when named+anonymous misses share one image (HARM-05 mixed).
 _GT_BOX_STRANGER_FN_B = {"x": 0.7, "y": 0.7, "w": 0.2, "h": 0.2, "source": "iptc"}
+# VLM6-R2-G-01 / wF4: mixed-y order_degraded trap. Sibling named boxes share x;
+# one carries real y, one omits y. Correct per-box key orders (has-y first);
+# pre-G-01 whole-image (x, name) collapse reorders by name and is detectable.
+# Zero detections so face association never float()-coerces the null y.
+_GT_BOX_Y_PRESENT = {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
+_GT_BOX_Y_MISSING = {"x": 0.5, "w": 0.2, "h": 0.2, "source": "iptc"}  # no y key
 _LANDMARKS = [[0.0, 0.0]] * 5
 _DET_SCORE = 0.95
 
@@ -101,6 +107,43 @@ _ALICE = "Alice Example"
 _BOB = "Bob Example"
 _COHORT_A = "cohort_a"
 _COHORT_B = "cohort_b"
+
+# Corpus-level trap inventory (EVAL-03 / VLM6-R2-C-02). Media exist to trip a
+# specific formula or freeze-blindness hazard; detection arithmetic is correct
+# for the corpus — the sampling frame must disclose deliberate traps.
+# Mirrored into run-record provenance.corpus_traps at generation time.
+_CORPUS_TRAPS: list[dict[str, Any]] = [
+    {
+        "media_id": 9,
+        "path": "localwp/uploads/stranger-fn-miss.jpg",
+        "kind": "HARM-05_pure_stranger_miss",
+        "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
+        "note": (
+            "anonymous GT, zero detections; 1 of 4 detection FN on the freeze. "
+            "Without this entry pre- and post-HARM-01 fn agree (blind freeze)."
+        ),
+    },
+    {
+        "media_id": 10,
+        "path": "localwp/uploads/mixed-fn-miss.jpg",
+        "kind": "HARM-05_mixed_named_anonymous_miss",
+        "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
+        "note": (
+            "named Alice GT + anonymous GT, zero detections; contributes named FN "
+            "plus stranger FN. Discriminates identity-agnostic vs named-only recall."
+        ),
+    },
+    {
+        "media_id": 11,
+        "path": "celebs01/y-missing-mixed-order.jpg",
+        "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
+        "trips": "labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual)",
+        "note": (
+            "named box missing y alongside sibling named box with y; order_degraded "
+            "observable so the disclosure counter cannot freeze at structural 0."
+        ),
+    },
+]
 
 
 def _unit(values: list[float]) -> list[float]:
@@ -147,6 +190,9 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
     # HARM-05: unmatched anonymous GT (stranger miss) — population HARM-01 fn counts.
     stranger_fn_box = {**_GT_BOX_STRANGER_FN, "name": None}
     stranger_fn_box_b = {**_GT_BOX_STRANGER_FN_B, "name": None}
+    # VLM6-R2-G-01: Bob has real y; Alice omits y — mixed shape, not all-missing.
+    y_present_box = {**_GT_BOX_Y_PRESENT, "name": _BOB}
+    y_missing_box = {**_GT_BOX_Y_MISSING, "name": _ALICE}
     return {
         "manifest_version": 2,
         "roster": [_ALICE, _BOB],
@@ -346,6 +392,33 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                 },
                 "demographic_cohort": _COHORT_A,
             },
+            {
+                # VLM6-R2-G-01 / wF4: mixed-y order_degraded trap.
+                # Named Bob has y; named Alice omits y (sibling shape). Zero
+                # detections so face association never float()-coerces null y.
+                # Exists so labeled_y_missing_images can be non-zero on the freeze
+                # corpus (pre-extension the counter was structurally always 0).
+                "path": "celebs01/y-missing-mixed-order.jpg",
+                "sha256": "5" * 64,
+                "media_id": 11,
+                "face_count": 2,
+                "present_identities": [_ALICE, _BOB],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [y_present_box, y_missing_box],
+                "provenance": {
+                    "source": "celeb",
+                    "license": "public_domain",
+                    "publishable": True,
+                    "note": (
+                        emb_note
+                        + "; TRAP VLM6-R2-G-01 mixed-y order_degraded "
+                        "(labeled_y_missing_images freeze observability)"
+                    ),
+                },
+            },
             # failures[] intentionally not exercised: score-face exits non-zero
             # when counts.failed > 0, which would make the freeze green path red.
             # Declared in provenance.coverage_gaps (AUDIT-07).
@@ -456,6 +529,14 @@ def build_face_anchor_run_record(
             image_size=_IMAGE_SIZE,
             faces=[],  # HARM-05: named + anonymous unmatched in one image
         ),
+        build_face_run_item(
+            media_id=11,
+            path="celebs01/y-missing-mixed-order.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[],  # VLM6-R2-G-01: order_degraded trap; no det so no float(y)
+        ),
     ]
     # Document-level synthetic occlusion twin (EVAL-16: never an item).
     # Alice has ≥2 matched faces and Bob is enrolled → multi-identity gallery
@@ -483,14 +564,17 @@ def build_face_anchor_run_record(
         "model_id": _MODEL_ID,
         "embedding_dim": _EMBEDDING_DIM,
         "generator": "scripts.eval_harness.generate_face_determinism_anchor",
+        # EVAL-03 / VLM6-R2-C-02: deliberate trap media + which gate each trips.
+        "corpus_traps": list(_CORPUS_TRAPS),
         "note": (
             "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); "
             "fixture_revision/canonical_timestamp are byte-stability sentinels "
             "(not git/wall-clock provenance); "
             "F7 multi-regime corpus (2 identities, FP/FN, wrong-name, "
             "occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + "
-            "mixed named/anonymous miss; failures[] declared gap — score-face "
-            "hard-exits on counts.failed>0)"
+            "mixed named/anonymous miss; VLM6-R2-G-01 mixed-y order_degraded "
+            "trap (media 11); failures[] declared gap — score-face "
+            "hard-exits on counts.failed>0); see provenance.corpus_traps"
         ),
     }
     record = build_face_run_record(items, provenance=provenance)

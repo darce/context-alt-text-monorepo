@@ -381,12 +381,18 @@ class FaceBox(BaseModel):
     Persisted for ALL curated faces — named people AND anonymous strangers
     (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
     not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
+
+    ``y`` may be omitted/null (VLM6-R2-G-01 / wF4). L→R ordering uses a per-box
+    missing-y fallback and surfaces ``order_degraded``; detection association that
+    needs a full centre must handle null y (zero-detection trap media never
+    invoke that path). A required ``y: float`` made the freeze corpus
+    *structurally* incapable of a non-zero ``labeled_y_missing_images`` counter.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     x: float
-    y: float
+    y: float | None = None
     w: float
     h: float
     name: str | None = None

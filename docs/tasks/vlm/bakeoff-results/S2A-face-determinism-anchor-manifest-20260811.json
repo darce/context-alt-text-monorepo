@@ -309,6 +309,45 @@
         "source": "localwp"
       },
       "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.2,
+          "name": "Bob Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5,
+          "y": 0.1
+        },
+        {
+          "h": 0.2,
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5
+        }
+      ],
+      "face_count": 2,
+      "media_id": 11,
+      "must_right": [],
+      "path": "celebs01/y-missing-mixed-order.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example",
+        "Bob Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime); TRAP VLM6-R2-G-01 mixed-y order_degraded (labeled_y_missing_images freeze observability)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
     }
   ],
   "manifest_version": 2,

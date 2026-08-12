@@ -8144,12 +8144,13 @@ class TestA901FlagIndependence:
 
 
 class TestA1002DenyFirstOrdering:
-    """FIR-7-A10-02: folded deny (a)/(b) before exception absorption.
+    """FIR-7-A10-02 / B11-01: deny (a)/(b)/(c) before exception absorption.
 
     Exception compact seeds (yolos/yolof/yolop/yolox) must not absorb bare-
-    yolo Ultralytics artifact forms (yolo_seg / yolo_free / yolo_pose /
-    yolo_x / yolo_s_v8). Pure exception identities and vendor-prefix forms
-    still admit.
+    yolo Ultralytics artifact forms — folded (yolo_seg / yolo_free /
+    yolo_pose / yolo_x / yolo_s_v8) **and** compact twins (yoloseg /
+    yolofree / yolopose / yolosg). Pure exception identities and
+    vendor-prefix forms still admit.
     """
 
     DENY_WITNESSES: ClassVar[tuple[str, ...]] = (
@@ -8165,21 +8166,38 @@ class TestA1002DenyFirstOrdering:
         "yolo_x",
         "yolo_s",
         "yolo_s_v8",
+        # FIR-7-B11-01: compact laundering twins of the folded forms above.
+        "yoloseg",
+        "YoloSeg",
+        "yolosg",
+        "yoloseg_v8",
+        "checkpoints_yoloseg",
+        "org/yoloseg",
+        "prefix_yoloseg",
+        "yolofree",
+        "yolopose",
     )
 
     ADMIT_PINS: ClassVar[tuple[str, ...]] = (
         "yolox_s",
         "yoloxs",
         "yolos-tiny",
+        "yolos_base",
         "yolof_r50",
+        "yolof_r101",
         "yolop",
         "yolopv2",
+        "yolop_v3",
         "yolop_yolox",
         "yolox_yolop",
         "megvii_yolox",
+        "megvii_yolox_s",
         "hustvl_yolos",
+        "hustvl_yolos_tiny",
         "hustvl_yolop",
         "megvii_model_yolof",
+        "ppyolo",
+        "ppyoloe",
         "ppyolov2",
         "myyolo",
         "yolodummy",
@@ -8218,11 +8236,16 @@ class TestA1002DenyFirstOrdering:
 
 
 class TestA1001MultiAxisDoorPromotion:
-    """FIR-7-A10-01: doors consider ALL floor hits; AGPL precedes NC.
+    """FIR-7-A10-01 / B11-02 / A11-2: AGPL precedes NC on all door paths.
 
     Dual-axis compounds (NC seed + Ultralytics residue) must not admit and
     must not attribute one lineage's residue to the other's note.
-    Precedence: denylisted_package (AGPL) first when both present.
+    Precedence: denylisted_package (AGPL) first when both present —
+    including membership-path forms where match_nc_model_pattern would
+    otherwise return first (slash dual-axis, exception-shielded).
+
+    Detail honesty (A11-2): assert ENTRY identity + licence axis, not
+    substrings of the echoed input token.
     """
 
     DUAL_AXIS: ClassVar[tuple[str, ...]] = (
@@ -8232,6 +8255,46 @@ class TestA1001MultiAxisDoorPromotion:
         "yolo_nas_l_ultralytics",
         "retinaface_yolov8",
     )
+
+    # FIR-7-B11-02: membership path previously returned nc_model_derived
+    # before consulting multi-axis floor promotion.
+    MEMBERSHIP_PATH_DUAL_AXIS: ClassVar[tuple[str, ...]] = (
+        "ultralytics/buffalo_l",
+        "buffalo_l/ultralytics",
+        "yolov8/arcface",
+        "arcface/yolov8",
+        "yolox_s_buffalo_l_ultralytics",
+        "yolop_arcface_ultralytics",
+    )
+
+    NC_ONLY_COUNTERS: ClassVar[tuple[str, ...]] = (
+        "myprefix_antelopev2_trt",
+        "org/buffalo_l",
+    )
+
+    _NC_LINEAGE_PHRASES: ClassVar[tuple[str, ...]] = (
+        "non-commercial",
+        "insightface",
+        "deci",
+        "buffalo weights",
+    )
+
+    def _assert_agpl_entry_detail(self, detail: str, token: str) -> None:
+        """A11-2: entry id + AGPL licence present; no NC lineage phrases."""
+        detail_cf = detail.casefold()
+        # Matched entry identity + licence — not merely the echoed input.
+        has_ultralytics_entry = "entry 'ultralytics' (agpl-3.0)" in detail_cf
+        has_yolov8_entry = "entry 'yolov8' (agpl-3.0)" in detail_cf
+        assert has_ultralytics_entry or has_yolov8_entry, (
+            f"{token!r}: detail must name AGPL entry id+licence "
+            f"(entry 'ultralytics' (AGPL-3.0) or entry 'yolov8' (AGPL-3.0)); "
+            f"got {detail!r}"
+        )
+        for phrase in self._NC_LINEAGE_PHRASES:
+            assert phrase not in detail_cf, (
+                f"{token!r}: AGPL-precedence detail must NOT contain NC "
+                f"lineage phrase {phrase!r}; got {detail!r}"
+            )
 
     @pytest.mark.parametrize("token", DUAL_AXIS)
     def test_dual_axis_rejects_both_doors_with_agpl_precedence(
@@ -8243,20 +8306,89 @@ class TestA1001MultiAxisDoorPromotion:
             f"{token!r}: AGPL precedence expected denylisted_package, got "
             f"{derived.reason} ({derived.detail})"
         )
-        # Honest AGPL lineage note — not an NC note on the AGPL residue.
-        detail_cf = derived.detail.casefold()
-        assert (
-            "ultralytics" in detail_cf
-            or "yolov8" in detail_cf
-            or "agpl" in detail_cf
-        ), f"{token!r}: AGPL detail missing: {derived.detail!r}"
-        # Must not attribute Ultralytics residue solely to buffalo/insightface
-        # wording without naming the AGPL package id.
-        assert "package_denylist entry" in detail_cf or "hits package" in detail_cf
+        self._assert_agpl_entry_detail(derived.detail, token)
 
         source = policy.audit_source(token)
         assert source.ok is False, f"audit_source({token!r}) must reject"
         assert source.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        self._assert_agpl_entry_detail(source.detail, token)
+
+    @pytest.mark.parametrize("token", MEMBERSHIP_PATH_DUAL_AXIS)
+    def test_membership_path_dual_axis_agpl_precedence(
+        self, token: str
+    ) -> None:
+        """B11-02: slash/exception dual-axis still reports denylisted_package."""
+        # Precondition: NC membership would hit without floor precedence.
+        assert policy.match_nc_model_pattern(token) is not None, (
+            f"fixture {token!r} must match NC membership (path under test)"
+        )
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False
+        assert derived.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{token!r}: membership-path AGPL precedence expected "
+            f"denylisted_package, got {derived.reason} ({derived.detail})"
+        )
+        self._assert_agpl_entry_detail(derived.detail, token)
+        source = policy.audit_source(token)
+        assert source.ok is False
+        assert source.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        self._assert_agpl_entry_detail(source.detail, token)
+
+    @pytest.mark.parametrize("token", NC_ONLY_COUNTERS)
+    def test_nc_only_compounds_still_report_nc_model_derived(
+        self, token: str
+    ) -> None:
+        derived = policy.audit_derived_from_model(token)
+        assert derived.ok is False
+        assert derived.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {derived.reason} "
+            f"({derived.detail})"
+        )
+        detail_cf = derived.detail.casefold()
+        assert "non-commercial" in detail_cf or "insightface" in detail_cf or (
+            "antelope" in detail_cf or "buffalo" in detail_cf
+        ), f"{token!r}: NC lineage note missing: {derived.detail!r}"
+        assert "entry 'ultralytics'" not in detail_cf
+        assert "entry 'yolov8'" not in detail_cf
+        source = policy.audit_source(token)
+        assert source.ok is False
+        assert source.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_red_proof_cross_attributed_detail_fails_honesty_pin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A11-2: fabricated NC-note-on-AGPL-token detail must fail asserts.
+
+        Monkeypatch audit_derived_from_model to return denylisted_package
+        with a detail that echoes the input (so 'ultralytics' appears) and
+        uses the generic floor phrasing, but cross-attributes an NC lineage
+        note — the vacuous pre-A11-2 asserts would pass; the entry-identity
+        pin must fail.
+        """
+        token = "buffalo_l_ultralytics"
+        fabricated = policy.LicenseAuditResult(
+            verdict=policy.LicenseVerdict.FAIL,
+            reason=policy.RejectionReason.DENYLISTED_PACKAGE,
+            detail=(
+                f"derived_from_model={token!r} hits PACKAGE_DENYLIST entry "
+                f"'buffalo_l' (Non-Commercial): buffalo weights and "
+                f"output-derived data are banned"
+            ),
+            category=policy.PolicyCategory.TRAINING_DATA,
+        )
+        monkeypatch.setattr(
+            policy,
+            "audit_derived_from_model",
+            lambda _t: fabricated,
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        # Vacuous checks that used to pass on fabricated cross-attribution:
+        assert "ultralytics" in result.detail.casefold()  # echoed input
+        assert "package_denylist entry" in result.detail.casefold()
+        # Honest pin must reject this fabrication.
+        with pytest.raises(AssertionError):
+            self._assert_agpl_entry_detail(result.detail, token)
 
     @pytest.mark.parametrize("token", DUAL_AXIS)
     def test_package_floor_still_sees_nc_axis(self, token: str) -> None:
@@ -8322,18 +8454,24 @@ class TestB1001DerivedNcFloorSurface:
         assert policy.audit_derived_from_model("cosface").ok is True
         assert policy.audit_derived_from_model("magface").ok is True
 
-    def test_anti_drift_pinned_nc_floor_sweep(self) -> None:
-        """Every non-excluded pinned NC id: bare + export tag + junk prefix.
+    def test_anti_drift_full_generator_input_floor_sweep(self) -> None:
+        """Every non-excluded generator-input id: bare + tag + junk prefix.
 
-        Both underscore and compact spellings. Adding a pinned id without
-        floor coverage fails this sweep automatically.
+        FIR-7-B11-03 / A11-3: sweep the FULL generator input surface
+        (``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ ``yolo_nas``
+        stem), both underscore and compact spellings — not just pinned
+        ids. A partial generator regression that drops only explicit-
+        variant keys must fail this sweep.
         """
         excluded = (
             policy._NC_PACKAGE_FLOOR_EXCLUSIONS
             | policy._NC_SURFACE_DELIBERATE_EXCLUSIONS
         )
+        raw_ids: set[str] = set(policy._PINNED_NC_MODEL_IDS)
+        raw_ids |= set(policy._NC_EXPLICIT_VARIANTS)
+        raw_ids.add("yolo_nas")  # generator-only stem (A11-4)
         seeds: list[str] = []
-        for raw in policy._PINNED_NC_MODEL_IDS:
+        for raw in sorted(raw_ids):
             if raw in excluded:
                 continue
             c = policy.canonical(raw)
@@ -8343,7 +8481,15 @@ class TestB1001DerivedNcFloorSurface:
             compact = policy._compact_canonical(c)
             if compact and compact != c:
                 seeds.append(compact)
-        assert seeds, "pinned NC surface produced zero floor seeds"
+        assert seeds, "generator NC surface produced zero floor seeds"
+        # Explicit-variant keys must contribute at least one seed so a
+        # partial generator drop cannot hide behind pinned-only coverage.
+        explicit_seeds = [
+            policy.canonical(x) or x
+            for x in policy._NC_EXPLICIT_VARIANTS
+            if x not in excluded
+        ]
+        assert explicit_seeds, "explicit variants produced zero seeds"
         for seed in seeds:
             bare = policy._package_denylist_hit(seed)
             assert bare is not None, f"bare {seed!r} must hit NC floor"
@@ -8548,3 +8694,116 @@ class TestB1005ScrfdNcSurface:
         )
         assert result.ok is False
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F8 — compact deny-first follow-ups, note parity, flag honesty
+# ---------------------------------------------------------------------------
+
+
+class TestB1105CompactMembershipNoteParity:
+    """FIR-7-B11-05: compact multi-segment membership notes match underscore twins."""
+
+    PAIRS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolonasposel", "yolo_nas_pose_l"),
+        ("arcfaceglint360kr100", "arcface_glint360k_r100"),
+        ("scrfd10gkps", "scrfd_10g_kps"),
+    )
+
+    @pytest.mark.parametrize("compact,folded", PAIRS)
+    def test_compact_and_underscore_note_parity(
+        self, compact: str, folded: str
+    ) -> None:
+        d_c = policy.audit_derived_from_model(compact)
+        d_f = policy.audit_derived_from_model(folded)
+        assert d_c.ok is False and d_f.ok is False
+        assert d_c.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert d_f.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        # Lineage clause after the matched-id preamble must be identical.
+        note_c = d_c.detail.split(";", 1)[-1].strip()
+        note_f = d_f.detail.split(";", 1)[-1].strip()
+        assert note_c == note_f, (
+            f"{compact!r} note {note_c!r} != {folded!r} note {note_f!r}"
+        )
+        # Must not be the generic fallback.
+        assert "deci" in note_c.casefold() or "insightface" in note_c.casefold() or (
+            "scrfd" in note_c.casefold()
+        ), f"expected lineage-specific note, got {note_c!r}"
+
+
+class TestB1106InsightfaceNoteWording:
+    """FIR-7-B11-06: insightface seed has its own zoo wording, not buffalo-pack."""
+
+    def test_insightface_note_names_model_zoo_not_buffalo_pack(self) -> None:
+        result = policy.audit_derived_from_model("insightface")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        detail_cf = result.detail.casefold()
+        assert "insightface" in detail_cf
+        assert "model zoo" in detail_cf or "zoo" in detail_cf, (
+            f"insightface note must name the model zoo; got {result.detail!r}"
+        )
+        assert "buffalo weights" not in detail_cf, (
+            f"insightface must not inherit buffalo-pack boilerplate; "
+            f"got {result.detail!r}"
+        )
+        # Floor generator uses the same note table.
+        floor = policy.PACKAGE_DENYLIST.get("insightface")
+        assert floor is not None
+        assert "buffalo weights" not in floor.notes.casefold()
+        assert "insightface" in floor.notes.casefold() or "zoo" in (
+            floor.notes.casefold()
+        )
+
+    def test_buffalo_l_keeps_historical_buffalo_wording(self) -> None:
+        result = policy.audit_derived_from_model("buffalo_l")
+        assert result.ok is False
+        assert "buffalo weights and output-derived data are banned" in (
+            result.detail
+        )
+
+
+class TestB1104StructuralNcFlagDoorSolePath:
+    """FIR-7-B11-04: _NC_STRUCTURAL_MATCH_ENABLED remains door-load-bearing.
+
+    Known export-tag residuals also reject via floor promotion, so the
+    sole-path door witnesses are pure-alpha short tags that are NOT
+    export-shaped (yolo_nas_l_free / yolo_nas_l_blah). Flipping the flag
+    alone must turn those door cells green (TEST-15).
+    """
+
+    SOLE_PATH: ClassVar[tuple[str, ...]] = (
+        "yolo_nas_l_free",
+        "yolo_nas_l_blah",
+    )
+
+    @pytest.mark.parametrize("token", SOLE_PATH)
+    def test_sole_path_rejects_only_via_structural_membership(
+        self, token: str
+    ) -> None:
+        # Production: structural strip rejects.
+        assert policy.audit_derived_from_model(token).ok is False
+        assert (
+            policy.audit_derived_from_model(token).reason
+            is policy.RejectionReason.NC_MODEL_DERIVED
+        )
+        # Floor whole-component NC path must MISS (not export-shaped).
+        assert policy._whole_component_nc_package_hit(token) is None, (
+            f"{token!r} must not be door-promoted via floor (sole-path pin)"
+        )
+        # Package floor may still hit via unrestricted (b); doors do not
+        # use that path for NC when whole-component misses.
+
+    def test_red_proof_flag_alone_admits_sole_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for token in self.SOLE_PATH:
+            assert policy.audit_derived_from_model(token).ok is False
+        monkeypatch.setattr(policy, "_NC_STRUCTURAL_MATCH_ENABLED", False)
+        for token in self.SOLE_PATH:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with structural NC off, {token!r} must admit"
+            )
+        # Floor-backed export tags still reject without structural strip.
+        assert policy.audit_derived_from_model("yolo_nas_l_trt").ok is False
+        assert policy.audit_derived_from_model("buffalo_l").ok is False

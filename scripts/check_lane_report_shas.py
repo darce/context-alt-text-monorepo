@@ -381,12 +381,21 @@ def _is_lane_report_relpath(name: str) -> bool:
 
 
 def _default_report_paths(repo: Path) -> list[Path]:
-    """Recursive default targets: ``.s2a/**/*.md`` and ``*/.s2a/**/*.md`` (RV4-04)."""
-    found = list(repo.glob(".s2a/**/*.md")) + list(repo.glob("*/.s2a/**/*.md"))
-    # De-dupe while preserving a stable order.
+    """Walk the tree; keep only paths accepted by ``_is_lane_report_relpath``.
+
+    Shared implementation with ``--scan-staged`` (rg-006 / VLM6-R2-G-04): a
+    hand-maintained glob list (``.s2a/**/*.md`` + ``*/.s2a/**/*.md``) cannot
+    reach arbitrary depth above ``*`` and drifts from the staged predicate.
+    """
     seen: set[Path] = set()
     out: list[Path] = []
-    for path in sorted(found):
+    for path in sorted(repo.rglob("*.md")):
+        try:
+            rel = path.relative_to(repo).as_posix()
+        except ValueError:
+            continue
+        if not _is_lane_report_relpath(rel):
+            continue
         resolved = path.resolve()
         if resolved in seen:
             continue

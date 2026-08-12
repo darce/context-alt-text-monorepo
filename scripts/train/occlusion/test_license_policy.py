@@ -4750,3 +4750,41 @@ class TestRv11SyntheticSourceAxisTaintReasonFidelity:
         # Must not collapse to the unknown-head phrasing.
         assert "has no clearance entry" not in result.detail
 
+# ---------------------------------------------------------------------------
+# FIR-7-RV-12 — compound SPDX allowlist tokenisation
+# ---------------------------------------------------------------------------
+
+
+class TestRv12CompoundSpdxAllowlistTokenisation:
+    """FIR-7-RV-12: all-allowlisted compounds PASS; failures name the component."""
+
+    @pytest.mark.parametrize(
+        "spdx",
+        [
+            "MIT AND Apache-2.0",
+            "(MIT)",
+            "MIT+",
+            "Apache-2.0+",
+        ],
+    )
+    def test_all_allowlisted_compounds_pass(self, spdx: str) -> None:
+        result = policy.audit_spdx(spdx)
+        assert result.ok is True, (
+            f"{spdx!r} must PASS (every component allowlisted); got "
+            f"{result.reason} {result.detail}"
+        )
+
+    def test_denylisted_component_named(self) -> None:
+        result = policy.audit_spdx("MIT AND GPL-3.0")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+        assert "GPL-3.0" in result.detail
+
+    def test_unknown_component_named(self) -> None:
+        result = policy.audit_spdx("MIT AND UnknownLic-1.0")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNKNOWN_SPDX
+        assert "UnknownLic-1.0" in result.detail
+        assert "unknown component" in result.detail
+
+

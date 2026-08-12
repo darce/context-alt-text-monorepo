@@ -60,11 +60,14 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # all, so corpus drift was undisclosed on the identity path. Only the .md digest moved —
 # manifest, run-record and report JSON are byte-identical, which is the evidence that
 # disclosure changed and scoring did not.
+# Regenerated fx7 (this lane's branch): head_sha 40-zeros → null + fixture_revision;
+# coverage_gaps predicate keys on probe count (perfect ID/detection not listed).
+# Manifest digest unchanged (corpus body byte-identical); run/report/md moved.
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958",
-    _RUN.name: "38a5168d051bc830ec1503a59858ff76e532807b9fbb7a8ccb1aaafadf7c10ff",
-    _REPORT_JSON.name: "dcee8efa6aa0846c2ef22f054030bc5ee921093f20043f0d498247d471c29442",
-    _REPORT_MD.name: "c29cc8591ba2b9fa560d8504deb3273bafeb499760f27a8475c3168594d59718",
+    _RUN.name: "de8d00edb4458e7bce9c22a5831c7e65bb2a225f5ebff1e0b37e42c7badbcde4",
+    _REPORT_JSON.name: "50dd3c2a8fab1153015c431067394ef12c6114283a038c4b8850b6d368fdd041",
+    _REPORT_MD.name: "6452cc66134ec07d24fed6aed8b863b64b31c4cbfb3bb9e34b7dca3937898701",
 }
 
 

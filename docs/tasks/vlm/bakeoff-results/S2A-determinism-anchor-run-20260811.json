@@ -18,19 +18,8 @@
         }
       },
       "error": null,
-      "face_count": 1,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Maria Correonero",
-          "unpositioned": false
-        }
-      ],
+      "face_count": 0,
+      "identities": [],
       "media_id": 1,
       "path": "mock_images/Breiðamerkurjökull.jpg"
     },
@@ -55,14 +44,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Bea Burke",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 2,
@@ -88,14 +71,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 3,
@@ -120,14 +97,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 4,
@@ -153,24 +124,12 @@
       "face_count": 4,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         },
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 70.0,
-            "y": 40.0
-          },
           "name": "Erika Hansen Miller",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 5,
@@ -194,18 +153,7 @@
       },
       "error": null,
       "face_count": 1,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Caitlin Weaver",
-          "unpositioned": false
-        }
-      ],
+      "identities": [],
       "media_id": 6,
       "path": "mock_images/ccqw-flowers.jpg"
     },
@@ -228,14 +176,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 7,
@@ -258,17 +200,11 @@
         }
       },
       "error": null,
-      "face_count": 1,
+      "face_count": 0,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 8,
@@ -294,14 +230,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 9,
@@ -327,14 +257,12 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-9",
+          "unpositioned": true
         }
       ],
       "media_id": 10,
@@ -358,18 +286,7 @@
       },
       "error": null,
       "face_count": 1,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Caitlin Weaver",
-          "unpositioned": false
-        }
-      ],
+      "identities": [],
       "media_id": 11,
       "path": "mock_images/ccqw-running-2.jpg"
     },
@@ -390,17 +307,11 @@
         }
       },
       "error": null,
-      "face_count": 2,
+      "face_count": 3,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 12,
@@ -426,14 +337,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 13,
@@ -459,14 +364,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 14,
@@ -490,17 +389,11 @@
         }
       },
       "error": null,
-      "face_count": 1,
+      "face_count": 0,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Caitlin Weaver",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 15,
@@ -525,18 +418,7 @@
       },
       "error": null,
       "face_count": 1,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Caitlin Weaver",
-          "unpositioned": false
-        }
-      ],
+      "identities": [],
       "media_id": 16,
       "path": "mock_images/ccqw.blurry.jpg"
     },
@@ -559,14 +441,8 @@
       "face_count": 3,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Cristina Quintana",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 17,
@@ -591,14 +467,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Ellyn Heald",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 18,
@@ -624,14 +494,12 @@
       "face_count": 2,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Kirstie Mccarrel",
-          "unpositioned": false
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-18",
+          "unpositioned": true
         }
       ],
       "media_id": 19,
@@ -656,14 +524,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Kirstie Mccarrel",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 20,
@@ -687,18 +549,7 @@
       },
       "error": null,
       "face_count": 3,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Kirstie Mccarrel",
-          "unpositioned": false
-        }
-      ],
+      "identities": [],
       "media_id": 21,
       "path": "mock_images/kirstie-boat.jpg"
     },
@@ -719,27 +570,15 @@
         }
       },
       "error": null,
-      "face_count": 2,
+      "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Daniel Arce",
-          "unpositioned": false
+          "unpositioned": true
         },
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 70.0,
-            "y": 40.0
-          },
           "name": "Kirstie Mccarrel",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 23,
@@ -761,17 +600,11 @@
         }
       },
       "error": null,
-      "face_count": 1,
+      "face_count": 2,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Kirstie Mccarrel",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 24,
@@ -796,14 +629,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Liam Maloney",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 25,
@@ -829,14 +656,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Liam Maloney",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 26,
@@ -882,14 +703,8 @@
       "face_count": 4,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Maria Correonero",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 28,
@@ -916,14 +731,12 @@
       "face_count": 3,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Maria Correonero",
-          "unpositioned": false
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-27",
+          "unpositioned": true
         }
       ],
       "media_id": 29,
@@ -945,17 +758,11 @@
         }
       },
       "error": null,
-      "face_count": 1,
+      "face_count": 0,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Maria Correonero",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 30,
@@ -980,14 +787,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Maria Correonero",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 31,
@@ -1011,18 +812,7 @@
       },
       "error": null,
       "face_count": 1,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Maria Correonero",
-          "unpositioned": false
-        }
-      ],
+      "identities": [],
       "media_id": 32,
       "path": "mock_images/mcm-icecave.jpg"
     },
@@ -1046,14 +836,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Maria Correonero",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 33,
@@ -1096,7 +880,7 @@
         }
       },
       "error": null,
-      "face_count": 2,
+      "face_count": 3,
       "identities": [],
       "media_id": 35,
       "path": "mock_images/rrw-mirror.jpg"
@@ -1121,14 +905,8 @@
       "face_count": 1,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Ryann Wiseman",
-          "unpositioned": false
+          "unpositioned": true
         }
       ],
       "media_id": 36,
@@ -1150,19 +928,8 @@
         }
       },
       "error": null,
-      "face_count": 6,
-      "identities": [
-        {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
-          "name": "Ryann Wiseman",
-          "unpositioned": false
-        }
-      ],
+      "face_count": 5,
+      "identities": [],
       "media_id": 37,
       "path": "mock_images/ryann-group-party.jpg"
     },
@@ -1185,14 +952,12 @@
       "face_count": 2,
       "identities": [
         {
-          "bbox": {
-            "height": 60.0,
-            "width": 50.0,
-            "x": 10.0,
-            "y": 40.0
-          },
           "name": "Ryann Wiseman",
-          "unpositioned": false
+          "unpositioned": true
+        },
+        {
+          "name": "Fixture-Wrong-36",
+          "unpositioned": true
         }
       ],
       "media_id": 38,
@@ -1203,15 +968,58 @@
   "provenance": {
     "adapter": "seeded",
     "base_url": "seeded-stub://offline",
+    "canonical_timestamp": "2026-08-11T00:00:00Z",
     "coverage_gaps": {
-      "face_boxes": "0/37 entries populate it — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces",
-      "reference_facts": "0/37 entries populate it — no denominator for fabricated-fact scoring",
-      "spatial_facts": "0/37 entries populate it — placement accuracy is vacuous (0 asserted claims)"
+      "demographic_cohort": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/37 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame",
+        "registry": "owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet",
+        "threshold": 5,
+        "total": 37
+      },
+      "face_boxes": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/37 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces",
+        "registry": "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute",
+        "threshold": 5,
+        "total": 37
+      },
+      "reference_facts": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/37 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)",
+        "registry": "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone",
+        "threshold": 5,
+        "total": 37
+      },
+      "spatial_facts": {
+        "below_threshold": true,
+        "pi_zero": true,
+        "populated": 0,
+        "reason": "0/37 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)",
+        "registry": "owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus",
+        "threshold": 5,
+        "total": 37
+      }
     },
+    "face_metrics_evidential": false,
+    "fixture_revision": "0000000000000000000000000000000000000000",
     "generator": "scripts.eval_harness.generate_determinism_anchor",
-    "head_sha": "0000000000000000000000000000000000000000",
+    "head_sha": null,
     "manifest_sha256": "83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737",
-    "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions are good. See eval_harness/README.md § Corpus coverage boundary.",
+    "metric_backing_refusals": {
+      "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
+      "face_boxes": "cannot certify metric backed by 'face_boxes': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute.",
+      "reference_facts": "cannot certify metric backed by 'reference_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
+      "spatial_facts": "cannot certify metric backed by 'spatial_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus."
+    },
+    "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. See eval_harness/README.md § Corpus coverage boundary.",
+    "predictions_source": "ground_truth_derived_fixture",
     "started_at": "2026-08-11T00:00:00Z"
   },
   "schema": "acx-eval/v1"

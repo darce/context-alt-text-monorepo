@@ -2,14 +2,18 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
-- head_sha: `0000000000000000000000000000000000000000`
+- head_sha: `None`
 - base_url: seeded-stub://offline
 - fetch manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737`
 - score manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737` (matches fetch: True)
 - started_at: 2026-08-11T00:00:00Z
 - images: 37/37 scored, 0 failed
-- verdict: **pass_ungated** (wrong_name_rate=0.000, floor=0.000)
+- verdict: **fail** (wrong_name_rate=0.108, floor=0.000)
 - rubric_gate: `skip`
+- verdict reason: wrong_name_rate=0.1081 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=37)
+- verdict reason: category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False degraded_images=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)
+- verdict reason: category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=37 (π=0 on spatial_facts; AUDIT-07)
+- verdict reason: category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07)
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)
@@ -19,7 +23,7 @@
 - Must-Right failed images (hard gate): 34 (must_right-defined images: 34; easy_wrong-defined images: 37)
 - policy violations: 0
 - mean gated score: 0.000 (scored=34, excluded=3)
-- fabricated-fact rate: 0.000 (caught=0/0 trap images; instances=0/0)
+- fabricated-fact rate: null (caught=0/0 trap images; instances=0/0)
 - fabricated by kind: none
 - true-fact coverage: null
 - placement accuracy: null (correct=0 wrong=0 claims=0 abstained=0)
@@ -51,34 +55,59 @@
 
 ## Face detection (identity-agnostic)
 
-- precision: 1.000 recall: 1.000 (tp=57 fp=0 fn=0)
+- precision: 0.944 recall: 0.895 (tp=51 fp=3 fn=6)
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 1.000
-- macro precision: 1.000 recall: 1.000
-- true rejections (strangers): 10
-- positional accuracy (L→R order): null (hits=0 / 0; exact-order images=0/0; swaps=0)
+- micro precision: 0.879 recall: 0.806
+- macro precision: 0.714 recall: 0.897
+- true rejections (strangers): 7
+- positional accuracy (L→R order): null (hits=0 / 0; exact-order images=0/0; swaps=0; status=not_evaluable; evaluable=False)
+- positional vacuity: positional identification not evaluable on this corpus, π=0 for box-grounded identity claims (sampling_frame=box_grounded_LtoR_name_sequences: position i must match; requires face_boxes (labeled_order_known) and centre-ordered predicted names (predicted_left_to_right); when compared_images=0 status=not_evaluable π=0 for box-grounded identity claims (EVAL-23 / AUDIT-07))
 - ⚠ identity ordering degraded on 37 image(s) (missing/malformed bbox → not pure L→R): `mock_images/Breiðamerkurjökull.jpg`, `mock_images/bea-nye.jpg`, `mock_images/ccqw-antartica.jpg`, `mock_images/ccqw-bar.jpg`, `mock_images/ccqw-erika.jpg`, `mock_images/ccqw-flowers.jpg`, `mock_images/ccqw-hair.jpg`, `mock_images/ccqw-occlusion-2.jpg`, `mock_images/ccqw-occlusion.jpg`, `mock_images/ccqw-purple.jpg`, `mock_images/ccqw-running-2.jpg`, `mock_images/ccqw-running.jpg`, `mock_images/ccqw-sunglasses-flowers.jpg`, `mock_images/ccqw-sunglasses.jpg`, `mock_images/ccqw-underexposed.jpg`, `mock_images/ccqw.blurry.jpg`, `mock_images/cristina-1.jpg`, `mock_images/example-ellynheald-goldleaf.jpeg`, `mock_images/k.mcc-1.jpg`, `mock_images/kirstie-1.jpeg`, `mock_images/kirstie-boat.jpg`, `mock_images/kirstie-daniel-sunglasses.jpg`, `mock_images/kirstie-pool.jpg`, `mock_images/liam-maloney-2.jpg`, `mock_images/liam-maloney-home.jpg`, `mock_images/liam-maloney-painting.jpg`, `mock_images/maria-cocktail.jpg`, `mock_images/maria-party.jpg`, `mock_images/maria-pool.jpg`, `mock_images/mcm-eye-blocked.jpg`, `mock_images/mcm-icecave.jpg`, `mock_images/mcm-planecrash.jpg`, `mock_images/nina-machiavelli.jpeg`, `mock_images/rrw-mirror.jpg`, `mock_images/ryann-bar.jpg`, `mock_images/ryann-group-party.jpg`, `mock_images/ryann-party.jpg`
 
 ### Wrong-name errors (top product risk — every instance listed)
 
-- none
+- `mock_images/ccqw-purple.jpg` → asserted **Fixture-Wrong-9**
+- `mock_images/k.mcc-1.jpg` → asserted **Fixture-Wrong-18**
+- `mock_images/maria-party.jpg` → asserted **Fixture-Wrong-27**
+- `mock_images/ryann-party.jpg` → asserted **Fixture-Wrong-36**
 - ignored (triaged): 0
 
 ### Per-identity (macro components)
 
 - Bea Burke: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Caitlin Weaver: precision=1.000 recall=1.000 (tp=14 fp=0 fn=0)
+- Caitlin Weaver: precision=1.000 recall=0.786 (tp=11 fp=0 fn=3)
 - Cristina Quintana: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
 - Daniel Arce: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
 - Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
 - Erika Hansen Miller: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Kirstie Mccarrel: precision=1.000 recall=1.000 (tp=5 fp=0 fn=0)
+- Fixture-Wrong-18: precision=0.000 recall=null (tp=0 fp=1 fn=0)
+- Fixture-Wrong-27: precision=0.000 recall=null (tp=0 fp=1 fn=0)
+- Fixture-Wrong-36: precision=0.000 recall=null (tp=0 fp=1 fn=0)
+- Fixture-Wrong-9: precision=0.000 recall=null (tp=0 fp=1 fn=0)
+- Kirstie Mccarrel: precision=1.000 recall=0.800 (tp=4 fp=0 fn=1)
 - Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
-- Maria Correonero: precision=1.000 recall=1.000 (tp=7 fp=0 fn=0)
-- Ryann Wiseman: precision=1.000 recall=1.000 (tp=3 fp=0 fn=0)
+- Maria Correonero: precision=1.000 recall=0.714 (tp=5 fp=0 fn=2)
+- Ryann Wiseman: precision=1.000 recall=0.667 (tp=2 fp=0 fn=1)
 
 ## Per-item failures
 
 - none
+
+## Coverage gaps (sampling frame — AUDIT-07)
+
+Face metrics in this freeze are **non-evidential** (predictions_source=ground_truth_derived_fixture; face_metrics_evidential=false).
+This artifact certifies scoring-path byte-stability only.
+
+- `demographic_cohort`: 0/37 entries populate it (threshold=5) — demographic/cohort fairness slices have no sampling frame
+- `face_boxes`: 0/37 entries populate it (threshold=5) — positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces
+- `reference_facts`: 0/37 entries populate it (threshold=5) — no trap coverage for fabricated-fact scoring (rate is undefined)
+- `spatial_facts`: 0/37 entries populate it (threshold=5) — placement accuracy is vacuous (0 asserted claims)
+
+### Metric-backing refusals (require_metric_backing)
+
+- `demographic_cohort`: cannot certify metric backed by 'demographic_cohort': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.
+- `face_boxes`: cannot certify metric backed by 'face_boxes': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — phrase_boxes.json has centers only for 6 scenes and is not a substitute.
+- `reference_facts`: cannot certify metric backed by 'reference_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.
+- `spatial_facts`: cannot certify metric backed by 'spatial_facts': 0/37 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author spatial relations from curated boxes — no box geometry is vendored for the full corpus.

@@ -429,12 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         "--live-head-sha",
         default=None,
         help="real 40-char git SHA for provenance.head_sha when --no-pin. "
-        "Always verified via git rev-parse --verify <sha>^{commit} when a git "
-        "binary is available; refuses empty string, forty zeros, non-hex, and "
-        "format-valid hex that is not a resolvable commit. Degrades to "
-        "format-only only when the git binary is missing (FileNotFoundError/"
-        "ENOENT) — never when git is present but unhappy (VLM6-R2-D-01/02; "
-        "RV2-04 / RV2-05 / S4-06 / RV3-05 / rg-006 / rg-015)",
+        "Always verified via git rev-parse --verify <sha>^{commit} against the "
+        "pinned worktree (env overrides scrubbed; system git preferred). "
+        "Refuses empty string, forty zeros, non-hex, format-valid hex that is "
+        "not a resolvable commit, and any case where git cannot verify "
+        "(missing binary, foreign GIT_DIR, impostor git) — never silent "
+        "format-only accept (VLM6-R2-D-01/02; wE2 refuse-uniform; "
+        "RV2-04 / RV2-05 / S4-06 / RV3-05 / rg-006 / rg-015 / S2-07)",
     )
     parser.add_argument(
         "--live-started-at",

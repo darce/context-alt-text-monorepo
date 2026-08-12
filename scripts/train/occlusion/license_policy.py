@@ -46,20 +46,46 @@ disagreeing with component-level exception/deny outcomes.
 **Exception allowlist** (``PACKAGE_EXCEPTION_ALLOWLIST``): distinct-lineage
 packages whose names overlap the YOLO naming surface (Megvii YOLOX, hustvl
 YOLOS / YOLOP, megvii-model YOLOF). Exception seeds use the **same**
-structural rules with **bounded admit** semantics (FIR-7-B6-01):
+structural rules with **bounded admit** semantics (FIR-7-B6-01 / B7-01):
 
   1. longest exception-family seed hit on the component;
   2. strip that seed (canonical boundary form or compact prefix; exact →
      empty residual);
-  3. re-run the DENY family scan on the residual as a whole token under
-     rules (a)-(d);
-  4. residual deny hit → component DENIES with the residual seed's entry;
+  3. re-scan the residual for DENY via **segment-aligned suffixes**
+     longest-first (FIR-7-B7-01; see below);
+  4. residual deny hit → component DENIES with the residual seed's entry
+     (NC-weights entries keep ``nc_model_derived`` — FIR-7-B7-03);
      empty residual or no residual deny → component admitted.
 
 So ``yolox`` / ``yolox_s`` / ``yolos`` admit (empty or clean residual), while
-``yolox_ultralytics`` / ``yolos_yolov8`` DENY (residual hits ultralytics /
-yolov8). An unbounded exception short-circuit that admitted the whole
-component without residual re-scan was an admit bypass — fail-closed.
+``yolox_ultralytics`` / ``yolos_yolov8`` / ``yolox_s_ultralytics`` DENY
+(residual suffix hits ultralytics / yolov8). An unbounded exception
+short-circuit that admitted the whole component without residual re-scan
+was an admit bypass — fail-closed. Whole-residual-only re-scan (Wave F3)
+still missed size/task/export tags that shield a trailing deny seed
+(``s_ultralytics`` after stripping ``yolox``); suffix scan closes that.
+
+**Residual segment-suffix scan** (FIR-7-B7-01): given residual R
+(canonical, underscore-separated), iterate separator-aligned **suffixes**
+from longest to shortest (R itself, then drop the leading segment,
+repeat). For each suffix S, apply the same component precedence as the
+outer path:
+
+  * **exception-family hit on S** → strip that exception seed from S and
+    **recurse** on the new residual (bounded: each strip consumes ≥1
+    segment or a compact remainder, so residual length strictly shrinks
+    and recursion depth ≤ segment count; no infinite loop). Empty residual
+    after strip → admit (do not fall through to bare-``yolo`` compact deny
+    on names like ``yolox`` / ``yolop``);
+  * else **DENY family hit on S** (rules (a)-(d)) → component DENIES with
+    S's entry;
+  * no hit on any suffix → residual clean → component admitted.
+
+Double-exception compounds ``yolop_yolox`` / ``yolox_yolop`` therefore
+ADMIT: strip the first exception, residual is itself an exception seed,
+strip → empty. Both are genuinely permissive hustvl/Megvii lineages;
+Wave F3 falsely denied them via bare-``yolo`` compact remainder on the
+residual (policy correction FIR-7-B7-06).
 
 **NC-weights deny axis** (FIR-7-A6-03): Deci YOLO-NAS (``yolo_nas`` /
 ``yolonas``) is a **deny** seed, not an exception. Code is Apache-2.0 but
@@ -336,8 +362,71 @@ _PINNED_NC_MODEL_IDS: frozenset[str] = frozenset(
         "arcface",
         "antelopev2",
         "insightface",
+        # Deci YOLO-NAS real weight variants (FIR-7-A7-01). Package-floor
+        # structural match already denies yolo_nas_* compounds; pin the
+        # weights-lineage doors (derived_from_model / source) to the same
+        # real Deci size/pose set buffalo already has for its packs.
+        "yolo_nas_s",
+        "yolo_nas_m",
+        "yolo_nas_l",
+        "yolo_nas_pose_n",
+        "yolo_nas_pose_s",
+        "yolo_nas_pose_m",
+        "yolo_nas_pose_l",
     }
 )
+
+# Per-entry NC lineage notes for audit detail text (FIR-7-B7-04).
+# ``audit_derived_from_model`` interpolates the matched id + this note so
+# each NC rejection names its own lineage (buffalo keeps historical
+# wording; yolo_nas gets honest Deci NC-weights text — never cross-talk).
+_NC_MODEL_DETAIL_NOTES: dict[str, str] = {
+    "buffalo": "buffalo weights and output-derived data are banned",
+    "buffalo_s": "buffalo weights and output-derived data are banned",
+    "buffalo_sc": "buffalo weights and output-derived data are banned",
+    "buffalo_l": "buffalo weights and output-derived data are banned",
+    "buffalo_l2": "buffalo weights and output-derived data are banned",
+    "insightface": "buffalo weights and output-derived data are banned",
+    "retinaface": (
+        "InsightFace RetinaFace weights and output-derived data are banned"
+    ),
+    "arcface": "InsightFace ArcFace weights and output-derived data are banned",
+    "antelopev2": (
+        "InsightFace antelopev2 weights and output-derived data are banned"
+    ),
+    "yolo_nas": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_s": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_m": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_l": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_pose_n": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_pose_s": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_pose_m": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "yolo_nas_pose_l": (
+        "Deci YOLO-NAS pretrained weights are non-commercial "
+        "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+}
 
 # Explicit NC forms that must fail but are not a single common-suffix hop from
 # a seed (multi-segment InsightFace pack / backbone tags).
@@ -423,8 +512,9 @@ class PackageExceptionEntry:
     Exception seeds use the same structural family-boundary rules as deny
     seeds (exact / separator-boundary prefix / bounded compact remainder /
     head-segment) but with **bounded admit** semantics: an exception hit
-    strips the exception seed and re-runs the DENY family scan on the
-    residual (rules (a)-(d)). A residual deny hit DENIES the component; an
+    strips the exception seed and re-scans the residual via separator-
+    aligned suffixes (exception-first recurse, then DENY rules (a)-(d) —
+    FIR-7-B6-01 / B7-01). A residual deny hit DENIES the component; an
     empty residual or residual with no deny hit admits. Other floors still
     apply after an admit.
     """
@@ -781,12 +871,15 @@ PACKAGE_DENYLIST: dict[str, PackageDenylistEntry] = {
 # Distinct-lineage packages whose names overlap the YOLO surface but are NOT
 # Ultralytics/AGPL and are not on an NC-weights deny axis. Matched with the
 # same structural family rules as deny seeds, with **bounded admit** semantics
-# (FIR-7 Wave F3): exception-family hit → strip seed → residual DENY re-scan;
-# residual deny → component DENIES; empty/clean residual → admit so other
-# floors continue. Size / task / export variants of an exception seed with a
-# clean residual also admit (``yolox_s``, ``yolos_tiny``) — exceptions are
-# family seeds, not bare exact pins. Compounds that glue a deny seed after an
-# exception seed (``yolox_ultralytics``) DENY via residual re-scan.
+# (FIR-7 Wave F3/F4): exception-family hit → strip seed → residual DENY
+# re-scan via segment-aligned suffixes (FIR-7-B7-01); residual deny →
+# component DENIES; empty/clean residual → admit so other floors continue.
+# Size / task / export variants of an exception seed with a clean residual
+# also admit (``yolox_s``, ``yolos_tiny``) — exceptions are family seeds, not
+# bare exact pins. Compounds that glue a deny seed after an exception seed
+# (``yolox_ultralytics``, ``yolox_s_ultralytics``) DENY via residual suffix
+# re-scan. Double-exception compounds (``yolop_yolox``) admit after recursive
+# exception strip (FIR-7-B7-06).
 PACKAGE_EXCEPTION_ALLOWLIST: dict[str, PackageExceptionEntry] = {
     "yolox": PackageExceptionEntry(
         package_id="yolox",
@@ -1376,6 +1469,49 @@ def match_nc_model_pattern(derived_from_model: str) -> str | None:
     if c is None:
         return None
     return _membership_hit(c, _live_nc_expanded())
+
+
+def _nc_detail_lineage_note(matched: str) -> str:
+    """Per-entry NC lineage note for audit detail (FIR-7-B7-04).
+
+    Resolves ``matched`` (from :func:`match_nc_model_pattern`) to the longest
+    covering seed in ``_NC_MODEL_DETAIL_NOTES`` so buffalo rejections keep
+    their historical wording and yolo_nas rejections carry Deci NC-weights
+    text — never another entry's boilerplate.
+    """
+    if not matched:
+        return "non-commercial weights and output-derived data are banned"
+    c = canonical(matched) or matched
+    compact = _compact_canonical(c)
+    best_key = ""
+    best_note = ""
+    for seed, note in _NC_MODEL_DETAIL_NOTES.items():
+        seed_c = canonical(seed) or seed
+        seed_k = _compact_canonical(seed_c)
+        if c == seed_c or compact == seed_k:
+            if len(seed_k) >= len(_compact_canonical(best_key) if best_key else ""):
+                best_key = seed_c
+                best_note = note
+            continue
+        # Separated or compact prefix covering (yolo_nas_m → yolo_nas).
+        if c.startswith(seed_c + "_") or (
+            seed_k and compact.startswith(seed_k) and len(compact) > len(seed_k)
+        ):
+            if len(seed_k) > len(_compact_canonical(best_key) if best_key else ""):
+                best_key = seed_c
+                best_note = note
+    if best_note:
+        return best_note
+    # PACKAGE_DENYLIST NC entry notes as a secondary source (package_id seeds).
+    for key, entry in PACKAGE_DENYLIST.items():
+        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
+            continue
+        seed_c = canonical(key) or key
+        seed_k = _compact_canonical(seed_c)
+        if c == seed_c or compact == seed_k or c.startswith(seed_c + "_"):
+            if entry.notes:
+                return entry.notes
+    return "non-commercial weights and output-derived data are banned"
 
 
 def _looks_like_research_source(value: str) -> bool:
@@ -2190,11 +2326,14 @@ def _reject_non_string(
 # Branch enable flags (always True in production). Tests red-prove each branch
 # by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
 # admit; disable (c) → yolov9t admits; disable (d) → yolov9t-seg admits;
-# disable residual re-scan → yolox_ultralytics admits (exception short-circuit).
+# disable residual re-scan → yolox_ultralytics admits (exception short-circuit);
+# disable residual suffix scan → yolox_s_ultralytics / yolox_s_buffalo_l admit
+# (size-tag shield class; Wave F3 only covered residual-leading deny seeds).
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
 _EXCEPTION_RESIDUAL_RESCAN_ENABLED: bool = True
+_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
 _BOUNDED_COMPACT_REMAINDER = re.compile(r"^[a-z0-9]{1,3}$")
@@ -2298,9 +2437,16 @@ def _family_match_seed(
     return False
 
 
-def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
-    """Longest-matching family seed entry for ``token``, or None."""
-    best: Any | None = None
+def _best_family_seed_match(
+    token: str,
+    mapping: Mapping[str, Any],
+) -> tuple[str, str, Any] | None:
+    """Longest-matching family seed triple ``(seed_c, seed_k, entry)``, or None.
+
+    Shared ranking fold for deny hits and exception residual strips
+    (FIR-7-A7-04): rank by ``(len(compact), len(canonical))`` descending.
+    """
+    best: tuple[str, str, Any] | None = None
     best_key: tuple[int, int] = (-1, -1)
     for seed_c, seed_k, entry in _iter_family_seeds(mapping):
         if not _family_match_seed(token, seed_c, seed_k):
@@ -2308,8 +2454,16 @@ def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
         rank = (len(seed_k), len(seed_c))
         if rank > best_key:
             best_key = rank
-            best = entry
+            best = (seed_c, seed_k, entry)
     return best
+
+
+def _best_family_hit(token: str, mapping: Mapping[str, Any]) -> Any | None:
+    """Longest-matching family seed entry for ``token``, or None."""
+    matched = _best_family_seed_match(token, mapping)
+    if matched is None:
+        return None
+    return matched[2]
 
 
 def _strip_exception_seed_residual(
@@ -2320,9 +2474,10 @@ def _strip_exception_seed_residual(
     """Strip a matched exception seed from ``token``; return residual.
 
     Empty residual means exact seed match (admit, no re-scan). Non-empty
-    residual is a whole token (canonical segments rejoined) for deny rules
-    (a)-(d). Prefer canonical boundary strip; fall back to compact-prefix
-    strip, then head-segment strip.
+    residual is a whole token (canonical segments rejoined) for residual
+    suffix re-scan. Prefer canonical boundary strip, then bounded compact
+    remainder, then head-segment strip. Only structural match shapes are
+    stripped — no unbounded compact-prefix fallback (FIR-7-A7-04).
     """
     if not token or not seed_c:
         return ""
@@ -2363,11 +2518,6 @@ def _strip_exception_seed_residual(
                     if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                         return f"{rem}_{rest}" if rest else rem
 
-    # Compact-prefix fallback for any remaining compact-matched form.
-    if seed_k and token_compact.startswith(seed_k):
-        rem = token_compact[len(seed_k) :]
-        if rem:
-            return rem
     return ""
 
 
@@ -2375,34 +2525,76 @@ def _best_exception_hit_with_residual(
     token: str,
 ) -> tuple[Any, str] | None:
     """Longest exception-family seed hit and its residual, or None."""
-    best_entry: Any | None = None
-    best_key: tuple[int, int] = (-1, -1)
-    best_seed_c = ""
-    best_seed_k = ""
-    for seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_EXCEPTION_ALLOWLIST):
-        if not _family_match_seed(token, seed_c, seed_k):
-            continue
-        rank = (len(seed_k), len(seed_c))
-        if rank > best_key:
-            best_key = rank
-            best_entry = entry
-            best_seed_c = seed_c
-            best_seed_k = seed_k
-    if best_entry is None:
+    matched = _best_family_seed_match(token, PACKAGE_EXCEPTION_ALLOWLIST)
+    if matched is None:
         return None
-    residual = _strip_exception_seed_residual(token, best_seed_c, best_seed_k)
-    return best_entry, residual
+    seed_c, seed_k, entry = matched
+    residual = _strip_exception_seed_residual(token, seed_c, seed_k)
+    return entry, residual
+
+
+def _residual_suffix_deny_scan(residual: str) -> PackageDenylistEntry | None:
+    """Scan residual via separator-aligned suffixes + recursive exception strip.
+
+    FIR-7-B7-01: after an exception seed is stripped, the residual may still
+    carry a leading size/task/export tag that shields a trailing deny seed
+    under whole-token rules (a)-(d) (e.g. ``s_ultralytics``). Iterate
+    suffixes longest-first; on each suffix apply component precedence
+    (exception-family first, then DENY). Exception strip recurses with a
+    strict length shrink bound (depth ≤ segment count).
+
+    Double-exception residuals (``yolox`` after stripping ``yolop`` from
+    ``yolop_yolox``) admit after recursive strip → empty, rather than
+    falling through to bare-``yolo`` compact deny (FIR-7-B7-06).
+    """
+    if not residual:
+        return None
+    segments = residual.split("_")
+    for i in range(len(segments)):
+        suffix = "_".join(segments[i:])
+        if not suffix:
+            continue
+        # Exception-first (same precedence as the outer component path).
+        exc = _best_exception_hit_with_residual(suffix)
+        if exc is not None:
+            _entry, new_residual = exc
+            if not new_residual:
+                # Pure exception seed → admit this residual path.
+                return None
+            # Bound: each strip must strictly shrink the token.
+            if len(new_residual) >= len(suffix):
+                return None
+            return _residual_suffix_deny_scan(new_residual)
+        deny = _best_family_hit(suffix, PACKAGE_DENYLIST)
+        if deny is not None:
+            return deny  # type: ignore[no-any-return]
+    return None
+
+
+def _residual_deny_scan(residual: str) -> PackageDenylistEntry | None:
+    """DENY re-scan on an exception residual (Wave F3 / F4).
+
+    When ``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED`` is True (production),
+    use segment-aligned suffix scan (FIR-7-B7-01). When False, whole-token
+    residual only (Wave F3 behaviour) so red-proofs can neuter the suffix
+    branch independently — size-tag shields then admit.
+    """
+    if not residual:
+        return None
+    if _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED:
+        return _residual_suffix_deny_scan(residual)
+    return _best_family_hit(residual, PACKAGE_DENYLIST)  # type: ignore[no-any-return]
 
 
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F3).
+    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F4).
 
     Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space).
     When ``/`` is present, test **only** slash components (never the joined
     full token — FIR-7-A6-02). Each component is matched against
     exception-family seeds first (bounded admit: strip seed, re-scan residual
-    against DENY — FIR-7-B6-01) then deny-family seeds. A component hits a
-    family seed under any of:
+    via segment-aligned suffixes — FIR-7-B6-01 / B7-01) then deny-family
+    seeds. A component hits a family seed under any of:
 
       (a) exact folded/compact match;
       (b) separator-boundary prefix (``seed_`` + rest);
@@ -2410,10 +2602,11 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
       (d) head-segment (leading segment hits via (a) or (c)).
 
     ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` /
-    ``yolox_ultralytics`` deny; ``yolodummy`` / ``myyolo`` / pure
-    exception-family tokens (``yolox``, ``yolos``) do not. Empty / None
-    canonical → no denylist hit (doors treat empty/None as ``invalid_row``
-    separately — FIR-7-B4-01 / B5-04).
+    ``yolox_ultralytics`` / ``yolox_s_ultralytics`` deny; ``yolodummy`` /
+    ``myyolo`` / pure exception-family tokens (``yolox``, ``yolos``,
+    ``yolop_yolox``) do not. Empty / None canonical → no denylist hit
+    (doors treat empty/None as ``invalid_row`` separately —
+    FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:
@@ -2431,17 +2624,18 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
         if cand in seen:
             continue
         seen.add(cand)
-        # Bounded exception: strip seed → residual deny re-scan (FIR-7-B6-01).
-        # Residual deny hit → component DENIES with that residual seed's entry.
-        # Empty residual / no residual deny → admit this component; keep
-        # scanning other path components (ultralytics/yolox still denies).
+        # Bounded exception: strip seed → residual deny re-scan (FIR-7-B6-01
+        # / B7-01). Residual deny hit → component DENIES with that residual
+        # seed's entry (NC axis preserved — B7-03). Empty residual / no
+        # residual deny → admit this component; keep scanning other path
+        # components (ultralytics/yolox still denies).
         exc = _best_exception_hit_with_residual(cand)
         if exc is not None:
             _exc_entry, residual = exc
             if residual and _EXCEPTION_RESIDUAL_RESCAN_ENABLED:
-                residual_deny = _best_family_hit(residual, PACKAGE_DENYLIST)
+                residual_deny = _residual_deny_scan(residual)
                 if residual_deny is not None:
-                    return residual_deny  # type: ignore[no-any-return]
+                    return residual_deny
             continue
         hit = _best_family_hit(cand, PACKAGE_DENYLIST)
         if hit is not None:
@@ -2630,11 +2824,12 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
     # NC ban first (reason precedence for InsightFace family).
     matched = match_nc_model_pattern(text)
     if matched is not None:
+        lineage = _nc_detail_lineage_note(matched)
         return _fail(
             RejectionReason.NC_MODEL_DERIVED,
             detail=(
                 f"derived_from_model={text!r} matches non-commercial pattern "
-                f"{matched!r}; buffalo weights and output-derived data are banned"
+                f"{matched!r}; {lineage}"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )

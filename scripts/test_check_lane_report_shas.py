@@ -471,6 +471,36 @@ def test_cyrillic_homoglyph_sha_fails_loudly(report_dir: Path) -> None:
     assert "citation(s) resolved" not in proc.stdout
 
 
+def test_homoglyph_detection_is_unconditional_not_vocab_gated(report_dir: Path) -> None:
+    """VLM6-R2-G-03 / TEST-15: homoglyph runs are examined on every line.
+
+    Vocabulary must not gate detection. The Cyrillic-с variant of c9f7c6e must
+    fail closed even when the surrounding prose has no commit vocabulary (and
+    even when the line only contains 'HEAD', which is not in the vocab set).
+    """
+    # с = U+0441, е = U+0435  → renders like c9f7c6e
+    sha = "\u04419f7\u04416\u0435"
+    cases = [
+        ("vocab.md", f"Sandbox base was {sha}."),
+        ("no_vocab.md", f"Work landed under {sha} in the throwaway clone."),
+        ("head_only.md", f"The lane worktree HEAD was {sha} at the time of the run."),
+    ]
+    for name, body in cases:
+        path = _write(report_dir / f"g03_{name}", body + "\n")
+        rel = str(path.relative_to(REPO_ROOT))
+        proc = _run_guard(rel)
+        assert proc.returncode != 0, (
+            f"homoglyph must fail closed without vocab gate; body={body!r} "
+            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        )
+        combined = (proc.stdout + proc.stderr).lower()
+        assert (
+            "homoglyph" in combined
+            or "lookalike" in combined
+            or "non-ascii" in combined
+        ), f"expected homoglyph signal for body={body!r}; got {combined!r}"
+
+
 # ---------------------------------------------------------------------------
 # RV4-04 / RV4-06 — default walk must match staged depth (recursive)
 # ---------------------------------------------------------------------------

@@ -31,9 +31,12 @@ require a digest **shape**, not just an adjacent label (RV4-02):
 
 Unicode evasion (RV4-03 / VLM6-R2-G-03): each line is NFKC-normalised and Cf
 (format) characters (soft hyphen, ZWSP, …) are stripped before scanning.
-Homoglyph / confusable hex-lookalike runs are examined on **every** line
-unconditionally — commit vocabulary may annotate context but never gates
-whether a lookalike SHA is reported.
+Markdown emphasis markers interior to hex runs (``dead*beef*1234``) are
+collapsed so the raw tokenizer sees the rendered token (RF-11). Homoglyph /
+confusable hex-lookalike runs are examined on **every** line unconditionally —
+commit vocabulary may annotate context but never gates whether a lookalike SHA
+is reported. Both the ASCII and homoglyph paths honour nearest-token
+``sha-guard:ignore`` (RF-07).
 
 HTML comments are **not** a skip channel (S5-01). Unresolvable hex inside
 ``<!-- ... -->`` fails the same way as visible prose. Foreign SHAs that
@@ -42,7 +45,14 @@ scoped to the nearest token (S5-07), or — for fenced verbatim output — an
 ``sha-guard:ignore-next-block`` directive on the line **immediately before**
 the fence opener (blank lines allowed; intervening non-blank content resets
 pending suppression — VLM6-R2-G-05 / HARM-08). An unclosed ``<!--`` is a hard
-violation (S5-02).
+violation (S5-02). An unclosed fenced block is likewise a hard violation
+(RF-08) — a suppressor that never ends must not silently pass.
+
+Default walk prunes vendored / cache directory names (``.venv``,
+``node_modules``, …) before enumerating markdown (RF-09). A default walk that
+finds zero lane reports exits non-zero rather than claiming a vacuous pass
+(RF-10); ``--scan-staged`` with an empty index still reports "nothing to check"
+and exits 0 (nothing staged is a legitimate empty sample).
 
 Usage:
     scripts/check_lane_report_shas.py [path ...]   # default: **/.s2a/**/*.md
@@ -52,6 +62,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -135,34 +146,109 @@ _IGNORE_NEXT_BLOCK_RE = re.compile(
 # Fence opener/closer (CommonMark-style ``` or ~~~).
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
+# Directory basenames the default walk must not descend into (RF-09).
+_PRUNE_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        "vendor",
+        "site-packages",
+        ".eggs",
+        "htmlcov",
+    }
+)
+
+# Hex run with optional interior markdown emphasis (``*`` / ``~``). Underscore is
+# intentionally excluded — it appears in identifiers like ``manifest_sha256``.
+_MD_EMPHASIS_HEX_RUN = re.compile(
+    r"(?<![0-9a-fA-F])(?:[0-9a-fA-F][*~]*){6,}[0-9a-fA-F](?![0-9a-fA-F])",
+    re.IGNORECASE,
+)
+
+
+def _collapse_md_emphasis_in_hex_runs(line: str) -> str:
+    """Collapse ``*`` / ``~`` markers that sit inside otherwise-hex runs (RF-11).
+
+    ``dead*beef*1234`` renders as ``deadbeef1234``; the tokenizer must see the
+    rendered form. Runs without emphasis markers are left unchanged. This lives
+    in the shared normaliser so every detection path (ASCII hex, ignore spans,
+    homoglyph folding) observes the same token stream.
+    """
+
+    def _repl(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "*" not in raw and "~" not in raw:
+            return raw
+        collapsed = re.sub(r"[*~]+", "", raw)
+        if 7 <= len(collapsed) <= 40 and re.fullmatch(r"[0-9a-fA-F]+", collapsed, re.I):
+            return collapsed
+        return raw
+
+    return _MD_EMPHASIS_HEX_RUN.sub(_repl, line)
+
 
 def _normalize_scan_line(line: str) -> str:
-    """NFKC-normalise and strip Cf (format) chars so soft-hyphen / ZWSP cannot hide hex.
+    """NFKC-normalise, strip Cf chars, collapse interior MD emphasis in hex runs.
 
     RV4-03: Markdown viewers render ``c9f7\\u00adc6e`` as ``c9f7c6e``; the guard must
-    see the same token the reader sees.
+    see the same token the reader sees. RF-11: the same rule for ``dead*beef*1234``.
     """
     nfkc = unicodedata.normalize("NFKC", line)
-    return "".join(ch for ch in nfkc if unicodedata.category(ch) != "Cf")
+    no_cf = "".join(ch for ch in nfkc if unicodedata.category(ch) != "Cf")
+    return _collapse_md_emphasis_in_hex_runs(no_cf)
 
 
-def _homoglyph_sha_runs(line: str) -> list[str]:
-    """Return 7–40 char runs that look like hex only after confusable folding.
+def _homoglyph_sha_spans(line: str) -> list[tuple[int, int, str]]:
+    """Return (start, end, original) for 7–40 char confusable hex-lookalike runs.
 
     Pure ASCII hex is handled by ``_HEX``; these are the residual lookalike cases
-    that would otherwise be invisible to the scanner (RV4-03).
+    that would otherwise be invisible to the scanner (RV4-03). Span indices align
+    with *line* (confusable fold is 1:1) so ignore-span membership is shared
+    with the ASCII path (RF-07).
     """
     if not any(ord(ch) > 127 for ch in line):
         return []
     folded = line.translate(_CONFUSABLE_TO_ASCII)
-    runs: list[str] = []
+    runs: list[tuple[int, int, str]] = []
     for match in _HEX.finditer(folded):
-        original = line[match.start() : match.end()]
+        start, end = match.start(1), match.end(1)
+        original = line[start:end]
         token = match.group(1)
         # Residual non-ASCII in the original span ⇒ confusable, not real hex.
         if original != token and any(ord(ch) > 127 for ch in original):
-            runs.append(original)
+            runs.append((start, end, original))
     return runs
+
+
+def _homoglyph_sha_runs(line: str) -> list[str]:
+    """Return original lookalike run strings (compat wrapper around spans)."""
+    return [original for _s, _e, original in _homoglyph_sha_spans(line)]
+
+
+def _hex_like_token_spans(line: str) -> list[tuple[int, int]]:
+    """ASCII hex spans plus confusable-folded lookalike spans on the same line.
+
+    Single source of candidate spans for ignore-nearest-token matching so the
+    ASCII and homoglyph detection paths cannot drift (RF-07 / RF-11 class).
+    """
+    spans: list[tuple[int, int]] = [(m.start(1), m.end(1)) for m in _HEX.finditer(line)]
+    seen: set[tuple[int, int]] = set(spans)
+    for start, end, _original in _homoglyph_sha_spans(line):
+        if (start, end) not in seen:
+            spans.append((start, end))
+            seen.add((start, end))
+    return spans
 
 
 def _resolves(repo: Path, token: str) -> bool:
@@ -211,7 +297,11 @@ def _is_content_digest(line: str, start: int, end: int) -> bool:
 
 
 def _ignored_token_spans(line: str) -> set[tuple[int, int]]:
-    """Return hex-token spans covered by a nearest-token ``sha-guard:ignore`` (S5-07)."""
+    """Return hex-like spans covered by a nearest-token ``sha-guard:ignore`` (S5-07).
+
+    Spans include both pure ASCII hex and confusable-folded lookalikes so the
+    remediation message printed for homoglyph violations actually works (RF-07).
+    """
     markers = [m.start() for m in re.finditer(re.escape(_IGNORE_MARKER), line)]
     # Do not treat ignore-next-block as a nearest-token ignore marker.
     markers = [
@@ -223,7 +313,7 @@ def _ignored_token_spans(line: str) -> set[tuple[int, int]]:
     ]
     if not markers:
         return set()
-    tokens = [(m.start(1), m.end(1)) for m in _HEX.finditer(line)]
+    tokens = _hex_like_token_spans(line)
     if not tokens:
         return set()
     ignored: set[tuple[int, int]] = set()
@@ -339,7 +429,10 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
 
         # Homoglyph SHAs: examine every line unconditionally (VLM6-R2-G-03).
         # Commit vocabulary annotates context only — never gates detection.
-        for run in _homoglyph_sha_runs(line):
+        # Nearest-token ignore applies here too (RF-07) — same remediation as ASCII.
+        for start, end, run in _homoglyph_sha_spans(line):
+            if (start, end) in ignored:
+                continue
             vocab_note = (
                 " adjacent to commit vocabulary"
                 if _COMMIT_VOCAB.search(line)
@@ -355,6 +448,13 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
     if in_block_comment:
         violations.append(
             f"{rel}: unclosed HTML comment — refusing to claim SHA citations resolve "
+            f"for a partially scanned file"
+        )
+    # RF-08: unclosed fence (with or without ignore-next-block) must not silently
+    # suppress the rest of the file and exit 0. Mirror the unclosed-comment rule.
+    if in_fence:
+        violations.append(
+            f"{rel}: unclosed fenced block — refusing to claim SHA citations resolve "
             f"for a partially scanned file"
         )
     return violations, tokens_checked
@@ -386,21 +486,37 @@ def _default_report_paths(repo: Path) -> list[Path]:
     Shared implementation with ``--scan-staged`` (rg-006 / VLM6-R2-G-04): a
     hand-maintained glob list (``.s2a/**/*.md`` + ``*/.s2a/**/*.md``) cannot
     reach arbitrary depth above ``*`` and drifts from the staged predicate.
+
+    Prunes known vendored / cache directory basenames during traversal (RF-09)
+    so ``.venv`` / ``node_modules`` / etc. are never scanned as lane reports.
     """
     seen: set[Path] = set()
     out: list[Path] = []
-    for path in sorted(repo.rglob("*.md")):
-        try:
-            rel = path.relative_to(repo).as_posix()
-        except ValueError:
-            continue
-        if not _is_lane_report_relpath(rel):
-            continue
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        out.append(path)
+    repo = repo.resolve()
+    for dirpath, dirnames, filenames in os.walk(repo, topdown=True):
+        # In-place prune: prevent descent into vendored / cache trees.
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in _PRUNE_DIR_NAMES and not d.endswith(".egg-info")
+        )
+        base = Path(dirpath)
+        for name in sorted(filenames):
+            if not name.endswith(".md"):
+                continue
+            path = base / name
+            try:
+                rel = path.relative_to(repo).as_posix()
+            except ValueError:
+                continue
+            if not _is_lane_report_relpath(rel):
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            out.append(path)
+    out.sort()
     return out
 
 
@@ -436,6 +552,18 @@ def main(argv: list[str] | None = None) -> int:
         # S5-04 / AUDIT-07: never claim resolution over an empty sample.
         print("0 staged lane reports; nothing to check")
         return 0
+
+    if not args.scan_staged and not args.paths and not targets:
+        # RF-10: default walk with zero targets is a vacuous pass if exit 0 —
+        # unlike an empty staged index (legitimate), finding no lane reports at
+        # all means the walk/predicate regressed or CI invoked us in the wrong
+        # tree. Fail closed with an explicit honesty message.
+        print(
+            "0 lane reports found by default walk; nothing to check — "
+            "refusing to claim success over an empty sample",
+            file=sys.stderr,
+        )
+        return 1
 
     violations: list[str] = []
     checked = 0

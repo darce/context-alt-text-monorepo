@@ -3686,3 +3686,192 @@ def test_public_scrubs_case_and_slug_identity_variants():  # RV4-05 / TEST-15
     pub_out = next(r for r in redacted["per_image"] if r["media_id"] == 10)
     assert pub_out["path"] == "media_id:10"
     assert pub_out["short_error"] in ("<redacted>", "<error>")
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 Wave D / lane wd-A — ordering disclosure + detection sampling frame
+# ---------------------------------------------------------------------------
+
+
+def _ordering_disclosure_pair() -> tuple[dict, list[dict]]:
+    """One image with order_degraded GT + one fully-coordinated sibling.
+
+    Image 1: cx1 G-01 mixed y (A/B real y, C missing y) → order_degraded=True.
+    Image 2: both named boxes carry x+y → order_degraded=False.
+    Aggregate labeled_y_missing_images must be 1, not 0/2, and must not fold
+    into degraded_images (predicted stamp is positional on both).
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "/ops/private/lane-wda/group-y-missing.jpg",
+                "describe": {
+                    "alt_text_draft": "Three people stand together.",
+                    "visual_facts": {"caption": "people", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "C",
+                        "bbox": {"x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 3,
+                "identity_ordering": "positional",
+                "error": None,
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/full-coords.jpg",
+                "describe": {
+                    "alt_text_draft": "Two people stand together.",
+                    "visual_facts": {"caption": "people", "objects": []},
+                    "adapter": "seeded",
+                    "model_id": "seeded-fixtures",
+                    "model_version": "1",
+                    "cached": False,
+                },
+                "identities": [
+                    {
+                        "name": "D",
+                        "bbox": {"x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "/ops/private/lane-wda/group-y-missing.jpg",
+            "media_id": 1,
+            "face_count": 3,
+            "present_identities": ["A", "B", "C"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"x": 0.5, "y": 0.9, "w": 0.1, "h": 0.1, "name": "A"},
+                {"x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1, "name": "B"},
+                {"x": 0.2, "y": None, "w": 0.1, "h": 0.1, "name": "C"},
+            ],
+            "provenance": {"source": "operator", "license": "consented", "publishable": False},
+        },
+        {
+            "path": "celebs01/full-coords.jpg",
+            "media_id": 2,
+            "face_count": 2,
+            "present_identities": ["D", "E"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.1, "name": "D"},
+                {"x": 0.8, "y": 0.4, "w": 0.1, "h": 0.1, "name": "E"},
+            ],
+            "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+        },
+    ]
+    return record, entries
+
+
+def test_labeled_y_missing_images_aggregates_order_degraded():  # VLM6-R2-G-01 / wd-A
+    """Report must aggregate labeled_order.order_degraded into its own counter.
+
+    TEST-15: count must be 1 for the mixed fixture (not a constant 0, not 2).
+    S2-07 / rg-015: must NOT overload degraded_images (predicted stamp).
+    """
+    from scripts.eval_harness.face_metrics import labeled_order
+
+    record, entries = _ordering_disclosure_pair()
+    # Precondition: face_boxes really trigger order_degraded on image 1 only.
+    r0 = labeled_order(entries[0]["face_boxes"])
+    r1 = labeled_order(entries[1]["face_boxes"])
+    assert r0.order_degraded is True and r0.names == ["C", "B", "A"]
+    assert r1.order_degraded is False
+
+    scored = score_run_record(record, entries)
+    ordering = scored["faces"]["identity_ordering"]
+    assert "labeled_y_missing_images" in ordering
+    assert ordering["labeled_y_missing_images"] == 1
+    assert ordering["labeled_y_missing_paths"] == ["/ops/private/lane-wda/group-y-missing.jpg"]
+    # Predicted stamp is POSITIONAL on both — do not overload degraded_*.
+    assert ordering["degraded_images"] == 0
+    assert ordering["degraded_paths"] == []
+    assert ordering["positional_images"] == 2
+
+
+def test_labeled_y_missing_paths_public_redacted():  # VLM6-R2-A-02 / wd-A Task 3
+    """labeled_y_missing_paths carries operator paths — PUBLIC must scrub them.
+
+    Private absolute path must not survive the caption PUBLIC export (same
+    contract as degraded_paths). Labeled-y-missing int counter may remain.
+    """
+    from scripts.eval_harness.report import _redact_caption_report_for_public
+
+    record, entries = _ordering_disclosure_pair()
+    local = score_run_record(record, entries)
+    leak = "/ops/private/lane-wda/group-y-missing.jpg"
+    assert leak in local["faces"]["identity_ordering"]["labeled_y_missing_paths"]
+    assert leak in json.dumps(local)
+
+    redacted = _redact_caption_report_for_public(
+        local, run_record=record, manifest_entries=entries
+    )
+    blob = json.dumps(redacted)
+    assert leak not in blob
+    assert "/ops/private" not in blob
+    # Private media is unpublished → path list drops (publishable-only keep),
+    # or collapses to media_id:N if kept. Either way no operator path survives.
+    paths = redacted["faces"]["identity_ordering"]["labeled_y_missing_paths"]
+    assert all(not (isinstance(p, str) and p.startswith("/")) for p in paths)
+    assert all("/ops/" not in str(p) for p in paths)
+    # Int counter is not a path — must survive PUBLIC (not provenance allow-list).
+    assert redacted["faces"]["identity_ordering"]["labeled_y_missing_images"] == 1
+
+
+def test_face_detection_carries_sampling_frame():  # VLM6-R2-C-02 / wd-A
+    """Face bakeoff detection object must publish sampling_frame (string).
+
+    Shape matches floor-gated slices (str protocol description). Arithmetic
+    (tp/fp/fn/precision/recall) must be unchanged by the disclosure field.
+    TEST-15: key alone is not enough — type/non-empty + arithmetic pin.
+    """
+    face_run, manifest = _face_fixture_corpus()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    det = scored["detection"]
+    assert "sampling_frame" in det
+    assert isinstance(det["sampling_frame"], str)
+    assert det["sampling_frame"]  # non-empty
+    # Same type/shape as a floor-gated slice sampling_frame.
+    hl_frame = scored["slices"]["headline_identification"]["sampling_frame"]
+    assert type(det["sampling_frame"]) is type(hl_frame) is str
+    # Provenance sampling_frames map includes detection (same dict source).
+    assert "detection" in scored["provenance"]["sampling_frames"]
+    assert scored["provenance"]["sampling_frames"]["detection"] == det["sampling_frame"]
+    # Arithmetic pin (fixture: 3 matched, 0 miss/fp) — disclosure is additive only.
+    assert det["tp"] == 3
+    assert det["fp"] == 0
+    assert det["fn"] == 0
+    assert det["precision"] == pytest.approx(1.0)
+    assert det["recall"] == pytest.approx(1.0)
+    # Population language must name the GT-box unit (operator can read the frame).
+    frame = det["sampling_frame"].casefold()
+    assert "gt" in frame or "box" in frame
+    assert "associat" in frame or "scoreable" in frame or "media" in frame

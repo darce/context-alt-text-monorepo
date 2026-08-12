@@ -11,7 +11,7 @@ Operator clearance: ``dcface_operator_clearance_20260723`` flips DCFace to
 commercial-allowed; residual FFHQ/CASIA generator lineage is disclosed in the
 informational ``generator_lineage`` field (exempt from research-source rejection).
 
-Package-identity family matching (FIR-7 Wave F / F3 / F5 structural rule)
+Package-identity family matching (FIR-7 Wave F / F3 / F5 / F6 structural rule)
 ------------------------------------------------------------------------
 ``PACKAGE_DENYLIST`` seeds are matched by a **structural family-boundary**
 rule (replaces the Wave-E size/task tag-strip treadmill, which could not
@@ -27,19 +27,12 @@ Core head-aligned rules on a token:
   (c) **bounded compact remainder**: compact token starts with the seed's
       compact form and the remainder is ``[a-z0-9]{1,3}`` (e.g. ``yolov9t``,
       ``fastsamx``, ``yolo11n``). Longer remainders (``yolodummy``) and
-      non-prefix tokens (``myyolo``) do **not** hit.
+      non-prefix tokens (``myyolo``) do **not** hit;
+  (d) **head-segment** (legacy): leading ``_``-segment hits via (a) or (c)
+      (e.g. ``yolov9t-seg``).
 
-Deny-family matching adds two generalisations (FIR-7-B8-01 / B8-03) that
-replace the old head-only rule (d):
+Deny-family matching adds one generalisation (FIR-7-B8-03):
 
-  (d') **generalised suffix rule**: a token hits a deny seed when **any**
-      separator-aligned suffix of the token hits (a)/(b)/(c) at its head,
-      or the local head-segment of that suffix hits via (a)/(c). This is
-      the single deny scanner used for both direct component checks and
-      post-exception residual checks — one code path, no mirrored logic.
-      Closes path-split shields (``yolox/s_ultralytics`` → component
-      ``s_ultralytics``) and size-tag shields (``s_ultralytics`` residual)
-      that head-only (d) missed.
   (e) **compact segment-suffix rule** (gated by
       ``_FAMILY_COMPACT_SUFFIX_ENABLED``): a single segment (or a whole
       one-segment compact token) whose compact form **ends with** a deny
@@ -49,9 +42,20 @@ replace the old head-only rule (d):
       short seeds: ``myyolo`` ends with the 4-char seed ``yolo`` and must
       still ADMIT.
 
-Exception-family matching keeps (a)/(b)/(c) plus local head-segment (the
-legacy (d) shape) for strip targeting — exception seeds are not matched
-via (d')/(e).
+Exception-family matching keeps (a)/(b)/(c)/(d) for strip targeting —
+exception seeds are not matched via (e).
+
+**No inner (d') deny walk** (FIR-7-A9-01 / A9-02 / B9-01): Wave F5's
+per-suffix deny check used an inner generalised-suffix walk that hit
+INNER ``yolox`` via bare ``yolo`` rule (c) before the outer walk's
+exception check on that suffix — over-blocking vendor-prefix exception
+forms (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
+``megvii_model_yolof``) with a false Ultralytics-AGPL note. The outer
+separator-aligned suffix walk (gated by
+``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED``) already provides
+suffix coverage, so the inner walk was redundant for deny and is
+removed. ``_FAMILY_GENERALIZED_SUFFIX_ENABLED`` is deleted (verdict-dead:
+flipping it alone changed zero path-split pins).
 
 **Component-split-first** (FIR-7-A6-02): when the canonical form contains
 ``/``, family matching runs **only** on the individual slash components —
@@ -60,7 +64,7 @@ never on the joined full token. Testing the joined form first let bare
 ``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
 disagreeing with component-level exception/deny outcomes.
 
-**Uniform component scanner** (FIR-7 Wave F5): every slash component is
+**Uniform component scanner** (FIR-7 Wave F5 / F6): every slash component is
 scanned by one iterative exception-first suffix walker:
 
   1. For each separator-aligned suffix S of the current token (longest
@@ -69,27 +73,39 @@ scanned by one iterative exception-first suffix walker:
      admit past un-scanned deny content (fixes
      ``yolox_xultralytics_yolox``); non-empty residual is queued for
      multi-strip continuation. Else DENY-family hit on S via (a)/(b)/(c)/
-     (d')/(e) → component DENIES with that entry.
+     (d)/(e) → component DENIES with that entry.
   2. Queued residuals are scanned by the **same** walker (multi-strip
      continuation). Double-exception compounds ``yolop_yolox`` /
      ``yolox_yolop`` ADMIT after successive pure-exception strips
      (FIR-7-B7-06).
 
-**Iterative fail-closed bounds** (FIR-7-B8-02 / B8-05): the walker is an
-iterative loop, not recursion. Each successful strip must strictly shrink
-total canonical length; the hard step cap equals the **initial segment
-count** of the component. Exceeding the cap or a non-shrinking strip is
-an invariant violation that DENIES with ``denylisted_package`` (detail
-names the invariant) — never admit, never raise. Compact-remainder strips
-shrink length, not necessarily segment count (``yolos_yoloxs``); the
-bound is therefore step-count ≤ initial segments, not "recursion depth ≤
-segment count".
+Vendor-prefix underscore forms of pure exception seeds
+(``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
+``megvii_model_yolof``) ADMIT: the outer walk hits the trailing exception
+suffix as pure-exception and never false-denies via bare ``yolo``.
+Path-split / size-tag shields (``yolox/s_ultralytics``, ``s_ultralytics``,
+``yolox_xultralytics``) still DENY via the outer suffix walk + (e).
 
-So ``yolox`` / ``yolox_s`` / ``yolos`` admit (empty or clean residual), while
-``yolox_ultralytics`` / ``yolos_yolov8`` / ``yolox_s_ultralytics`` /
-``yolox/s_ultralytics`` / ``yoloxultralytics`` DENY. An unbounded exception
-short-circuit that admitted the whole component without residual re-scan
-was an admit bypass — fail-closed.
+**Iterative fail-closed bounds** (FIR-7-B8-02 / B8-05 / B9-04): the walker
+is an iterative loop, not recursion. Each successful strip must strictly
+shrink total canonical length; the hard step cap equals the **initial
+segment count** of the component. Exceeding the cap or a non-shrinking
+strip is a **defensive invariant** that DENIES with ``denylisted_package``
+(detail names the invariant) — never admit, never raise. The non-shrink
+half is reachable when strip logic is wrong (or under test monkeypatch);
+the hard-cap overflow half is a defensive belt — each counted strip
+consumes ≥ 1 unit against a bound of initial segment count, so production
+inputs with correct strip helpers do not overflow. Suite probes use a
+synthetic ``max_steps`` / non-shrink fixture. Compact-remainder strips
+shrink length, not necessarily segment count (``yolos_yoloxs``); the
+bound is step-count ≤ initial segments, not "recursion depth ≤ segment
+count".
+
+So ``yolox`` / ``yolox_s`` / ``yolos`` / ``megvii_yolox`` admit (empty or
+clean residual), while ``yolox_ultralytics`` / ``yolos_yolov8`` /
+``yolox_s_ultralytics`` / ``yolox/s_ultralytics`` / ``yoloxultralytics``
+DENY. An unbounded exception short-circuit that admitted the whole
+component without residual re-scan was an admit bypass — fail-closed.
 
 **NC-weights deny axis** (FIR-7-A6-03): Deci YOLO-NAS (``yolo_nas`` /
 ``yolonas``) is a **deny** seed, not an exception. Code is Apache-2.0 but
@@ -97,25 +113,41 @@ pretrained weights are non-commercial (Deci ``LICENSE.YOLONAS.md``) — the
 same NC-weights axis already enforced for ``insightface`` / ``buffalo_l``.
 Previously listing it as an Apache-2.0 exception was a policy error.
 
-**Structural NC door matching** (FIR-7-B8-06 / B8-07): weights-lineage
-doors (``audit_derived_from_model`` / ``audit_source``) keep exact
-``NC_MODEL_IDS_EXPANDED`` membership first (BR-28 precision), then:
+**Structural NC door matching** (FIR-7-B8-06 / B8-07 / B9-02): weights-
+lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
+``NC_MODEL_IDS_EXPANDED`` membership first (BR-28 precision controls like
+``not-insightface`` / ``buffalo_bill_detector`` stay load-bearing), then:
 
-  1. progressive strip of trailing export/quant/runtime shield tags
-     (``int8``, ``onnx``, …) and re-check exact membership — closes
-     ``yolo_nas_l_int8`` / ``buffalo_l_onnx`` without prefix-overmatch on
-     ``buffalo_bill_detector`` / ``not-insightface``;
+  1. **Bounded unknown-tag strip** (order-blind, hard bound 3): strip a
+     trailing segment when it is a known export/quant/runtime tag
+     (``_NC_TRAILING_SHIELD_TAGS``, including longer names like
+     ``savedmodel``, ``coreml``, ``openvino``, ``tflite``, ``ncnn``,
+     ``rknn``, ``tensorrt``, ``trt``, …) **or** a short tag of ≤ 4
+     canonical chars; keep ≥ 1 leading segment; re-test exact membership
+     after each strip. Closes ``yolo_nas_l_trt`` / ``buffalo_l_trt`` /
+     ``yolo_nas_l_int8_trt`` (mixed order) without an open-ended tag
+     treadmill. Bound overflow stops stripping — the un-stripped token
+     admits only if its base truly is not NC.
   2. when an exception-family component is present, promote a package-floor
      ``nc_model_derived`` hit so residual NC compounds
      (``yolox_s_buffalo_l`` / ``yolox_s_yolo_nas``) reject on the derived
      door too.
+  3. **Derived/source package-floor parity** (FIR-7-B9-02): both doors
+     promote whole-component package-floor hits on the NC axis
+     (``nc_model_derived``) as well as the AGPL axis
+     (``denylisted_package`` on derived). Whole-component (not
+     suffix-only) matching preserves BR-28 ``not-insightface`` admit on
+     weights doors; NC-only seeds (``antelopev2``, ``vec2face``, …) have
+     no package-floor backstop and hold via (1) alone.
 
-Exact-set membership alone was a treadmill for open-ended export tags.
-
-**Honest lineage notes** (FIR-7-B6-02): ``yolop`` is hustvl BSD-3-Clause
-(exception); ``yolov2`` / ``yolov4`` are Darknet-era deny seeds with their
-own notes so they stop inheriting the false Ultralytics-AGPL text from bare
-``yolo``. YOLOR (WongKinYiu, GPL-3.0) remains a deny-axis seed.
+**Honest lineage notes** (FIR-7-B6-02 / B9-03): ``yolop`` is hustvl
+BSD-3-Clause (exception); ``yolov2`` / ``yolov4`` are Darknet-era deny
+seeds with their own notes so they stop inheriting the false
+Ultralytics-AGPL text from bare ``yolo``. **PP-YOLO** (``ppyolo`` /
+``ppyoloe`` / ``ppyolov2``) is Baidu PaddleDetection Apache-2.0 — an
+exception-family seed so ``ppyolov2`` is not false-denied via compact
+suffix on Darknet ``yolov2``. YOLOR (WongKinYiu, GPL-3.0) remains a
+deny-axis seed.
 
 Precedence per component: exception-family strip → residual / suffix deny
 re-scan → residual deny or direct deny-family hit → ``denylisted_package``
@@ -909,6 +941,19 @@ PACKAGE_EXCEPTION_ALLOWLIST: dict[str, PackageExceptionEntry] = {
             "(same org family as YOLOS)."
         ),
     ),
+    # Baidu PaddleDetection PP-YOLO family (ppyolo / ppyoloe / ppyolov2),
+    # Apache-2.0 — not Darknet YOLOv2. Without this seed, compact suffix (e)
+    # on deny seed ``yolov2`` false-denied ``ppyolov2`` under a Darknet note
+    # (FIR-7-B9-03). Seed ``ppyolo`` covers ppyoloe / ppyolov2 via (c).
+    "ppyolo": PackageExceptionEntry(
+        package_id="ppyolo",
+        display_name="PP-YOLO (Baidu PaddleDetection)",
+        spdx_id="Apache-2.0",
+        notes=(
+            "Baidu PaddleDetection PP-YOLO / PP-YOLOe / PP-YOLOv2, Apache-2.0; "
+            "distinct lineage from Darknet YOLOv2 and Ultralytics AGPL."
+        ),
+    ),
 }
 
 # TOOLING allowlist — diagnostic deps, not training data.
@@ -1453,10 +1498,13 @@ def _live_nc_expanded() -> frozenset[str]:
 
 
 # Trailing export / quant / runtime tags that must not shield an NC seed on
-# the weights-lineage doors (FIR-7-B8-06). Progressive strip + exact
-# re-membership keeps BR-28 precision controls (``not-insightface``,
-# ``buffalo_bill_detector``) green — full family (b)/(d')/(e) on short NC
-# seeds would over-block them.
+# the weights-lineage doors (FIR-7-B8-06 / B9-02). Known longer tags live
+# here; short tags (≤ ``_NC_STRUCTURAL_SHORT_TAG_MAX_LEN``) are stripped
+# structurally without enumeration. Progressive strip + exact re-membership
+# keeps multi-segment BR-28 controls (``buffalo_bill_detector``) green —
+# full family (b)/(e) on short NC seeds would over-block them on the
+# membership axis (package-floor NC promotion uses whole-component match
+# only so ``not-insightface`` stays clean on weights doors).
 _NC_TRAILING_SHIELD_TAGS: frozenset[str] = frozenset(
     {
         "int8",
@@ -1471,6 +1519,11 @@ _NC_TRAILING_SHIELD_TAGS: frozenset[str] = frozenset(
         "tflite",
         "openvino",
         "tensorrt",
+        "trt",
+        "coreml",
+        "ncnn",
+        "rknn",
+        "savedmodel",
         "weights",
         "pretrained",
         "pt",
@@ -1479,16 +1532,108 @@ _NC_TRAILING_SHIELD_TAGS: frozenset[str] = frozenset(
         "safetensors",
     }
 )
+# Hard bound on trailing-tag strips per token (FIR-7-B9-02). Overflow stops
+# stripping; the un-stripped head admits only if it is not NC.
+_NC_MAX_TRAILING_TAG_STRIPS: int = 3
+# Structural short-tag threshold: trailing segment of this many canonical
+# chars or fewer is treated as an export/quant/runtime tag without being
+# listed in ``_NC_TRAILING_SHIELD_TAGS``.
+_NC_STRUCTURAL_SHORT_TAG_MAX_LEN: int = 4
 
 
-def _nc_strip_trailing_shield_tags(token: str) -> str:
-    """Drop trailing export/quant tags; return the longest shielded head."""
+def _nc_is_strippable_trailing_tag(
+    segment: str,
+    *,
+    head_after: str,
+) -> bool:
+    """True when ``segment`` is a known shield tag or a short structural tag.
+
+    Structural short tags (≤ ``_NC_STRUCTURAL_SHORT_TAG_MAX_LEN``):
+
+      * digit-bearing segments (quant codes) always strip;
+      * pure-alpha short segments strip when the remaining head is
+        multi-segment (size/pose pins like ``yolo_nas_l``) **or** when the
+        segment is in ``_NC_TRAILING_SHIELD_TAGS`` (already handled above).
+
+    Pure-alpha short tags on a single-segment head (``insightface_free``,
+    ``arcface_mit``, ``buffalos_eye``) do **not** strip — that keeps BR-28
+    name-continuation controls green while still unwrapping
+    ``yolo_nas_l_trt`` (known tag) and ``yolo_nas_l_x`` (short on
+    multi-segment head).
+    """
+    if not segment:
+        return False
+    if segment in _NC_TRAILING_SHIELD_TAGS:
+        return True
+    if len(segment) > _NC_STRUCTURAL_SHORT_TAG_MAX_LEN:
+        return False
+    if any(ch.isdigit() for ch in segment):
+        return True
+    # Pure-alpha short: only on multi-segment remaining heads.
+    return bool(head_after) and "_" in head_after
+
+
+def _nc_iter_stripped_heads(token: str) -> list[str]:
+    """Successive heads after each trailing-tag strip (≤ bound), longest first.
+
+    Order-blind within the bound: ``int8_trt``, ``trt_int8``, and
+    ``fp16_onnx_trt`` all unwrap. A trailing segment strips when it is in
+    ``_NC_TRAILING_SHIELD_TAGS``, digit-bearing and ≤ 4 chars, or
+    pure-alpha ≤ 4 chars with a multi-segment remaining head. Always
+    keeps ≥ 1 leading segment. Fail-closed on bound overflow (stops
+    stripping). Used by :func:`match_nc_model_pattern` to re-test exact
+    NC membership after every strip (FIR-7-B9-02).
+    """
     if not token or "_" not in token:
-        return token
+        return []
     parts = token.split("_")
-    while len(parts) > 1 and parts[-1] in _NC_TRAILING_SHIELD_TAGS:
+    heads: list[str] = []
+    strips = 0
+    while len(parts) > 1 and strips < _NC_MAX_TRAILING_TAG_STRIPS:
+        head_after = "_".join(parts[:-1])
+        if not _nc_is_strippable_trailing_tag(parts[-1], head_after=head_after):
+            break
         parts.pop()
-    return "_".join(parts)
+        strips += 1
+        heads.append("_".join(parts))
+    return heads
+
+
+def _nc_covering_seed_for_head(head: str) -> str | None:
+    """Longest base NC seed covering ``head`` exactly or export-shaped rest.
+
+    Used after bounded tag-strip so a residual like ``yolo_nas_l_int8``
+    (not itself in the expanded set) still resolves to ``yolo_nas_l`` when
+    the 3-tag bound leaves unstripped export debris. ``seed_`` + rest is
+    accepted only when ``rest`` is export-shaped (known/quant tags) so
+    name-continuations like ``arcface_alternative`` stay clean (BR-28).
+    """
+    if not head:
+        return None
+    live = NC_MODEL_IDS
+    best: str | None = None
+    best_len = -1
+    head_k = _compact_canonical(head)
+    for seed in live:
+        sc = canonical(str(seed))
+        if not sc:
+            continue
+        if head == sc or (
+            "_" not in sc and head_k and head_k == _compact_canonical(sc)
+        ):
+            if len(sc) > best_len:
+                best = sc
+                best_len = len(sc)
+            continue
+        boundary = sc + "_"
+        if head.startswith(boundary) and len(head) > len(boundary):
+            rest = head[len(boundary) :]
+            if not _nc_package_rest_is_export_shaped(rest):
+                continue
+            if len(sc) > best_len:
+                best = sc
+                best_len = len(sc)
+    return best
 
 
 def _token_has_exception_family(token: str) -> bool:
@@ -1508,19 +1653,21 @@ def match_nc_model_pattern(derived_from_model: str) -> str | None:
 
     Exact set membership against ``NC_MODEL_IDS_EXPANDED`` after
     :func:`canonical` (B4b / WEB-24) is always tried first so the existing
-    pin set and BR-28 precision controls stay load-bearing.
+    pin set and multi-segment BR-28 precision controls stay load-bearing.
 
-    FIR-7-B8-06 structural NC (when ``_NC_STRUCTURAL_MATCH_ENABLED``):
+    FIR-7-B8-06 / B9-02 structural NC (when ``_NC_STRUCTURAL_MATCH_ENABLED``):
 
-      1. Progressive strip of trailing export/quant/runtime shield tags
-         (``int8``, ``onnx``, …) then re-check exact membership — closes
-         ``yolo_nas_l_int8`` / ``buffalo_l_onnx`` without prefix-overmatch
-         on ``buffalo_bill_detector`` / ``not-insightface``.
+      1. Bounded order-blind strip of trailing export/quant/runtime tags
+         (known set **or** ≤ 4-char short tags; hard bound 3; keep ≥ 1
+         leading segment) then re-check exact membership after each strip
+         — closes ``yolo_nas_l_trt`` / ``buffalo_l_int8_trt`` /
+         ``antelopev2_trt`` without prefix-overmatch on
+         ``buffalo_bill_detector`` / ``not-insightface``.
       2. Package-floor NC hit (``_package_denylist_hit`` reason
          ``nc_model_derived``) when the token also carries an exception-
          family component — residual NC compounds like
          ``yolox_s_buffalo_l`` (FIR-7-B8-07). Bare BR-28 controls have no
-         exception family and stay clean.
+         exception family and stay clean on this path.
 
     Non-ASCII residue yields ``None``; callers must treat that as
     ``invalid_row`` via their own canonical check.
@@ -1537,27 +1684,27 @@ def match_nc_model_pattern(derived_from_model: str) -> str | None:
     if not _NC_STRUCTURAL_MATCH_ENABLED:
         return None
 
-    # (1) Trailing export/quant shield strip → exact re-membership.
+    # (1) Bounded order-blind trailing-tag strip → exact re-membership
+    # after each strip (FIR-7-B9-02). One call strips up to the bound;
+    # intermediate heads are re-tested so a mid-strip exact hit still
+    # fires. No dead "double strip" loop — strip helper is single-pass.
     if "/" in c:
         tag_candidates = [p for p in c.split("/") if p]
     else:
         tag_candidates = [c]
     for cand in tag_candidates:
-        stripped = _nc_strip_trailing_shield_tags(cand)
-        if stripped and stripped != cand:
-            hit = _membership_hit(stripped, expanded)
-            if hit is not None:
-                return hit
-            # Also accept package-floor NC seed as the stripped head
-            # (yolo_nas_l may be pinned; yolo_nas_l_int8_onnx double strip).
-            while True:
-                nxt = _nc_strip_trailing_shield_tags(stripped)
-                if not nxt or nxt == stripped:
-                    break
-                stripped = nxt
-                hit = _membership_hit(stripped, expanded)
-                if hit is not None:
-                    return hit
+        for head in _nc_iter_stripped_heads(cand):
+            if not head:
+                continue
+            # Covering base seed gates acceptance so unsplit phantoms
+            # (buffalos) and name-continuations (arcface_alternative) stay
+            # clean; bound-overflow residuals under an export-shaped rest
+            # (yolo_nas_l_int8) still resolve.
+            covering = _nc_covering_seed_for_head(head)
+            if covering is None:
+                continue
+            hit = _membership_hit(head, expanded)
+            return hit if hit is not None else covering
 
     # (2) Exception-residual NC compounds (B8-07): package floor already
     # denies ``yolox_s_buffalo_l`` with nc_model_derived; promote that hit
@@ -2393,31 +2540,35 @@ def _reject_non_string(
 
 
 # ---------------------------------------------------------------------------
-# Package-identity structural family matching (FIR-7 Wave F / F5)
+# Package-identity structural family matching (FIR-7 Wave F / F5 / F6)
 # ---------------------------------------------------------------------------
 # Replaces the Wave-E size/task tag-strip treadmill. Module docstring owns the
-# design narrative; helpers below implement (a)/(b)/(c) for both deny and
-# exception seeds, plus deny-only (d') generalised suffix and (e) compact
-# segment-suffix, behind a uniform iterative component scanner.
+# design narrative; helpers below implement (a)/(b)/(c)/(d) for both deny and
+# exception seeds, plus deny-only (e) compact segment-suffix, behind a uniform
+# iterative component scanner. Outer separator-aligned suffix walk (gated by
+# ``_EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED``) provides path-split / size-tag
+# coverage — there is no inner (d') walk (FIR-7-A9-01 / A9-02 / B9-01).
 
 # Branch enable flags (always True in production). Tests red-prove each branch
-# by monkeypatching these to False (TEST-15): disable (b) → compound witnesses
-# admit; disable (c) → yolov9t admits; disable head-segment → yolov9t-seg
-# admits; disable (d') → path-split / size-tag suffix shields admit; disable
-# (e) → compact glue (xultralytics / yoloxultralytics) admits; disable residual
-# re-scan → yolox_ultralytics admits (exception short-circuit); disable
-# multi-strip continuation → yolox_yolop_ultralytics admits; disable fail-closed
-# scan bounds → non-shrinking strip admits; disable NC structural match →
-# yolo_nas_l_int8 admits on weights doors.
+# by monkeypatching EXACTLY ONE flag to False (TEST-15): disable (b) → compound
+# witnesses admit; disable (c) → yolov9t admits; disable head-segment →
+# yolov9t-seg admits; disable outer residual-suffix scan → path-split /
+# size-tag shields admit; disable (e) → compact glue (xultralytics /
+# yoloxultralytics) admits; disable residual re-scan → yolox_ultralytics
+# admits (exception short-circuit); disable multi-strip continuation →
+# yolox_yolop_ultralytics admits; disable fail-closed scan bounds →
+# non-shrinking strip admits (synthetic invariant probe; FIR-7-B9-04);
+# disable NC structural match → yolo_nas_l_int8 / yolo_nas_l_trt admit on
+# weights doors. Every surviving flag must change ≥ 1 pinned outcome when
+# flipped alone (no-op flags are TEST-15 violations).
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
-_FAMILY_GENERALIZED_SUFFIX_ENABLED: bool = True  # (d')
 _FAMILY_COMPACT_SUFFIX_ENABLED: bool = True  # (e)
 _EXCEPTION_RESIDUAL_RESCAN_ENABLED: bool = True
 _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED: bool = True
 _EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED: bool = True
-_SCAN_FAIL_CLOSED_BOUNDS_ENABLED: bool = True
+_SCAN_FAIL_CLOSED_BOUNDS_ENABLED: bool = True  # defensive invariant (B9-04)
 _NC_STRUCTURAL_MATCH_ENABLED: bool = True
 
 # Bounded compact remainder: 1–3 alphanumeric chars after a seed compact form.
@@ -2531,14 +2682,21 @@ def _family_match_compact_suffix(
 
     Only individual segments are tested (a one-segment token is its own
     segment). Multi-segment compact-join is intentionally NOT tested — that
-    would shadow (d') and break independent red-proofs. Leading remainder
-    must be non-empty; seeds shorter than ``_COMPACT_SUFFIX_MIN_SEED_LEN``
-    never match (``myyolo`` / ``yolo`` admit pin).
+    would shadow the outer suffix walk and break independent red-proofs.
+    Leading remainder must be non-empty; seeds shorter than
+    ``_COMPACT_SUFFIX_MIN_SEED_LEN`` never match (``myyolo`` / ``yolo``
+    admit pin). ``seed_compact`` is already
+    ``seed_canonical.replace('_', '')`` so a second endswith on the
+    underscore-stripped canonical is unreachable and is not tested
+    (FIR-7-A9-03).
     """
     if not _FAMILY_COMPACT_SUFFIX_ENABLED:
         return False
     if not seed_compact or len(seed_compact) < _COMPACT_SUFFIX_MIN_SEED_LEN:
         return False
+    # seed_canonical retained for call-site symmetry with other matchers;
+    # compact form is the sole endswith target (A9-03).
+    _ = seed_canonical
     for seg in token.split("_"):
         if not seg:
             continue
@@ -2548,11 +2706,6 @@ def _family_match_compact_suffix(
         if seg_k.endswith(seed_compact):
             # Non-empty leading remainder is implied by len check above.
             return True
-        # Also allow seed_canonical as an endswith target when it differs
-        # from compact (underscore-bearing seeds already compact-equal).
-        if seed_canonical and seg_k.endswith(seed_canonical.replace("_", "")):
-            if len(seg_k) > len(seed_canonical.replace("_", "")):
-                return True
     return False
 
 
@@ -2567,48 +2720,20 @@ def _family_match_seed(
     """True if folded ``token`` hits one family seed.
 
     Exception path (``for_deny=False``): rules (a)(b)(c) + head-segment (d).
-    Deny path (``for_deny=True``): (d') generalised suffix over (a)(b)(c) +
-    local head-segment on each suffix, plus (e) compact segment-suffix when
-    ``allow_rule_e`` is True. When (d') is disabled, deny falls back to
-    whole-token (a)(b)(c)+(d). NC doors pass ``allow_rule_e=False`` so
-    BR-28 controls like ``not-insightface`` stay clean (FIR-7-B8-06).
+    Deny path (``for_deny=True``): whole-token (a)(b)(c)/(d) plus (e)
+    compact segment-suffix when ``allow_rule_e`` is True. Separator-aligned
+    suffix coverage is the **outer** walk in :func:`_uniform_component_scan`
+    (FIR-7-A9-01) — there is no inner (d') walk. NC doors pass
+    ``allow_rule_e=False`` so BR-28 controls like ``not-insightface`` stay
+    clean on membership-only paths (FIR-7-B8-06).
     """
     if not token or not seed_canonical:
         return False
 
-    # (d') requires the generalised-suffix flag; the F4 residual-suffix flag
-    # is kept as a second gate so existing red-proofs still neuter size-tag
-    # shields independently of (e).
-    d_prime = (
-        for_deny
-        and _FAMILY_GENERALIZED_SUFFIX_ENABLED
-        and _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED
-    )
-    if d_prime:
-        # (d'): any separator-aligned suffix hits (a)(b)(c) or local head (d).
-        segments = token.split("_")
-        for i in range(len(segments)):
-            suffix = "_".join(segments[i:])
-            if not suffix:
-                continue
-            if _family_match_abc(suffix, seed_canonical, seed_compact):
-                return True
-            if _family_match_head_segment(suffix, seed_canonical, seed_compact):
-                return True
-        # (e) compact segment-suffix on the whole token's segments.
-        if allow_rule_e and _family_match_compact_suffix(
-            token, seed_canonical, seed_compact
-        ):
-            return True
-        return False
-
-    # Exception path, or deny path with (d') disabled (red-proof fallback).
     if _family_match_abc(token, seed_canonical, seed_compact):
         return True
     if _family_match_head_segment(token, seed_canonical, seed_compact):
         return True
-    # Even with (d') off, (e) still applies on the deny path when enabled
-    # so compact-glue red-proofs stay independent of (d').
     if (
         for_deny
         and allow_rule_e
@@ -2752,18 +2877,23 @@ def _uniform_component_scan(
 ) -> PackageDenylistEntry | None:
     """Uniform iterative exception-first suffix scan on one component.
 
-    FIR-7-B8-01 / B8-02 / B8-05: one code path for direct component checks
-    and post-exception residual re-scans. Separator-aligned suffixes are
-    walked longest-first; exception hits strip and continue (never pure-
-    exception early-return past un-scanned deny content); DENY uses
-    (a)/(b)/(c)/(d')/(e). Iterative loop with hard step bound = initial
-    segment count of the component; non-shrinking strip or bound overflow
-    DENIES (``denylisted_package``, detail names the invariant).
+    FIR-7-B8-01 / B8-02 / B8-05 / A9-01: one code path for direct component
+    checks and post-exception residual re-scans. Separator-aligned suffixes
+    are walked longest-first; exception hits strip and continue (never
+    pure-exception early-return past un-scanned deny content); DENY uses
+    whole-suffix (a)/(b)/(c)/(d)/(e) — no inner (d') walk. Iterative loop
+    with hard step bound = initial segment count of the component;
+    non-shrinking strip or bound overflow DENIES (``denylisted_package``,
+    detail names the invariant).
 
     Bound is step-count ≤ initial segment count. Compact-remainder strips
     shrink total canonical length, not necessarily segment count, so the
     historical "recursion depth ≤ segment count" claim is false — this
-    walker states the real bound (FIR-7-A8-03).
+    walker states the real bound (FIR-7-A8-03). The hard-cap overflow
+    branch is a **defensive invariant** (FIR-7-B9-04): with correct strip
+    helpers each counted strip consumes ≥ 1 unit against a bound of the
+    initial segment count, so production inputs do not overflow; suite
+    probes may force it via synthetic ``max_steps``.
 
     ``strip_depth`` tracks how many exception strips have already been
     applied. The first strip (depth 0→1) is the single-strip residual path
@@ -2850,27 +2980,29 @@ def _uniform_component_scan(
 
 
 def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
-    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F5).
+    """Structural family-boundary PACKAGE_DENYLIST lookup (BR-51 / Wave F6).
 
     Fold via :func:`canonical` (NFKC, casefold, unify ``-``/``_``/``.``/space).
     When ``/`` is present, test **only** slash components (never the joined
     full token — FIR-7-A6-02). Each component is matched by the **uniform
-    iterative scanner** (FIR-7-B8-01 / B8-02): exception-family strip with
-    residual re-scan, then deny-family via (a)/(b)/(c)/(d')/(e). A component
-    hits a deny family seed under any of:
+    iterative scanner** (FIR-7-B8-01 / B8-02 / A9-01): exception-family
+    strip with residual re-scan, then deny-family via whole-suffix
+    (a)/(b)/(c)/(d)/(e). Outer separator-aligned suffix walk supplies
+    path-split coverage; there is no inner (d') walk. A component hits a
+    deny family seed under any of:
 
       (a) exact folded/compact match;
       (b) separator-boundary prefix (``seed_`` + rest);
       (c) bounded compact remainder (1–3 alnum after seed compact form);
-      (d') generalised separator-aligned suffix of (a)/(b)/(c) + local head;
+      (d) head-segment (leading segment hits via (a) or (c));
       (e) compact segment-suffix (seed ≥ 5 compact chars, non-empty lead).
 
     ``yolo-v5`` / ``yolov8n_oiv7`` / ``yolov9t`` / ``yolov9t-seg`` /
     ``yolox_ultralytics`` / ``yolox_s_ultralytics`` / ``yolox/s_ultralytics`` /
     ``yoloxultralytics`` deny; ``yolodummy`` / ``myyolo`` / pure exception-
-    family tokens (``yolox``, ``yolos``, ``yolop_yolox``) do not. Empty /
-    None canonical → no denylist hit (doors treat empty/None as
-    ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
+    family tokens (``yolox``, ``yolos``, ``yolop_yolox``, ``megvii_yolox``,
+    ``ppyolov2``) do not. Empty / None canonical → no denylist hit (doors
+    treat empty/None as ``invalid_row`` separately — FIR-7-B4-01 / B5-04).
     """
     c = canonical(value)
     if c is None or not c:
@@ -2906,6 +3038,81 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
         hit = _uniform_component_scan(cand, max_steps=bound)
         if hit is not None:
             return hit
+    return None
+
+
+def _nc_package_rest_is_export_shaped(rest: str) -> bool:
+    """True when ``rest`` is entirely export/quant/runtime shield tags.
+
+    Used by whole-component NC package promotion so ``insightface_trt``
+    rejects while BR-28 name-continuations like ``insightface_free`` /
+    ``buffalo_l_extra`` stay admitted on weights doors. A rest segment
+    counts when it is in ``_NC_TRAILING_SHIELD_TAGS`` or contains a digit
+    (structural quant codes like ``int8``). Pure-alpha short name
+    continuations (``free``, ``extra``) do not qualify.
+    """
+    if not rest:
+        return False
+    parts = [p for p in rest.split("_") if p]
+    if not parts or len(parts) > _NC_MAX_TRAILING_TAG_STRIPS:
+        return False
+    for seg in parts:
+        if seg in _NC_TRAILING_SHIELD_TAGS:
+            continue
+        if any(ch.isdigit() for ch in seg) and len(seg) <= _NC_STRUCTURAL_SHORT_TAG_MAX_LEN:
+            continue
+        return False
+    return True
+
+
+def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
+    """Whole-component NC package-floor hit for weights doors (FIR-7-B9-02).
+
+    Unlike :func:`_package_denylist_hit`, this does **not** run the outer
+    separator-aligned suffix walk or exception residual strip. Each slash
+    component is tested only as a whole token under deny rules (a)/(b)/(c)/
+    (d)/(e), then filtered so only **export-shaped** (b) residuals promote.
+    That rejects ``insightface_trt`` / ``buffalo_l_trt`` while leaving
+    suffix-only forms like ``not_insightface`` and name-continuations like
+    ``insightface_free`` clean on weights doors (BR-28). NC-only seeds
+    without a package entry (``antelopev2``, ``vec2face``) return None —
+    structural tag-strip membership must hold them alone.
+    """
+    c = canonical(value)
+    if c is None or not c:
+        return None
+    if "/" in c:
+        candidates = [p for p in c.split("/") if p]
+    else:
+        candidates = [c]
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        matched = _best_family_seed_match(
+            cand, PACKAGE_DENYLIST, for_deny=True
+        )
+        if matched is None:
+            continue
+        seed_c, _seed_k, entry = matched
+        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
+            continue
+        # Exact / compact (a): always promote.
+        cand_k = _compact_canonical(cand)
+        seed_k = _compact_canonical(seed_c)
+        if cand == seed_c or cand_k == seed_k or cand == seed_k or cand_k == seed_c:
+            return entry  # type: ignore[no-any-return]
+        # (b) separator-boundary: promote only export-shaped residuals so
+        # name-continuations (insightface_free) and (e) glue over-matches
+        # (insightfaces_r_us) stay clean on weights doors (BR-28).
+        boundary = seed_c + "_"
+        if cand.startswith(boundary) and len(cand) > len(boundary):
+            rest = cand[len(boundary) :]
+            if _nc_package_rest_is_export_shaped(rest):
+                return entry  # type: ignore[no-any-return]
+        # Do not promote (c)/(d)/(e)-only hits on the weights doors.
+        continue
     return None
 
 
@@ -3112,9 +3319,11 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    # BR-51: PACKAGE_DENYLIST (AGPL family etc.) on derived_from_model.
-    # NC_MODEL_DERIVED package entries are enforced via NC_MODEL_IDS expansion
-    # only — keeps M2 discrimination on the NC seed set single-sourced.
+    # BR-51 / FIR-7-B9-02: package-floor hits on both axes. AGPL-family uses
+    # the full uniform scanner (suffix walk). NC-axis promotion uses
+    # whole-component family match only so suffix-only hits like
+    # ``not_insightface`` stay admitted on weights doors (BR-28), while
+    # ``insightface_trt`` / ``buffalo_l_trt`` still reject via (b).
     deny = _package_denylist_hit(text)
     if deny is not None and deny.reason is RejectionReason.DENYLISTED_PACKAGE:
         return _fail(
@@ -3122,6 +3331,16 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             detail=(
                 f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "
                 f"{deny.package_id!r} ({deny.spdx_id}): {deny.notes}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    nc_pkg = _whole_component_nc_package_hit(text)
+    if nc_pkg is not None:
+        return _fail(
+            RejectionReason.NC_MODEL_DERIVED,
+            detail=(
+                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "
+                f"{nc_pkg.package_id!r} ({nc_pkg.spdx_id}): {nc_pkg.notes}"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
@@ -3395,6 +3614,18 @@ def audit_source(source: str | None) -> LicenseAuditResult:
         return _fail(
             RejectionReason.RESEARCH_ONLY_SOURCE,
             detail=f"source {text!r} is research-only and taints commercial use",
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    # FIR-7-B9-02: whole-component package-floor NC parity with
+    # audit_derived_from_model (suffix-only hits stay clean for BR-28).
+    nc_pkg = _whole_component_nc_package_hit(text)
+    if nc_pkg is not None:
+        return _fail(
+            RejectionReason.NC_MODEL_DERIVED,
+            detail=(
+                f"source={text!r} hits PACKAGE_DENYLIST entry "
+                f"{nc_pkg.package_id!r} ({nc_pkg.spdx_id}): {nc_pkg.notes}"
+            ),
             category=PolicyCategory.TRAINING_DATA,
         )
     return _pass(

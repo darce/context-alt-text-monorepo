@@ -63,10 +63,15 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # alone learns which scorers the corpus leaves nothing to assert against. Here the
 # .md digest is the one that did NOT move — the disclosure is in the two JSON
 # documents' provenance, and the scored markdown is byte-identical.
+# Regenerated fx7 (this lane's branch) after vacuity honesty + seeded deviation
+# + centre-order positional + category-vacuity verdict wiring landed. Headline
+# moves: detection/identification leave 1.0, fabricated_fact_rate 0.0→None,
+# verdict pass_ungated→fail (seeded wrong names + vacuity), head_sha→null +
+# fixture_revision, coverage_gaps structured with demographic_cohort.
 _FROZEN_DIGESTS = {
-    _RUN.name: "978aefef41bca050b278a74c527f9e656367942fab67909e95fee47ff0a5957e",
-    _REPORT_JSON.name: "29f72112187b06d5ab21bba1660c6215c7f8bc1fa660b6dffe801c9a8522fc23",
-    _REPORT_MD.name: "97d6132b6842175ec624776347af0596248fc702fc05564e6bbb04a5e3856dcb",
+    _RUN.name: "3166ab64fdbfa4a0b68d3375cd00de6344dd743c8679f2bf9d5e96a6581bfef4",
+    _REPORT_JSON.name: "d33c340f39fb6c7cdd998ea2eba6e48abe84eb02b45316e90ad0061352b5a184",
+    _REPORT_MD.name: "4d7154e2f2d55f0c56ebd44655d155b3268cb5c51a195d7cdcb175da659c9c8a",
 }
 
 

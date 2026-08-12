@@ -127,9 +127,9 @@
       "detection_recall": 0.8571428571428571,
       "detection_recall_coupling_flag": true,
       "flag": "identification recall is computed only over faces this leg detected and §C-matched (enrolled); weak detection can inflate id-recall on the easy detected subset — report id-recall ALONGSIDE detection-recall",
-      "identification_recall": 0.8,
+      "identification_recall": 0.6666666666666666,
       "missed_gt": 1,
-      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions: precision over accept/confusion; recall over enrolled (≥2 matched faces) only; detection misses excluded from FN (EVAL-16); error-item media excluded from scoring (listed in failures)",
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
       "unmatched_detections": 0
     },
     "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
@@ -185,14 +185,16 @@
   ],
   "provenance": {
     "canon_version": "0.11.0",
+    "canonical_timestamp": "2026-08-11T00:00:00Z",
     "coverage_gaps": [
       "failures",
       "occlusion.occlusion_other",
       "occlusion.sunglasses"
     ],
     "embedding_dim": 8,
+    "fixture_revision": "0000000000000000000000000000000000000000",
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
-    "head_sha": "0000000000000000000000000000000000000000",
+    "head_sha": null,
     "k_folds": {
       "clamped": true,
       "effective": 3,
@@ -211,14 +213,14 @@
       ]
     },
     "model_id": "synthetic-face-anchor",
-    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); head_sha/started_at are byte-stability sentinels; F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
     "protocol_id": "fir-5-face-bakeoff-v0.11.0",
     "sampling_frames": {
       "clustering": "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 all-singletons guard; single-linkage diagnostic (GRPH-18)",
-      "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions: precision over accept/confusion; recall over enrolled (≥2 matched faces) only; detection misses excluded from FN (EVAL-16)",
-      "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions: precision over accept/confusion; recall over enrolled (≥2 matched faces) only; detection misses excluded from FN (EVAL-16); error-item media excluded from scoring (listed in failures)",
+      "full_corpus_identification": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
+      "headline_identification": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
       "occlusion_recovery": "eligible_twin_pairs: distinct_image_min_gallery AND gallery_n_identities>=2; re_detect_miss counts as incorrect only inside that frame",
-      "unknown_rejection": "stranger_probes_full_corpus_including_unpublishable: correct_reject=decision=reject; false_accept=decision=accept"
+      "unknown_rejection": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions"
     },
     "score_manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
     "started_at": "2026-08-11T00:00:00Z",
@@ -311,7 +313,7 @@
     },
     "full_corpus_identification": {
       "detection_recall_coupling_flag": true,
-      "fn": 1,
+      "fn": 2,
       "fp": 1,
       "missed_gt": 1,
       "n_named_probes": 5,
@@ -319,10 +321,10 @@
       "precision": 0.8,
       "precision_denominator": 5,
       "precision_numerator": 4,
-      "recall": 0.8,
-      "recall_denominator": 5,
+      "recall": 0.6666666666666666,
+      "recall_denominator": 6,
       "recall_numerator": 4,
-      "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions: precision over accept/confusion; recall over enrolled (≥2 matched faces) only; detection misses excluded from FN (EVAL-16)",
+      "sampling_frame": "full_corpus_named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag",
       "tp": 4,
       "unmatched_detections": 1,
       "wrong_names": [
@@ -340,7 +342,7 @@
       "directional": true,
       "error_target": "Wilson_95_halfwidth_le_10pct_at_p0.5 (n≈96–100 → ±9.8%)",
       "floor_unit": "recall_eligible_celebs01",
-      "fn": 1,
+      "fn": 2,
       "fp": 1,
       "label": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
       "missed_gt": 1,
@@ -353,10 +355,10 @@
       "reasons": [
         "n_recall_eligible=5<100"
       ],
-      "recall": 0.8,
-      "recall_denominator": 5,
+      "recall": 0.6666666666666666,
+      "recall_denominator": 6,
       "recall_numerator": 4,
-      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions: precision over accept/confusion; recall over enrolled (≥2 matched faces) only; detection misses excluded from FN (EVAL-16); error-item media excluded from scoring (listed in failures)",
+      "sampling_frame": "celebs01_named_matched_probes (provenance.source==CELEB); named_matched_probes_pooled_kfold_decisions_plus_missed_gt: precision over accept/confusion; recall denominator = TP + decision-FN + missed_gt (EVAL-16: detector-missed named GT is an identification FN); unmatched_detections disclosed via detection_recall_coupling_flag; error-item media excluded from scoring (listed in failures)",
       "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion",
       "tp": 4,
       "unmatched_detections": 0,
@@ -481,7 +483,7 @@
       "reasons": [
         "n=1<43"
       ],
-      "sampling_frame": "stranger_probes_full_corpus_including_unpublishable: correct_reject=decision=reject; false_accept=decision=accept",
+      "sampling_frame": "stranger_probes_matched_plus_missed_gt: correct_reject=decision=reject; false_accept=decision=accept; missed_stranger_gt counted as failure in denominator (EVAL-16 / AUDIT-07); caller must pass missed_stranger_gt scoped to the same frame as decisions",
       "status": "UNDER-FLOOR / DIRECTIONAL — awaiting operator demotion"
     }
   },

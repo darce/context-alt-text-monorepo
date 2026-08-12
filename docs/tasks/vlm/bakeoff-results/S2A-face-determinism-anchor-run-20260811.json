@@ -405,18 +405,20 @@
     ]
   },
   "provenance": {
+    "canonical_timestamp": "2026-08-11T00:00:00Z",
     "coverage_gaps": [
       "failures",
       "occlusion.occlusion_other",
       "occlusion.sunglasses"
     ],
     "embedding_dim": 8,
+    "fixture_revision": "0000000000000000000000000000000000000000",
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
-    "head_sha": "0000000000000000000000000000000000000000",
+    "head_sha": null,
     "leg": "candidate",
     "manifest_sha256": "19861fede2ec99bc0a7ed8777bca25829bce0fdd65e948e8c0080407e84c18e4",
     "model_id": "synthetic-face-anchor",
-    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); head_sha/started_at are byte-stability sentinels; F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
+    "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; failures[] declared gap — score-face hard-exits on counts.failed>0)",
     "started_at": "2026-08-11T00:00:00Z"
   },
   "schema": "acx-eval/v1"

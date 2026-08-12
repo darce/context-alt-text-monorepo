@@ -599,8 +599,10 @@ def collect_matched_faces(
         associations[media_id] = assoc
         false_det += len(assoc.unmatched_detections)
         for gi in assoc.unmatched_gt:
-            # Indices from associate_detections are in range(n_gt).
-            name = _gt_fields(gt_boxes[gi])[4]
+            # Name only — do not float()-coerce coords. Unmatched GT may omit y
+            # (VLM6-R2-G-01 order_degraded trap media; zero-det path never enters
+            # associate_detections' _gt_fields loop).
+            name = gt_box_name(gt_boxes[gi])
             if name is not None:
                 missed_named += 1
             else:

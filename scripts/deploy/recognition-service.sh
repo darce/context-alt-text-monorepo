@@ -636,6 +636,12 @@ converge_check() {
   remote_tmp="$(mktemp)"
   # shellcheck disable=SC2064
   trap "rm -f '${remote_tmp}'" RETURN
+  # fail() calls `exit 1`, which does NOT run RETURN traps — every abort path
+  # must rm explicitly or --check leaks /tmp/tmp.* (gate r0811e5db V-02).
+  _cc_fail() {
+    rm -f "${remote_tmp}"
+    fail "$@"
+  }
 
   _check_remote_file() {
     # Fetch remote path into remote_tmp; compare to local. Sets drift on
@@ -644,7 +650,7 @@ converge_check() {
     ssh_rc=0
     ssh "${SSH_TARGET}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
     if (( ssh_rc == 255 )); then
-      fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+      _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
     if (( ssh_rc != 0 )); then
       # Non-transport failure (typically cat exit 1 = missing file) → drift.
@@ -671,7 +677,7 @@ converge_check() {
   ssh_rc=0
   ssh "${SSH_TARGET}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
   if (( ssh_rc == 255 )); then
-    fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+    _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
   elif (( ssh_rc != 0 )); then
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
   elif ! diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") >/dev/null; then
@@ -697,13 +703,13 @@ converge_check() {
   local edge_membership edge_member_rc=0
   edge_membership="$(ssh "${SSH_TARGET}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
   if (( edge_member_rc != 0 )); then
-    fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
+    _cc_fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
   fi
   if [[ "${edge_membership}" != "MEMBER" ]]; then
     warn "drift: caddy edge container is not attached to ${fir_net} (${edge_membership})"; drift=1
   fi
   if (( drift )); then
-    fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
+    _cc_fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
   fi
   log "no runtime drift for ${env} (compose + unit match repo)"
 }

@@ -950,7 +950,8 @@ def test_detection_from_assignment_counts_stranger_fn():  # HARM-01 / EVAL-16
 
     Repro: 1 named GT detected + 1 anonymous GT missed → pre-fix published
     recall=1.0 (fn=missed_gt named-only). True detection recall is 0.5.
-    Invariant: tp + fn reconciles to total GT boxes that reached association.
+    Invariant (post-wG2/wH1): tp + fn + geometry_incomplete_gt reconciles to
+    every GT box that entered association.
     """
     from scripts.eval_harness.face_assignment import AssignmentResult, AssociationResult
     from scripts.eval_harness.report import _detection_from_assignment
@@ -982,6 +983,8 @@ def test_detection_from_assignment_counts_stranger_fn():  # HARM-01 / EVAL-16
         false_detections=0,
         missed_gt=0,  # named unmatched only
         missed_stranger_gt=1,  # anonymous unmatched
+        geometry_incomplete_gt=0,
+        association_incomplete_media=0,
     )
     det = _detection_from_assignment(assignment)
     assert det["tp"] == 1
@@ -989,11 +992,15 @@ def test_detection_from_assignment_counts_stranger_fn():  # HARM-01 / EVAL-16
     assert det["fn"] == 1  # stranger miss counted
     assert det["precision"] == pytest.approx(1.0)
     assert det["recall"] == pytest.approx(0.5)
-    # tp + fn == GT boxes that reached association (pairs + unmatched_gt).
+    assert det["geometry_incomplete_gt"] == 0
+    assert det["association_incomplete_media"] == 0
+    assert det["association_complete"] is True
+    # tp + fn + geometry_incomplete_gt == all GT that entered association.
     gt_in_assoc = sum(
-        len(a.pairs) + len(a.unmatched_gt) for a in assignment.association_by_media.values()
+        len(a.pairs) + len(a.unmatched_gt) + len(a.geometry_incomplete_gt)
+        for a in assignment.association_by_media.values()
     )
-    assert det["tp"] + det["fn"] == gt_in_assoc == 2
+    assert det["tp"] + det["fn"] + det["geometry_incomplete_gt"] == gt_in_assoc == 2
 
 
 def test_score_face_unknown_rejection_surfaces_missed_stranger_gt():  # HARM-09
@@ -4163,6 +4170,255 @@ def test_face_labeled_y_missing_constant_zero_mutation_diverges(
         f"constant-0 mutation still matches live ({live_n}) — face freeze cannot "
         "see labeled_y_missing regressions (TEST-15 blindness not closed)"
     )
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 Wave H / lane wH1 — publish geometry_incomplete_* on face detection
+# ---------------------------------------------------------------------------
+
+
+def _face_geometry_incomplete_fixture() -> tuple[dict, dict]:
+    """Face run + manifest: one geometry-incomplete named GT + complete siblings.
+
+    Media 1: Alice (null y) + Bob (complete y), zero detections — Alice is
+    geometry-incomplete (not FN); Bob is complete unmatched (FN).
+    Media 2: clean Alice+Bob pair with matching detections.
+    """
+    dim = 8
+    alice = _unit([1.0] + [0.0] * (dim - 1))
+    bob = _unit([0.0, 1.0] + [0.0] * (dim - 2))
+    face_run = {
+        "schema": "acx-eval/v1",
+        "kind": DocKind.FACE_RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-18T00:00:00Z",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "/ops/private/lane-wh1/group-y-missing.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [],
+            },
+            {
+                "media_id": 2,
+                "path": "celebs01/clean-pair.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [100, 100],
+                "faces": [
+                    _face_det([10.0, 20.0, 30.0, 30.0], alice),
+                    _face_det([50.0, 20.0, 30.0, 30.0], bob),
+                ],
+            },
+        ],
+    }
+    manifest = {
+        "roster": ["Alice Example", "Bob Example"],
+        "roster_cohorts": {"Alice Example": "cohort_a", "Bob Example": "cohort_b"},
+        "entries": [
+            {
+                "path": "/ops/private/lane-wh1/group-y-missing.jpg",
+                "media_id": 1,
+                "face_count": 2,
+                "present_identities": ["Alice Example", "Bob Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "name": "Bob Example"},
+                    {"x": 0.5, "w": 0.2, "h": 0.2, "name": "Alice Example"},  # no y
+                ],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            },
+            {
+                "path": "celebs01/clean-pair.jpg",
+                "media_id": 2,
+                "face_count": 2,
+                "present_identities": ["Alice Example", "Bob Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    _gt_box(0.25, 0.35, 0.3, 0.3, "Alice Example"),
+                    _gt_box(0.65, 0.35, 0.3, 0.3, "Bob Example"),
+                ],
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+            },
+        ],
+    }
+    return face_run, manifest
+
+
+def test_face_detection_publishes_geometry_incomplete_stamp():  # wH1 / wG2 residual 1
+    """Face detection block must publish geometry_incomplete_* / association_complete.
+
+    Stamp exists on AssignmentResult (wG2) but was invisible on the report
+    surface — freeze could not pin it (rg-015 one level up). Fields come from
+    the assignment stamp, not a boundary recount.
+    Denominator: geometry_incomplete_gt out of n_gt (= tp+fn+incomplete);
+    association_incomplete_media out of counts.scored.
+    """
+    face_run, manifest = _face_geometry_incomplete_fixture()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    det = scored["detection"]
+    for key in (
+        "geometry_incomplete_gt",
+        "association_incomplete_media",
+        "association_complete",
+    ):
+        assert key in det, f"missing detection.{key}"
+    assert det["geometry_incomplete_gt"] == 1
+    assert det["association_incomplete_media"] == 1
+    assert det["association_complete"] is False
+    # Arithmetic: Alice incomplete + Bob FN on media1 + 2 TP on media2.
+    assert det["tp"] == 2
+    assert det["fn"] == 1  # Bob complete miss only — Alice NOT re-absorbed as FN
+    n_gt = det["tp"] + det["fn"] + det["geometry_incomplete_gt"]
+    assert n_gt == 4
+    assert det["geometry_incomplete_gt"] <= n_gt
+    assert det["association_incomplete_media"] <= scored["counts"]["scored"]
+    # Sampling frame discloses geometry-incomplete exclusion (EVAL-03).
+    frame = det["sampling_frame"]
+    assert "geometry_incomplete" in frame
+    assert "tp+fn+geometry_incomplete_gt" in frame
+    assert "tp+fn equals GT boxes that reached association" not in frame
+    # Provenance map shares the same string.
+    assert scored["provenance"]["sampling_frames"]["detection"] == frame
+
+
+def test_detection_from_assignment_publishes_stamp_not_recount():  # wH1 / rg-015
+    """geometry_incomplete_* must be the AssignmentResult stamp, not a recount.
+
+    Wire assignment.geometry_incomplete_gt to a deliberate value that would
+    disagree with a pairs+unmatched+incomplete recount of association_by_media
+    if the report re-derived it — the published field must still equal the stamp.
+    """
+    from scripts.eval_harness.face_assignment import AssignmentResult, AssociationResult
+    from scripts.eval_harness.report import _detection_from_assignment
+
+    class _Pair:
+        def __init__(self) -> None:
+            self.det_index = 0
+            self.gt_index = 0
+
+    assoc = AssociationResult(
+        pairs=(_Pair(),),
+        unmatched_detections=(),
+        unmatched_gt=(),
+        ious=(),
+        geometry_incomplete_gt=(1,),  # one incomplete on this media
+    )
+    # Stamp deliberately disagrees with len(assoc.geometry_incomplete_gt) sum
+    # if a future caller forgot to propagate — report must still publish stamp.
+    assignment = AssignmentResult(
+        matched=(),
+        decisions=(),
+        tau_k=(),
+        tau_op=0.5,
+        association_by_media={1: assoc},
+        false_detections=0,
+        missed_gt=0,
+        missed_stranger_gt=0,
+        geometry_incomplete_gt=7,  # stamp value (not re-derived from assoc)
+        association_incomplete_media=3,
+    )
+    det = _detection_from_assignment(assignment)
+    assert det["geometry_incomplete_gt"] == 7
+    assert det["association_incomplete_media"] == 3
+    assert det["association_complete"] is False
+    # Incomplete must not inflate FN (stamp path only for misses).
+    assert det["fn"] == 0
+    assert det["tp"] == 1
+
+
+def test_detection_incomplete_not_reabsorbed_as_fn():  # wH1 Task 3
+    """Report path must not re-count geometry-incomplete boxes as detection FN.
+
+    wG2 excluded them at associate_detections; publication must preserve that
+    exclusion end-to-end (sr-001: do not adjust arithmetic to make text true).
+    """
+    face_run, manifest = _face_geometry_incomplete_fixture()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    det = scored["detection"]
+    # 1 incomplete + 1 complete miss + 2 matched = 4 GT; fn is complete-only.
+    assert det["geometry_incomplete_gt"] == 1
+    assert det["fn"] == 1
+    assert det["tp"] == 2
+    assert det["tp"] + det["fn"] + det["geometry_incomplete_gt"] == 4
+    # If incomplete were re-absorbed: fn would be 2 and incomplete 0 or ignored.
+    assert det["fn"] != det["fn"] + det["geometry_incomplete_gt"]
+
+
+def test_face_geometry_incomplete_constant_zero_mutation_diverges(
+    monkeypatch: pytest.MonkeyPatch,
+):  # wH1 TEST-15
+    """Acceptance: constant-0 stamp of geometry_incomplete must diverge on face path.
+
+    Separates pre-existing freeze staleness from counter observability: compare
+    live vs mutated re-scores on detection.geometry_incomplete_gt specifically,
+    not the freeze pass/fail bit.
+    """
+    from dataclasses import replace
+
+    import scripts.eval_harness.report as report_mod
+    from scripts.eval_harness.face_assignment import score_face_assignment
+
+    face_run, manifest = _face_geometry_incomplete_fixture()
+    live = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    live_n = int(live["detection"]["geometry_incomplete_gt"])
+    assert live_n >= 1
+    assert live["detection"]["association_complete"] is False
+
+    real_sfa = score_face_assignment
+
+    def _blind_constant_zero(run_items, gt_by_media, **kwargs):  # type: ignore[no-untyped-def]
+        result = real_sfa(run_items, gt_by_media, **kwargs)
+        return replace(
+            result,
+            geometry_incomplete_gt=0,
+            association_incomplete_media=0,
+        )
+
+    monkeypatch.setattr(report_mod, "score_face_assignment", _blind_constant_zero)
+    blind = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    blind_n = int(blind["detection"]["geometry_incomplete_gt"])
+    assert blind_n == 0
+    assert blind["detection"]["association_complete"] is True
+    assert blind_n != live_n, (
+        f"constant-0 mutation still matches live ({live_n}) — face freeze cannot "
+        "see geometry_incomplete regressions (TEST-15 blindness not closed)"
+    )
+    # FN arithmetic must be unchanged by the stamp-only mutation (sr-001).
+    assert blind["detection"]["fn"] == live["detection"]["fn"]
+    assert blind["detection"]["tp"] == live["detection"]["tp"]
+
+
+def test_face_detection_sampling_frame_discloses_geometry_incomplete():  # wH1 residual 2
+    """Detection sampling_frame must state the real post-wG2 population identity.
+
+    Pre-wH1 text claimed tp+fn equals every GT that reached association; after
+    geometry-incomplete exclusion that identity is wrong (EVAL-03).
+    """
+    from scripts.eval_harness.report import FACE_BAKEOFF_SAMPLING_FRAMES
+
+    frame = FACE_BAKEOFF_SAMPLING_FRAMES["detection"]
+    assert "geometry_incomplete_gt" in frame
+    assert "tp+fn+geometry_incomplete_gt equals" in frame
+    assert "not detector FN" in frame or "not detector fn" in frame.casefold()
+    # Obsolete claim must be gone.
+    assert "tp+fn equals GT boxes that reached association" not in frame
+    # End-to-end: published detection block carries the registry string.
+    face_run, manifest = _face_geometry_incomplete_fixture()
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    assert scored["detection"]["sampling_frame"] == frame
 
 
 # ---------------------------------------------------------------------------

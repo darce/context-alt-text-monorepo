@@ -139,12 +139,18 @@ FACE_BAKEOFF_SAMPLING_FRAMES: dict[str, str] = {
     "clustering": SAMPLING_FRAME_CLUSTERING,
     # VLM6-R2-C-02: detection P/R population (named + anonymous GT boxes).
     # Same string shape as other FACE_BAKEOFF_SAMPLING_FRAMES entries.
+    # wG2 / wH1: geometry-incomplete GT (null/invalid y) are excluded from
+    # spatial association and are NOT detector FNs — the honest identity is
+    # tp+fn+geometry_incomplete_gt = n_gt that entered association (EVAL-03).
     "detection": (
         "all_gt_boxes_on_scoreable_media_via_association: named and anonymous "
         "GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; "
-        "FN=unmatched GT (named missed_gt + missed_stranger_gt); "
-        "FP=unmatched detections; error-item media excluded from association "
-        "(listed in failures); tp+fn equals GT boxes that reached association"
+        "FN=unmatched complete GT (named missed_gt + missed_stranger_gt); "
+        "FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded "
+        "from IoU (null/invalid centre-y; not detector FN); "
+        "tp+fn+geometry_incomplete_gt equals GT boxes that reached association; "
+        "association_complete=false when geometry_incomplete_gt>0; "
+        "error-item media excluded from association (listed in failures)"
     ),
 }
 
@@ -3072,17 +3078,31 @@ def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
     stranger misses live on ``missed_stranger_gt``. FN = both. Identification is
     the metric that legitimately excludes anonymous GT.
 
-    Invariant: ``tp + fn`` equals the number of GT boxes that reached association
-    (pairs + unmatched_gt across ``association_by_media``).
+    Geometry-incomplete GT (null/invalid centre-y) are **not** detector FNs
+    (wG2). They are stamped on ``AssignmentResult.geometry_incomplete_gt`` /
+    ``association_incomplete_media`` and published here so a freeze can pin them
+    (wH1 / rg-015). Invariant: ``tp + fn + geometry_incomplete_gt`` equals the
+    number of GT boxes that entered association (pairs + unmatched complete GT +
+    geometry-incomplete). Do not invent these counters at the report boundary —
+    read the assignment stamp (rg-015).
 
     VLM6-R2-C-02: publish ``sampling_frame`` (string, same shape as floor-gated
     slices) so operators can tell the population behind precision/recall.
     """
     tp = sum(len(a.pairs) for a in assignment.association_by_media.values())
     fp = int(assignment.false_detections)
-    # Detection FN = named misses + stranger misses (same population as tp pairs).
+    # Detection FN = named misses + stranger misses (complete GT only).
+    # Geometry-incomplete boxes are excluded upstream and must not re-enter FN.
     fn = int(assignment.missed_gt) + int(getattr(assignment, "missed_stranger_gt", 0) or 0)
+    # Stamp fields: real AssignmentResult counters — never re-count at boundary.
+    geometry_incomplete_gt = int(getattr(assignment, "geometry_incomplete_gt", 0) or 0)
+    association_incomplete_media = int(
+        getattr(assignment, "association_incomplete_media", 0) or 0
+    )
+    association_complete = geometry_incomplete_gt == 0
     precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+    # Recall denominator is complete-GT population only (tp+fn); incomplete
+    # boxes are outside detection P/R and disclosed via geometry_incomplete_*.
     recall = (tp / (tp + fn)) if (tp + fn) else 0.0
     return {
         "precision": precision,
@@ -3090,6 +3110,13 @@ def _detection_from_assignment(assignment: Any) -> dict[str, Any]:
         "tp": tp,
         "fp": fp,
         "fn": fn,
+        # wG2 residual / wH1: publish association-completeness so freeze pins it.
+        # Denominator for geometry_incomplete_gt: n_gt that entered association
+        # (= tp + fn + geometry_incomplete_gt). Media counter is out of scored
+        # images (counts.scored). association_complete is corpus-level completeness.
+        "geometry_incomplete_gt": geometry_incomplete_gt,
+        "association_incomplete_media": association_incomplete_media,
+        "association_complete": association_complete,
         "sampling_frame": FACE_BAKEOFF_SAMPLING_FRAMES["detection"],
     }
 
@@ -4142,9 +4169,24 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         "## Detection",
         "",
         f"- precision: {_fmt(det.get('precision'))} recall: {_fmt(det.get('recall'))} "
-        f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))}) "
+        f"(tp={_fmt_prov(det.get('tp'))} fp={_fmt_prov(det.get('fp'))} fn={_fmt_prov(det.get('fn'))} "
+        f"geometry_incomplete_gt={_fmt_prov(det.get('geometry_incomplete_gt'))} "
+        f"association_incomplete_media={_fmt_prov(det.get('association_incomplete_media'))} "
+        f"association_complete={_fmt_prov(det.get('association_complete'))}) "
         f"frame=`{_fmt_prov(det.get('sampling_frame'), default='')}`",
     ]
+    # wH1 / EVAL-03: disclose geometry-incomplete exclusion so operators can
+    # reconcile tp+fn against n_gt (identity: tp+fn+geometry_incomplete_gt = n_gt).
+    if det.get("geometry_incomplete_gt"):
+        lines.append(
+            f"- ⚠ geometry-incomplete GT excluded from detection FN: "
+            f"geometry_incomplete_gt={_fmt_prov(det.get('geometry_incomplete_gt'))} "
+            f"(of n_gt=tp+fn+incomplete="
+            f"{_fmt_prov((det.get('tp') or 0) + (det.get('fn') or 0) + (det.get('geometry_incomplete_gt') or 0))}; "
+            f"association_incomplete_media="
+            f"{_fmt_prov(det.get('association_incomplete_media'))}; "
+            f"association_complete={_fmt_prov(det.get('association_complete'))})"
+        )
     # VLM6-R2-G-01 / wG1: GT-side y-missing + predicted stamp disclosure (same
     # field names as caption faces.identity_ordering). Denominator = counts.scored.
     ordering = scored.get("identity_ordering") if isinstance(scored.get("identity_ordering"), Mapping) else {}

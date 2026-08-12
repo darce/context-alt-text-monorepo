@@ -1022,3 +1022,90 @@ def test_face_anchor_freeze_sees_labeled_y_missing_counter(
     live_blob = json.dumps(live, sort_keys=True)
     assert '"labeled_y_missing_images": 1' in live_blob
     assert '"labeled_y_missing_images": 0' in json.dumps(blind, sort_keys=True)
+
+
+def test_face_anchor_freeze_sees_geometry_incomplete_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wH1 acceptance: face freeze surface publishes + pins geometry_incomplete_*.
+
+    Separates pre-existing freeze staleness from counter observability (TEST-15):
+    both live and constant-0-mutated re-scores mismatch the stale committed
+    report, but the *diff of their detection.geometry_incomplete_gt* is
+    specifically 1 vs 0 — the field the freeze will pin after regeneration.
+    A wiring that omitted the field or wired it to a constant would make
+    live==mutated on that cell.
+    """
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    from scripts.eval_harness.face_assignment import score_face_assignment
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import score_face_run_record
+    import scripts.eval_harness.report as report_mod
+
+    repo = Path(__file__).resolve().parents[4]
+    anchor = repo / "docs" / "tasks" / "vlm" / "bakeoff-results"
+    man = load_manifest(
+        str(anchor / "S2A-face-determinism-anchor-manifest-20260811.json"),
+        skip_hash_verification=True,
+    )
+    face_run = json.loads((anchor / "S2A-face-determinism-anchor-run-20260811.json").read_text())
+    committed = json.loads(
+        (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
+    )
+
+    # Task-1 baseline: committed freeze has no geometry_incomplete field (blind).
+    committed_det = committed.get("detection") or {}
+    assert "geometry_incomplete_gt" not in committed_det
+    assert "association_complete" not in committed_det
+    assert "geometry_incomplete" not in json.dumps(committed)
+
+    live = score_face_run_record(face_run, man)
+    live_det = live["detection"]
+    live_n = int(live_det["geometry_incomplete_gt"])
+    assert live_n == 1, (
+        f"extended face corpus must yield geometry_incomplete_gt=1; got {live_n}"
+    )
+    assert live_det["association_incomplete_media"] == 1
+    assert live_det["association_complete"] is False
+    # Denominator honesty (EVAL-03): incomplete out of n_gt on scoreable media.
+    n_gt = int(live_det["tp"]) + int(live_det["fn"]) + live_n
+    assert n_gt == 12, f"tp+fn+incomplete must equal corpus n_gt=12; got {n_gt}"
+    assert live["provenance"]["total_gt_boxes"] == 12
+    # Incomplete not re-absorbed as FN: tp=6, fn=5 (not 6), incomplete=1.
+    assert live_det["tp"] == 6
+    assert live_det["fn"] == 5
+    # Sampling frame states the real post-wG2 identity.
+    assert "tp+fn+geometry_incomplete_gt" in live_det["sampling_frame"]
+    assert "tp+fn equals GT boxes that reached association" not in live_det["sampling_frame"]
+
+    real_sfa = score_face_assignment
+
+    def _blind_constant_zero(run_items, gt_by_media, **kwargs):  # type: ignore[no-untyped-def]
+        result = real_sfa(run_items, gt_by_media, **kwargs)
+        return replace(
+            result,
+            geometry_incomplete_gt=0,
+            association_incomplete_media=0,
+        )
+
+    monkeypatch.setattr(report_mod, "score_face_assignment", _blind_constant_zero)
+    blind = score_face_run_record(face_run, man)
+    blind_n = int(blind["detection"]["geometry_incomplete_gt"])
+    assert blind_n == 0
+    assert blind["detection"]["association_complete"] is True
+
+    # Both diverge from stale freeze (pre-existing Expected-red); the *specific*
+    # new difference freeze must pin is live_n vs blind_n on the counter field.
+    assert live_n != blind_n, (
+        "mutation invisible on face report — freeze cannot pin geometry_incomplete "
+        "(wiring did not close blindness)"
+    )
+    live_blob = json.dumps(live, sort_keys=True)
+    assert '"geometry_incomplete_gt": 1' in live_blob
+    assert '"geometry_incomplete_gt": 0' in json.dumps(blind, sort_keys=True)
+    # Stamp-only mutation must not alter detection P/R arithmetic (sr-001).
+    assert blind["detection"]["fn"] == live_det["fn"]
+    assert blind["detection"]["tp"] == live_det["tp"]

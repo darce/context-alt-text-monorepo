@@ -28,13 +28,12 @@ FAIR-01/02/03/06, CAL-06, PROV-04, EVAL-04 (S3d).
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-
-from scripts.eval_harness.face_assignment import gt_box_name
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
@@ -98,6 +97,42 @@ SAMPLING_FRAME_CLUSTERING = (
     "named_matched_faces_pairwise: P_same/P_diff pair floors; M==0 "
     "all-singletons guard; single-linkage diagnostic (GRPH-18)"
 )
+
+
+def named_box_name(box: Any) -> str | None:
+    """Authoritative namedness predicate for face_metrics (VLM6-R2-A-01 / RA-02 / RA-03).
+
+    **Rule (explicit):** a box is named iff, after normalization, a non-empty
+    string remains. Normalization is:
+
+    1. Read ``name`` from a Mapping or object attribute; missing/``None`` → anonymous.
+    2. Coerce to ``str``.
+    3. Remove Unicode category ``Cf`` (format controls) — zero-width space/joiner/
+       non-joiner, BOM, soft hyphen, and other invisible format chars that
+       ``str.strip()`` does **not** remove (RA-03).
+    4. ``str.strip()`` of Unicode whitespace (ASCII space, NBSP, ideographic
+       space, tabs, …).
+    5. Empty after (3)+(4) → ``None`` (anonymous); else return the remaining text.
+
+    Every face_metrics site that decides "is this box named?" / extracts a
+    display name for ordering **must** call this function — not an inline
+    ``str(name).strip()`` or truthiness check (RA-02). Association still uses
+    ``face_assignment.gt_box_name`` (strip-only); that surface is out of this
+    module's ownership — keep the rules aligned when that module is next open.
+    """
+    if isinstance(box, Mapping):
+        raw = box.get("name")
+    else:
+        raw = getattr(box, "name", None)
+    if raw is None:
+        return None
+    # Cf = format controls (ZWSP U+200B, ZWJ U+200D, ZWNJ U+200C, BOM U+FEFF,
+    # soft hyphen U+00AD, …). Not covered by str.strip() whitespace.
+    without_format = "".join(
+        ch for ch in str(raw) if unicodedata.category(ch) != "Cf"
+    )
+    text = without_format.strip()
+    return text if text else None
 
 
 @dataclass(frozen=True)
@@ -248,9 +283,10 @@ def predicted_left_to_right(
     rg-005). **Leftmost-wins duplicate-name dedup** mirrors
     ``labeled_left_to_right`` (VLM6-R4-08).
 
-    Namedness (VLM6-R2-A-01 / HARM-06): routes every row through ``gt_box_name``
-    — the single strip/empty→None predicate also used by association and
-    ``labeled_left_to_right``. Whitespace-only names are anonymous (skipped);
+    Namedness (VLM6-R2-A-01 / HARM-06 / RA-02): routes every row through
+    ``named_box_name`` — the single face_metrics predicate shared with
+    ``labeled_left_to_right`` and ``sort_identity_rows_by_normalized_centre``.
+    Whitespace-only and format-control-only names are anonymous (skipped);
     padded names are stripped before ordering.
 
     Returns:
@@ -266,7 +302,7 @@ def predicted_left_to_right(
     positioned: list[tuple[float, float, str]] = []
     unpositioned: list[str] = []
     for entry in identities:
-        name = gt_box_name(entry)
+        name = named_box_name(entry)
         if name is None:
             continue
         if isinstance(entry, Mapping):
@@ -313,6 +349,12 @@ def sort_identity_rows_by_normalized_centre(
     Sort key is the shared ``normalized_centre_order_key`` (cx, cy, name) — same
     rule as ``predicted_left_to_right`` before name dedup (S3-01 / rg-005).
     Unpositioned rows follow positioned ones (stable secondary key = name).
+
+    Namedness (RA-02): the tertiary name component comes from ``named_box_name``
+    (stripped / format-stripped; anonymous → ``""``). Rows are not filtered —
+    storage must keep the full multiset — but the key must not fork an inline
+    ``str(row.get("name") or "")`` that disagrees with L→R paths on padding or
+    invisible names. Row ``name`` fields are left unchanged.
     """
     positioned: list[tuple[float, float, str, dict[str, Any]]] = []
     unpositioned: list[tuple[str, dict[str, Any]]] = []
@@ -320,7 +362,8 @@ def sort_identity_rows_by_normalized_centre(
         if not isinstance(entry, Mapping):
             continue
         row = dict(entry)
-        name = str(row.get("name") or "")
+        # Single namedness predicate — never raw row["name"] for the sort key.
+        name = named_box_name(entry) or ""
         centre = wire_bbox_normalized_centre(row.get("bbox"), image_width=image_width, image_height=image_height)
         if centre is None:
             unpositioned.append((name, row))
@@ -375,8 +418,8 @@ def labeled_order(face_boxes: Sequence[Any] | None) -> LabeledOrderResult:
     named: list[tuple[float, float | None, str]] = []
     named_missing_x = 0
     for box in face_boxes:
-        # Single namedness predicate (VLM6-R2-A-01 / HARM-06): strip; empty → None.
-        name = gt_box_name(box)
+        # Single namedness predicate (VLM6-R2-A-01 / HARM-06 / RA-02/RA-03).
+        name = named_box_name(box)
         if name is None:
             continue
         if isinstance(box, Mapping):
@@ -421,11 +464,11 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
       empty labeled order. Scoring as ``[]`` would charge every predicted name
       as a positional miss (VLM6-R4-08).
     - Ordered unique names when boxes are present. Anonymous boxes (``name``
-      None/empty/whitespace — via ``gt_box_name``) are skipped. **Duplicate
-      names keep the leftmost occurrence only** so the sequence cardinality
-      matches what ``predicted`` can hold (one slot per distinct identity, as
-      ``present_identities`` is a set-like list). Later same-name boxes are
-      ignored, not multi-counted.
+      None/empty/whitespace/format-control-only — via ``named_box_name``) are
+      skipped. **Duplicate names keep the leftmost occurrence only** so the
+      sequence cardinality matches what ``predicted`` can hold (one slot per
+      distinct identity, as ``present_identities`` is a set-like list). Later
+      same-name boxes are ignored, not multi-counted.
     - ``[]`` when boxes are present but all anonymous (order established, nobody
       named) — distinct from the malformed-GT ``None`` case above.
 

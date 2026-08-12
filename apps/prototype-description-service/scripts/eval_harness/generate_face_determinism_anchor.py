@@ -90,6 +90,10 @@ _BBOX_PX_FP = [60.0, 60.0, 20.0, 20.0]
 _GT_BOX = {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc"}
 # Secondary GT for missed-detection item (no face will be placed here).
 _GT_BOX_FN = {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
+# Anonymous GT at a distinct locus for pure stranger-miss (HARM-05 / HARM-01).
+_GT_BOX_STRANGER_FN = {"x": 0.7, "y": 0.1, "w": 0.2, "h": 0.2, "source": "iptc"}
+# Second locus used when named+anonymous misses share one image (HARM-05 mixed).
+_GT_BOX_STRANGER_FN_B = {"x": 0.7, "y": 0.7, "w": 0.2, "h": 0.2, "source": "iptc"}
 _LANDMARKS = [[0.0, 0.0]] * 5
 _DET_SCORE = 0.95
 
@@ -140,6 +144,9 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
     bob_box = {**_GT_BOX, "name": _BOB}
     stranger_box = {**_GT_BOX, "name": None}
     fn_box = {**_GT_BOX_FN, "name": _ALICE}
+    # HARM-05: unmatched anonymous GT (stranger miss) — population HARM-01 fn counts.
+    stranger_fn_box = {**_GT_BOX_STRANGER_FN, "name": None}
+    stranger_fn_box_b = {**_GT_BOX_STRANGER_FN_B, "name": None}
     return {
         "manifest_version": 2,
         "roster": [_ALICE, _BOB],
@@ -298,6 +305,47 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                     "note": emb_note,
                 },
             },
+            {
+                # HARM-05 pure stranger-miss: anonymous GT, zero detections.
+                # Pre-HARM-01 fn=missed_gt (named-only) hides this population.
+                "path": "localwp/uploads/stranger-fn-miss.jpg",
+                "sha256": "3" * 64,
+                "media_id": 9,
+                "face_count": 1,
+                "present_identities": [],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [stranger_fn_box],
+                "provenance": {
+                    "source": "localwp",
+                    "license": "consented",
+                    "publishable": False,
+                    "note": emb_note,
+                },
+            },
+            {
+                # HARM-05 mixed miss: named Alice GT + anonymous GT, zero detections.
+                # Discriminates named-only FN (pre-HARM-01) from identity-agnostic FN.
+                "path": "localwp/uploads/mixed-fn-miss.jpg",
+                "sha256": "4" * 64,
+                "media_id": 10,
+                "face_count": 2,
+                "present_identities": [_ALICE],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [fn_box, stranger_fn_box_b],
+                "provenance": {
+                    "source": "localwp",
+                    "license": "consented",
+                    "publishable": False,
+                    "note": emb_note,
+                },
+                "demographic_cohort": _COHORT_A,
+            },
             # failures[] intentionally not exercised: score-face exits non-zero
             # when counts.failed > 0, which would make the freeze green path red.
             # Declared in provenance.coverage_gaps (AUDIT-07).
@@ -392,6 +440,22 @@ def build_face_anchor_run_record(
             image_size=_IMAGE_SIZE,
             faces=[_face(emb["stranger"])],
         ),
+        build_face_run_item(
+            media_id=9,
+            path="localwp/uploads/stranger-fn-miss.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[],  # HARM-05: unmatched anonymous GT
+        ),
+        build_face_run_item(
+            media_id=10,
+            path="localwp/uploads/mixed-fn-miss.jpg",
+            model_id=_MODEL_ID,
+            embedding_dim=_EMBEDDING_DIM,
+            image_size=_IMAGE_SIZE,
+            faces=[],  # HARM-05: named + anonymous unmatched in one image
+        ),
     ]
     # Document-level synthetic occlusion twin (EVAL-16: never an item).
     # Alice has ≥2 matched faces and Bob is enrolled → multi-identity gallery
@@ -424,7 +488,8 @@ def build_face_anchor_run_record(
             "fixture_revision/canonical_timestamp are byte-stability sentinels "
             "(not git/wall-clock provenance); "
             "F7 multi-regime corpus (2 identities, FP/FN, wrong-name, "
-            "occlusion twin, 2 cohorts; failures[] declared gap — score-face "
+            "occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + "
+            "mixed named/anonymous miss; failures[] declared gap — score-face "
             "hard-exits on counts.failed>0)"
         ),
     }

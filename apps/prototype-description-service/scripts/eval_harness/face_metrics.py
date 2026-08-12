@@ -339,11 +339,9 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
       established; the image must be excluded from positional scoring (never
       fall back to stored ``present_identities`` order).
     - ``None`` when boxes are present and at least one is named but **every**
-      named box lacks a complete ``(x, y)`` centre — malformed ground truth, not
-      an empty labeled order. Scoring as ``[]`` would charge every predicted
-      name as a positional miss (VLM6-R4-08). HARM-07: never invent ``y=0.0``;
-      incomplete coords match the predicted-side refuse-to-order policy
-      (rg-015).
+      named box lacks an ``x`` coordinate — malformed ground truth, not an
+      empty labeled order. Scoring as ``[]`` would charge every predicted name
+      as a positional miss (VLM6-R4-08).
     - Ordered unique names when boxes are present. Anonymous boxes (``name``
       None/empty) are skipped. **Duplicate names keep the leftmost occurrence
       only** so the sequence cardinality matches what ``predicted`` can hold
@@ -351,11 +349,17 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
       list). Later same-name boxes are ignored, not multi-counted.
     - ``[]`` when boxes are present but all anonymous (order established, nobody
       named) — distinct from the malformed-GT ``None`` case above.
+
+    HARM-07 / rg-015: never invent ``y=0.0``. When every named box with ``x``
+    also carries ``y``, sort by the shared ``normalized_centre_order_key``
+    (x, y, name). When any named box is missing ``y``, sort by ``(x, name)``
+    only — real primary + name tertiary, no fabricated secondary coordinate.
     """
     if not face_boxes:
         return None
-    named: list[tuple[float, float, str]] = []
-    named_missing_coord = 0
+    # (x, y|None, name)
+    named: list[tuple[float, float | None, str]] = []
+    named_missing_x = 0
     for box in face_boxes:
         if isinstance(box, Mapping):
             name = box.get("name")
@@ -367,17 +371,20 @@ def labeled_left_to_right(face_boxes: Sequence[Any] | None) -> list[str] | None:
             y = getattr(box, "y", None)
         if name is None or name == "":
             continue
-        # Both centre coords required — same refuse-to-invent policy as
-        # wire_bbox_normalized_centre on the predicted side (HARM-07 / rg-015).
-        if x is None or y is None:
-            named_missing_coord += 1
+        if x is None:
+            named_missing_x += 1
             continue
-        named.append((float(x), float(y), str(name)))
-    # Named boxes exist but none carry full centre → manifest defect, not empty order.
-    if not named and named_missing_coord > 0:
+        y_val: float | None = None if y is None else float(y)
+        named.append((float(x), y_val, str(name)))
+    # Named boxes exist but none carry x → manifest defect, not empty order.
+    if not named and named_missing_x > 0:
         return None
     # Boxes present but none named (all strangers): established empty order.
-    named.sort(key=lambda t: normalized_centre_order_key(t[0], t[1], t[2]))
+    if named and all(y is not None for _, y, _ in named):
+        named.sort(key=lambda t: normalized_centre_order_key(t[0], float(t[1]), t[2]))
+    else:
+        # Missing y on at least one box: never invent y=0.0 (HARM-07).
+        named.sort(key=lambda t: (t[0], t[2]))
     return _leftmost_unique_names([name for _, _, name in named])
 
 

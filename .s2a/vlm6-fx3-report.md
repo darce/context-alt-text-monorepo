@@ -215,9 +215,12 @@ None. All five reproduced with live probes before the fix; each has a RED captur
 
 ```
 $ python3 scripts/check_lane_report_shas.py
-lane report SHA citations: 50 file(s), 45 citation(s) resolved
+lane report SHA citations: 50 file(s), N citation(s) resolved
 EXIT:0
 ```
+
+N grows as this report cites additional resolvable SHAs from `fix/fx3` commits;
+exit code is the acceptance criterion. Last measured: 46 citations, exit 0.
 
 ## Test suite (post-fix)
 
@@ -259,3 +262,4 @@ Coordinator: integrate `fix/fx3` onto `feature/vlm-6` after review.
 
 - `a21fa99610d0386e90e9b55bb813f2430b238bc5` — fix(fx3): close lane-report SHA guard evasion channels
 - `f3e54b890322f15099a8e265070f4b0d32b5469f` — docs(fx3): record RED/GREEN captures and resolving commit SHAs
+- `d984abd02afd4f7c71c3fa2869380fcbbb1f6fb3` — docs(fx3): finalise lane report counts and commit list

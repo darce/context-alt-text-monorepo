@@ -8046,6 +8046,8 @@ class TestA901FlagIndependence:
         "_SCAN_FAIL_CLOSED_BOUNDS_ENABLED",
         "_NC_STRUCTURAL_MATCH_ENABLED",
         "_NC_PACKAGE_COMPONENT_SUFFIX_ENABLED",
+        "_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED",  # FIR-7-B12-1 steal backstop
+        "_ELEVATED_DENY_COMPACT_ENABLED",  # FIR-7-B12-1 elevated deny-(c) arm
     )
 
     def test_no_generalized_suffix_flag_remains(self) -> None:
@@ -8062,6 +8064,8 @@ class TestA901FlagIndependence:
             "yolov8n_oiv7",  # (b)
             "buffalo_l_extra",  # pure (b)
             "yolov9t",  # (c)
+            "yoloseg",  # elevated deny-(c) (FIR-7-B12-1)
+            "yolofree",  # steal backstop only (FIR-7-B12-1)
             "yolov9t-seg",  # (d) head-segment
             "yoloxultralytics",  # (e)
             "yolox_ultralytics",  # residual re-scan
@@ -8807,3 +8811,336 @@ class TestB1104StructuralNcFlagDoorSolePath:
         # Floor-backed export tags still reject without structural strip.
         assert policy.audit_derived_from_model("yolo_nas_l_trt").ok is False
         assert policy.audit_derived_from_model("buffalo_l").ok is False
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F9 — elevated deny-(c) real, carve-out laundering closed
+# ---------------------------------------------------------------------------
+
+
+class TestB121ElevatedDenyCompactCloser:
+    """FIR-7-B12-1: elevated deny-(c) is real; steal is a narrow backstop.
+
+    F8 left ``_deny_folded_ab_hit`` (c) dead via an ``elif`` chain on the
+    (b) flag. Architecture after fix: elevated deny-(c) closes rem ≤ 3
+    compact debris (``yoloseg``); steal closes rem > 3 (``yolofree``).
+    Each is single-mechanism red-provable.
+    """
+
+    ELEVATED_ONLY: ClassVar[tuple[str, ...]] = (
+        "yoloseg",
+        "yolosg",
+        "YoloSeg",
+        "checkpoints_yoloseg",
+        "org/yoloseg",
+        "prefix_yoloseg",
+    )
+    STEAL_ONLY: ClassVar[tuple[str, ...]] = (
+        "yolofree",
+        "yolopose",
+    )
+
+    def test_elevated_deny_c_hits_compact_debris_directly(self) -> None:
+        """Pin: (c) arm is live — ``_deny_folded_ab_hit('yoloseg')`` is not None."""
+        for token in self.ELEVATED_ONLY:
+            c = policy.canonical(token) or token
+            # Path-split: elevated runs per component.
+            if "/" in c:
+                c = c.split("/")[-1]
+            # Strip junk prefix for bare elevated probe on the debris form.
+            if c.startswith("checkpoints_"):
+                c = c[len("checkpoints_") :]
+            if c.startswith("prefix_"):
+                c = c[len("prefix_") :]
+            hit = policy._deny_folded_ab_hit(c)
+            assert hit is not None, (
+                f"elevated deny-(c) must claim {c!r} directly "
+                f"(F8 dead-code regression pin)"
+            )
+            assert hit.package_id == "yolo"
+            # Steal must NOT double-cover rem ≤ 3 (single-mechanism).
+            assert policy._exception_illegitimate_deny_steal(c) is None, (
+                f"steal must not cover elevated-owned {c!r}"
+            )
+
+    def test_steal_owns_long_rem_only(self) -> None:
+        for token in self.STEAL_ONLY:
+            assert policy._deny_folded_ab_hit(token) is None, (
+                f"elevated must miss long-rem {token!r}"
+            )
+            steal = policy._exception_illegitimate_deny_steal(token)
+            assert steal is not None, f"steal must claim {token!r}"
+            assert steal.package_id == "yolo"
+            assert policy._package_denylist_hit(token) is not None
+
+    def test_red_proof_elevated_c_alone_turns_compact_pins_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable elevated deny-(c) arm alone → elevated-only pins admit."""
+        for token in self.ELEVATED_ONLY:
+            assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(policy, "_ELEVATED_DENY_COMPACT_ENABLED", False)
+        for token in self.ELEVATED_ONLY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with elevated (c) off, {token!r} must admit"
+            )
+        # Steal-only pins still deny (independent closer; exception (c) lives).
+        for token in self.STEAL_ONLY:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"steal backstop must still deny {token!r} with elevated (c) off"
+            )
+
+    def test_red_proof_steal_alone_turns_long_rem_pins_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Disable steal alone → long-rem pins admit; elevated pins stay red."""
+        for token in self.STEAL_ONLY:
+            assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED", False
+        )
+        for token in self.STEAL_ONLY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with steal off, {token!r} must admit"
+            )
+        for token in self.ELEVATED_ONLY:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"elevated must still deny {token!r} with steal off"
+            )
+
+    def test_deny_has_folded_ab_claim_load_bearing_for_yolo_x(self) -> None:
+        """``_deny_has_folded_ab_claim`` is not vacuous — yolo_x needs it."""
+        assert policy._deny_has_folded_ab_claim("yolo_x") is True
+        assert policy._deny_folded_ab_hit("yolo_x") is not None
+        # Compact exception spelling would otherwise carve out via yolox.
+        assert policy._token_has_legitimate_exception_boundary("yolox") is True
+        assert policy._package_denylist_hit("yolo_x") is not None
+        assert policy._package_denylist_hit("yolox") is None
+
+
+class TestB122SeparatorTwinReconstitution:
+    """FIR-7-B12-2: separator twins of compact denies reconstitute → deny."""
+
+    DENY_TWINS: ClassVar[tuple[str, ...]] = (
+        "yolos_eg",
+        "yolof_ree",
+        "yolop_ose",
+        "yolos_eg_v8",
+        "checkpoints_yolos_eg",
+        "megvii_yolos_eg",
+        "hustvl_yolos_eg",
+    )
+    ADMIT_PINS: ClassVar[tuple[str, ...]] = (
+        "yolos-tiny",
+        "yolos_base",
+        "yolos_small",
+        "hustvl_yolos",
+        "hustvl_yolos_tiny",
+        "yolof_r50",
+        "yolof_r101",
+        "yolop",
+        "yolopv2",
+        "yolop_v3",
+        "megvii_yolox_s",
+        "ppyolo",
+        "ppyoloe",
+        "ppyolov2",
+        "myyolo",
+        "yolodummy",
+    )
+
+    @pytest.mark.parametrize("token", DENY_TWINS)
+    def test_separator_twins_deny(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (separator twin B12-2)"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", ADMIT_PINS)
+    def test_admit_pins_survive_reconstitution(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"admit pin {token!r} must survive residual reconstitution"
+        )
+
+    def test_full_row_and_doors_deny_separator_twins(self) -> None:
+        for token in self.DENY_TWINS:
+            row = {
+                "source": "self-generated",
+                "license": "MIT",
+                "derived_from_model": "",
+                "package": token,
+            }
+            result = policy.audit_provenance_row(
+                row, category=policy.PolicyCategory.TRAINING_DATA
+            )
+            assert result.ok is False, f"row package={token!r} must deny"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+
+class TestB123PerFamilyCompactTags:
+    """FIR-7-B12-3: per-family tag sets; digit-wildcard removed."""
+
+    DENY_DIGIT_LAUNDER: ClassVar[tuple[str, ...]] = (
+        "yolos_v8",
+        "yolosv8",
+        "yolos8",
+        "yoloseg1",
+        "yolos1eg",
+        "yolos0g",
+        "yoloxs2",
+        "yoloxv8",
+        "yolopv8",
+        "yolofv2",
+        "weights_yolosv8",
+        "org/yolosv8",
+    )
+    ADMIT_REAL_TAGS: ClassVar[tuple[str, ...]] = (
+        "yolox_s",
+        "yoloxs",
+        "yolox_nano",
+        "yolos-tiny",
+        "yolos_base",
+        "yolof_r50",
+        "yolopv2",
+        "ppyoloe",
+        "hustvl/yolos-small",
+        "yolox_darknet",
+    )
+
+    @pytest.mark.parametrize("token", DENY_DIGIT_LAUNDER)
+    def test_digit_laundering_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (per-family tags B12-3)"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", ADMIT_REAL_TAGS)
+    def test_real_family_tags_admit(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"real tag {token!r} must admit under per-family sets"
+        )
+
+    def test_no_global_digit_wildcard(self) -> None:
+        """Digit-bearing rem is not globally legitimate."""
+        assert policy._is_legitimate_exception_compact_rem("v8", "yolos") is False
+        assert policy._is_legitimate_exception_compact_rem("v2", "yolop") is True
+        assert policy._is_legitimate_exception_compact_rem("s", "yolox") is True
+        assert policy._is_legitimate_exception_compact_rem("s", "yolos") is False
+        # Empty seed fail-closed.
+        assert policy._is_legitimate_exception_compact_rem("v2", "") is False
+
+
+class TestB124YolosSizeLetterTwins:
+    """FIR-7-B12-4: YOLOS single-letter size twins deny; yoloxs admits."""
+
+    YOLO_S_LETTER_DENY: ClassVar[tuple[str, ...]] = (
+        "yolosx",
+        "yolos_x",
+        "yolose",
+        "yolosn",
+        "yolosm",
+        "yolosl",
+        "yolost",
+        "yolosb",
+    )
+
+    @pytest.mark.parametrize("token", YOLO_S_LETTER_DENY)
+    def test_yolos_letter_twins_deny(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (not a real YOLOS size)"
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_yoloxs_real_size_admits(self) -> None:
+        assert policy._package_denylist_hit("yoloxs") is None
+        assert policy._package_denylist_hit("yolo_x") is not None  # folded deny
+
+    def test_family_compact_tag_table_pin(self) -> None:
+        tags = policy._EXCEPTION_FAMILY_COMPACT_TAGS
+        assert tags["yolox"] == frozenset({"s", "m", "l", "x"})
+        assert tags["yolos"] == frozenset()
+        assert "r50" in tags["yolof"]
+        assert tags["yolop"] == frozenset({"v2", "v3"})
+        assert tags["ppyolo"] == frozenset({"e", "v2"})
+
+
+class TestB125CarveOutTest15Debts:
+    """FIR-7-B12-5: free/blah outside shield tags; mechanism red-proofs."""
+
+    def test_free_and_blah_outside_nc_trailing_shield_tags(self) -> None:
+        """Sole-path door witnesses must not be silently subsumed by shield set."""
+        shield = policy._NC_TRAILING_SHIELD_TAGS
+        assert "free" not in shield
+        assert "blah" not in shield
+
+    def test_red_proof_steal_flag_is_load_bearing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert policy._package_denylist_hit("yolofree") is not None
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED", False
+        )
+        assert policy._package_denylist_hit("yolofree") is None
+
+    def test_red_proof_elevated_c_flag_is_load_bearing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert policy._package_denylist_hit("yoloseg") is not None
+        monkeypatch.setattr(policy, "_ELEVATED_DENY_COMPACT_ENABLED", False)
+        assert policy._package_denylist_hit("yoloseg") is None
+        # Steal still covers long-rem independently.
+        assert policy._package_denylist_hit("yolofree") is not None
+
+
+class TestA123SharedWeightsDoorHelper:
+    """FIR-7-A12-3: derived/source doors share one axis sequence helper."""
+
+    def test_helper_exists_and_both_doors_call_it(self) -> None:
+        import inspect
+
+        assert hasattr(policy, "_audit_weights_lineage_token")
+        src_derived = inspect.getsource(policy.audit_derived_from_model)
+        src_source = inspect.getsource(policy.audit_source)
+        assert "_audit_weights_lineage_token" in src_derived
+        assert "_audit_weights_lineage_token" in src_source
+
+    def test_doors_agree_on_dual_axis_and_nc_only(self) -> None:
+        for token in (
+            "buffalo_l_ultralytics",
+            "ultralytics/buffalo_l",
+            "buffalo_l",
+            "yolo_nas_l_trt",
+        ):
+            d = policy.audit_derived_from_model(token)
+            s = policy.audit_source(token)
+            assert d.ok is False and s.ok is False
+            assert d.reason is s.reason, (
+                f"{token!r}: doors disagree {d.reason} vs {s.reason}"
+            )
+
+
+class TestB126AgplAdjacentGluePrefix:
+    """FIR-7-B12-6: non-exact AGPL-adjacent names keep NC reason (option b).
+
+    ``ultralyticsplus`` is not an AGPL family seed; ``buffalo_l`` sibling
+    still rejects fail-closed as nc_model_derived. Exact AGPL seeds keep
+    the AGPL axis.
+    """
+
+    def test_ultralyticsplus_buffalo_l_is_nc_not_agpl(self) -> None:
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door("ultralyticsplus/buffalo_l")
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+                f"expected nc_model_derived for AGPL-adjacent glue, got "
+                f"{result.reason} ({result.detail})"
+            )
+            detail_cf = result.detail.casefold()
+            assert "buffalo" in detail_cf
+            assert "entry 'ultralytics'" not in detail_cf
+
+    def test_exact_ultralytics_buffalo_still_agpl_precedence(self) -> None:
+        result = policy.audit_derived_from_model("ultralytics/buffalo_l")
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert "entry 'ultralytics'" in result.detail.casefold()

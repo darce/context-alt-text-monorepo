@@ -2,18 +2,19 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
-- head_sha: `None`
+- head_sha: `null`
 - base_url: seeded-stub://offline
 - fetch manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737`
 - score manifest_sha256: `83bfdc4e50b441dd60f4d7b6613dac57f42e8bb1e216f53cfeab147984cfd737` (matches fetch: True)
-- started_at: 2026-08-11T00:00:00Z
+- started_at: null
 - images: 37/37 scored, 0 failed
 - verdict: **fail** (wrong_name_rate=0.108, floor=0.000)
 - rubric_gate: `skip`
 - verdict reason: wrong_name_rate=0.1081 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=37)
-- verdict reason: category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False degraded_images=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)
+- verdict reason: category-vacuity: positional — claim unit=image with face_boxes L→R order; compared_images=0 status=not_evaluable evaluable=False order_unknown_excluded=37 excluded_images=37 (π=0 on face_boxes; AUDIT-07)
 - verdict reason: category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=37 (π=0 on spatial_facts; AUDIT-07)
-- verdict reason: category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07)
+- verdict reason: category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)
+- verdict reason: category-vacuity: identity_ordering — positional_images=0 (order metric non-observable; AUDIT-07 / S2-06)
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)
@@ -64,7 +65,7 @@
 - true rejections (strangers): 7
 - positional accuracy (L→R order): null (hits=0 / 0; exact-order images=0/0; swaps=0; status=not_evaluable; evaluable=False)
 - positional vacuity: positional identification not evaluable on this corpus, π=0 for box-grounded identity claims (sampling_frame=box_grounded_LtoR_name_sequences: position i must match; requires face_boxes (labeled_order_known) and centre-ordered predicted names (predicted_left_to_right); when compared_images=0 status=not_evaluable π=0 for box-grounded identity claims (EVAL-23 / AUDIT-07))
-- ⚠ identity ordering degraded on 37 image(s) (missing/malformed bbox → not pure L→R): `mock_images/Breiðamerkurjökull.jpg`, `mock_images/bea-nye.jpg`, `mock_images/ccqw-antartica.jpg`, `mock_images/ccqw-bar.jpg`, `mock_images/ccqw-erika.jpg`, `mock_images/ccqw-flowers.jpg`, `mock_images/ccqw-hair.jpg`, `mock_images/ccqw-occlusion-2.jpg`, `mock_images/ccqw-occlusion.jpg`, `mock_images/ccqw-purple.jpg`, `mock_images/ccqw-running-2.jpg`, `mock_images/ccqw-running.jpg`, `mock_images/ccqw-sunglasses-flowers.jpg`, `mock_images/ccqw-sunglasses.jpg`, `mock_images/ccqw-underexposed.jpg`, `mock_images/ccqw.blurry.jpg`, `mock_images/cristina-1.jpg`, `mock_images/example-ellynheald-goldleaf.jpeg`, `mock_images/k.mcc-1.jpg`, `mock_images/kirstie-1.jpeg`, `mock_images/kirstie-boat.jpg`, `mock_images/kirstie-daniel-sunglasses.jpg`, `mock_images/kirstie-pool.jpg`, `mock_images/liam-maloney-2.jpg`, `mock_images/liam-maloney-home.jpg`, `mock_images/liam-maloney-painting.jpg`, `mock_images/maria-cocktail.jpg`, `mock_images/maria-party.jpg`, `mock_images/maria-pool.jpg`, `mock_images/mcm-eye-blocked.jpg`, `mock_images/mcm-icecave.jpg`, `mock_images/mcm-planecrash.jpg`, `mock_images/nina-machiavelli.jpeg`, `mock_images/rrw-mirror.jpg`, `mock_images/ryann-bar.jpg`, `mock_images/ryann-group-party.jpg`, `mock_images/ryann-party.jpg`
+- ⚠ identity order unknown (no face_boxes) on 37 image(s) — positional excluded
 
 ### Wrong-name errors (top product risk — every instance listed)
 

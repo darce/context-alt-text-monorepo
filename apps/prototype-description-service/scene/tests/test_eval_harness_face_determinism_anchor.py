@@ -63,11 +63,13 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # Regenerated fx7 (this lane's branch): head_sha 40-zeros → null + fixture_revision;
 # coverage_gaps predicate keys on probe count (perfect ID/detection not listed).
 # Manifest digest unchanged (corpus body byte-identical); run/report/md moved.
+# Regenerated hx1 (wave-C regen) after gx4 S4-04 pin-mode started_at:null +
+# S4-05 MD head_sha null rendering. Manifest digest still unchanged.
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "1209733ed2b62e837449855690c15931dc0e76fcb24be8a715668020e05c8958",
-    _RUN.name: "de8d00edb4458e7bce9c22a5831c7e65bb2a225f5ebff1e0b37e42c7badbcde4",
-    _REPORT_JSON.name: "50dd3c2a8fab1153015c431067394ef12c6114283a038c4b8850b6d368fdd041",
-    _REPORT_MD.name: "6452cc66134ec07d24fed6aed8b863b64b31c4cbfb3bb9e34b7dca3937898701",
+    _RUN.name: "a5264540eb1fe7aa12227d8c8da5776a4ae2790cf9b6f606899a0fc48c3685c5",
+    _REPORT_JSON.name: "fbea3c228f527d657d85c511a093ec8c0959cbeed0850fe5f996b95b85037449",
+    _REPORT_MD.name: "537446ccc8f96704a93aaeb9e027662b9995bc5daffddf4c876cb48ae97be760",
 }
 
 

@@ -1,6 +1,8 @@
 {
   "caption": {
     "easy_wrong_defined_images": 37,
+    "gated_score_excluded": 3,
+    "gated_score_scored": 34,
     "insertion_rate": 0.0,
     "mean_gated_score": 0.0,
     "must_right_defined_images": 34,
@@ -161,12 +163,62 @@
       "wrong_names": []
     },
     "identity_ordering": {
-      "degraded_images": 0,
-      "degraded_paths": [],
+      "degraded_images": 37,
+      "degraded_paths": [
+        "mock_images/Breiðamerkurjökull.jpg",
+        "mock_images/bea-nye.jpg",
+        "mock_images/ccqw-antartica.jpg",
+        "mock_images/ccqw-bar.jpg",
+        "mock_images/ccqw-erika.jpg",
+        "mock_images/ccqw-flowers.jpg",
+        "mock_images/ccqw-hair.jpg",
+        "mock_images/ccqw-occlusion-2.jpg",
+        "mock_images/ccqw-occlusion.jpg",
+        "mock_images/ccqw-purple.jpg",
+        "mock_images/ccqw-running-2.jpg",
+        "mock_images/ccqw-running.jpg",
+        "mock_images/ccqw-sunglasses-flowers.jpg",
+        "mock_images/ccqw-sunglasses.jpg",
+        "mock_images/ccqw-underexposed.jpg",
+        "mock_images/ccqw.blurry.jpg",
+        "mock_images/cristina-1.jpg",
+        "mock_images/example-ellynheald-goldleaf.jpeg",
+        "mock_images/k.mcc-1.jpg",
+        "mock_images/kirstie-1.jpeg",
+        "mock_images/kirstie-boat.jpg",
+        "mock_images/kirstie-daniel-sunglasses.jpg",
+        "mock_images/kirstie-pool.jpg",
+        "mock_images/liam-maloney-2.jpg",
+        "mock_images/liam-maloney-home.jpg",
+        "mock_images/liam-maloney-painting.jpg",
+        "mock_images/maria-cocktail.jpg",
+        "mock_images/maria-party.jpg",
+        "mock_images/maria-pool.jpg",
+        "mock_images/mcm-eye-blocked.jpg",
+        "mock_images/mcm-icecave.jpg",
+        "mock_images/mcm-planecrash.jpg",
+        "mock_images/nina-machiavelli.jpeg",
+        "mock_images/rrw-mirror.jpg",
+        "mock_images/ryann-bar.jpg",
+        "mock_images/ryann-group-party.jpg",
+        "mock_images/ryann-party.jpg"
+      ],
+      "order_unknown_excluded": 37,
       "positional_images": 0
     }
   },
   "failures": [],
+  "hallucination": {
+    "by_kind": {},
+    "count_advisory_images": 3,
+    "fabricated_fact_rate": 0.0,
+    "fabricated_fact_rate_trapped": null,
+    "fabricated_instances": 0,
+    "images_caught": 0,
+    "images_with_traps": 0,
+    "mean_coverage": null,
+    "trap_instances": 0
+  },
   "kind": "report",
   "per_image": [
     {
@@ -176,6 +228,15 @@
       "fkre": 92.97,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 1,
       "meta_framing_hits": [],
@@ -187,6 +248,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/Breiðamerkurjökull.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -200,6 +268,15 @@
       "fkre": 92.97,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 2,
       "meta_framing_hits": [],
@@ -211,6 +288,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/bea-nye.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -224,6 +308,15 @@
       "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 3,
       "meta_framing_hits": [],
@@ -235,6 +328,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-antartica.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -248,6 +348,15 @@
       "fkre": 71.82,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 4,
       "meta_framing_hits": [],
@@ -259,6 +368,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-bar.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -272,6 +388,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 5,
       "meta_framing_hits": [],
@@ -285,6 +410,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-erika.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -298,6 +430,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 6,
       "meta_framing_hits": [],
@@ -309,6 +450,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-flowers.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -322,6 +470,15 @@
       "fkre": 71.82,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 7,
       "meta_framing_hits": [],
@@ -333,6 +490,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-hair.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -346,6 +510,15 @@
       "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 8,
       "meta_framing_hits": [],
@@ -357,6 +530,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-occlusion-2.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -370,6 +550,15 @@
       "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 9,
       "meta_framing_hits": [],
@@ -381,6 +570,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-occlusion.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -394,6 +590,15 @@
       "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 10,
       "meta_framing_hits": [],
@@ -405,6 +610,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-purple.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -418,6 +630,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 11,
       "meta_framing_hits": [],
@@ -429,6 +650,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-running-2.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -442,6 +670,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 12,
       "meta_framing_hits": [],
@@ -453,6 +690,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-running.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -466,6 +710,15 @@
       "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 13,
       "meta_framing_hits": [],
@@ -477,6 +730,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-sunglasses-flowers.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -490,6 +750,15 @@
       "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 14,
       "meta_framing_hits": [],
@@ -501,6 +770,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-sunglasses.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -514,6 +790,15 @@
       "fkre": 92.97,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 15,
       "meta_framing_hits": [],
@@ -525,6 +810,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw-underexposed.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -538,6 +830,15 @@
       "fkre": 45.65,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 16,
       "meta_framing_hits": [],
@@ -549,6 +850,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ccqw.blurry.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -562,6 +870,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 17,
       "meta_framing_hits": [],
@@ -573,6 +890,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/cristina-1.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -586,6 +910,15 @@
       "fkre": 88.0,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 18,
       "meta_framing_hits": [],
@@ -597,6 +930,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/example-ellynheald-goldleaf.jpeg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1818,
       "sentence_count": 1,
@@ -610,6 +950,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 19,
       "meta_framing_hits": [],
@@ -621,6 +970,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/k.mcc-1.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -634,6 +990,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 20,
       "meta_framing_hits": [],
@@ -645,6 +1010,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/kirstie-1.jpeg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -658,6 +1030,15 @@
       "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 21,
       "meta_framing_hits": [],
@@ -669,6 +1050,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/kirstie-boat.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -682,6 +1070,15 @@
       "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 23,
       "meta_framing_hits": [],
@@ -695,6 +1092,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -708,6 +1112,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 24,
       "meta_framing_hits": [],
@@ -719,6 +1132,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/kirstie-pool.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -732,6 +1152,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 25,
       "meta_framing_hits": [],
@@ -743,6 +1172,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/liam-maloney-2.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -756,6 +1192,15 @@
       "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 26,
       "meta_framing_hits": [],
@@ -767,6 +1212,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/liam-maloney-home.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -780,6 +1232,15 @@
       "fkre": 50.67,
       "gated_score": null,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 27,
       "meta_framing_hits": [],
@@ -787,6 +1248,13 @@
       "must_right_failures": [],
       "name_front_loaded": null,
       "path": "mock_images/liam-maloney-painting.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -800,6 +1268,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 28,
       "meta_framing_hits": [],
@@ -811,6 +1288,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/maria-cocktail.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -824,6 +1308,15 @@
       "fkre": 92.97,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 29,
       "meta_framing_hits": [],
@@ -835,6 +1328,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/maria-party.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -848,6 +1348,15 @@
       "fkre": 71.82,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 30,
       "meta_framing_hits": [],
@@ -859,6 +1368,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/maria-pool.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -872,6 +1388,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 31,
       "meta_framing_hits": [],
@@ -883,6 +1408,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/mcm-eye-blocked.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -896,6 +1428,15 @@
       "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 32,
       "meta_framing_hits": [],
@@ -907,6 +1448,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/mcm-icecave.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -920,6 +1468,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 33,
       "meta_framing_hits": [],
@@ -931,6 +1488,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/mcm-planecrash.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -944,6 +1508,15 @@
       "fkre": 50.67,
       "gated_score": null,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 34,
       "meta_framing_hits": [],
@@ -951,6 +1524,13 @@
       "must_right_failures": [],
       "name_front_loaded": null,
       "path": "mock_images/nina-machiavelli.jpeg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -964,6 +1544,15 @@
       "fkre": 71.82,
       "gated_score": null,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 35,
       "meta_framing_hits": [],
@@ -971,6 +1560,13 @@
       "must_right_failures": [],
       "name_front_loaded": null,
       "path": "mock_images/rrw-mirror.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -984,6 +1580,15 @@
       "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 36,
       "meta_framing_hits": [],
@@ -995,6 +1600,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ryann-bar.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.1111,
       "sentence_count": 1,
@@ -1008,6 +1620,15 @@
       "fkre": 50.67,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 37,
       "meta_framing_hits": [],
@@ -1019,6 +1640,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ryann-group-party.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
@@ -1032,6 +1660,15 @@
       "fkre": 71.82,
       "gated_score": 0.0,
       "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
       "inserted_identities": [],
       "media_id": 38,
       "meta_framing_hits": [],
@@ -1043,6 +1680,13 @@
       ],
       "name_front_loaded": false,
       "path": "mock_images/ryann-party.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
       "policy_violation": false,
       "repetition_ratio": 0.125,
       "sentence_count": 1,
@@ -1050,6 +1694,14 @@
       "wrong_name_hits": []
     }
   ],
+  "placement": {
+    "abstained": 0,
+    "accuracy": null,
+    "claims": 0,
+    "correct": 0,
+    "images_scored": 37,
+    "wrong": 0
+  },
   "provenance": {
     "adapter": "seeded",
     "base_url": "seeded-stub://offline",
@@ -1072,7 +1724,11 @@
     "started_at": "2026-08-11T00:00:00Z"
   },
   "quality": {
+    "first_sentence_gist_ok_rate": 1.0,
     "mean_context_duplication": 0.0,
+    "mean_fkre": 64.9,
+    "mean_repetition_ratio": 0.0563,
+    "mean_tag_coverage": 0.6847,
     "meta_framing_images": 0,
     "name_front_loaded_rate": 0.0,
     "sentence_band": [
@@ -1082,6 +1738,142 @@
     "sentence_band_ok_rate": 1.0
   },
   "schema": "acx-eval/v1",
+  "strata": {
+    "by_difficulty": {
+      "easy": {
+        "mean_gated_score": 0.0,
+        "n": 16,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 16,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "hard": {
+        "mean_gated_score": 0.0,
+        "n": 11,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 11,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "medium": {
+        "mean_gated_score": 0.0,
+        "n": 10,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 10,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      }
+    },
+    "by_domain": {
+      "art": {
+        "mean_gated_score": null,
+        "n": 2,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 2,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "crowds": {
+        "mean_gated_score": 0.0,
+        "n": 6,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 6,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "faces": {
+        "mean_gated_score": 0.0,
+        "n": 19,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 19,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "low_light": {
+        "mean_gated_score": 0.0,
+        "n": 1,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 1,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "mirrors": {
+        "mean_gated_score": 0.0,
+        "n": 2,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 2,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "occlusion": {
+        "mean_gated_score": 0.0,
+        "n": 3,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 3,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      },
+      "people": {
+        "mean_gated_score": 0.0,
+        "n": 4,
+        "placement_accuracy": null,
+        "positional": {
+          "compared_images": 0,
+          "exact_order_rate": null,
+          "excluded_images": 4,
+          "position_accuracy": null,
+          "swap_images": 0
+        },
+        "wrong_name_images": 0
+      }
+    }
+  },
   "verdict": {
     "insertion_rate": 0.0,
     "mean_gated_score": 0.0,
@@ -1089,6 +1881,8 @@
     "reasons": [],
     "rubric_gate": "skip",
     "verdict": "pass_ungated",
+    "wrong_name_assertions": 0,
+    "wrong_name_images": 0,
     "wrong_name_rate": 0.0,
     "wrong_name_rate_floor": 0.0
   }

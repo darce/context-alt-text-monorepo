@@ -315,16 +315,28 @@ def _redact_caption_report_for_public(
     redacted = copy.deepcopy(scored)
     entries = _entry_index(manifest_entries)
     publishable_ids = _publishable_media_ids(manifest_entries)
-    publishable_names = {
-        name
-        for e in manifest_entries
-        if int(e["media_id"]) in publishable_ids
-        for name in (
-            list(e.get("present_identities") or [])
-            + list(e.get("must_right") or [])
-            + list(e.get("easy_wrong") or [])
+    # VLM6-LC-INT-01: publishability is conferred by being a SUBJECT of a
+    # publishable image (present_identities / must_right) and revoked by being a
+    # subject of any non-publishable one. ``easy_wrong`` is the decoy field — it
+    # names a person who must NOT appear in that image's caption, and is routinely
+    # populated with a private individual precisely because they are off-limits.
+    # Treating a decoy as publishable published the private roster name under
+    # ``per_identity`` with full tp/fp/precision/recall. Fail-closed both ways:
+    # a decoy never confers publishability, and never revokes it either.
+    def _subject_names(entry: Mapping[str, Any]) -> list[str]:
+        return [
+            str(n)
+            for n in (list(entry.get("present_identities") or []) + list(entry.get("must_right") or []))
+        ]
+
+    publishable_subjects: set[str] = set()
+    private_subjects: set[str] = set()
+    for e in manifest_entries:
+        target = (
+            publishable_subjects if int(e["media_id"]) in publishable_ids else private_subjects
         )
-    }
+        target.update(_subject_names(e))
+    publishable_names = publishable_subjects - private_subjects
 
     items = list(run_record.get("items") or [])
     total_items = len(items)
@@ -831,9 +843,13 @@ def build_score_verdict(
         floor_breach = rate > WRONG_NAME_RATE_FLOOR
     if floor_breach:
         reasons.append(
+            # ``wrong_names`` is the count token the F1-7 rounding gate asserts on —
+            # it is the only reason field that stays non-zero when round(rate, 4)
+            # collapses to 0.0 at corpus scale. VLM6-S2A-B-09 added the image /
+            # assertion split alongside it; it must not replace it (VLM6-LC-INT-02).
             f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
-            f"(wrong_name_images={wrong_image_n}, assertions={wrong_n}, "
-            f"ignored={ignored_n}, scored={scored_n})"
+            f"(wrong_names={wrong_n}, wrong_name_images={wrong_image_n}, "
+            f"assertions={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
 
     # VLM6-R2-04 vacuity is surfaced on faces.identity_ordering.degraded_images

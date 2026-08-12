@@ -46,6 +46,8 @@ from scripts.eval_harness.face_metrics import (
     wire_bbox_normalized_centre,
 )
 
+
+
 # --- detection level (identity-agnostic) ---
 
 
@@ -1066,6 +1068,111 @@ def test_namedness_predicate_shared_across_sites():  # VLM6-R2-A-01
     assert false_det == 0
     assert missed_named == 1  # only stripped "Alice"
     assert missed_stranger == 3  # "", None, whitespace
+
+
+def test_face_metrics_namedness_sites_share_one_predicate(monkeypatch):
+    """RA-02 / TEST-15: every face_metrics name decision routes through one predicate.
+
+    Pre-fix (cx1 residual): ``sort_identity_rows_by_normalized_centre`` used
+    ``str(row.get("name") or "")`` while L→R paths used ``gt_box_name`` — a
+    reintroduced inline check never appears in the spy and fails this test.
+    Not an enumeration of call sites (those rot); a divergent site is one that
+    does not call the module predicate.
+    """
+    assert hasattr(face_metrics_mod, "named_box_name"), (
+        "face_metrics must expose named_box_name as the single namedness predicate"
+    )
+    calls: list[object] = []
+    real = face_metrics_mod.named_box_name
+
+    def spy(box: object) -> str | None:
+        calls.append(box)
+        return real(box)
+
+    monkeypatch.setattr(face_metrics_mod, "named_box_name", spy)
+
+    rows = [
+        {"name": "  ", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": " Bob ", "bbox": {"x": 50, "y": 0, "width": 10, "height": 10}},
+    ]
+    labeled_boxes = [
+        {"name": "  ", "x": 0.2, "y": 0.5},
+        {"name": " Alice ", "x": 0.8, "y": 0.5},
+    ]
+
+    n0 = len(calls)
+    sort_identity_rows_by_normalized_centre(rows, image_width=100, image_height=100)
+    sort_calls = len(calls) - n0
+    assert sort_calls >= 2, (
+        "sort_identity_rows_by_normalized_centre must route each row through "
+        f"named_box_name (got {sort_calls} calls)"
+    )
+
+    n1 = len(calls)
+    assert predicted_left_to_right(rows, image_width=100, image_height=100) == ["Bob"]
+    pred_calls = len(calls) - n1
+    assert pred_calls >= 2
+
+    n2 = len(calls)
+    assert labeled_left_to_right(labeled_boxes) == ["Alice"]
+    assert labeled_order(labeled_boxes).names == ["Alice"]
+    labeled_calls = len(calls) - n2
+    assert labeled_calls >= 2
+
+
+def test_sort_identity_rows_name_tiebreak_uses_stripped_namedness():
+    """RA-02: same centre → tertiary name key must use the namedness predicate.
+
+    Pre-fix: raw ``" Bob "`` sorts before ``"Alice"`` (leading space). After
+    strip the order is Alice, Bob — same as predicted L→R name sequence.
+    Rows are still all kept (storage multiset); only the sort key is normalized.
+    """
+    rows = [
+        {"name": " Bob ", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+        {"name": "Alice", "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}},
+    ]
+    ordered = sort_identity_rows_by_normalized_centre(
+        rows, image_width=100, image_height=100
+    )
+    # Spatial keys identical → name tie-break via stripped namedness.
+    assert [r["name"] for r in ordered] == ["Alice", " Bob "]
+    predicted = predicted_left_to_right(rows, image_width=100, image_height=100)
+    assert predicted == ["Alice", "Bob"]
+    # Named subsequence order of sort rows (via predicate) matches predicted.
+    assert hasattr(face_metrics_mod, "named_box_name"), "named_box_name missing"
+    pred = face_metrics_mod.named_box_name
+    assert [pred(r) for r in ordered if pred(r) is not None] == predicted
+
+
+def test_named_box_name_rejects_invisible_format_chars():
+    """RA-03: format controls (Cf) are not names; strip alone is insufficient.
+
+    Explicit rule (face_metrics.named_box_name): remove Unicode category Cf
+    (ZWSP/ZWJ/ZWNJ/BOM/soft-hyphen/…), then str.strip() of Unicode whitespace;
+    empty → anonymous (None). Visible characters remain (``"A\\u200bB"`` → ``"AB"``).
+    Mechanism only — corpus incidence not measured (AUDIT-07).
+    """
+    assert hasattr(face_metrics_mod, "named_box_name"), "named_box_name missing"
+    named_box_name = face_metrics_mod.named_box_name
+    for invisible in ("\u200b", "\u200d", "\u200c", "\ufeff", "\u00ad"):
+        assert named_box_name({"name": invisible}) is None, repr(invisible)
+        assert labeled_left_to_right(
+            [{"name": invisible, "x": 0.5, "y": 0.5}]
+        ) == []
+        assert predicted_left_to_right(
+            [{"name": invisible, "bbox": {"x": 0, "y": 0, "width": 10, "height": 10}}],
+            image_width=100,
+            image_height=100,
+        ) == []
+    # NBSP is whitespace — still anonymous after strip.
+    assert named_box_name({"name": "\u00a0"}) is None
+    assert named_box_name({"name": "\u00a0Alice\u00a0"}) == "Alice"
+    # Format char inside a real name is removed, not a distinct identity.
+    assert named_box_name({"name": "A\u200bB"}) == "AB"
+    assert named_box_name({"name": " Alice "}) == "Alice"
+    assert named_box_name({"name": "   "}) is None
+    assert named_box_name({"name": None}) is None
+    assert named_box_name({"name": ""}) is None
 
 
 def test_gt_box_name_empty_string_is_anonymous():

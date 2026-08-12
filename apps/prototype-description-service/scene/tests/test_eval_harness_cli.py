@@ -79,10 +79,15 @@ def test_fetch_produces_run_record_with_provenance(images_dir):
     assert record["provenance"]["head_sha"] == "f" * 40
     assert len(record["items"]) == 3
     assert all(item["error"] is None for item in record["items"])
+    from scripts.eval_harness.cli import IdentityOrdering
+
     # A-08: every item stamps image dimensions (None when bytes are not a real image).
     assert all("image_width" in item and "image_height" in item for item in record["items"])
-    # A-07: ordering source stamped once identities extracted.
-    assert all(item.get("identity_ordering") == "positional" for item in record["items"])
+    # A-07 / RH-06: ordering source stamped once identities extracted.
+    assert all(
+        item.get("identity_ordering") == IdentityOrdering.POSITIONAL.value
+        for item in record["items"]
+    )
 
 
 def test_fetch_persists_image_dimensions_from_pixels(tmp_path):
@@ -478,9 +483,11 @@ def test_extract_identities_uses_is_auto_label_wire_shape():  # S8-01
             "media_url": None,
         },
     ]
+    from scripts.eval_harness.cli import IdentityOrdering
+
     identities, face_count, ordering = _extract_identities(payload, media_id=7)
     assert face_count == 2
-    assert ordering == "positional"
+    assert ordering == IdentityOrdering.POSITIONAL.value
     assert identities == [
         {
             "name": "Alice Example",
@@ -526,7 +533,9 @@ def test_extract_identities_orders_left_to_right_not_alphabetically():
     ]
     identities, face_count, ordering = _extract_identities(payload, media_id=1)
     assert face_count == 3
-    assert ordering == "positional"
+    from scripts.eval_harness.cli import IdentityOrdering
+
+    assert ordering == IdentityOrdering.POSITIONAL.value
     names = [row["name"] for row in identities]
     assert names == ["Cam Left", "Amy Mid", "Zoe Right"]
     assert names != sorted(names)  # not alphabetical
@@ -538,9 +547,9 @@ def test_extract_identities_orders_left_to_right_not_alphabetically():
 def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
     """Missing/malformed bbox rows stay, mark unpositioned, sort after positioned (rg-015).
 
-    A-07: ordering_source must be ``degraded`` (loud), not silent alpha fallback.
+    A-07: ordering_source must be ``IdentityOrdering.DEGRADED`` (loud), not silent alpha fallback.
     """
-    from scripts.eval_harness.cli import _extract_identities
+    from scripts.eval_harness.cli import IdentityOrdering, _extract_identities
 
     payload = [
         {
@@ -567,7 +576,7 @@ def test_extract_identities_unpositioned_after_positioned_no_fabricated_bbox():
     ]
     identities, face_count, ordering = _extract_identities(payload, media_id=1)
     assert face_count == 3
-    assert ordering == "degraded"  # A-07: loud, not silent
+    assert ordering == IdentityOrdering.DEGRADED.value  # A-07 / RH-06: loud, not silent
     assert [row["name"] for row in identities] == [
         "Bob Placed",
         "Alice NoBox",
@@ -728,21 +737,27 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
 
 
 def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
-    """--audience public writes a distinct <run>-report.public.{json,md} with only
-    publishable entries and no local path/name leak (VLM6-C-01 / VLM6-F-03).
+    """--audience public happy path (VLM6-S2A-A-06): exit 0 + redacted public artifact.
 
-    Fixture keeps a local wrong-name row so public redaction of wrong_names is
-    exercised; VLM-6 S2A wrong-name floor therefore exits non-zero *after*
-    artifacts are written — catch SystemExit and still assert the files.
+    Clean fixture (correct local identity). Wrong-name redaction lives in a
+    separate test so this guard is not coupled to the S2A floor gate (sr-001).
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=True
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit) as excinfo:
-        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path), "--audience", "public"])
-    assert excinfo.value.code != 0
-    assert "wrong-name" in str(excinfo.value).lower()
+    assert (
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--audience",
+                "public",
+            ]
+        )
+        is None
+    )
 
     public_json = (tmp_path / "run-x-report.public.json").read_text()
     public_md = (tmp_path / "run-x-report.public.md").read_text()
@@ -752,13 +767,39 @@ def test_cmd_score_public_audience_emits_redacted_public_artifact(tmp_path, monk
     for blob in (public_json, public_md):
         assert _W1_LOCAL_PATH not in blob
         assert _W1_LOCAL_NAME not in blob
-        assert "Wrong Celebrity" not in blob  # wrong_names pair from the local item
         assert _W1_INTERNAL_BASE_URL not in blob  # run-level endpoint redacted (VLM6-S5-BR-01)
     assert _W1_PUBLIC_NAME in public_json
     # The full LOCAL report is still written for operator triage, unredacted.
     local_json = (tmp_path / "run-x-report.json").read_text()
     assert _W1_LOCAL_PATH in local_json
     assert "redaction" not in json.loads(local_json)
+    assert json.loads(local_json)["verdict"]["verdict"] == "pass"
+
+
+def test_cmd_score_public_audience_redacts_wrong_names(tmp_path, monkeypatch):  # VLM6-S2A-A-06
+    """Public artifact withholds wrong_names pairs even when floor exits non-zero."""
+    manifest_path, record_path = _w1_audience_manifest_and_record(
+        tmp_path, inject_wrong_name=True
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--audience",
+                "public",
+            ]
+        )
+    assert excinfo.value.code != 0
+    assert "wrong-name" in str(excinfo.value).lower()
+    public_json = (tmp_path / "run-x-report.public.json").read_text()
+    assert "Wrong Celebrity" not in public_json
+    assert _W1_LOCAL_PATH not in public_json
+    assert _W1_PUBLIC_NAME in public_json
 
 
 def test_cmd_score_default_local_emits_no_public_artifact(tmp_path, monkeypatch):  # VLM-6 S5 W1
@@ -1106,8 +1147,6 @@ def test_cli_score_check_determinism_runs_cross_process_guard(tmp_path, monkeypa
     must pass. Reaching report write without SystemExit means the guard ran and
     matched — not the old same-process double build_reports call.
     """
-    from scripts.eval_harness import cli as cli_mod
-
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
     main(
@@ -2025,55 +2064,60 @@ def test_f8_determinism_artifact_content_ignores_shared_out_decoy(
     shared = _determinism_artifact_dir()
     decoy = shared / "determinism-mismatch-score-seed0.diff.txt"
     poison = shared / "determinism-mismatch-score-seed2.diff.txt"
-    decoy.write_text(
-        "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
-        "PYTHONHASHSEED=0\n"
-    )
-    poison.write_text(
-        "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
-        "POISONED_SHARED_OUT\n"
-    )
-    # Prove the old selection form would be order-dependent against these files.
-    globbed = list(shared.glob("determinism-mismatch-score-seed*.diff.txt"))
-    assert decoy in globbed and poison in globbed
-    seed0_first = sorted(globbed, key=lambda p: p.name)
-    assert "baseline_regime=fixed:0" not in seed0_first[0].read_text()
+    try:
+        decoy.write_text(
+            "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
+            "PYTHONHASHSEED=0\n"
+        )
+        poison.write_text(
+            "gate=score\nbaseline_regime=randomized\nchild_seeds=0,1,42\n"
+            "POISONED_SHARED_OUT\n"
+        )
+        # Prove the old selection form would be order-dependent against these files.
+        globbed = list(shared.glob("determinism-mismatch-score-seed*.diff.txt"))
+        assert decoy in globbed and poison in globbed
+        seed0_first = sorted(globbed, key=lambda p: p.name)
+        assert "baseline_regime=fixed:0" not in seed0_first[0].read_text()
 
-    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PYTHONHASHSEED", "0")
-    monkeypatch.setattr(cli_mod, "_determinism_artifact_dir", lambda: tmp_path)
+        manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PYTHONHASHSEED", "0")
+        monkeypatch.setattr(cli_mod, "_determinism_artifact_dir", lambda: tmp_path)
 
-    real_run = cli_mod.subprocess.run
+        real_run = cli_mod.subprocess.run
 
-    def _mutate_then_run(*args, **kwargs):
-        payload = json.loads(record_path.read_text())
-        item = payload["items"][0]
-        item["describe"] = {
-            "alt_text_draft": "MUTATED CAPTION FOR F8 DECOY CONTROL",
-            "visual_facts": {"objects": ["f8-decoy-probe"]},
-        }
-        record_path.write_text(json.dumps(payload))
-        return real_run(*args, **kwargs)
+        def _mutate_then_run(*args, **kwargs):
+            payload = json.loads(record_path.read_text())
+            item = payload["items"][0]
+            item["describe"] = {
+                "alt_text_draft": "MUTATED CAPTION FOR F8 DECOY CONTROL",
+                "visual_facts": {"objects": ["f8-decoy-probe"]},
+            }
+            record_path.write_text(json.dumps(payload))
+            return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
-    with pytest.raises(SystemExit) as exc:
-        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
-    msg = str(exc.value)
-    assert "determinism check FAILED [score]" in msg
-    assert "baseline=fixed:0" in msg
+        monkeypatch.setattr(cli_mod.subprocess, "run", _mutate_then_run)
+        with pytest.raises(SystemExit) as exc:
+            cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+        msg = str(exc.value)
+        assert "determinism check FAILED [score]" in msg
+        assert "baseline=fixed:0" in msg
 
-    # Exact path under isolated dir — never glob-index, never shared out/.
-    artifact = tmp_path / "determinism-mismatch-score-seed2.diff.txt"
-    assert artifact.is_file()
-    body = artifact.read_text()
-    assert "baseline_regime=fixed:0" in body
-    assert "child_seeds=2,1,42" in body
-    assert "POISONED_SHARED_OUT" not in body
-    assert "baseline_regime=randomized" not in body
-    # Shared decoy/poison still present and still wrong — isolation held.
-    assert "baseline_regime=randomized" in decoy.read_text()
-    assert "POISONED_SHARED_OUT" in poison.read_text()
+        # Exact path under isolated dir — never glob-index, never shared out/.
+        artifact = tmp_path / "determinism-mismatch-score-seed2.diff.txt"
+        assert artifact.is_file()
+        body = artifact.read_text()
+        assert "baseline_regime=fixed:0" in body
+        assert "child_seeds=2,1,42" in body
+        assert "POISONED_SHARED_OUT" not in body
+        assert "baseline_regime=randomized" not in body
+        # Shared decoy/poison still present and still wrong during isolation check.
+        assert "baseline_regime=randomized" in decoy.read_text()
+        assert "POISONED_SHARED_OUT" in poison.read_text()
+    finally:
+        # VLM6-S2A-F8-01: never leave decoys in the real shared out/ after the test.
+        decoy.unlink(missing_ok=True)
+        poison.unlink(missing_ok=True)
 
 
 def test_determinism_gate_detects_hash_order_dependence(tmp_path):
@@ -2169,7 +2213,19 @@ def _corpus_entries(n: int, *, with_rubric: bool) -> tuple[list[str], list[dict]
     return roster, entries
 
 
-def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_sha: str, name: str = "run.json"):
+def _score_run_record(
+    entries: list[dict],
+    *,
+    caption_fn,
+    identity_fn,
+    manifest_sha: str,
+    aborted: bool = False,
+):
+    """Build an in-memory run-record dict for score guards (VLM6-S2A-A-08).
+
+    Filename is not part of the record body — callers write to their own
+    ``record_path`` under ``tmp_path``. ``aborted`` stamps the partial-run flag.
+    """
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     items = []
@@ -2187,7 +2243,7 @@ def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_
                 "error": None,
             }
         )
-    return {
+    record = {
         "schema": SCHEMA,
         "kind": DocKind.RUN_RECORD.value,
         "provenance": {
@@ -2198,6 +2254,9 @@ def _score_run_record(entries: list[dict], *, caption_fn, identity_fn, manifest_
         },
         "items": items,
     }
+    if aborted:
+        record["aborted"] = True
+    return record
 
 
 def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypatch):
@@ -2222,7 +2281,6 @@ def test_score_guard_caption_corruption_fails_must_right_gate(tmp_path, monkeypa
             [_score_identity(e["present_identities"][0])] if e["present_identities"] else []
         ),
         manifest_sha=manifest_sha,
-        name="run-caption-corrupt.json",
     )
     record_path = tmp_path / "run-caption-corrupt.json"
     record_path.write_text(json.dumps(record))
@@ -2260,7 +2318,6 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
         caption_fn=lambda _e: "A human standing outdoors near greenery.",
         identity_fn=lambda _e: [],
         manifest_sha=manifest_sha,
-        name="run-seeded-shape.json",
     )
     record_path = tmp_path / "run-seeded-shape.json"
     record_path.write_text(json.dumps(record))
@@ -2301,7 +2358,6 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
         caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
         identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
         manifest_sha=manifest_sha,
-        name="run-rubric-flag.json",
     )
     record_path = tmp_path / "run-rubric-flag.json"
     record_path.write_text(json.dumps(record))
@@ -2405,7 +2461,6 @@ def test_score_guard_empty_must_right_fails_empty_rubric_gate(tmp_path, monkeypa
         caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
         identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
         manifest_sha=manifest_sha,
-        name="run-empty-rubric.json",
     )
     record_path = tmp_path / "run-empty-rubric.json"
     record_path.write_text(json.dumps(record))
@@ -2437,7 +2492,6 @@ def test_score_guard_empty_easy_wrong_fails_empty_rubric_gate(tmp_path, monkeypa
         caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
         identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
         manifest_sha=manifest_sha,
-        name="run-empty-easy-wrong.json",
     )
     record_path = tmp_path / "run-empty-easy-wrong.json"
     record_path.write_text(json.dumps(record))
@@ -3851,3 +3905,196 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
     assert prov["leg"] == "candidate"
     assert prov["model_id"] == "ort-yunet-sface"
     assert "leg_mode" not in prov
+
+
+# --- VLM6-lc2 residual gates (A-02, F2A-01, R2-08, B-10) ---
+
+
+def test_score_aborted_record_exits_nonzero(tmp_path, monkeypatch):
+    """VLM6-S2A-A-02: aborted partial record must not certify as pass."""
+    roster, entries = _corpus_entries(2, with_rubric=True)
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    record = _score_run_record(
+        entries,
+        caption_fn=lambda e: f"{e['present_identities'][0]} outdoors smiling.",
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])],
+        manifest_sha=manifest_sha,
+        aborted=True,
+    )
+    record_path = tmp_path / "run-aborted.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    msg = str(excinfo.value).lower()
+    assert "aborted-record" in msg
+    report = json.loads(record_path.with_name("run-aborted-report.json").read_text())
+    assert report["verdict"]["verdict"] == "fail"
+    assert any("aborted" in r.lower() for r in report["verdict"]["reasons"])
+
+
+def test_score_zero_scored_exits_nonzero(tmp_path, monkeypatch):
+    """VLM6-S2A-A-02: empty items (scored=0, failed=0) must not green-exit."""
+    from scripts.eval_harness.schema import SCHEMA, DocKind
+
+    entries = [
+        {
+            "path": "mock_images/img-1.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 0,
+            "present_identities": [],
+            "context_pack": {},
+            "base_caption": "",
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+        }
+    ]
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, ["Alice Example", "Bob Builder"]
+    )
+    # Empty items → scored=0, failed=0 (distinct from all-error failed-items).
+    record = {
+        "schema": SCHEMA,
+        "kind": DocKind.RUN_RECORD.value,
+        "provenance": {
+            "manifest_sha256": manifest_sha,
+            "base_url": "https://example.test",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": [],
+    }
+    record_path = tmp_path / "run-empty.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    msg = str(excinfo.value).lower()
+    assert "zero-scored" in msg
+    assert "failed-items" not in msg
+    report = json.loads(record_path.with_name("run-empty-report.json").read_text())
+    assert report["counts"]["scored"] == 0
+    assert report["verdict"]["verdict"] == "fail"
+
+
+def test_cli_determinism_guard_errors_on_child_timeout(tmp_path, monkeypatch):
+    """VLM6-S2A-F2A-01: TimeoutExpired maps to ERROR class, not FAILED.
+
+    Covers stderr-present and stderr-None shapes; asserts timeout= is passed.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    seen_timeouts: list[object] = []
+
+    def _raise_timeout_with_stderr(*args, **kwargs):
+        seen_timeouts.append(kwargs.get("timeout"))
+        raise cli_mod.subprocess.TimeoutExpired(
+            cmd=args[0] if args else kwargs.get("args"),
+            timeout=kwargs.get("timeout") or 120,
+            output=None,
+            stderr="hung on cv2 import",
+        )
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _raise_timeout_with_stderr)
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg = str(exc.value)
+    assert "determinism check ERROR [score]" in msg
+    assert "timed out" in msg
+    assert "determinism check FAILED" not in msg
+    assert seen_timeouts
+    assert all(t == cli_mod._DETERMINISM_CHILD_TIMEOUT_S for t in seen_timeouts)
+
+    # stderr=None must not crash (TimeoutExpired.stderr can be None).
+    def _raise_timeout_no_stderr(*args, **kwargs):
+        raise cli_mod.subprocess.TimeoutExpired(
+            cmd=args[0] if args else kwargs.get("args"),
+            timeout=kwargs.get("timeout") or 120,
+            output=None,
+            stderr=None,
+        )
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", _raise_timeout_no_stderr)
+    with pytest.raises(SystemExit) as exc2:
+        cli_mod._check_score_determinism_cross_process(record_path, str(manifest_path))
+    msg2 = str(exc2.value)
+    assert "determinism check ERROR [score]" in msg2
+    assert "timed out" in msg2
+
+
+def test_cli_compare_meet_or_beat_pass_and_regression(tmp_path):
+    """VLM6-R2-08: compare subcommand exits 0 on meet-or-beat, non-zero on regression."""
+    baseline = {
+        "caption": {
+            "insertion_rate": 0.8,
+            "mean_gated_score": 0.5,
+            "must_right_failed_images": 2,
+        },
+        "verdict": {"wrong_name_rate": 0.1},
+    }
+    better = {
+        "caption": {
+            "insertion_rate": 0.9,
+            "mean_gated_score": 0.6,
+            "must_right_failed_images": 1,
+        },
+        "verdict": {"wrong_name_rate": 0.05},
+    }
+    worse = {
+        "caption": {
+            "insertion_rate": 0.7,
+            "mean_gated_score": 0.4,
+            "must_right_failed_images": 5,
+        },
+        "verdict": {"wrong_name_rate": 0.2},
+    }
+    base_path = tmp_path / "baseline-report.json"
+    good_path = tmp_path / "candidate-good.json"
+    bad_path = tmp_path / "candidate-bad.json"
+    base_path.write_text(json.dumps(baseline))
+    good_path.write_text(json.dumps(better))
+    bad_path.write_text(json.dumps(worse))
+
+    assert (
+        main(["compare", "--baseline", str(base_path), "--candidate", str(good_path)])
+        is None
+    )
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--baseline", str(base_path), "--candidate", str(bad_path)])
+    assert exc.value.code != 0
+    assert "compare regression gate" in str(exc.value)
+    assert "insertion_rate" in str(exc.value) or "must_right_failed_images" in str(exc.value)
+
+
+def test_cmd_run_scores_all_records_despite_gate_failure(tmp_path, monkeypatch):
+    """VLM6-S2A-B-10: run scores every record; exits once with per-record summary."""
+    from argparse import Namespace
+
+    from scripts.eval_harness import cli as cli_mod
+
+    scored: list[str] = []
+
+    def fake_fetch(args):
+        return ["r0.json", "r1.json", "r2.json"]
+
+    def fake_score(args):
+        scored.append(args.run_record)
+        if args.run_record == "r1.json":
+            raise cli_mod.ScoreGateError("score must-right failures gate: synthetic")
+
+    monkeypatch.setattr(cli_mod, "_cmd_fetch", fake_fetch)
+    monkeypatch.setattr(cli_mod, "_cmd_score", fake_score)
+    args = Namespace(check_determinism=False, provider=None, audience="local")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod._cmd_run(args)
+    assert scored == ["r0.json", "r1.json", "r2.json"]
+    msg = str(exc.value)
+    assert "run score gates failed" in msg
+    assert "r1.json" in msg
+    assert "must-right" in msg

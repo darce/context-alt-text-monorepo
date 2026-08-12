@@ -526,6 +526,20 @@ def test_fabricated_fact_rate_all_vs_trapped():
     assert fabricated_fact_rate([untrapped], over="trapped") is None
 
 
+def test_fabricated_fact_rate_none_when_no_traps_corpus_wide():  # VLM6-C-05 / EVAL-19
+    """Zero trap coverage → rate is undefined (None), not a vacuous 0.0 success.
+
+    TEST-15: unfixed code returned 0.0 with denom=len(scores) when every image
+    has trap_count=0 — reading as "zero hallucination" where the truth is
+    non-observable.
+    """
+    untrapped = [score_hallucination("anything", reference_facts=[]) for _ in range(37)]
+    assert fabricated_fact_rate(untrapped, over="all") is None
+    assert fabricated_fact_rate(untrapped, over="trapped") is None
+    # Empty score list is also None.
+    assert fabricated_fact_rate([], over="all") is None
+
+
 def test_fabrication_by_kind_tally():
     scores = [
         score_hallucination(

@@ -486,10 +486,18 @@ def fabricated_fact_rate(scores: Sequence[HallucinationScores], *, over: str = "
     many it tripped. ``over='all'`` denominates over every scored image (corpus caught-
     rate); ``over='trapped'`` denominates only over images that authored >=1 false-fact
     (caught-rate AMONG trapped images — NOT a per-trap-instance rate: a 3-trap image that
-    trips 1 counts as fully caught). Returns None when the denominator is empty.
+    trips 1 counts as fully caught).
+
+    Returns ``None`` when there is no trap coverage at all (EVAL-19 / VLM6-C-05): a
+    vacuous 0/N rate over untrapped images would read as "zero hallucination" where
+    the truth is "undefined". Trap coverage is the only honest denominator — do not
+    divide an error by a volume the system controls when π(traps)=0.
     """
     if over not in ("all", "trapped"):
         raise ValueError("over must be 'all' or 'trapped'")
+    # EVAL-19: without any authored traps the rate is non-observable, not 0.0.
+    if sum(s.trap_count for s in scores) == 0:
+        return None
     denom = len(scores) if over == "all" else sum(1 for s in scores if s.trap_count)
     if denom == 0:
         return None

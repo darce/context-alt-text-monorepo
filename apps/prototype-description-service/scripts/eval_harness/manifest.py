@@ -536,6 +536,96 @@ def require_metric_backing(manifest: GoldenManifest, field: str) -> FieldPopulat
     return pop
 
 
+# Minimum populated entries for a critical slice to count as evaluable (EVAL-04).
+# Below this threshold the claim unit is disclosed as under-sampled, not certified.
+METRIC_BACKING_SLICE_THRESHOLD: int = 5
+
+# Scorer-facing consequences when a registry gap field is empty/under-sampled.
+# Kept next to the registry so disclosure cannot drift from SHIPPED_CORPUS_COVERAGE_GAPS.
+_GAP_SCORER_CONSEQUENCES: dict[str, str] = {
+    "face_boxes": (
+        "positional_identification never runs; set-based identity scoring "
+        "cannot catch right-names-on-wrong-faces"
+    ),
+    "spatial_facts": "placement accuracy is vacuous (0 asserted claims)",
+    "reference_facts": "no trap coverage for fabricated-fact scoring (rate is undefined)",
+    "demographic_cohort": "demographic/cohort fairness slices have no sampling frame",
+}
+
+
+def compute_corpus_coverage_gaps(
+    entries: list[GoldenEntry] | list[object],
+    *,
+    threshold: int = METRIC_BACKING_SLICE_THRESHOLD,
+) -> dict[str, dict[str, object]]:
+    """Sampling-frame honesty for every SHIPPED_CORPUS_COVERAGE_GAPS field (AUDIT-07).
+
+    Always reports populated/total and a slice threshold — never a boolean that
+    hides a 1/N under-sampled field (VLM6-C-01). Driven by the package gap
+    registry so demographic_cohort cannot drift out of the anchor (VLM6-C-02).
+    Call from offline generators *and* live score paths (VLM6-E-07).
+
+    Returns a dict keyed by field name. Each value is a structured record::
+
+        {
+          "populated": int,
+          "total": int,
+          "threshold": int,
+          "below_threshold": bool,
+          "pi_zero": bool,
+          "reason": str,   # human-readable summary
+          "registry": str, # owner=… action=… from SHIPPED_CORPUS_COVERAGE_GAPS
+        }
+    """
+    total = len(entries)
+    out: dict[str, dict[str, object]] = {}
+    for field, registry in SHIPPED_CORPUS_COVERAGE_GAPS.items():
+        populated = 0
+        for entry in entries:
+            if isinstance(entry, GoldenEntry):
+                if _entry_field_is_populated(entry, field):
+                    populated += 1
+            else:
+                value = getattr(entry, field, None)
+                if value is None:
+                    continue
+                if isinstance(value, list) and len(value) == 0:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if value:
+                    populated += 1
+        below = populated < threshold
+        pi_zero = populated == 0
+        consequence = _GAP_SCORER_CONSEQUENCES.get(field, "metric claim units under-sampled")
+        reason = f"{populated}/{total} entries populate it (threshold={threshold}) — {consequence}"
+        out[field] = {
+            "populated": populated,
+            "total": total,
+            "threshold": threshold,
+            "below_threshold": below,
+            "pi_zero": pi_zero,
+            "reason": reason,
+            "registry": registry,
+        }
+    return out
+
+
+def metric_backing_refusals(manifest: GoldenManifest) -> dict[str, str]:
+    """Call ``require_metric_backing`` for every registry gap field; collect refusals.
+
+    Production gates must not treat a vacuous field as pass (EVAL-23). This
+    helper is the single place generators and score paths share (VLM6-C-07).
+    """
+    refusals: dict[str, str] = {}
+    for field in SHIPPED_CORPUS_COVERAGE_GAPS:
+        try:
+            require_metric_backing(manifest, field)
+        except ManifestError as exc:
+            refusals[field] = str(exc)
+    return refusals
+
+
 def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
     """Resolve ``entry.path`` under ``images_root`` and verify the sha256 pin.
 

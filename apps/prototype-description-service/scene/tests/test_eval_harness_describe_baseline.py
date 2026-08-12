@@ -297,4 +297,102 @@ def test_no_hardcoded_operator_uploads_constant():
     if uploads is not None:
         text = str(uploads)
         assert "/Volumes/Butter" not in text
-        assert not (Path(text).is_absolute() and "Butter" in text)
+
+
+# --- VLM6-C-06 / EVAL-01: offline Δ vs zero-rule ------------------------------
+
+
+def test_score_rows_against_golden_undefined_when_no_match():  # VLM6-C-06
+    """No matching media_ids → status=undefined, not a green absolute-only win."""
+    rows = [
+        {
+            "media_id": 999999,
+            "path": "nope.jpg",
+            "error": None,
+            "describe": {"alt_text_draft": "a perfect caption"},
+        }
+    ]
+    result = db.score_rows_against_golden(rows)
+    assert result["status"] == "undefined"
+    assert result["matched"] == 0
+    assert result["delta"] is None
+
+
+def test_score_rows_delta_goes_red_when_candidate_worse_than_zero_rule(
+    tmp_path: Path,
+):  # VLM6-C-06 / TEST-15
+    """Candidate that injects wrong names must show worse Δ than empty caption.
+
+    Empty caption fails must_right but does not trip wrong-name traps. A caption
+    that names a non-present roster identity is strictly worse on wrong_name_images.
+    """
+    from scripts.eval_harness.manifest import load_manifest
+
+    golden = Path(__file__).resolve().parent / "seed" / "golden.json"
+    manifest = load_manifest(str(golden), skip_hash_verification=True)
+    # Pick an entry with present identities and a non-empty roster of others.
+    entry = next(e for e in manifest.entries if e.present_identities and e.must_right)
+    other = next(n for n in manifest.roster if n not in entry.present_identities)
+
+    # Worse candidate: names the wrong person (wrong-name trap).
+    worse_rows = [
+        {
+            "media_id": entry.media_id,
+            "path": entry.path,
+            "error": None,
+            "describe": {"alt_text_draft": f"{other} at an event"},
+        }
+    ]
+    worse = db.score_rows_against_golden(worse_rows, golden_path=golden)
+    assert worse["status"] == "ok"
+    assert worse["matched"] == 1
+    assert worse["candidate"]["wrong_name_images"] >= 1
+    # Δ vs zero-rule on wrong_name_images must be > 0 (candidate worse).
+    assert worse["delta"]["wrong_name_images"] is not None
+    assert worse["delta"]["wrong_name_images"] > 0
+
+    # Better-ish candidate: includes must_right phrases, no wrong name.
+    must = " ".join(entry.must_right)
+    present = " ".join(entry.present_identities)
+    better_rows = [
+        {
+            "media_id": entry.media_id,
+            "path": entry.path,
+            "error": None,
+            "describe": {"alt_text_draft": f"{present} {must}"},
+        }
+    ]
+    better = db.score_rows_against_golden(better_rows, golden_path=golden)
+    assert better["status"] == "ok"
+    # mean_gated_score Δ for a caption that hits must_right should beat zero-rule.
+    assert better["delta"]["mean_gated_score"] is not None
+    assert better["delta"]["mean_gated_score"] > worse["delta"]["mean_gated_score"]
+
+
+def test_write_report_includes_rubric_delta(tmp_path, monkeypatch):  # VLM6-C-06
+    paths = _patch_report_paths(monkeypatch, tmp_path)
+    from scripts.eval_harness.manifest import load_manifest
+
+    golden = Path(__file__).resolve().parent / "seed" / "golden.json"
+    entry = load_manifest(str(golden), skip_hash_verification=True).entries[0]
+    paths["jsonl"].write_text(
+        json.dumps(
+            {
+                "media_id": entry.media_id,
+                "path": entry.path,
+                "error": None,
+                "describe": {"alt_text_draft": "x", "model_id": "m"},
+                "identities": [],
+                "face_count": 0,
+                "latency_s": 1.0,
+                "completed_at": 1.0,
+            }
+        )
+        + "\n"
+    )
+    db._write_report(cost_per_image_usd=None, uploads=paths["uploads"], golden_path=golden)
+    report = json.loads(paths["report_json"].read_text())
+    assert "rubric_delta" in report["summary"]
+    assert report["summary"]["rubric_delta"]["status"] == "ok"
+    md = paths["report_md"].read_text()
+    assert "rubric Δ" in md

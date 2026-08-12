@@ -33,10 +33,13 @@ from scripts.eval_harness.cli import (
     main,
 )
 from scripts.eval_harness.generate_face_determinism_anchor import (
+    CoverageGapsUnderDeclaredError,
     _DEFAULT_MANIFEST_STEM,
     _DEFAULT_STEM,
     _EMBEDDING_DIM,
+    _is_vacuous_id_slice,
     compute_coverage_gaps,
+    validate_coverage_gaps,
     write_face_anchor,
 )
 from scripts.eval_harness.manifest import load_manifest
@@ -84,8 +87,7 @@ def _live_slice_names(report: dict) -> set[str]:
         "demographic.by_cohort",
         "full_corpus_identification",
         "headline_identification",
-        "detection.fp",
-        "detection.fn",
+        "detection",  # whole detection cell (VLM6-B-05: not per-error-path)
         "failures",
     }
     gaps = set(compute_coverage_gaps(report))
@@ -153,8 +155,7 @@ def test_coverage_gaps_enumerate_every_vacuous_or_live_slice() -> None:
     # F7 must light up the previously vacuous hard cells (not merely declare them).
     for required in (
         "clustering.p_diff",
-        "detection.fp",
-        "detection.fn",
+        "detection",
         "full_corpus_identification",
         "headline_identification",
         "demographic.by_cohort",
@@ -171,16 +172,81 @@ def test_coverage_gaps_enumerate_every_vacuous_or_live_slice() -> None:
         assert g in declared
 
 
+def test_id_slice_vacuity_keys_on_probe_count_not_errors():  # VLM6-B-05 / TEST-15
+    """Perfect accuracy with n_named_probes>0 is NOT vacuous (sampling frame exists)."""
+    live_perfect = {
+        "n_named_probes": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "missed_gt": 0,
+        "unmatched_detections": 0,
+        "wrong_names": [],
+    }
+    assert _is_vacuous_id_slice(live_perfect) is False
+
+    empty = {
+        "n_named_probes": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "missed_gt": 0,
+        "unmatched_detections": 0,
+        "wrong_names": [],
+    }
+    assert _is_vacuous_id_slice(empty) is True
+
+    # Detection: perfect detector (fp=fn=0, tp>0) must not list detection as a gap.
+    perfect_det_report = {
+        "slices": {
+            "occlusion": {
+                "masked": {"synthetic": {"n_eligible": 1, "accuracy": 1.0}},
+                "sunglasses": {},
+                "occlusion_other": {},
+            },
+            "clustering": {"p_diff": 1},
+            "demographic": {"by_cohort": {"a": {}, "b": {}}},
+            "full_corpus_identification": live_perfect,
+            "headline_identification": live_perfect,
+        },
+        "detection": {"tp": 6, "fp": 0, "fn": 0},
+        "failures": [],
+    }
+    gaps = compute_coverage_gaps(perfect_det_report)
+    assert "full_corpus_identification" not in gaps
+    assert "headline_identification" not in gaps
+    assert "detection" not in gaps
+    assert "detection.fp" not in gaps
+    assert "detection.fn" not in gaps
+
+
 def test_coverage_gaps_guard_fails_when_gap_list_under_declares(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Deleting a still-vacuous gap from coverage_gaps must fail the guard."""
+    """Deleting a still-vacuous gap must fail the runtime guard (VLM6-B-04 / TEST-15).
+
+    Prior test only asserted compute_coverage_gaps(report) != truncated — a
+    tautology. The runtime validator is what score/generator paths must call.
+    """
     report = json.loads(_REPORT_JSON.read_text())
-    gaps = list(report["provenance"]["coverage_gaps"])
-    assert gaps, "fixture expects at least one honest gap (sunglasses/occlusion_other)"
-    # Drop one real gap without fixing the corpus → guard must fire.
-    report["provenance"]["coverage_gaps"] = gaps[1:]
-    assert compute_coverage_gaps(report) != report["provenance"]["coverage_gaps"]
+    # Recompute against the fixed predicate so the test does not depend on a
+    # stale freeze list shape after B-05.
+    computed = compute_coverage_gaps(report)
+    assert computed, "fixture expects at least one honest gap"
+    # Happy path: exact match passes.
+    validate_coverage_gaps(report, declared=computed)
+
+    # Under-declare: drop one still-vacuous gap → guard must raise.
+    truncated = list(computed)[1:]
+    with pytest.raises(CoverageGapsUnderDeclaredError, match="missing_declared|coverage_gaps mismatch"):
+        validate_coverage_gaps(report, declared=truncated)
+
+    # Also exercise via provenance stamp on the report document.
+    report = dict(report)
+    report["provenance"] = dict(report.get("provenance") or {})
+    report["provenance"]["coverage_gaps"] = truncated
+    with pytest.raises(CoverageGapsUnderDeclaredError):
+        validate_coverage_gaps(report)
 
 
 def test_corrupt_face_expect_report_makes_determinism_gate_red(tmp_path: Path) -> None:

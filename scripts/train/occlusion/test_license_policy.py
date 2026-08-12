@@ -1909,14 +1909,33 @@ class TestBr53SourceAxisClosedOnEveryDoor:
             f"{category.value} accepted a confusable NC source as {result.reason}"
         )
 
-    def test_synthetic_door_keeps_its_more_specific_reason(self) -> None:
-        # The floor exempts SYNTHETIC_SOURCE so the door reports the actionable
-        # clearance reason. The verdict must still be a rejection.
+    def test_synthetic_door_reports_source_taint_for_non_registry_heads(
+        self,
+    ) -> None:
+        # FIR-7-RV-11: SYNTHETIC_SOURCE exemption is only for synthetic-registry
+        # heads (so the door can report clearance). An NC / research source
+        # that is not a registry head must keep its specific taint reason —
+        # not the generic pending_legal_clearance unknown-head default.
         result = policy.audit_provenance_row(
             self._row("insightface"), category=policy.PolicyCategory.SYNTHETIC_SOURCE
         )
         assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"non-registry NC source through synthetic door reported "
+            f"{result.reason}, expected nc_model_derived (FIR-7-RV-11)"
+        )
+
+    def test_synthetic_door_keeps_clearance_reason_for_registry_heads(
+        self,
+    ) -> None:
+        # Registry head without clearance_decision: door / floor reports the
+        # actionable clearance reason (not research/NC — dcface is neither).
+        result = policy.audit_provenance_row(
+            self._row("dcface"), category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False
         assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+        assert "requires clearance_decision=" in result.detail
 
     def test_synthetic_exemption_cannot_pass_a_tainted_source(
         self, monkeypatch: pytest.MonkeyPatch
@@ -4593,4 +4612,37 @@ class TestRd06LicensePolicyErrorPayload:
         assert ei.value.result.ok is False
         assert ei.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
 
+# ---------------------------------------------------------------------------
+# FIR-7-RV-11 — SYNTHETIC_SOURCE reason fidelity for source-axis taint
+# ---------------------------------------------------------------------------
+
+
+class TestRv11SyntheticSourceAxisTaintReasonFidelity:
+    """FIR-7-RV-11: non-registry synthetic sources keep specific taint reasons."""
+
+    @pytest.mark.parametrize(
+        ("source", "expected_reason"),
+        [
+            ("ffhq", policy.RejectionReason.RESEARCH_ONLY_SOURCE),
+            ("buffalo_l", policy.RejectionReason.NC_MODEL_DERIVED),
+        ],
+    )
+    def test_synthetic_door_reports_source_axis_taint(
+        self, source: str, expected_reason: policy.RejectionReason
+    ) -> None:
+        row = {
+            "source": source,
+            "license": "MIT",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(
+            row, category=policy.PolicyCategory.SYNTHETIC_SOURCE
+        )
+        assert result.ok is False
+        assert result.reason is expected_reason, (
+            f"source={source!r} through synthetic door: expected "
+            f"{expected_reason}, got {result.reason} ({result.detail})"
+        )
+        # Must not collapse to the unknown-head phrasing.
+        assert "has no clearance entry" not in result.detail
 

@@ -89,7 +89,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 986  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1010  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -207,6 +207,30 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB304A302SpdxExpressionHygieneCompleteness::test_unicode_dash_fails_expression_hygiene[em-dash]',
     'test_license_policy.py::TestB304A302SpdxExpressionHygieneCompleteness::test_unicode_dash_fails_expression_hygiene[en-dash-id]',
     'test_license_policy.py::TestB304A302SpdxExpressionHygieneCompleteness::test_unicode_dash_fails_expression_hygiene[en-dash-or]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_model_ingest_scalar_confusable_invalid_row[en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_model_ingest_scalar_confusable_invalid_row[greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_model_ingest_scalar_confusable_invalid_row[unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-model_id-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-model_id-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-model_id-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package_name-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package_name-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[tooling-package_name-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-model_id-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-model_id-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-model_id-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package_name-en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package_name-greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_row_confusable_package_identity_invalid_row[training_data-package_name-unicode_hyphen]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_tooling_scalar_confusable_invalid_row[en_dash]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_tooling_scalar_confusable_invalid_row[greek_omicron]',
+    'test_license_policy.py::TestB401PackageIdentityCanonicalNoneFailClosed::test_tooling_scalar_confusable_invalid_row[unicode_hyphen]',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_nc_tagged_ingest_entry_joins_nc_model_ids',
     'test_license_policy.py::TestBr38NcIngestDerivationAndHelpers::test_br38_require_string_field_used_for_missing_derived',
     'test_license_policy.py::TestBr46EntryPointTypeContract::test_br46_type_contract_table[derived-None]',

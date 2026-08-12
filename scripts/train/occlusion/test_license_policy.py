@@ -5613,3 +5613,130 @@ class TestB304A302SpdxExpressionHygieneCompleteness:
         )
 
 
+# ---------------------------------------------------------------------------
+# FIR-7-B4-01 — package-identity floor fail-closed on canonical-None
+# ---------------------------------------------------------------------------
+
+
+class TestB401PackageIdentityCanonicalNoneFailClosed:
+    """FIR-7-B4-01: non-ASCII residue on package-identity fields is invalid_row.
+
+    Measured pre-fix ADMITs on clean TRAINING_DATA rows when package carried
+    unicode dashes or confusable scripts (canonical() → None treated as floor
+    miss). Source / derived_from_model already BR-21 fail-closed; package
+    floor + scalar doors must match.
+
+    Red-proven: restoring silent floor skip on canonical-None re-admits the
+    TRAINING_DATA package witnesses (tests go red).
+    """
+
+    # en dash U+2013, unicode hyphen U+2010, Greek omicron U+03BF
+    CONFUSABLE_TOKENS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("en_dash", "yolo\u2013v5"),
+        ("unicode_hyphen", "yolo\u2010v5"),
+        ("greek_omicron", "yol\u03bfv5"),
+    )
+    IDENTITY_FIELDS: ClassVar[tuple[str, ...]] = (
+        "package",
+        "package_name",
+        "model_id",
+    )
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        CONFUSABLE_TOKENS,
+        ids=[t[0] for t in CONFUSABLE_TOKENS],
+    )
+    @pytest.mark.parametrize("field", IDENTITY_FIELDS)
+    @pytest.mark.parametrize(
+        "category",
+        (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+        ),
+        ids=("training_data", "tooling"),
+    )
+    def test_row_confusable_package_identity_invalid_row(
+        self,
+        token_id: str,
+        token: str,
+        field: str,
+        category: policy.PolicyCategory,
+    ) -> None:
+        assert policy.canonical(token) is None, (
+            f"precondition: {token_id} must yield canonical None"
+        )
+        if category is policy.PolicyCategory.TRAINING_DATA:
+            row: dict[str, Any] = {
+                "source": "self-generated",
+                "license": "MIT",
+                "derived_from_model": "",
+                field: token,
+            }
+        else:
+            row = {
+                "package": "llvmlite" if field != "package" else token,
+                "license": "BSD-2-Clause",
+                "derived_from_model": "",
+            }
+            if field != "package":
+                row[field] = token
+            else:
+                row["package"] = token
+        result = policy.audit_provenance_row(row, category=category)
+        assert result.ok is False, (
+            f"{category.value} admitted confusable {field}={token!r} "
+            f"({token_id}); detail={result.detail!r}"
+        )
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"{category.value}/{field}/{token_id}: expected invalid_row, "
+            f"got {result.reason} ({result.detail})"
+        )
+        detail_cf = result.detail.casefold()
+        assert "non-ascii" in detail_cf or "non-ASCII" in result.detail, (
+            f"detail must name non-ASCII residue; got {result.detail!r}"
+        )
+        assert field in result.detail or token in result.detail, (
+            f"detail must name field or value; got {result.detail!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        CONFUSABLE_TOKENS,
+        ids=[t[0] for t in CONFUSABLE_TOKENS],
+    )
+    def test_tooling_scalar_confusable_invalid_row(
+        self, token_id: str, token: str
+    ) -> None:
+        result = policy.audit_tooling_dependency(token)
+        assert result.ok is False, f"tooling scalar admitted {token!r}"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"tooling scalar {token_id}: expected invalid_row (not "
+            f"unknown_source), got {result.reason} ({result.detail})"
+        )
+        assert "non-ASCII" in result.detail or "non-ascii" in result.detail.casefold(), (
+            f"detail must name non-ASCII residue; got {result.detail!r}"
+        )
+        # Must NOT imply the token is merely unregistered.
+        assert result.reason is not policy.RejectionReason.UNKNOWN_SOURCE
+
+    @pytest.mark.parametrize(
+        "token_id,token",
+        CONFUSABLE_TOKENS,
+        ids=[t[0] for t in CONFUSABLE_TOKENS],
+    )
+    def test_model_ingest_scalar_confusable_invalid_row(
+        self, token_id: str, token: str
+    ) -> None:
+        result = policy.audit_model_ingest(token)
+        assert result.ok is False, f"model_ingest scalar admitted {token!r}"
+        assert result.reason is policy.RejectionReason.INVALID_ROW, (
+            f"model_ingest scalar {token_id}: expected invalid_row (not "
+            f"missing_ingest_entry), got {result.reason} ({result.detail})"
+        )
+        assert "non-ASCII" in result.detail or "non-ascii" in result.detail.casefold(), (
+            f"detail must name non-ASCII residue; got {result.detail!r}"
+        )
+        assert result.reason is not policy.RejectionReason.MISSING_INGEST_ENTRY
+
+

@@ -1527,6 +1527,56 @@ def test_publishability_named_private_source_redacted():
     assert redacted["slices"]["unknown_rejection"]["rate"] == scored["slices"]["unknown_rejection"]["rate"]
 
 
+def test_face_public_redaction_drops_operator_paths_base_url_identity_text():  # VLM6-R2-A-02
+    """Face PUBLIC must use the shared provenance allow-list + path/identity scrub.
+
+    Reviewer probe: score_face copies full run-record provenance, and
+    redact_face_report_for_public only stripped decision/wrong_names/labels/failures —
+    never _public_provenance / _redact_public_paths / _scrub_identity_names. Assert
+    on concrete leak strings (TEST-15), not on whether a helper was called.
+    """
+    face_run, manifest = _face_fixture_corpus()
+    face_run["provenance"].update(
+        {
+            "cache_dir": "/home/ubuntu/private/JaneDoePrivate/cache",
+            "base_url": "http://127.0.0.1:8765/v1",
+            "operator_note": "local scoring for Jane Doe Private",
+            "run_record_path": "/home/ubuntu/secret/face-run.json",
+        }
+    )
+    scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
+    # Control: LOCAL/full scored report still carries the operator fields.
+    pre = json.dumps(scored)
+    assert "/home/ubuntu/private/JaneDoePrivate/cache" in pre
+    assert "http://127.0.0.1:8765/v1" in pre
+    assert "local scoring for Jane Doe Private" in pre
+    assert "/home/ubuntu/secret/face-run.json" in pre
+
+    redacted = redact_face_report_for_public(scored)
+    blob = json.dumps(redacted)
+    md = __import__("scripts.eval_harness.report", fromlist=["_markdown_face"])._markdown_face(redacted)
+
+    for surface in (blob, md):
+        assert "/home/ubuntu/private" not in surface
+        assert "JaneDoePrivate" not in surface
+        assert "Jane Doe Private" not in surface
+        assert "http://127.0.0.1" not in surface
+        assert "http://127.0.0.1:8765/v1" not in surface
+        assert "/home/ubuntu/secret" not in surface
+        assert "face-run.json" not in surface
+        assert "local scoring for" not in surface
+
+    prov = redacted["provenance"]
+    for key in ("cache_dir", "base_url", "operator_note", "run_record_path"):
+        assert key not in prov, f"leaked provenance key {key!r}: {prov.get(key)!r}"
+    # Shared allow-list still emits safe protocol fields (no face-only fork).
+    assert "head_sha" in prov
+    assert "manifest_sha256" in prov
+    assert "score_manifest_sha256" in prov
+    assert "canon_version" in prov
+    assert "zero_box_corpus" in prov
+
+
 def test_sort_nested_lists_preserves_fixed_schema_row_order():
     """§G determinism (FIR5-S5-BR-02): the collection of rows is canonicalized for
     order-independence, but the positional internals of a fixed-schema row (e.g.
@@ -3329,6 +3379,57 @@ def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # V
     assert verdict_ok["verdict"] == ScoreVerdict.PASS.value, verdict_ok
 
 
+def test_quality_floor_realistic_midrange_and_chance_boundary():  # VLM6-R2-G-06
+    """0.5 is binary-chance, not a 0.05 band — realistic mid-range must pass.
+
+    Floor uses `<=` so accuracy==0.5 fails; accuracy just above passes. A
+    working-model mid-range (e.g. 0.72 position / 0.65 placement) must not trip
+    quality-floor. Unmeasured slices (compared=0 / claims=0) stay dormant —
+    matches S2A bake-off anchors where position_accuracy is None.
+    """
+    from scripts.eval_harness.report import (
+        PLACEMENT_ACCURACY_FLOOR,
+        POSITION_ACCURACY_FLOOR,
+        build_score_quality_floor_reasons,
+        build_score_verdict,
+    )
+
+    assert POSITION_ACCURACY_FLOOR == 0.5
+    assert PLACEMENT_ACCURACY_FLOOR == 0.5
+
+    # Realistic mid-range (above chance) → no quality-floor reason.
+    mid = _passable_scored_dict()
+    mid["faces"]["identification"]["positional"]["position_accuracy"] = 0.72
+    mid["faces"]["identification"]["positional"]["compared_images"] = 5
+    mid["placement"]["accuracy"] = 0.65
+    mid["placement"]["claims"] = 4
+    mid_reasons = build_score_quality_floor_reasons(mid, scored_n=int(mid["counts"]["scored"]))
+    assert mid_reasons == [], mid_reasons
+    mid_verdict = build_score_verdict(mid, rubric_gate="enforce")
+    assert not any("quality-floor" in r for r in mid_verdict["reasons"]), mid_verdict["reasons"]
+    assert mid_verdict["verdict"] == ScoreVerdict.PASS.value, mid_verdict
+
+    # Exact chance boundary: `<=` means floor itself is FAIL.
+    at_floor = _passable_scored_dict()
+    at_floor["faces"]["identification"]["positional"]["position_accuracy"] = POSITION_ACCURACY_FLOOR
+    at_floor["faces"]["identification"]["positional"]["compared_images"] = 5
+    at_floor["placement"]["accuracy"] = PLACEMENT_ACCURACY_FLOOR
+    at_floor["placement"]["claims"] = 4
+    at_reasons = build_score_quality_floor_reasons(at_floor, scored_n=int(at_floor["counts"]["scored"]))
+    assert any("position_accuracy" in r and "<=" in r for r in at_reasons), at_reasons
+    assert any("placement.accuracy" in r and "<=" in r for r in at_reasons), at_reasons
+    at_verdict = build_score_verdict(at_floor, rubric_gate="enforce")
+    assert at_verdict["verdict"] == ScoreVerdict.FAIL.value, at_verdict
+
+    # Unmeasured (bake-off-shaped): accuracy present but compared/claims == 0 → dormant.
+    dormant = _passable_scored_dict()
+    dormant["faces"]["identification"]["positional"]["position_accuracy"] = 0.0
+    dormant["faces"]["identification"]["positional"]["compared_images"] = 0
+    dormant["placement"]["accuracy"] = 0.0
+    dormant["placement"]["claims"] = 0
+    assert build_score_quality_floor_reasons(dormant, scored_n=int(dormant["counts"]["scored"])) == []
+
+
 def test_public_redaction_scrubs_free_text_identity_names_everywhere():  # VLM6-S2-03 / S2-04
     """Identity names in path / short_error / failures must be absent from PUBLIC blob.
 
@@ -3459,6 +3560,9 @@ def test_face_markdown_renders_null_and_bool_json_tokens():  # HARM-04 / S4-05
     assert _fmt_prov(None) == "null"
     assert _fmt_prov(False) == "false"
     assert _fmt_prov(True) == "true"
+    # Empty string → default remains live for non-head_sha producers (VLM6-R2-A-04).
+    assert _fmt_prov("") == "unknown"
+    assert _fmt_prov("", default="missing") == "missing"
     face_run, manifest = _face_fixture_corpus()
     scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
     scored["provenance"]["head_sha"] = None
@@ -3473,6 +3577,10 @@ def test_face_markdown_renders_null_and_bool_json_tokens():  # HARM-04 / S4-05
     assert "directional=true" in md or "directional=false" in md
     assert "directional=True" not in md
     assert "directional=False" not in md
+    # VLM6-R2-A-04: coupling_flag must not render raw Python False/True.
+    assert "coupling_flag=false" in md or "coupling_flag=true" in md
+    assert "coupling_flag=False" not in md
+    assert "coupling_flag=True" not in md
 
 
 def test_sample_size_in_shared_vacuity_predicate_blocks_compare():  # RV1-02

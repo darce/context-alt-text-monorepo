@@ -64,26 +64,35 @@ never on the joined full token. Testing the joined form first let bare
 ``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
 disagreeing with component-level exception/deny outcomes.
 
-**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7): every slash
+**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7 / F8): every slash
 component is scanned by one iterative **deny-first** suffix walker
-(FIR-7-A10-02):
+(FIR-7-A10-02 / B11-01):
 
   1. For each separator-aligned suffix S of the current token (longest
      first):
-     * **Folded deny (a)/(b) first** — if any deny seed claims S via exact
-       match or separator-boundary prefix on the *folded* form, DENY
-       immediately. Exception compact absorption must never consume
-       characters a deny seed claims at that alignment (closes
-       ``yolo_seg`` / ``yolo_free`` / ``yolo_pose`` / ``yolo_x`` /
-       ``yolo_s_v8`` under junk prefixes: exception seeds ``yolos`` /
-       ``yolof`` / ``yolop`` / ``yolox`` previously absorbed the bare-
-       yolo compact form via rules (a)/(c) and left a clean residual).
+     * **Deny (a)/(b)/(c) first** — if any deny seed claims S via exact
+       match, separator-boundary prefix, or bounded compact remainder,
+       DENY immediately **unless** S forms a **legitimate exception-
+       family spelling boundary** (exact exception identity, separator
+       (b) under an exception seed, or exception compact (c) with a
+       size/version residual such as ``s`` / ``v2`` / ``e``). Exception
+       compact absorption must never consume characters a deny seed
+       claims at that alignment (closes folded ``yolo_seg`` /
+       ``yolo_free`` / ``yolo_pose`` **and** their compact twins
+       ``yoloseg`` / ``yolofree`` / ``yolopose`` / ``yolosg`` under junk
+       prefixes: exception seeds ``yolos`` / ``yolof`` / ``yolop`` /
+       ``yolox`` previously absorbed bare-yolo compact forms via (a)/(c)
+       and left a clean residual). Compact exception (c)/(d) matches
+       whose residual is arbitrary debris (not size/version) on an
+       exception seed that itself is a compact (c) extension of a deny
+       seed are rejected as that deny seed (covers ``yolofree`` where
+       deny (c) rem ``free`` exceeds the 1–3 bound).
      * Else exception-family hit → strip seed; pure-exception (empty
        residual) only continues to later suffixes — it never early-returns
        admit past un-scanned deny content (fixes
        ``yolox_xultralytics_yolox``); non-empty residual is queued for
        multi-strip continuation.
-     * Else DENY-family hit on S via remaining (c)/(d)/(e) → component
+     * Else DENY-family hit on S via remaining (d)/(e) → component
        DENIES with that entry.
   2. Queued residuals are scanned by the **same** walker (multi-strip
      continuation). Double-exception compounds ``yolop_yolox`` /
@@ -93,11 +102,12 @@ component is scanned by one iterative **deny-first** suffix walker
 Vendor-prefix underscore forms of pure exception seeds
 (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
 ``megvii_model_yolof``) ADMIT: the trailing exception suffix is pure-
-exception (no folded (a)/(b) deny claim on ``yolox`` / ``yolos`` / … —
-bare ``yolo`` only matches them via compact (c), which runs *after*
-exception absorption). Path-split / size-tag shields
+exception (exact exception identity — legitimate boundary carve-out for
+deny (c)). Path-split / size-tag shields
 (``yolox/s_ultralytics``, ``s_ultralytics``, ``yolox_xultralytics``)
-still DENY via the outer suffix walk + (e).
+still DENY via the outer suffix walk + (e). Bare exception seeds and
+their size/version forms (``yoloxs``, ``yolopv2``, ``yolos_tiny``,
+``ppyoloe``) still ADMIT.
 
 **Iterative fail-closed bounds** (FIR-7-B8-02 / B8-05 / B9-04): the walker
 is an iterative loop, not recursion. Each successful strip must strictly
@@ -153,8 +163,8 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      ``nc_model_derived`` hit so residual NC compounds
      (``yolox_s_buffalo_l`` / ``yolox_s_yolo_nas``) reject on the derived
      door too.
-  4. **Multi-axis door promotion** (FIR-7-A10-01): doors consider **all**
-     floor hits in a compound, not just the ranked winner. If any
+  4. **Multi-axis door promotion** (FIR-7-A10-01 / B11-02): doors consider
+     **all** floor hits in a compound, not just the ranked winner. If any
      suffix/component hits an AGPL/``denylisted_package`` entry, reject
      with that entry's honest note; if any hits an NC entry, reject
      ``nc_model_derived`` with the NC entry's note. When **both** axes
@@ -163,7 +173,15 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      not be shadowed by a longer NC seed ranking win) — never admit, and
      never attribute one lineage's residue to the other's note. Closes
      ``buffalo_l_ultralytics`` / ``arcface_ultralytics`` /
-     ``retinaface_yolov8`` etc.
+     ``retinaface_yolov8`` etc. **Membership-path precedence** (B11-02):
+     when ``match_nc_model_pattern`` hits (exact / slash / tag-strip /
+     exception-residual membership), doors still consult multi-axis
+     floor promotion; an AGPL hit anywhere in the compound wins over the
+     NC membership reason so path dual-axis forms
+     (``ultralytics/buffalo_l``, ``yolov8/arcface``) and exception-
+     shielded dual-axis forms (``yolox_s_buffalo_l_ultralytics``) report
+     ``denylisted_package`` with the AGPL entry's note — never an NC-only
+     note that hides Ultralytics residue.
   5. **Derived/source package-floor parity** (FIR-7-B9-02 / B10-04): both
      doors promote whole-component package-floor hits on the NC axis
      for every floor-hit shape — exact (a), export-shaped (b) (any-length
@@ -178,7 +196,7 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
   6. **Derived NC-axis package floor** (FIR-7-B10-01 / B10-02 / B10-05):
      NC-axis ``PACKAGE_DENYLIST`` entries are **generated** from the
      canonical NC id surface (``_PINNED_NC_MODEL_IDS`` ∪
-     ``_NC_EXPLICIT_VARIANTS`` ∪ other NC derivation sources), covering
+     ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci ``yolo_nas`` base stem), covering
      both underscore and compact spellings of every id, **minus** an
      explicit exclusion set. Bare ``buffalo`` stays excluded —
      ``buffalo_bill_detector`` must admit; real InsightFace packs are
@@ -192,17 +210,23 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      honest note from ``_NC_MODEL_DETAIL_NOTES``. Compact (e) over-block
      of ``myarcface`` (arcface ≥ 5 compact chars) is deliberate.
 
-**Honest lineage notes** (FIR-7-B6-02 / B9-03): ``yolop`` is hustvl
-BSD-3-Clause (exception); ``yolov2`` / ``yolov4`` are Darknet-era deny
-seeds with their own notes so they stop inheriting the false
-Ultralytics-AGPL text from bare ``yolo``. **PP-YOLO** (``ppyolo`` /
+**Honest lineage notes** (FIR-7-B6-02 / B9-03 / B11-05 / B11-06):
+``yolop`` is hustvl BSD-3-Clause (exception); ``yolov2`` / ``yolov4`` are
+Darknet-era deny seeds with their own notes so they stop inheriting the
+false Ultralytics-AGPL text from bare ``yolo``. **PP-YOLO** (``ppyolo`` /
 ``ppyoloe`` / ``ppyolov2``) is Baidu PaddleDetection Apache-2.0 — an
 exception-family seed so ``ppyolov2`` is not false-denied via compact
 suffix on Darknet ``yolov2``. YOLOR (WongKinYiu, GPL-3.0) remains a
-deny-axis seed.
+deny-axis seed. Membership-door notes resolve through the same compact-
+aware per-lineage table the floor generator uses, so compact and
+underscore spellings of one id (``yolonasposel`` / ``yolo_nas_pose_l``)
+carry identical notes. The ``insightface`` seed has its own zoo wording
+(not buffalo-pack boilerplate).
 
-Precedence per component: folded deny (a)/(b) → exception-family strip →
-residual / suffix deny re-scan (c)/(d)/(e) → residual deny or direct
+Precedence per component: deny (a)/(b)/(c) (with legitimate exception-
+boundary carve-out) → exception-family strip (illegitimate compact
+exception steals of deny-seed extensions fail closed as the deny seed)
+→ residual / suffix deny re-scan (d)/(e) → residual deny or direct
 deny-family hit → ``denylisted_package`` (or the entry's reason, e.g.
 ``nc_model_derived`` for NC-weights); clean exception or neither → no
 hit (admit path continues to other floors). The two seed sets are
@@ -511,7 +535,9 @@ _NC_MODEL_DETAIL_NOTES: dict[str, str] = {
     "buffalo_sc": "buffalo weights and output-derived data are banned",
     "buffalo_l": "buffalo weights and output-derived data are banned",
     "buffalo_l2": "buffalo weights and output-derived data are banned",
-    "insightface": "buffalo weights and output-derived data are banned",
+    "insightface": (
+        "InsightFace model zoo weights and output-derived data are banned"
+    ),
     "retinaface": (
         "InsightFace RetinaFace weights and output-derived data are banned"
     ),
@@ -1012,12 +1038,14 @@ def _nc_package_floor_note_for_seed(seed_canonical: str) -> str:
 def _nc_package_floor_seed_surface() -> set[str]:
     """Canonical NC ids that should become package-floor seeds.
 
-    Single source of truth for the NC-axis floor (FIR-7-B10-01):
-    ``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci
-    ``yolo_nas`` base stem, minus the documented exclusion set. Compact
-    spellings of underscore-bearing seeds are emitted as sibling keys so
-    rule (c)'s 3-char remainder cap cannot make coverage tag-length-
-    sensitive (``antelope_v2_int8`` vs ``antelope_v2_trt``).
+    Single source of truth for the NC-axis floor (FIR-7-B10-01 / A11-4):
+    exactly ``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ the
+    Deci ``yolo_nas`` base stem, minus ``_NC_PACKAGE_FLOOR_EXCLUSIONS``
+    and ``_NC_SURFACE_DELIBERATE_EXCLUSIONS``. No other derivation
+    sources. Compact spellings of underscore-bearing seeds are emitted
+    as sibling keys so rule (c)'s 3-char remainder cap cannot make
+    coverage tag-length-sensitive (``antelope_v2_int8`` vs
+    ``antelope_v2_trt``).
 
     Requires :func:`canonical` / :func:`_compact_canonical` (called after
     those helpers exist — see the merge at the bottom of this section).
@@ -1926,19 +1954,36 @@ def match_nc_model_pattern(derived_from_model: str) -> str | None:
 
 
 def _nc_detail_lineage_note(matched: str) -> str:
-    """Per-entry NC lineage note for audit detail (FIR-7-B7-04 / A8-04).
+    """Per-entry NC lineage note for audit detail (FIR-7-B7-04 / B11-05).
 
     Resolves ``matched`` (from :func:`match_nc_model_pattern`) to the longest
-    covering seed in ``_NC_MODEL_DETAIL_NOTES`` via the shared
-    :func:`_best_family_seed_match` ranking fold so buffalo rejections keep
-    their historical wording and yolo_nas rejections carry Deci NC-weights
-    text — never another entry's boilerplate.
+    covering seed in ``_NC_MODEL_DETAIL_NOTES`` with the **same compact-aware
+    prefix resolution** the floor generator uses
+    (:func:`_nc_package_floor_note_for_seed`), so compact multi-segment
+    membership hits (``yolonasposel``, ``arcfaceglint360kr100``,
+    ``scrfd10gkps``) carry the same Deci / InsightFace notes as their
+    underscore twins — never the generic fallback when lineage is known.
     """
     if not matched:
         return "non-commercial weights and output-derived data are banned"
-    hit = _best_family_seed_match(matched, _NC_MODEL_DETAIL_NOTES, for_deny=True)
-    if hit is not None:
-        return str(hit[2])
+    c = canonical(str(matched)) or str(matched).casefold().replace("-", "_")
+    best_note: str | None = None
+    best_len = -1
+    seed_k = c.replace("_", "")
+    for key, note in _NC_MODEL_DETAIL_NOTES.items():
+        kc = key.casefold().replace("-", "_")
+        kk = kc.replace("_", "")
+        if (
+            c == kc
+            or seed_k == kk
+            or c.startswith(kc + "_")
+            or (kk and seed_k.startswith(kk))
+        ):
+            if len(kk) > best_len:
+                best_len = len(kk)
+                best_note = note
+    if best_note is not None:
+        return best_note
     return "non-commercial weights and output-derived data are banned"
 
 
@@ -2763,11 +2808,15 @@ def _reject_non_string(
 # admits (exception short-circuit); disable multi-strip continuation →
 # yolox_yolop_ultralytics admits; disable fail-closed scan bounds →
 # non-shrinking strip admits (synthetic invariant probe; FIR-7-B9-04);
-# disable NC structural match → yolo_nas_l_int8 / yolo_nas_l_trt admit on
-# weights doors; disable NC package component-suffix walk →
-# myprefix_antelopev2 admits on weights doors (FIR-7-B9-02 follow-up).
+# disable NC structural match → yolo_nas_l_free / yolo_nas_l_blah admit on
+# weights doors (sole-path: pure-alpha short tags that are NOT export-
+# shaped, so floor whole-component promotion misses — FIR-7-B11-04;
+# known export tags like yolo_nas_l_trt still reject via floor);
+# disable NC package component-suffix walk → myprefix_antelopev2 admits
+# on weights doors (FIR-7-B9-02 follow-up).
 # Every surviving flag must change ≥ 1 pinned outcome when flipped alone
-# (no-op flags are TEST-15 violations).
+# (no-op flags are TEST-15 violations). Flag inventory (F8): the ten
+# booleans below; ``_FAMILY_GENERALIZED_SUFFIX_ENABLED`` is deleted.
 _FAMILY_BOUNDARY_PREFIX_ENABLED: bool = True
 _FAMILY_COMPACT_REMAINDER_ENABLED: bool = True
 _FAMILY_HEAD_SEGMENT_ENABLED: bool = True
@@ -2776,7 +2825,7 @@ _EXCEPTION_RESIDUAL_RESCAN_ENABLED: bool = True
 _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED: bool = True
 _EXCEPTION_MULTI_STRIP_CONTINUATION_ENABLED: bool = True
 _SCAN_FAIL_CLOSED_BOUNDS_ENABLED: bool = True  # defensive invariant (B9-04)
-_NC_STRUCTURAL_MATCH_ENABLED: bool = True
+_NC_STRUCTURAL_MATCH_ENABLED: bool = True  # sole-path: yolo_nas_l_free (B11-04)
 # FIR-7-B9-02 follow-up: separator-aligned suffix walk inside
 # ``_whole_component_nc_package_hit`` so prefix-shielded NC package seeds
 # (``myprefix_antelopev2``) reject on weights doors. When False, only the
@@ -3130,13 +3179,145 @@ def _scan_invariant_deny(detail: str) -> PackageDenylistEntry:
     )
 
 
-def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
-    """Longest deny seed claiming ``token`` via folded exact (a) or (b) only.
+# Compact (c) residuals treated as legitimate exception-family size/version
+# tags (FIR-7-B11-01). Digit-bearing remainders (v2, r50 truncated to ≤3)
+# are always legitimate; pure-alpha size letters cover YOLOX/YOLOP/PP-YOLO
+# compact spellings (yoloxs, ppyoloe). Arbitrary debris (eg, ree, ose, g)
+# is NOT legitimate — those are Ultralytics task-tag laundering channels.
+_EXCEPTION_COMPACT_SIZE_TAGS: frozenset[str] = frozenset(
+    {"n", "s", "m", "l", "x", "t", "b", "e"}
+)
 
-    FIR-7-A10-02: folded (a)/(b) deny claims outrank exception absorption at
-    the same alignment. Compact (c), head-segment (d), and compact-suffix
-    (e) are intentionally excluded — those may still lose to a longer
-    exception family identity (``yolox`` / ``yolopv2`` / ``megvii_yolox``).
+
+def _is_legitimate_exception_compact_rem(rem: str) -> bool:
+    """True when compact (c) residual is a size/version tag, not task debris."""
+    if not rem or not _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+        return False
+    if any(ch.isdigit() for ch in rem):
+        return True
+    return rem in _EXCEPTION_COMPACT_SIZE_TAGS
+
+
+def _exception_match_shape(
+    token: str, seed_c: str, seed_k: str
+) -> str | None:
+    """Return ``a``/``b``/``c``/``d`` for how ``token`` hits exception seed."""
+    if not token or not seed_c:
+        return None
+    token_compact = _compact_canonical(token)
+    if (
+        token == seed_c
+        or token_compact == seed_k
+        or token == seed_k
+        or token_compact == seed_c
+    ):
+        return "a"
+    if _FAMILY_BOUNDARY_PREFIX_ENABLED:
+        boundary = seed_c + "_"
+        if token.startswith(boundary) and len(token) > len(boundary):
+            return "b"
+    if _FAMILY_COMPACT_REMAINDER_ENABLED and seed_k:
+        if token_compact.startswith(seed_k):
+            rem = token_compact[len(seed_k) :]
+            if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                return "c"
+    if _family_match_head_segment(token, seed_c, seed_k):
+        return "d"
+    return None
+
+
+def _token_has_legitimate_exception_boundary(token: str) -> bool:
+    """True when token is a clean exception-family spelling (B11-01 carve-out).
+
+    Deny (c) is suppressed when the remainder forms a legitimate
+    exception-family spelling boundary:
+
+      * exact exception identity (a) — bare ``yolos`` / ``yolof`` / ``yolop``
+      * separator-boundary (b) — ``yolos_tiny`` / ``yolox_s`` / ``yolof_r50``
+      * compact (c) with size/version residual — ``yoloxs`` / ``yolopv2`` /
+        ``ppyoloe``
+
+    Compact (c) or head-segment (d) with arbitrary debris (``yoloseg``,
+    ``yolofree``, ``yoloseg_v8``) is NOT legitimate.
+    """
+    matched = _best_family_seed_match(
+        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
+    )
+    if matched is None:
+        return False
+    seed_c, seed_k, _entry = matched
+    shape = _exception_match_shape(token, seed_c, seed_k)
+    if shape in ("a", "b"):
+        return True
+    if shape == "c":
+        rem = _compact_canonical(token)[len(seed_k) :]
+        return _is_legitimate_exception_compact_rem(rem)
+    return False
+
+
+def _deny_seed_underlying_exception(
+    exc_seed_k: str,
+) -> PackageDenylistEntry | None:
+    """If exception compact seed is a (c) extension of a deny seed, return it.
+
+    ``yolos`` / ``yolof`` / ``yolop`` / ``yolox`` are each bare ``yolo`` + a
+    1-char compact remainder. Used to fail-closed illegitimate exception
+    compact steals (``yolofree``) where deny (c) rem exceeds the 1–3 bound.
+    """
+    if not exc_seed_k:
+        return None
+    best: PackageDenylistEntry | None = None
+    best_len = -1
+    for _seed_c, deny_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if not deny_k or len(deny_k) >= len(exc_seed_k):
+            continue
+        if not exc_seed_k.startswith(deny_k):
+            continue
+        rem = exc_seed_k[len(deny_k) :]
+        if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+            if len(deny_k) > best_len:
+                best_len = len(deny_k)
+                best = entry  # type: ignore[assignment]
+    return best
+
+
+def _deny_has_folded_ab_claim(token: str) -> bool:
+    """True when any deny seed claims ``token`` via folded (a) or (b) only.
+
+    Folded (a)/(b) claims are never suppressed by the exception-boundary
+    carve-out — ``yolo_x`` / ``yolo_s`` / ``yolo_seg`` must DENY even though
+    their compact forms spell exception seeds ``yolox`` / ``yolos``.
+    """
+    if not token:
+        return False
+    token_compact = _compact_canonical(token)
+    for seed_c, seed_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if (
+            token == seed_c
+            or token_compact == seed_k
+            or token == seed_k
+            or token_compact == seed_c
+        ):
+            # Exact compact identity of a deny seed — but if the token's
+            # *folded* form differs and equals an exception, still (a) on
+            # compact. For deny seeds this is fine. Exception seeds are
+            # disjoint so this is a real deny (a).
+            return True
+        if _FAMILY_BOUNDARY_PREFIX_ENABLED:
+            boundary = seed_c + "_"
+            if token.startswith(boundary) and len(token) > len(boundary):
+                return True
+    return False
+
+
+def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
+    """Longest deny seed claiming ``token`` via (a)/(b)/(c) (FIR-7-B11-01).
+
+    Elevated before exception absorption. Compact (c) is included so
+    ``yoloseg`` cannot be stolen by exception ``yolos``+``eg``. Callers must
+    apply the legitimate-exception-boundary carve-out **only** for pure
+    (c) hits (bare ``yolop`` / ``yoloxs`` must still admit); folded (a)/(b)
+    claims always win (``yolo_x`` / ``yolo_s``).
 
     Ranking uses the same specificity fold as :func:`_best_family_seed_match`
     so exact folded identity (``antelopev2``) outranks a compact-alias
@@ -3162,6 +3343,15 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
             boundary = seed_c + "_"
             if token.startswith(boundary) and len(token) > len(boundary):
                 hit = True
+        # (c) bounded compact remainder (FIR-7-B11-01 elevation).
+        elif (
+            _FAMILY_COMPACT_REMAINDER_ENABLED
+            and seed_k
+            and token_compact.startswith(seed_k)
+        ):
+            rem = token_compact[len(seed_k) :]
+            if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                hit = True
         if not hit:
             continue
         spec = _family_match_specificity(token, seed_c, seed_k)
@@ -3172,6 +3362,57 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
     return best
 
 
+def _exception_illegitimate_deny_steal(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """Deny entry when exception (c)/(d) steals a deny-seed extension (B11-01).
+
+    Exception seeds that are themselves compact (c) extensions of a deny
+    seed (``yolos``/``yolof``/``yolop``/``yolox`` ⊃ ``yolo``) may only absorb
+    via exact (a), separator (b), or compact (c) with a size/version
+    residual. Arbitrary compact debris (``yolofree``, ``yolopose``,
+    ``yoloseg_v8`` head) fails closed as the underlying deny seed.
+    """
+    matched = _best_family_seed_match(
+        token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
+    )
+    if matched is None:
+        return None
+    seed_c, seed_k, _entry = matched
+    underlying = _deny_seed_underlying_exception(seed_k)
+    if underlying is None:
+        return None
+    shape = _exception_match_shape(token, seed_c, seed_k)
+    if shape in ("a", "b"):
+        return None
+    if shape == "c":
+        rem = _compact_canonical(token)[len(seed_k) :]
+        if _is_legitimate_exception_compact_rem(rem):
+            return None
+        return underlying
+    if shape == "d":
+        head = token.split("_", 1)[0]
+        head_k = _compact_canonical(head)
+        if seed_k and head_k.startswith(seed_k):
+            head_rem = head_k[len(seed_k) :]
+            if head_rem and not _is_legitimate_exception_compact_rem(head_rem):
+                return underlying
+            if not head_rem:
+                # head is exact exception; (d) strip is legitimate.
+                return None
+        # head matches exception via (a)/(c) on head alone.
+        head_shape = _exception_match_shape(head, seed_c, seed_k)
+        if head_shape == "a":
+            return None
+        if head_shape == "c":
+            rem = head_k[len(seed_k) :]
+            if _is_legitimate_exception_compact_rem(rem):
+                return None
+            return underlying
+        return underlying
+    return None
+
+
 def _uniform_component_scan(
     token: str,
     *,
@@ -3180,19 +3421,20 @@ def _uniform_component_scan(
 ) -> PackageDenylistEntry | None:
     """Uniform iterative deny-first suffix scan on one component.
 
-    FIR-7-B8-01 / B8-02 / B8-05 / A9-01 / A10-02: one code path for direct
-    component checks and post-exception residual re-scans. Separator-
-    aligned suffixes are walked longest-first with **deny-first folded
-    (a)/(b)** before exception absorption (an exception hit must never
-    consume characters a deny seed claims at a separator/exact alignment
-    — closes ``yolo_seg`` / ``yolo_x`` under junk prefixes while pure
-    exception identities ``yolox`` / ``yolopv2`` / ``megvii_yolox`` still
-    admit). Pure-exception (empty residual) only continues to later
-    suffixes — it never early-returns admit past un-scanned deny content.
-    Remaining DENY uses (c)/(d)/(e). Iterative loop with hard step bound
-    = initial segment count of the component; non-shrinking strip or
-    bound overflow DENIES (``denylisted_package``, detail names the
-    invariant).
+    FIR-7-B8-01 / B8-02 / B8-05 / A9-01 / A10-02 / B11-01: one code path
+    for direct component checks and post-exception residual re-scans.
+    Separator-aligned suffixes are walked longest-first with **deny-first
+    (a)/(b)/(c)** before exception absorption (an exception hit must never
+    consume characters a deny seed claims at the same alignment — closes
+    folded ``yolo_seg`` / ``yolo_x`` **and** compact ``yoloseg`` /
+    ``yolofree`` / ``yolopose`` under junk prefixes while pure exception
+    identities ``yolox`` / ``yolopv2`` / ``megvii_yolox`` / ``yoloxs`` still
+    admit via the legitimate-exception-boundary carve-out). Pure-exception
+    (empty residual) only continues to later suffixes — it never
+    early-returns admit past un-scanned deny content. Remaining DENY uses
+    (d)/(e). Iterative loop with hard step bound = initial segment count
+    of the component; non-shrinking strip or bound overflow DENIES
+    (``denylisted_package``, detail names the invariant).
 
     Bound is step-count ≤ initial segment count. Compact-remainder strips
     shrink total canonical length, not necessarily segment count, so the
@@ -3247,16 +3489,31 @@ def _uniform_component_scan(
             if not suffix:
                 continue
 
-            # FIR-7-A10-02: folded deny (a)/(b) BEFORE exception absorption.
-            ab_deny = _deny_folded_ab_hit(suffix)
-            if ab_deny is not None and (
-                reasons is None or ab_deny.reason in reasons
-            ):
-                return ab_deny
-            # Other-axis folded (a)/(b) hit under a reasons filter: do not
-            # let exception strip consume the deny alignment either — skip
-            # exception absorption and keep walking shorter suffixes.
-            if ab_deny is not None and reasons is not None:
+            # FIR-7-A10-02 / B11-01: deny (a)/(b)/(c) BEFORE exception
+            # absorption. Folded (a)/(b) always win (yolo_x / yolo_seg).
+            # Pure compact (c) is suppressed only when the token forms a
+            # legitimate exception-family spelling boundary (yolop / yoloxs).
+            abc_deny = _deny_folded_ab_hit(suffix)
+            if abc_deny is not None:
+                ab_claim = _deny_has_folded_ab_claim(suffix)
+                if ab_claim or not _token_has_legitimate_exception_boundary(
+                    suffix
+                ):
+                    if reasons is None or abc_deny.reason in reasons:
+                        return abc_deny
+                    # Other-axis elevated deny under reasons filter: do not
+                    # let exception strip consume the deny alignment either.
+                    continue
+                # Pure (c) + legitimate exception boundary: fall through
+                # to exception absorption (bare yolop / yoloxs / yolos_tiny).
+
+            # Illegitimate exception (c)/(d) steal of a deny-seed extension
+            # (yolofree / yolopose / yoloseg_v8) — fail closed even when
+            # deny (c) rem exceeds the 1–3 bound.
+            steal = _exception_illegitimate_deny_steal(suffix)
+            if steal is not None:
+                if reasons is None or steal.reason in reasons:
+                    return steal
                 continue
 
             exc = _best_exception_hit_with_residual(suffix)
@@ -3443,6 +3700,14 @@ def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
         components = [p for p in c.split("/") if p]
     else:
         components = [c]
+    # Restrict the family map to NC-axis entries once (FIR-7-A11-1): an AGPL
+    # seed ranking win cannot steal this path (multi-axis is handled
+    # separately by door promotion — FIR-7-A10-01).
+    nc_map = {
+        k: e
+        for k, e in PACKAGE_DENYLIST.items()
+        if e.reason is RejectionReason.NC_MODEL_DERIVED
+    }
     seen: set[str] = set()
     for comp in components:
         if comp in seen:
@@ -3467,14 +3732,6 @@ def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
             # segment is carved out — ``myprefix_antelopev2`` still rejects.
             if i == 1 and segments[0] == "not":
                 continue
-            # Restrict the family map to NC-axis entries so an AGPL seed
-            # ranking win cannot steal this path (multi-axis is handled
-            # separately by door promotion — FIR-7-A10-01).
-            nc_map = {
-                k: e
-                for k, e in PACKAGE_DENYLIST.items()
-                if e.reason is RejectionReason.NC_MODEL_DERIVED
-            }
             matched = _best_family_seed_match(
                 cand, nc_map, for_deny=True, allow_rule_e=False
             )
@@ -3484,6 +3741,10 @@ def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
             if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
                 continue
             # Exact / compact (a): always promote.
+            # Multi-segment NC ids under junk prefixes
+            # (``myprefix_scrfd_10g_kps``) resolve here: specificity ranking
+            # returns the full multi-segment seed as exact (a) on the suffix
+            # ``scrfd_10g_kps`` — no (b)-fallback is required (FIR-7-A11-1).
             cand_k = _compact_canonical(cand)
             if (
                 cand == seed_c
@@ -3493,28 +3754,13 @@ def _whole_component_nc_package_hit(value: str) -> PackageDenylistEntry | None:
             ):
                 return entry  # type: ignore[no-any-return]
             # (b) separator-boundary: promote when residual is export-shaped
-            # (tag-flood OK — A10-05) OR when the full candidate itself is an
-            # NC floor seed via family (a)/(b)/(c) under the unrestricted
-            # package matcher — i.e. the package floor would hit this
-            # suffix. That closes multi-segment NC ids under junk prefixes
-            # (myprefix_scrfd_10g_kps) without promoting name-continuations
-            # like insightface_free (which miss the floor too).
+            # (tag-flood OK — A10-05). Name-continuations like
+            # ``insightface_free`` miss (not export-shaped) and stay clean
+            # on doors.
             boundary = seed_c + "_"
             if cand.startswith(boundary) and len(cand) > len(boundary):
                 rest = cand[len(boundary) :]
                 if _nc_package_rest_is_export_shaped(rest):
-                    return entry  # type: ignore[no-any-return]
-                # Family (b) on the floor map: seed_rest where rest is any
-                # non-empty trailing material — but only when the *seed*
-                # entry's package_id equals seed_c (not a longer sibling
-                # that ranked down). Name-continuations of short seeds are
-                # accepted on the package floor today (buffalo_l_extra
-                # denies on floor); doors stay stricter: require that
-                # every rest segment is short (≤ 4) or digit-bearing or a
-                # known shield tag OR the candidate is itself a floor key.
-                if cand in nc_map or _compact_canonical(cand) in {
-                    _compact_canonical(k) for k in nc_map
-                }:
                     return entry  # type: ignore[no-any-return]
             # (c) bounded compact remainder (FIR-7-B10-04): promote when the
             # remainder is **digit-bearing** (size/version debris like
@@ -3749,7 +3995,28 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    # NC ban first (reason precedence for InsightFace family).
+    # FIR-7-B11-02 / A10-01: multi-axis package-floor promotion runs even
+    # when NC membership matches. AGPL / denylisted_package anywhere in the
+    # compound outranks nc_model_derived so path dual-axis forms
+    # (ultralytics/buffalo_l) never hide Ultralytics residue behind an
+    # NC-only note. Floor promotion is consulted first for the AGPL axis;
+    # NC membership / NC floor follow.
+    floor = _door_package_floor_promotion(text)
+    if (
+        floor is not None
+        and floor.reason is RejectionReason.DENYLISTED_PACKAGE
+    ):
+        return _fail(
+            floor.reason,
+            detail=(
+                f"derived_from_model={text!r} hits PACKAGE_DENYLIST entry "
+                f"{floor.package_id!r} ({floor.spdx_id}): {floor.notes}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+
+    # NC ban (membership + structural). When both AGPL and NC were present,
+    # the AGPL branch above already returned.
     matched = match_nc_model_pattern(text)
     if matched is not None:
         lineage = _nc_detail_lineage_note(matched)
@@ -3774,11 +4041,7 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
             category=PolicyCategory.TRAINING_DATA,
         )
 
-    # BR-51 / FIR-7-B9-02 / A10-01: multi-axis package-floor promotion.
-    # Considers ALL floor hits (AGPL + NC), not just the ranked winner.
-    # Precedence when both present: denylisted_package (AGPL) first with
-    # that entry's honest note; never admit; never cross-attribute notes.
-    floor = _door_package_floor_promotion(text)
+    # NC-axis floor promotion (no AGPL hit; membership missed).
     if floor is not None:
         return _fail(
             floor.reason,
@@ -4043,14 +4306,30 @@ def audit_source(source: str | None) -> LicenseAuditResult:
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
+    # FIR-7-B11-02 / A10-01: AGPL floor promotion outranks NC membership on
+    # the source door too (parity with audit_derived_from_model).
+    floor = _door_package_floor_promotion(text)
+    if (
+        floor is not None
+        and floor.reason is RejectionReason.DENYLISTED_PACKAGE
+    ):
+        return _fail(
+            floor.reason,
+            detail=(
+                f"source={text!r} hits PACKAGE_DENYLIST entry "
+                f"{floor.package_id!r} ({floor.spdx_id}): {floor.notes}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
     # BR-20: NC matcher over source (precedence over research_only_source).
     matched = match_nc_model_pattern(text)
     if matched is not None:
+        lineage = _nc_detail_lineage_note(matched)
         return _fail(
             RejectionReason.NC_MODEL_DERIVED,
             detail=(
                 f"source={text!r} matches non-commercial pattern {matched!r}; "
-                "NC weights are banned regardless of which field carries them"
+                f"{lineage}"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
@@ -4060,10 +4339,7 @@ def audit_source(source: str | None) -> LicenseAuditResult:
             detail=f"source {text!r} is research-only and taints commercial use",
             category=PolicyCategory.TRAINING_DATA,
         )
-    # FIR-7-B9-02 / A10-01: multi-axis package-floor promotion parity with
-    # audit_derived_from_model (BR-28 not_* stays clean via whole-component
-    # carve-out; AGPL residues are not shadowed by longer NC seeds).
-    floor = _door_package_floor_promotion(text)
+    # NC-axis floor promotion (no AGPL hit; membership missed).
     if floor is not None:
         return _fail(
             floor.reason,

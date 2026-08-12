@@ -2418,7 +2418,17 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def _common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--manifest", default="scene/tests/seed/golden.json")
+        p.add_argument(
+            "--manifest",
+            default="scene/tests/seed/golden.json",
+            help=(
+                "score/fetch-time corpus man (default: shared 37-entry golden seed). "
+                "Caption determinism freeze must pass the bakeoff-results caption man "
+                "S2A-determinism-anchor-manifest-* (golden+media-39 trap), not bare "
+                "golden.json — otherwise manifest-drift / scored=37/38 (wG3 / rg-006). "
+                "Live run/fetch keep the golden default."
+            ),
+        )
         p.add_argument("--limit", type=_limit_arg, default=None, help="cap images (must be >= 1)")
         p.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
         p.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
@@ -2585,7 +2595,15 @@ def main(argv: list[str] | None = None) -> None:
         "score-face",
         help="face run-record → face report (pure, offline; full unfiltered corpus)",
     )
-    score_face_p.add_argument("--manifest", default="scene/tests/seed/golden.json")
+    score_face_p.add_argument(
+        "--manifest",
+        default="scene/tests/seed/golden.json",
+        help=(
+            "score-time face man (default: golden seed — unsuitable for the synthetic "
+            "face freeze: golden has 0 face_boxes). Face freeze must pass "
+            "S2A-face-determinism-anchor-manifest-* under bakeoff-results (see README)."
+        ),
+    )
     score_face_p.add_argument("--run-record", required=True)
     score_face_p.add_argument(
         "--check-determinism",

@@ -58,6 +58,26 @@ trait PreparesSqlQueries {
 		return is_string( $prepared ) && '' !== $prepared ? $prepared : null;
 	}
 
+	private function prepare_projection_read_query( string $query, array $args ): string {
+		$prepared = $this->prepare_query( $query, $args );
+		if ( null === $prepared ) {
+			$message = 'Projection query failed [prepare_query]: wpdb could not prepare query';
+			Telemetry::log_line( $message );
+			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal diagnostic message; never rendered as output.
+			throw new ProjectionQueryException( $message );
+		}
+
+		return $prepared;
+	}
+
+	private function clear_query_error(): void {
+		global $wpdb;
+
+		if ( isset( $wpdb ) && is_object( $wpdb ) ) {
+			$wpdb->last_error = '';
+		}
+	}
+
 	private function escape_identifier( string $identifier ): string {
 		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
 		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
@@ -103,6 +123,7 @@ trait PreparesSqlQueries {
 		Telemetry::log_line( $message );
 		$wpdb->last_error = '';
 
+		// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal diagnostic message; never rendered as output.
 		throw new ProjectionQueryException( $message );
 	}
 

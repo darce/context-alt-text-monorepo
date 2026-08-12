@@ -43,7 +43,17 @@ export const WorkbenchFindingsPanel = ({
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
-  const { counts, previews, hasFindings, isLoading, isError, isUnavailable, isReadOnly, nextAction } = findings;
+  const {
+    counts,
+    previews,
+    hasFindings,
+    isLoading,
+    isError,
+    isTopUnlabeledError,
+    isUnavailable,
+    isReadOnly,
+    nextAction,
+  } = findings;
 
   if (!hasFindings && isLoading) {
     return (
@@ -53,7 +63,9 @@ export const WorkbenchFindingsPanel = ({
     );
   }
 
-  if (!hasFindings && isError) {
+  // UI-03 / UI-04: top-unlabeled (or primary) failure is not an empty backlog.
+  // Gate the drained empty copy + its aria-live on a successful load only.
+  if (!hasFindings && (isError || isTopUnlabeledError)) {
     return (
       <div className="acx-findings-panel acx-findings-panel--error" role="status" aria-live="polite">
         <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
@@ -113,10 +125,12 @@ export const WorkbenchFindingsPanel = ({
               {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
             </li>
             <li className="acx-findings-panel__count">
-              {sprintf(
-                _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
-                counts.unlabeledClusters,
-              )}
+              {isTopUnlabeledError
+                ? __('Unlabeled groups unavailable', 'alt-context')
+                : sprintf(
+                    _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
+                    counts.unlabeledClusters,
+                  )}
             </li>
           </ul>
         </div>
@@ -137,7 +151,8 @@ export const WorkbenchFindingsPanel = ({
         </div>
       )}
 
-      {!hasFindings && (
+      {/* UI-04: empty drain copy is only for a successful zero — errors return above. */}
+      {!hasFindings && !isTopUnlabeledError && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>

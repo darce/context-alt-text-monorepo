@@ -54,6 +54,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   hasFindings: false,
   isLoading: false,
   isError: false,
+  isTopUnlabeledError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,
@@ -172,6 +173,76 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+  });
+
+  // UI-03: top-unlabeled 500 must not launder into the confident empty state.
+  it('UI-03: top-unlabeled error shows error affordance, not "No findings yet"', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isTopUnlabeledError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+  });
+
+  // UI-04: aria-live must announce failure, not the drained/empty copy, when top-unlabeled errored.
+  it('UI-04: aria-live announces error (not empty) when top-unlabeled failed', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isTopUnlabeledError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live).toHaveTextContent('Could not load recognition findings.');
+    expect(live).not.toHaveTextContent('No findings yet');
+  });
+
+  it('UI-04: aria-live announces empty only after a successful load with no findings', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel());
+
+    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live).toHaveTextContent(
+      'No findings yet. Run a scan and new findings will appear here automatically.',
+    );
+  });
+
+  // UI-06: partial findings + top-unlabeled outage must not report "0 unlabeled groups".
+  it('UI-06: unlabeled count is indeterminate when top-unlabeled query errored', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+
+    expect(screen.queryByText('0 unlabeled groups')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlabeled group')).not.toBeInTheDocument();
+    expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
+    expect(screen.getByText('2 to review')).toBeInTheDocument();
   });
 
   it('renders an explicit unavailable state', () => {

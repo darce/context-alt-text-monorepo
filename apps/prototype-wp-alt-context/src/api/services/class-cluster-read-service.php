@@ -36,6 +36,7 @@ class ClusterReadService {
 	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
 	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
+	private const CLUSTER_DETAIL_MEMBER_LIMIT = 500;
 
 	private ClustersHostInterface $host;
 	private ClusterReadDependencies $dependencies;
@@ -66,7 +67,7 @@ class ClusterReadService {
 				);
 
 				$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_PER_CLUSTER );
-				$clusters = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster );
+				$clusters = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, self::PREVIEW_IDENTITIES_PER_CLUSTER );
 
 				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 			} catch ( ProjectionQueryException $exception ) {
@@ -159,7 +160,8 @@ class ClusterReadService {
 			$unlabeled_items = $this->dependencies->cluster_mapper->map_top_unlabeled_clusters(
 				$sovereign_data['clusters'],
 				$sovereign_data['members'],
-				$tenant_id
+				$tenant_id,
+				self::PREVIEW_IDENTITIES_PER_CLUSTER
 			);
 			$total = count( $unlabeled_items );
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
@@ -191,13 +193,17 @@ class ClusterReadService {
 		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
 
 		if ( $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
-			$label_rows = $this->dependencies->clusters_repository->list_labels( $tenant_id, $search, $limit );
-			$labels = $this->dependencies->cluster_mapper->map_labels_list( array_map( static fn ( array $row ): string => (string) ( $row['label'] ?? '' ), $label_rows ) );
-			$total = count( $labels );
-			if ( isset( $label_rows[0]['total_count'] ) && is_numeric( $label_rows[0]['total_count'] ) ) {
-				$total = max( 0, (int) $label_rows[0]['total_count'] );
+			try {
+				$label_rows = $this->dependencies->clusters_repository->list_labels( $tenant_id, $search, $limit );
+				$labels = $this->dependencies->cluster_mapper->map_labels_list( array_map( static fn ( array $row ): string => (string) ( $row['label'] ?? '' ), $label_rows ) );
+				$total = count( $labels );
+				if ( isset( $label_rows[0]['total_count'] ) && is_numeric( $label_rows[0]['total_count'] ) ) {
+					$total = max( 0, (int) $label_rows[0]['total_count'] );
+				}
+				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
+			} catch ( ProjectionQueryException $exception ) {
+				return $this->projection_query_failed_error( 'list_cluster_labels', $exception );
 			}
-			return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
 		}
 
 		$query = array(
@@ -225,8 +231,8 @@ class ClusterReadService {
 			try {
 				$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 				if ( is_array( $cluster_row ) ) {
-					$members = $this->dependencies->members_repository->list_for_cluster( $cluster_id, 500, 0, $tenant_id );
-					$payload = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members );
+					$members = $this->dependencies->members_repository->list_for_cluster( $cluster_id, self::CLUSTER_DETAIL_MEMBER_LIMIT, 0, $tenant_id );
+					$payload = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, self::CLUSTER_DETAIL_MEMBER_LIMIT );
 					return new WP_REST_Response( $payload, 200 );
 				}
 

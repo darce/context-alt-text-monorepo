@@ -34,6 +34,7 @@ from scripts.eval_harness.face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    LabeledOrderResult,
     labeled_left_to_right,
     labeled_order,
     latency_summary,
@@ -979,6 +980,26 @@ def test_labeled_order_identical_centre_x_distinct_y():  # VLM6-R2-G-01
     assert result.names == ["B", "A"]
     assert result.order_degraded is False
     assert result.y_missing_count == 0
+
+
+def test_labeled_order_blank_non_numeric_y_is_missing():  # RA-04 source / wF1
+    """Blank / whitespace / non-numeric y must coerce to missing, not raise.
+
+    Called *directly* (not via report._normalize_face_boxes_for_order) so non-report
+    callers share the same fail-closed missing-y branch (order_degraded=True).
+    TEST-15: pre-fix float(y) raises ValueError on these fixtures.
+    """
+    for y in ("", "  ", "abc"):
+        result = labeled_order([{"name": "A", "x": 0.5, "y": y}])
+        assert isinstance(result, LabeledOrderResult), repr(y)
+        assert result.names == ["A"], repr(y)
+        assert result.order_degraded is True, repr(y)
+        assert result.y_missing_count == 1, repr(y)
+    # Numeric string still parses (not a third state).
+    ok = labeled_order([{"name": "A", "x": 0.5, "y": "0.3"}])
+    assert ok.names == ["A"]
+    assert ok.order_degraded is False
+    assert ok.y_missing_count == 0
 
 
 def test_namedness_predicate_shared_across_sites():  # VLM6-R2-A-01

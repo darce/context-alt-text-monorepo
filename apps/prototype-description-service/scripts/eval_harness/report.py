@@ -169,11 +169,17 @@ class ScoreVerdict(StrEnum):
 
     ``pass_ungated`` is reserved for ``--rubric-gate skip`` runs that clear every
     other exit gate: the artifact must not be readable as a gated pass (F1d-1).
+
+    ``not_ready`` is reserved for runs where a scored category has sampling
+    probability π=0 (no measurable claim units) — readiness is the weakest
+    category (EVAL-23), so this is never adoption-eligible and never collides
+    with a gated ``pass`` (VLM6-A-05 / VLM6-B-07 / AUDIT-07).
     """
 
     PASS = "pass"
     FAIL = "fail"
     PASS_UNGATED = "pass_ungated"
+    NOT_READY = "not_ready"
 
 
 # Floor for faces.identification wrong-name rate over scored images.
@@ -206,6 +212,59 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "two_pass",
         "dual_length",
         "face_gate",
+    }
+)
+
+# PUBLIC per-image is fail-closed allow-list (VLM6-A-01 / rg-015). Name-bearing
+# detail lists (inserted_identities, missing_identities, must_right_failures,
+# hallucinated_names, wrong_name_hits, …) and any future name-bearing key are
+# excluded by default — deny-lists leak on schema growth.
+_PUBLIC_PER_IMAGE_ALLOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "path",
+        "media_id",
+        "gated_score",
+        "policy_violation",
+        "fkre",
+        "repetition_ratio",
+        "tag_coverage",
+        "first_sentence_gist_ok",
+        "meta_framing_hits",
+        "context_duplication_ratio",
+        "sentence_count",
+        "name_front_loaded",
+        "cache_hit",
+        "short_error",
+        "placement",
+        "hallucination",
+        "long",
+    }
+)
+_PUBLIC_PER_IMAGE_LONG_ALLOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "gated_score",
+        "policy_violation",
+        "meta_framing_hits",
+        "context_duplication_ratio",
+        "sentence_count",
+        "word_count",
+        "name_front_loaded",
+    }
+)
+# Nested placement/hallucination fact lists embed identity names in free text;
+# keep only scalar observables for PUBLIC (rg-015 boundary adapter).
+_PUBLIC_PER_IMAGE_PLACEMENT_ALLOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "accuracy",
+        "claims",
+    }
+)
+_PUBLIC_PER_IMAGE_HALLUCINATION_ALLOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "fabricated",
+        "trap_count",
+        "coverage",
+        "count_advisory",
     }
 )
 
@@ -309,6 +368,29 @@ def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _public_per_image_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a PUBLIC per-image record from an explicit allow-list (VLM6-A-01).
+
+    Fail-closed (rg-015): unknown keys — including future name-bearing fields —
+    are dropped. Nested ``long`` / ``placement`` / ``hallucination`` are themselves
+    allow-listed so fact-string lists cannot carry roster names.
+    """
+    out: dict[str, Any] = {}
+    for key in _PUBLIC_PER_IMAGE_ALLOW_FIELDS:
+        if key not in row:
+            continue
+        value = row[key]
+        if key == "long" and isinstance(value, Mapping):
+            out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_LONG_ALLOW_FIELDS if k in value}
+        elif key == "placement" and isinstance(value, Mapping):
+            out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_PLACEMENT_ALLOW_FIELDS if k in value}
+        elif key == "hallucination" and isinstance(value, Mapping):
+            out[key] = {k: value[k] for k in _PUBLIC_PER_IMAGE_HALLUCINATION_ALLOW_FIELDS if k in value}
+        else:
+            out[key] = value
+    return out
+
+
 def _redact_caption_report_for_public(
     scored: dict[str, Any],
     *,
@@ -390,18 +472,16 @@ def _redact_caption_report_for_public(
         faces["identity_ordering"] = ordering
     redacted["faces"] = faces
 
-    # Per-image: only publishable rows; clear model-asserted private names.
+    # Per-image: only publishable rows; rebuild from allow-list so identity
+    # name fields and future name-bearing keys cannot leak by default (VLM6-A-01).
     kept_rows: list[dict[str, Any]] = []
     for row in redacted.get("per_image") or []:
         media_id = int(row.get("media_id", -1))
         if media_id not in publishable_ids:
             continue
-        row["hallucinated_names"] = []
-        row["wrong_name_hits"] = []
-        if isinstance(row.get("long"), dict):
-            row["long"]["hallucinated_names"] = []
-            row["long"]["wrong_name_hits"] = []
-        kept_rows.append(row)
+        if not isinstance(row, Mapping):
+            continue
+        kept_rows.append(_public_per_image_row(row))
     redacted["per_image"] = kept_rows
 
     # Quality title block may list hallucinated roster names — clear for PUBLIC.
@@ -768,14 +848,22 @@ def build_score_verdict(
 
     ``rubric_gate=skip`` bypasses only the must-right failures reason; a clean
     skip run persists ``pass_ungated`` so it is never readable as a gated pass.
+
+    Category vacuity (VLM6-A-05 / VLM6-B-07): positional and placement are
+    critical scored slices (EVAL-04). When their claim units have sampling
+    probability π=0 the verdict is ``not_ready`` (never ``pass``) — readiness is
+    the weakest category (EVAL-23), and AUDIT-07 requires naming the frame.
     """
     reasons: list[str] = []
+    vacuity_reasons: list[str] = []
     counts = scored.get("counts") or {}
     # F1d-4 / VLM-6-S2A-P-01: corpus-integrity counts live in scored["corpus"],
     # not counts (counts is the pinned {total, scored, failed} contract shape).
     corpus = scored.get("corpus") or {}
     caption = scored.get("caption") or {}
-    ident = (scored.get("faces") or {}).get("identification") or {}
+    faces = scored.get("faces") or {}
+    ident = faces.get("identification") or {}
+    placement = scored.get("placement") or {}
 
     failed = int(counts.get("failed") or 0)
     if failed > 0:
@@ -832,20 +920,50 @@ def build_score_verdict(
             f"assertions={wrong_n}, ignored={ignored_n}, scored={scored_n})"
         )
 
-    # VLM6-R2-04 vacuity is surfaced on faces.identity_ordering.degraded_images
-    # (and order_unknown_excluded), not as an automatic hard-fail: the shipped
-    # golden corpus still lacks face_boxes, so a hard gate would fail every run
-    # until curation lands. Operators read the degraded count + MD warning.
+    # Category vacuity (EVAL-04 / EVAL-23 / AUDIT-07 / VLM6-A-05 / VLM6-B-07):
+    # a critical scored slice with claim-unit sampling π=0 cannot certify pass.
+    # Frame: target=adoption readiness; sampling unit=scored image; observation
+    # unit=positional image (face_boxes L→R) or placement claim (spatial_fact).
+    if scored_n > 0:
+        positional = ident.get("positional") or {}
+        compared_images = int(positional.get("compared_images") or 0)
+        if compared_images == 0:
+            ordering = faces.get("identity_ordering") or {}
+            degraded = int(ordering.get("degraded_images") or 0)
+            excluded_raw = positional.get("excluded_images") or []
+            excluded_n = len(excluded_raw) if isinstance(excluded_raw, list) else int(excluded_raw or 0)
+            vacuity_reasons.append(
+                "category-vacuity: positional — claim unit=image with face_boxes "
+                f"L→R order; compared_images=0 degraded_images={degraded} "
+                f"excluded_images={excluded_n} (π=0 on face_boxes; AUDIT-07)"
+            )
+        place_claims = int(placement.get("claims") or 0)
+        place_acc = placement.get("accuracy")
+        if place_claims == 0 or place_acc is None:
+            abstained = int(placement.get("abstained") or 0)
+            images_scored = int(placement.get("images_scored") or 0)
+            vacuity_reasons.append(
+                "category-vacuity: placement — claim unit=asserted spatial_fact; "
+                f"claims={place_claims} accuracy={place_acc!s} abstained={abstained} "
+                f"images_scored={images_scored} (π=0 on spatial_facts; AUDIT-07)"
+            )
 
+    # Hard failures win; otherwise vacuity yields not_ready (not adoption pass).
     if reasons:
         verdict_value = ScoreVerdict.FAIL.value
+        all_reasons = reasons + vacuity_reasons
+    elif vacuity_reasons:
+        verdict_value = ScoreVerdict.NOT_READY.value
+        all_reasons = vacuity_reasons
     elif rubric_gate == "skip":
         verdict_value = ScoreVerdict.PASS_UNGATED.value
+        all_reasons = []
     else:
         verdict_value = ScoreVerdict.PASS.value
+        all_reasons = []
     return {
         "verdict": verdict_value,
-        "reasons": reasons,
+        "reasons": all_reasons,
         # Display-only rounding — comparisons above use count / unrounded rate.
         # Rate is unique wrong-name images / scored (VLM6-S2A-B-09), not assertions.
         "wrong_name_rate": round(rate, 4),

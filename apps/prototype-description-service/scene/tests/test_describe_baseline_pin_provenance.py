@@ -385,13 +385,79 @@ def test_fx6_head_sha_entry_points_agree_on_accept_refuse_table(
     assert _outcome(validate_live_head_sha, "")[0] == "refuse"
     assert _outcome(validate_live_head_sha, "   ")[0] == "refuse"
 
-    # When git is absent both degrade to format-only (same accept for fake hex).
+    # Degrade only when the git binary is missing (FileNotFoundError/ENOENT).
+    # Generic OSError must not open the format-only hatch (VLM6-R2-D-02).
     import scripts.eval_harness.provenance_sha as prov
 
-    def _no_git(*_a, **_k):
-        raise OSError("git missing")
+    def _no_git_binary(*_a, **_k):
+        raise FileNotFoundError("git missing")
 
-    monkeypatch.setattr(prov.subprocess, "run", _no_git)
+    monkeypatch.setattr(prov.subprocess, "run", _no_git_binary)
     fake = "deadbeef" * 5
     assert _outcome(db.resolve_head_sha, fake) == ("ok", fake)
     assert _outcome(validate_live_head_sha, fake) == ("ok", fake)
+
+
+# --- VLM6-R2-D-03: operator-boundary lock (CLI main + no verify_git reentry) ---
+
+
+def test_vlm6_r2_d03_cli_main_refuses_fabricated_40_hex(tmp_path: Path) -> None:
+    """Operator boundary: main([... '--live-head-sha', fake]) must refuse.
+
+    The library-level divergence table alone does not lock CLI wiring — a future
+    'cleanup' that reintroduces verify_git=False at the call site reopens the
+    hole while defaults-only tests stay green (VLM6-R2-D-03 / TEST-15 / rg-015).
+    """
+    fake = "a" * 40
+    assert fake != _worktree_head_sha()
+    with pytest.raises(SystemExit, match="not a resolvable commit") as excinfo:
+        gen.main(
+            [
+                "--manifest",
+                str(_GOLDEN),
+                "--out-dir",
+                str(tmp_path),
+                "--stem",
+                "cli-fake-hex",
+                "--no-pin",
+                "--live-head-sha",
+                fake,
+            ]
+        )
+    assert fake in str(excinfo.value)
+
+
+def test_vlm6_r2_d03_validate_live_head_sha_has_no_verify_git_param() -> None:
+    """cx3 ships validate_live_head_sha without verify_git; lock that contract.
+
+    Expected-red until lane cx3 removes the parameter (cross-lane). A reintroduced
+    parameter is the exact footgun that reopens format-only acceptance.
+    """
+    import inspect
+
+    sig = inspect.signature(validate_live_head_sha)
+    assert "verify_git" not in sig.parameters, (
+        "validate_live_head_sha must not expose verify_git= "
+        f"(got params {list(sig.parameters)}); cx3 removes it — VLM6-R2-D-03"
+    )
+
+
+def test_vlm6_r2_d03_no_call_site_passes_verify_git() -> None:
+    """No eval_harness call site may pass verify_git= into validate_live_head_sha."""
+    import re
+
+    harness = Path(__file__).resolve().parents[2] / "scripts" / "eval_harness"
+    offenders: list[str] = []
+    # Match validate_live_head_sha(...) that includes verify_git= in the same call.
+    call_re = re.compile(
+        r"validate_live_head_sha\s*\((?:[^)]|\n)*?verify_git\s*=",
+        re.MULTILINE,
+    )
+    for path in sorted(harness.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if call_re.search(text):
+            offenders.append(path.name)
+    assert not offenders, (
+        "call sites pass verify_git= into validate_live_head_sha: "
+        f"{offenders} (VLM6-R2-D-03)"
+    )

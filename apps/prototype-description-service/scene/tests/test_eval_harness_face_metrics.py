@@ -11,8 +11,11 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_assignment import FaceDecision
+from scripts.eval_harness import face_metrics as face_metrics_mod
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
+    SAMPLING_FRAME_FACE_ID,
+    SAMPLING_FRAME_UNKNOWN_REJECTION,
     UNLABELED_COHORT_KEY,
     ImageDetection,
     ImageIdentities,
@@ -26,9 +29,20 @@ from scripts.eval_harness.face_metrics import (
     labeled_left_to_right,
     latency_summary,
     nearest_rank_percentile,
+    positional_identification,
     predicted_left_to_right,
     sort_identity_rows_by_normalized_centre,
     wire_bbox_normalized_centre,
+)
+
+# Optional symbols (TEST-15: unfixed code must collect then fail assertions).
+predicted_names_for_positional = getattr(face_metrics_mod, "predicted_names_for_positional", None)
+POSITIONAL_EVAL_SCORED = getattr(face_metrics_mod, "POSITIONAL_EVAL_SCORED", "scored")
+POSITIONAL_EVAL_NOT_EVALUABLE = getattr(face_metrics_mod, "POSITIONAL_EVAL_NOT_EVALUABLE", "not_evaluable")
+POSITIONAL_VACUITY_SIGNAL = getattr(
+    face_metrics_mod,
+    "POSITIONAL_VACUITY_SIGNAL",
+    "positional identification not evaluable on this corpus, π=0 for box-grounded identity claims",
 )
 
 # --- detection level (identity-agnostic) ---
@@ -277,6 +291,30 @@ def test_face_unknown_rejection_ignores_named_probes():
     assert result.correct_rejects == 1
 
 
+def test_face_unknown_rejection_missed_stranger_gt_counts_against_rate():
+    """VLM6-B-08 / EVAL-16 / AUDIT-07: missed stranger GT lowers the rate.
+
+    Pre-fix: three matched reject-stranger decisions → rate=1.0, n=3 even when
+    fifty stranger boxes were missed upstream. Post-fix: missed_stranger_gt
+    enters n and the rate denominator as failures.
+    """
+    matched = [
+        _dec(media_id=i, true_name=None, decision="reject", predicted_name=None) for i in range(3)
+    ]
+    # Unfixed signature rejects the kwarg → TypeError (RED). Fixed → counts.
+    with_misses = face_unknown_rejection(matched, missed_stranger_gt=50)
+    assert with_misses.correct_rejects == 3
+    assert with_misses.false_accepts == 0
+    assert getattr(with_misses, "missed_stranger_gt", 0) == 50
+    assert with_misses.n == 53  # matched + missed
+    assert with_misses.rate == pytest.approx(3 / 53)
+    assert with_misses.rate < 1.0
+    # Sampling frame names the true observation unit (AUDIT-07).
+    assert "missed" in SAMPLING_FRAME_UNKNOWN_REJECTION.lower()
+    assert "full_corpus_including_unpublishable" not in SAMPLING_FRAME_UNKNOWN_REJECTION
+    assert with_misses.sampling_frame == SAMPLING_FRAME_UNKNOWN_REJECTION
+
+
 # --- clustering (single-linkage) ---
 
 
@@ -394,7 +432,28 @@ def test_clustering_sweep_headline_uses_tau_op():
 
 
 def test_face_id_detection_recall_coupling_flag_computed():
-    """EVAL-16: coupling flag is computed from missed_gt / unmatched detections."""
+    """EVAL-16 / VLM6-B-01 / VLM6-B-02: missed_gt folds into FN; flag is disclosure.
+
+    Pre-fix defect: one enrolled-accept TP + missed_gt=2 yielded FN=0, recall=1.0
+    and only flipped detection_recall_coupling_flag. TEST-15: this assertion goes
+    red against code that ignores misses and merely sets the flag.
+    """
+    # One TP accept + two detector-missed named GT → FN includes both misses.
+    # Assert FN/recall FIRST so unfixed code fails on the load-bearing claim
+    # (VLM6-B-02), not only on the sampling-frame string rewrite.
+    coupled = face_identification_pr(
+        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
+        missed_gt=2,
+        unmatched_detections=0,
+    )
+    assert coupled.true_positives == 1
+    assert coupled.false_negatives == 2  # EVAL-16: missed_gt folded into FN
+    assert coupled.recall == pytest.approx(1 / 3)  # TP / (TP+FN) = 1/3
+    assert coupled.recall_denominator == 3  # TP + FN
+    assert coupled.precision == 1.0  # no FP from misses
+    assert coupled.detection_recall_coupling_flag is True  # disclosure retained
+    assert coupled.missed_gt == 2
+
     clean = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
         missed_gt=0,
@@ -403,15 +462,11 @@ def test_face_id_detection_recall_coupling_flag_computed():
     assert clean.detection_recall_coupling_flag is False
     assert clean.precision_denominator == 1
     assert clean.recall_denominator == 1
+    assert clean.false_negatives == 0
+    assert clean.recall == 1.0
     assert clean.sampling_frame  # named frame always present
-
-    coupled = face_identification_pr(
-        [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
-        missed_gt=2,
-        unmatched_detections=0,
-    )
-    assert coupled.detection_recall_coupling_flag is True
-    assert coupled.missed_gt == 2
+    assert "missed_gt" in SAMPLING_FRAME_FACE_ID
+    assert "excluded from FN" not in SAMPLING_FRAME_FACE_ID
 
     coupled_fp = face_identification_pr(
         [_dec(true_name="Alice", decision="accept", predicted_name="Alice")],
@@ -419,6 +474,9 @@ def test_face_id_detection_recall_coupling_flag_computed():
         unmatched_detections=1,
     )
     assert coupled_fp.detection_recall_coupling_flag is True
+    # Unmatched detections alone do not invent FNs (no missed named GT).
+    assert coupled_fp.false_negatives == 0
+    assert coupled_fp.recall == 1.0
 
 
 def test_face_id_coupling_kwargs_required_no_fail_open_default():
@@ -750,6 +808,12 @@ def test_predicted_left_to_right_matches_centre_not_corner_order():
         "Narrow",
         "Wide",
     ]
+    # Canonical alias used by production callers (VLM6-B-03).
+    if predicted_names_for_positional is not None:
+        assert predicted_names_for_positional(identities, image_width=400, image_height=200) == [
+            "Narrow",
+            "Wide",
+        ]
     # Without image size both fall to unpositioned → alpha: "Narrow" < "Wide".
     # Use names that reverse under alpha to prove the unpositioned path.
     swapped_names = [
@@ -780,6 +844,113 @@ def test_predicted_left_to_right_dedupes_leftmost_like_labeled():
         {"name": "B", "bbox": {"x": 100, "y": 0, "width": 10, "height": 10}},
     ]
     assert predicted_left_to_right(identities, image_width=200, image_height=100) == ["A", "B"]
+
+
+def test_positional_identification_uses_centre_order_via_predicted_rows():
+    """VLM6-B-03: positional scoring via predicted_rows uses centre-x, not corner-x.
+
+    Wide box corner-x=100 w=200 vs narrow corner-x=150 w=50 on 400px image:
+    corner order [Wide, Narrow], centre order [Narrow, Wide]. Labeled L→R is
+    centre-based [Narrow, Wide] → exact_order only when predicted uses centre.
+    """
+    rows = [
+        {"name": "Wide", "bbox": {"x": 100, "y": 0, "width": 200, "height": 100}},
+        {"name": "Narrow", "bbox": {"x": 150, "y": 0, "width": 50, "height": 100}},
+    ]
+    # Raw identity_names order (corner / storage order) would be [Wide, Narrow].
+    corner_order_names = ["Wide", "Narrow"]
+    labelled = ["Narrow", "Wide"]  # centre L→R as labeled_left_to_right would yield
+    # Without predicted_rows: only leftmost dedupe of the raw list (still wrong order).
+    bare = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=corner_order_names,
+                labeled=labelled,
+                labeled_order_known=True,
+            )
+        ]
+    )
+    assert bare.position_accuracy == 0.0
+    assert bare.exact_order_images == 0
+    # With predicted_rows + image size: centre order wins → exact match.
+    # Unfixed code rejects predicted_rows kwarg → TypeError (RED). Fixed → exact.
+    fixed = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=corner_order_names,  # ignored when rows present
+                labeled=labelled,
+                labeled_order_known=True,
+                predicted_rows=rows,
+                image_width=400,
+                image_height=200,
+            )
+        ]
+    )
+    assert fixed.exact_order_images == 1
+    assert fixed.position_accuracy == 1.0
+    assert getattr(fixed, "evaluable", None) is True
+    assert getattr(fixed, "status", POSITIONAL_EVAL_SCORED) == POSITIONAL_EVAL_SCORED
+
+
+def test_positional_identification_dedupes_duplicate_predicted_names():
+    """VLM6-B-03: [Alice, Alice, Bob] vs labeled [Alice, Bob] → exact after dedup.
+
+    Pre-fix via raw identity_names: 1/3 position hits. Post-fix: leftmost-wins
+    dedup matches labeled cardinality → exact_order 1.0.
+    """
+    result = positional_identification(
+        [
+            ImageIdentities(
+                image="a.jpg",
+                predicted=["Alice", "Alice", "Bob"],
+                labeled=["Alice", "Bob"],
+                labeled_order_known=True,
+            )
+        ]
+    )
+    assert result.compared_images == 1
+    assert result.exact_order_images == 1
+    assert result.position_accuracy == 1.0
+    assert result.position_hits == 2
+    assert result.position_total == 2
+
+
+def test_positional_vacuity_signal_on_real_golden_corpus():
+    """VLM6-B-10 / EVAL-23 / AUDIT-07: golden.json has face_boxes on 0/37 → π=0.
+
+    Positional identification must emit an explicit not_evaluable vacuity signal
+    the verdict layer can consume — never a silent accuracy=None pass.
+    """
+    import json
+    from pathlib import Path
+
+    golden_path = Path(__file__).parent / "seed" / "golden.json"
+    manifest = json.loads(golden_path.read_text())
+    entries = manifest["entries"]
+    assert len(entries) == 37
+    assert sum(1 for e in entries if e.get("face_boxes")) == 0
+
+    items: list[ImageIdentities] = []
+    for entry in entries:
+        ordered = labeled_left_to_right(entry.get("face_boxes") or [])
+        items.append(
+            ImageIdentities(
+                image=str(entry["path"]),
+                predicted=list(entry.get("present_identities") or []),
+                labeled=list(ordered) if ordered is not None else [],
+                labeled_order_known=ordered is not None,
+            )
+        )
+    result = positional_identification(items)
+    assert result.compared_images == 0
+    assert result.position_accuracy is None
+    assert getattr(result, "evaluable", None) is False
+    assert getattr(result, "status", None) == POSITIONAL_EVAL_NOT_EVALUABLE
+    assert getattr(result, "vacuity_signal", None) == POSITIONAL_VACUITY_SIGNAL
+    assert "π=0" in (getattr(result, "vacuity_signal", None) or "")
+    assert len(result.excluded_images) == 37
 
 
 def test_sort_identity_rows_preserves_duplicates_reorders_by_centre():

@@ -159,3 +159,19 @@ def test_reset_remote_prod_dry_run_with_both_confirmations_succeeds() -> None:
     out = result.stdout
     assert "acx-prod" in out
     assert "https://api.altcontext.com/ready" in out
+
+
+def test_g3_07_deploy_dev_fir_dry_run_expands_recipe() -> None:
+    """G3-07: `make -n deploy-dev-fir` must exit 0 and expand the deploy recipe."""
+    result = subprocess.run(
+        ["make", "-n", "deploy-dev-fir"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "deploy dev-fir" in result.stdout, (
+        "dry-run output must contain 'deploy dev-fir' (recipe expands as written); "
+        f"got: {result.stdout!r}"
+    )

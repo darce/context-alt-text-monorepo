@@ -167,10 +167,11 @@ def test_score_run_record_emits_verdict_fail_when_wrong_names_present():
 
 
 def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
-    """Clean identities → pass verdict with rate 0 and empty reasons.
+    """Clean identities + measurable categories → pass with empty reasons.
 
-    Fixture is fully gate-clean (F1d-1): no failed items, non-empty must_right and
-    easy_wrong, fetch-time sha present, recognition_enabled on every scored image.
+    Fixture is fully gate-clean (F1d-1 / VLM6-A-05): no failed items, non-empty
+    must_right and easy_wrong, fetch-time sha present, recognition_enabled, and
+    face_boxes + spatial_facts so positional/placement claim units have π>0.
     """
     record = {
         "schema": "acx-eval/v1",
@@ -186,7 +187,7 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
                 "media_id": 1,
                 "path": "mock_images/alice-pool.jpg",
                 "describe": {
-                    "alt_text_draft": "Alice Example relaxes by a pool.",
+                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
                     "visual_facts": {"objects": []},
                 },
                 "identities": [
@@ -194,9 +195,15 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
                         "name": "Alice Example",
                         "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
                         "unpositioned": False,
-                    }
+                    },
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
                 ],
-                "face_count": 1,
+                "face_count": 2,
+                "identity_ordering": "positional",
                 "error": None,
             },
             {
@@ -214,6 +221,7 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
                     }
                 ],
                 "face_count": 1,
+                "identity_ordering": "positional",
                 "error": None,
             },
         ],
@@ -222,11 +230,23 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
         {
             "path": "mock_images/alice-pool.jpg",
             "media_id": 1,
-            "face_count": 1,
-            "present_identities": ["Alice Example"],
+            "face_count": 2,
+            "present_identities": ["Alice Example", "Bob Builder"],
             "must_right": ["Alice Example"],
-            "easy_wrong": ["Bob Builder"],
+            "easy_wrong": ["Carol Decoy"],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            ],
+            "spatial_facts": [
+                {
+                    "subject": "Alice Example",
+                    "relation": "left_of",
+                    "reference": "Bob Builder",
+                    "phrases": ["left of Bob Builder"],
+                }
+            ],
         },
         {
             "path": "mock_images/bob-beach.jpg",
@@ -236,13 +256,20 @@ def test_score_run_record_emits_verdict_pass_when_no_wrong_names():
             "must_right": ["Bob Builder"],
             "easy_wrong": ["Alice Example"],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Bob Builder", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            ],
+            # No spatial claim required on every image — corpus placement
+            # claims aggregate; alice-pool already supplies π>0.
         },
     ]
     scored = score_run_record(record, entries)
     assert scored["faces"]["identification"]["wrong_names"] == []
     assert scored["counts"]["failed"] == 0
+    assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert scored["placement"]["claims"] >= 1
     verdict = scored["verdict"]
-    assert verdict["verdict"] == ScoreVerdict.PASS.value
+    assert verdict["verdict"] == ScoreVerdict.PASS.value, verdict["reasons"]
     assert verdict["wrong_name_rate"] == 0.0
     assert verdict["wrong_name_rate_floor"] == WRONG_NAME_RATE_FLOOR
     assert verdict["reasons"] == []
@@ -256,6 +283,7 @@ def test_build_reports_json_includes_verdict_block():
         ScoreVerdict.PASS.value,
         ScoreVerdict.FAIL.value,
         ScoreVerdict.PASS_UNGATED.value,
+        ScoreVerdict.NOT_READY.value,
     }
     assert "wrong_name_rate" in parsed["verdict"]
     assert "wrong_name_rate_floor" in parsed["verdict"]
@@ -2499,6 +2527,310 @@ def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04
     bogus = {"schema": "acx-eval/v1", "kind": "report", "provenance": {}}
     with pytest.raises(ReportError, match="run_record"):
         build_reports(bogus, [], audience=Audience.PUBLIC)
+
+
+def test_public_per_image_allow_list_strips_identity_name_fields():  # VLM6-A-01
+    """PUBLIC per-image must not leak roster names via sibling identity fields.
+
+    Deny-list redaction cleared only hallucinated_names / wrong_name_hits; the
+    sibling fields inserted_identities, missing_identities, must_right_failures
+    survived with private roster names verbatim (rg-015 fail-closed allow-list).
+    """
+    private = "Shared Private Person"
+    public = "Barack Obama"
+    record, entries = _audience_fixtures()
+    # Publishable item: private subject is present+must_right but absent from
+    # caption/ids → missing_identities + must_right_failures carry the private name.
+    record["items"] = [record["items"][0]]
+    record["items"][0]["describe"]["alt_text_draft"] = f"{public} at a podium."
+    record["items"][0]["identities"] = [
+        {
+            "name": public,
+            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            "unpositioned": False,
+        }
+    ]
+    entries[0]["present_identities"] = [public, private]
+    entries[0]["must_right"] = [private]
+    roster = [public, private]
+
+    local = json.loads(build_reports(record, entries, audience=Audience.LOCAL, manifest_roster=roster)[0])
+    local_row = next(r for r in local["per_image"] if r["media_id"] == 10)
+    # Control: LOCAL surface is live — private name is in the sibling fields.
+    assert private in (local_row.get("missing_identities") or [])
+    assert private in (local_row.get("must_right_failures") or [])
+
+    pub = json.loads(build_reports(record, entries, audience=Audience.PUBLIC, manifest_roster=roster)[0])
+    assert pub["per_image"], "publishable row must survive redaction"
+    pub_row = pub["per_image"][0]
+    # Finding surface: per_image sibling fields (not aggregate per_identity).
+    assert private not in json.dumps(pub_row)
+    # Name-bearing fields must be absent (allow-list drop), not emptied-in-place.
+    for key in (
+        "inserted_identities",
+        "missing_identities",
+        "must_right_failures",
+        "hallucinated_names",
+        "wrong_name_hits",
+    ):
+        assert key not in pub_row, f"identity field leaked into PUBLIC per_image: {key}"
+
+
+def test_public_per_image_allow_list_drops_future_name_field():  # VLM6-A-01
+    """A brand-new name-bearing per-image key must NOT appear in PUBLIC (rg-015).
+
+    Deny-lists leak on schema growth; this is the assertion that the allow-list
+    actually holds — a field never listed is excluded by default.
+    """
+    private = "Future Leak Person"
+    record, entries = _audience_fixtures()
+    record["items"] = [record["items"][0]]
+    from scripts.eval_harness.report import _redact_caption_report_for_public
+
+    local = score_run_record(record, entries)
+    assert local["per_image"], "fixture must produce a scored row"
+    local["per_image"][0]["brand_new_name_field"] = [private]
+    # Also stamp the private name into a classic leak field so LOCAL control is live.
+    local["per_image"][0]["inserted_identities"] = [private]
+    assert private in json.dumps(local["per_image"][0])
+
+    redacted = _redact_caption_report_for_public(local, run_record=record, manifest_entries=entries)
+    assert redacted["per_image"], "publishable row must survive"
+    pub_row = redacted["per_image"][0]
+    assert private not in json.dumps(pub_row)
+    assert "brand_new_name_field" not in pub_row
+    assert "inserted_identities" not in pub_row
+
+
+def test_score_verdict_not_ready_when_positional_and_placement_vacuous():  # VLM6-A-05
+    """Clean identities on a π=0 corpus must NOT persist verdict=pass (EVAL-23).
+
+    Shipped golden has face_boxes/spatial_facts on 0/37 — positional compared=0
+    and placement claims=0. A readiness gate that reports pass here is dishonest
+    about which claim units have sampling probability 0 (AUDIT-07).
+    """
+    # Fixture mirrors the clean-pass shape: correct names, non-empty rubrics,
+    # fetch sha present — but no face_boxes / spatial_facts (vacuous categories).
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example relaxes by a pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            },
+            {
+                "media_id": 2,
+                "path": "mock_images/bob-beach.jpg",
+                "describe": {
+                    "alt_text_draft": "Bob Builder on a beach.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                "face_count": 1,
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Bob Builder"],
+            "policy": {"recognition_enabled": True},
+        },
+        {
+            "path": "mock_images/bob-beach.jpg",
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob Builder"],
+            "must_right": ["Bob Builder"],
+            "easy_wrong": ["Alice Example"],
+            "policy": {"recognition_enabled": True},
+        },
+    ]
+    scored = score_run_record(record, entries)
+    assert scored["faces"]["identification"]["positional"]["compared_images"] == 0
+    assert scored["placement"]["claims"] == 0
+    assert scored["placement"]["accuracy"] is None
+    verdict = scored["verdict"]
+    # Must not be adoption-eligible pass when critical categories are unobservable.
+    assert verdict["verdict"] != ScoreVerdict.PASS.value
+    assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
+    reasons_blob = " | ".join(verdict["reasons"]).lower()
+    assert "positional" in reasons_blob
+    assert "placement" in reasons_blob
+    assert reasons_blob  # non-empty reasons naming the vacuous categories
+
+
+def test_score_verdict_pass_when_positional_and_placement_measurable():  # VLM6-A-05 control
+    """Discrimination control: once claim units are measurable, verdict can pass.
+
+    Same clean identities as the vacuity test, but face_boxes + spatial_facts
+    populate positional and placement denominators (π>0).
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example stands left of Bob Builder by a pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Alice Example", "Bob Builder"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Carol Decoy"],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            ],
+            "spatial_facts": [
+                {
+                    "subject": "Alice Example",
+                    "relation": "left_of",
+                    "reference": "Bob Builder",
+                    "phrases": ["left of Bob Builder"],
+                }
+            ],
+        },
+    ]
+    scored = score_run_record(record, entries)
+    assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert scored["placement"]["claims"] >= 1
+    assert scored["placement"]["accuracy"] is not None
+    verdict = scored["verdict"]
+    assert verdict["verdict"] == ScoreVerdict.PASS.value, verdict["reasons"]
+    assert verdict["reasons"] == []
+
+
+def test_score_verdict_blocks_pass_on_vacuous_placement_alone():  # VLM6-B-07
+    """Placement must enter the verdict; claims=0 / accuracy=None blocks pass.
+
+    Positional is made measurable so the only vacuity reason is placement
+    (EVAL-04 slice gate; EVAL-23 weakest category).
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "https://api.example.com",
+            "head_sha": "0" * 40,
+            "started_at": "2026-07-06T00:00:00Z",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice-pool.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example and Bob Builder by a pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                    {
+                        "name": "Bob Builder",
+                        "bbox": {"x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    },
+                ],
+                "face_count": 2,
+                "identity_ordering": "positional",
+                "error": None,
+            },
+        ],
+    }
+    entries = [
+        {
+            "path": "mock_images/alice-pool.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Alice Example", "Bob Builder"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": ["Carol Decoy"],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            ],
+            # No spatial_facts → placement accuracy=None, claims=0 (π=0).
+        },
+    ]
+    scored = score_run_record(record, entries)
+    assert scored["faces"]["identification"]["positional"]["compared_images"] >= 1
+    assert scored["placement"]["claims"] == 0
+    assert scored["placement"]["accuracy"] is None
+    verdict = scored["verdict"]
+    assert verdict["verdict"] != ScoreVerdict.PASS.value
+    assert verdict["verdict"] == ScoreVerdict.NOT_READY.value
+    assert any("placement" in r.lower() for r in verdict["reasons"])
+    # Positional is measurable — must not be blamed.
+    assert not any("positional" in r.lower() for r in verdict["reasons"])
 
 
 def test_predicted_order_degraded_excluded_from_positional():  # VLM6-R4-06

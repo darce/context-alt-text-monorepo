@@ -954,3 +954,71 @@ def test_raw_detection_attribute_contract() -> None:
     # Walker maps these — not alternate names.
     assert not hasattr(det, "bbox_px")
     assert inspect.signature(walk_face_run_record).parameters["stall_limit"].default == DEFAULT_STALL_LIMIT
+
+
+def test_face_anchor_freeze_sees_labeled_y_missing_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wG1 acceptance: face freeze surface publishes + pins labeled_y_missing_*.
+
+    Separates pre-existing freeze staleness from counter observability (TEST-15):
+    both live and constant-0-mutated re-scores mismatch the stale committed
+    report, but the *diff of their identity_ordering.labeled_y_missing_images*
+    is specifically 1 vs 0 — the field the freeze will pin after regeneration.
+    A wiring that omitted the field would make live==mutated on that cell.
+    """
+    import json
+    from pathlib import Path
+
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+    from scripts.eval_harness.manifest import load_manifest
+    from scripts.eval_harness.report import score_face_run_record
+    import scripts.eval_harness.report as report_mod
+
+    repo = Path(__file__).resolve().parents[4]
+    anchor = repo / "docs" / "tasks" / "vlm" / "bakeoff-results"
+    man = load_manifest(
+        str(anchor / "S2A-face-determinism-anchor-manifest-20260811.json"),
+        skip_hash_verification=True,
+    )
+    face_run = json.loads((anchor / "S2A-face-determinism-anchor-run-20260811.json").read_text())
+    committed = json.loads(
+        (anchor / "S2A-face-determinism-anchor-run-20260811-face-report.json").read_text()
+    )
+
+    # Task-1 baseline: committed freeze has no counter field (blind).
+    assert "identity_ordering" not in committed
+    assert "labeled_y_missing_images" not in json.dumps(committed)
+
+    live = score_face_run_record(face_run, man)
+    live_io = live["identity_ordering"]
+    live_n = int(live_io["labeled_y_missing_images"])
+    assert live_n == 1, f"extended face corpus must yield labeled_y_missing_images=1; got {live_n}"
+    assert live_io["labeled_y_missing_paths"] == ["celebs01/y-missing-mixed-order.jpg"]
+    # Denominator honesty: out of scored images on the face freeze corpus.
+    assert live["counts"]["scored"] == 11
+    assert live_n <= live["counts"]["scored"]
+    # GT-side order_unknown matches caption semantics (fp-only + y-missing).
+    assert live_io["order_unknown_excluded"] == 2
+
+    real_lo = labeled_order
+
+    def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(names=result.names, y_missing_count=0, order_degraded=False)
+
+    monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
+    blind = score_face_run_record(face_run, man)
+    blind_n = int(blind["identity_ordering"]["labeled_y_missing_images"])
+    assert blind_n == 0
+
+    # Both diverge from stale freeze (pre-existing Expected-red); the *specific*
+    # new difference freeze must pin is live_n vs blind_n on the counter field.
+    assert live_n != blind_n, (
+        "mutation invisible on face report — freeze cannot pin labeled_y_missing "
+        "(wiring did not close blindness)"
+    )
+    # Structural: field present on live report JSON that freeze will absorb.
+    live_blob = json.dumps(live, sort_keys=True)
+    assert '"labeled_y_missing_images": 1' in live_blob
+    assert '"labeled_y_missing_images": 0' in json.dumps(blind, sort_keys=True)

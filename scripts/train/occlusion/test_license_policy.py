@@ -4613,6 +4613,110 @@ class TestRd06LicensePolicyErrorPayload:
         assert ei.value.result.reason is policy.RejectionReason.UNKNOWN_SOURCE
 
 # ---------------------------------------------------------------------------
+# FIR-7-RV-10 — package denylist is a floor across identity fields
+# ---------------------------------------------------------------------------
+
+
+class TestRv10PackageDenylistFloorAcrossIdentityFields:
+    """FIR-7-RV-10: denylisted package token in ANY identity field fails every door.
+
+    First-wins among package / package_name / source previously let a
+    denylisted token hide behind another non-empty field. Floor semantics
+    (like BR-53) audit every package-identity field on every door.
+    """
+
+    # Measured escape witnesses (must FAIL).
+    W1_TOOLING_SHADOW: ClassVar[dict[str, str]] = {
+        "package": "numba",
+        "package_name": "ultralytics",
+        "license": "BSD-2-Clause",
+        "derived_from_model": "",
+    }
+    W2_MODEL_ID_WINS: ClassVar[dict[str, str]] = {
+        "model_id": "yunet",
+        "package": "ultralytics",
+        "license": "MIT",
+        "derived_from_model": "",
+    }
+    W3_TRAINING_PACKAGE: ClassVar[dict[str, str]] = {
+        "source": "self-generated",
+        "package": "ultralytics",
+        "package_name": "ultralytics",
+        "license": "MIT",
+        "derived_from_model": "",
+    }
+
+    @pytest.mark.parametrize(
+        ("row", "door", "field_in_detail", "token"),
+        [
+            (
+                W1_TOOLING_SHADOW,
+                policy.PolicyCategory.TOOLING,
+                "package_name",
+                "ultralytics",
+            ),
+            (
+                W2_MODEL_ID_WINS,
+                policy.PolicyCategory.MODEL_INGEST,
+                "package",
+                "ultralytics",
+            ),
+            (
+                W3_TRAINING_PACKAGE,
+                policy.PolicyCategory.TRAINING_DATA,
+                "package",
+                "ultralytics",
+            ),
+        ],
+        ids=["tooling-shadow-package_name", "model-id-wins-package", "training-package"],
+    )
+    def test_measured_escape_witnesses_fail(
+        self, row, door, field_in_detail, token
+    ) -> None:
+        result = policy.audit_provenance_row(dict(row), category=door)
+        assert result.ok is False, (
+            f"witness through {door.value} PASSed; denylist floor missed "
+            f"{field_in_detail}={token!r}"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"{door.value}: expected denylisted_package, got {result.reason}"
+        )
+        assert token in result.detail
+        assert field_in_detail in result.detail, (
+            f"detail must name the field carrying the denylisted token; "
+            f"got {result.detail!r}"
+        )
+
+    @pytest.mark.parametrize("door", list(policy.PolicyCategory))
+    @pytest.mark.parametrize(
+        "row",
+        [W1_TOOLING_SHADOW, W2_MODEL_ID_WINS, W3_TRAINING_PACKAGE],
+        ids=["w1", "w2", "w3"],
+    )
+    def test_witness_fails_every_door(self, door, row) -> None:
+        # Per-door parametrisation: a denylisted package identity field is a
+        # floor obligation, not a tooling-only gate.
+        payload = dict(row)
+        # Give every door the keys it needs so rejection is the denylist, not
+        # a missing-field incidental (TEST-17).
+        payload.setdefault("source", payload.get("source", "self-generated"))
+        payload.setdefault("model_id", payload.get("model_id", "yunet"))
+        payload.setdefault("package", payload.get("package", "numba"))
+        payload.setdefault("photo_clearance", "cleared")
+        payload.setdefault("derived_from_model", "")
+        payload.setdefault("license", payload.get("license", "MIT"))
+        result = policy.audit_provenance_row(payload, category=door)
+        assert result.ok is False, (
+            f"door={door.value} PASSed denylisted package identity row {row!r}"
+        )
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+            f"door={door.value}: expected denylisted_package, got "
+            f"{result.reason} ({result.detail})"
+        )
+        assert "ultralytics" in result.detail
+
+
+# ---------------------------------------------------------------------------
 # FIR-7-RV-11 — SYNTHETIC_SOURCE reason fidelity for source-axis taint
 # ---------------------------------------------------------------------------
 

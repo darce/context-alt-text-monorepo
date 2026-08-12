@@ -1605,14 +1605,16 @@ def _floor_taint_and_clearance(
       3. content-triggered synthetic ``clearance_decision`` (GATE-11 / BR-65):
          fires on every door when source/derived resolves to a registry entry
          that carries a decision token
+      4. package-identity denylist across package / package_name / model_id /
+         source (FIR-7-RV-10) — floor, not first-wins
 
     Registration (BR-33 / BR-66) is a separate half — :func:`_floor_registration`
-    — so the TOOLING door can order package denylist ahead of it (GATE-22 /
-    BR-24) without a flag that drops an axis (BR-69).
+    — so the TOOLING door can order package allowlist admission ahead of it
+    (GATE-22 / BR-24) without a flag that drops an axis (BR-69).
 
     Callers that must interleave axes with their own gates (e.g. TOOLING
-    package denylist before registration and row SPDX — BR-24 / GATE-05 /
-    GATE-22) call this half, then their door gate, then
+    package allowlist admission before registration and row SPDX — BR-24 /
+    GATE-05 / GATE-22) call this half, then their door gate, then
     :func:`_floor_registration` / :func:`_floor_licenses`. They never get a
     floor call that silently omits an axis (BR-69 / ARCH-13).
     """
@@ -1680,6 +1682,14 @@ def _floor_taint_and_clearance(
     clearance_hit = _content_triggered_clearance_check(row, category=category)
     if clearance_hit is not None:
         return clearance_hit
+
+    # FIR-7-RV-10: package-identity denylist floor on every door (after
+    # clearance so synthetic-lineage reasons still surface when both fire;
+    # before registration / door-local gates so a denylisted secondary field
+    # cannot hide behind first-wins selection of a clean primary).
+    package_hit = _floor_package_identity_denylist(row, category=category)
+    if package_hit is not None:
+        return package_hit
 
     return None
 
@@ -1774,12 +1784,15 @@ def _common_provenance_checks(
          — FIR-7-RV-11)
       3. content-triggered synthetic ``clearance_decision`` on every door
          (GATE-11 / BR-65); occluder photo-release is a separate additive axis
-      4. unregistered ``derived_from_model`` registration (BR-33 / BR-66)
-      5. licence values (denylist + allowlist, present values only; doors that
+      4. package-identity denylist floor across package / package_name /
+         model_id / source (FIR-7-RV-10 / BR-53 floor, not first-wins)
+      5. unregistered ``derived_from_model`` registration (BR-33 / BR-66)
+      6. licence values (denylist + allowlist, present values only; doors that
          require a licence field still enforce ``required=True`` later)
 
-    TOOLING does **not** use this composition: it interleaves the package
-    denylist between clearance and registration (GATE-22 / BR-24).
+    TOOLING does **not** use this full composition for licence ordering: it
+    interleaves the package allowlist admission between the taint/clearance/
+    package-denylist floor and registration (GATE-22 / BR-24).
 
     Returns a FAIL result when a floor rule fires; ``None`` means the caller
     may continue with category-specific gates.
@@ -1839,6 +1852,48 @@ def _package_denylist_hit(value: str) -> PackageDenylistEntry | None:
             return deny
     return None
 
+
+
+# Fields that may carry a package / framework identity token. First-wins
+# selection among these keys must not hide a denylisted token behind another
+# non-empty field (FIR-7-RV-10 / BR-53 floor semantics).
+_PACKAGE_IDENTITY_FIELD_KEYS: tuple[str, ...] = (
+    "package",
+    "package_name",
+    "model_id",
+    "source",
+)
+
+
+def _floor_package_identity_denylist(
+    row: Mapping[str, Any],
+    *,
+    category: PolicyCategory,
+) -> LicenseAuditResult | None:
+    """Package-denylist floor across every package-identity field (FIR-7-RV-10).
+
+    A denylisted package token in **any** of ``package`` / ``package_name`` /
+    ``model_id`` / ``source`` fails closed on every door — floor semantics
+    like BR-53, not first-wins among identity fields. Rejection detail names
+    both the denylisted token and the field it appeared in.
+    """
+    for key in _PACKAGE_IDENTITY_FIELD_KEYS:
+        raw = row.get(key)
+        if not isinstance(raw, str) or not str.strip(raw):
+            continue
+        text = str.strip(raw)
+        deny = _package_denylist_hit(text)
+        if deny is None:
+            continue
+        return _fail(
+            deny.reason,
+            detail=(
+                f"{key}={text!r} hits PACKAGE_DENYLIST entry "
+                f"{deny.package_id!r} ({deny.spdx_id}): {deny.notes}"
+            ),
+            category=category,
+        )
+    return None
 
 def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResult:
     """Audit a ``derived_from_model`` provenance tag (buffalo OUTPUT ban).

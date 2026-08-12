@@ -706,17 +706,26 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
 
 
 def test_public_excludes_non_publishable_and_keeps_publishable():
+    """PUBLIC renders only publishable per_image rows; aggregates stay full-corpus.
+
+    VLM6-R3-03: score full corpus then redact — counts.total is full, not shrunk.
+    """
     record, entries = _audience_fixtures()
     json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     media_ids = {p["media_id"] for p in scored["per_image"]}
     assert 10 in media_ids
     assert 20 not in media_ids
-    assert scored["counts"]["total"] == 1  # only publishable items scored
-    assert scored["counts"]["scored"] == 1
+    # Full-corpus score (both items) — redaction only strips rendered per_image.
+    assert scored["counts"]["total"] == 2
+    assert scored["counts"]["scored"] == 2
 
 
 def test_public_fail_closed_missing_entry():
+    """Unknown media is corpus integrity (unknown_media_items), not privacy withhold.
+
+    VLM6-R3-05: missing manifest entry must not be folded into withheld_items.
+    """
     record, entries = _audience_fixtures()
     record["items"].append(
         {
@@ -731,8 +740,12 @@ def test_public_fail_closed_missing_entry():
     json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     assert all(p["media_id"] != 999 for p in scored["per_image"])
-    assert scored["redaction"]["withheld_items"] == 2  # local + missing
+    assert scored["redaction"]["withheld_items"] == 1  # local-only only
+    assert scored["redaction"]["unknown_media_items"] == 1  # media_id 999
     assert scored["redaction"]["total_items"] == 3
+    # Unknown media stays in failures so the public artifact fails loud.
+    assert any(f.get("media_id") == 999 for f in scored["failures"])
+    assert scored["counts"]["failed"] >= 1
 
 
 def test_public_fail_closed_missing_provenance():
@@ -742,11 +755,11 @@ def test_public_fail_closed_missing_provenance():
     json_doc, _md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     assert scored["per_image"] == []
-    assert scored["redaction"] == {
-        "audience": "public",
-        "withheld_items": 2,
-        "total_items": 2,
-    }
+    assert scored["redaction"]["audience"] == "public"
+    assert scored["redaction"]["withheld_items"] == 2
+    assert scored["redaction"]["total_items"] == 2
+    assert scored["redaction"]["unknown_media_items"] == 0
+    assert scored["redaction"]["withheld_manifest_entries"] == 2
 
 
 def test_public_fail_closed_unparseable_provenance():
@@ -762,11 +775,11 @@ def test_public_redaction_counts():
     record, entries = _audience_fixtures()
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
-    assert scored["redaction"] == {
-        "audience": "public",
-        "withheld_items": 1,
-        "total_items": 2,
-    }
+    assert scored["redaction"]["audience"] == "public"
+    assert scored["redaction"]["withheld_items"] == 1
+    assert scored["redaction"]["total_items"] == 2
+    assert scored["redaction"]["unknown_media_items"] == 0
+    assert scored["redaction"]["withheld_manifest_entries"] == 1
     # Honest redaction must also surface in markdown (not silent drop).
     assert "withheld" in md.lower()
     assert "1" in md and "2" in md
@@ -784,18 +797,18 @@ def test_public_serialized_output_leaks_no_local_path_or_name():
     assert _PUBLIC_PATH in json_doc or "obama" in json_doc.lower()
 
 
-def test_public_redacts_run_level_base_url():  # VLM6-S5-BR-01
-    """base_url is the live recognition endpoint (an internal host on real runs); it
-    must not leak into the hub-safe public artifact even though it is run-level, not
-    per-item, provenance."""
+def test_public_redacts_run_level_base_url():  # VLM6-S5-BR-01 / VLM6-R3-01
+    """base_url is not on the PUBLIC provenance allow-list — must be absent.
+
+    Fail-closed allow-list (not deny-list rewrite to 'redacted').
+    """
     record, entries = _audience_fixtures()
     record["provenance"]["base_url"] = "https://acx-backend.internal.example.ts.net"
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     for blob in (json_doc, md):
         assert "acx-backend.internal.example.ts.net" not in blob
     scored = json.loads(json_doc)
-    assert scored["provenance"]["base_url"] == "redacted"
-    assert "base_url: redacted" in md
+    assert "base_url" not in scored["provenance"]
     # LOCAL still shows the real endpoint (operator view).
     local_json, _local_md = build_reports(record, entries, audience=Audience.LOCAL)
     assert "acx-backend.internal.example.ts.net" in local_json
@@ -1617,11 +1630,19 @@ def test_latency_summary_single_call_items_percentiles():
         {"media_id": i, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": lat}
         for i, lat in enumerate([4.0, 1.0, 3.0, 2.0])
     ]
-    assert _latency_summary(items) == {
-        "images_timed": 4,
-        "wall_clock_s": {"p50": 2.0, "p95": 4.0},  # nearest-rank on sorted values
-        "model_calls": {"per_image_mean": 1.0, "total": 4},
-    }
+    summary = _latency_summary(items)
+    assert summary is not None
+    assert summary["images_timed"] == 4
+    # nearest-rank on sorted values; p99/max surface the tail (VLM6-R4-09)
+    assert summary["wall_clock_s"]["p50"] == 2.0
+    assert summary["wall_clock_s"]["p95"] == 4.0
+    assert summary["wall_clock_s"]["p99"] == 4.0
+    assert summary["wall_clock_s"]["max"] == 4.0
+    assert summary["model_calls"] == {"per_image_mean": 1.0, "total": 4}
+    assert summary["cache_hits_excluded"] == 0
+    assert summary["error_items_excluded"] == 0
+    assert summary["timed_out_images"] == 0
+    assert summary["percentile_caveat"] == "n=4_below_p95_rank_threshold"
 
 
 def test_latency_summary_sums_passes_and_counts_model_calls():
@@ -1640,23 +1661,30 @@ def test_latency_summary_sums_passes_and_counts_model_calls():
         }
 
     summary = _latency_summary([_two_pass_item(1, 1.0, 2.0), _two_pass_item(2, 3.0, 4.0)])
-    assert summary == {
-        "images_timed": 2,
-        "wall_clock_s": {"p50": 3.0, "p95": 7.0},
-        "model_calls": {"per_image_mean": 2.0, "total": 4},
-    }
+    assert summary is not None
+    assert summary["images_timed"] == 2
+    assert summary["wall_clock_s"]["p50"] == 3.0
+    assert summary["wall_clock_s"]["p95"] == 7.0
+    assert summary["wall_clock_s"]["max"] == 7.0
+    assert summary["model_calls"] == {"per_image_mean": 2.0, "total": 4}
 
 
 def test_latency_summary_skips_error_and_untimed_items():
     items = [
-        {"media_id": 1, "describe": None, "error": "boom", "latency_s": 5.0},
+        {"media_id": 1, "describe": None, "error": "timeout after 60s", "latency_s": 5.0},
         {"media_id": 2, "describe": {"alt_text_draft": "x"}, "error": None},  # no latency field at all
         {"media_id": 3, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": None},
         {"media_id": 4, "describe": {"alt_text_draft": "x"}, "error": None, "latency_s": 2.5},
     ]
     summary = _latency_summary(items)
+    assert summary is not None
     assert summary["images_timed"] == 1
-    assert summary["wall_clock_s"] == {"p50": 2.5, "p95": 2.5}
+    assert summary["wall_clock_s"]["p50"] == 2.5
+    assert summary["wall_clock_s"]["p95"] == 2.5
+    assert summary["wall_clock_s"]["p99"] == 2.5
+    assert summary["wall_clock_s"]["max"] == 2.5
+    assert summary["error_items_excluded"] == 1
+    assert summary["timed_out_images"] == 1
     assert _latency_summary(items[:3]) is None  # nothing timed at all => no section
 
 
@@ -1670,12 +1698,17 @@ def test_latency_section_and_markdown_line_render_when_timed():
     record["items"][1]["describe"]["cached"] = False
     json_doc, md = build_reports(record, entries)
     scored = json.loads(json_doc)
-    assert scored["latency"] == {
-        "images_timed": 2,
-        "wall_clock_s": {"p50": 1.1, "p95": 3.2},
-        "model_calls": {"per_image_mean": 1.0, "total": 2},
-    }
-    assert "- latency: per-image wall-clock p50 1.1s p95 3.2s (2 timed)" in md
+    lat = scored["latency"]
+    assert lat["images_timed"] == 2
+    assert lat["wall_clock_s"]["p50"] == 1.1
+    assert lat["wall_clock_s"]["p95"] == 3.2
+    assert lat["wall_clock_s"]["p99"] == 3.2
+    assert lat["wall_clock_s"]["max"] == 3.2
+    assert lat["model_calls"] == {"per_image_mean": 1.0, "total": 2}
+    assert lat["error_items_excluded"] == 1  # glacier timeout item
+    assert lat["timed_out_images"] == 1
+    assert "latency: per-image wall-clock p50 1.1s p95 3.2s" in md
+    assert "p99" in md and "max" in md
     assert build_reports(record, entries) == build_reports(record, entries)  # determinism holds
 
 
@@ -1708,10 +1741,16 @@ def test_latency_excludes_cache_hits():  # VLM6-R4-04
     summary = _latency_summary(items)
     assert summary is not None
     assert summary["images_timed"] == 2
-    assert summary["wall_clock_s"] == {"p50": 2.0, "p95": 4.0}
+    assert summary["wall_clock_s"]["p50"] == 2.0
+    assert summary["wall_clock_s"]["p95"] == 4.0
+    assert summary["wall_clock_s"]["max"] == 4.0
     assert summary["cache_hits_excluded"] == 1
-    # All-cache corpus ⇒ no latency section (nothing timed live).
-    assert _latency_summary(items[:1]) is None
+    # All-cache corpus ⇒ zero live timings but cache pollution is disclosed.
+    all_cache = _latency_summary(items[:1])
+    assert all_cache is not None
+    assert all_cache["images_timed"] == 0
+    assert all_cache["cache_hits_excluded"] == 1
+    assert all_cache["percentile_caveat"] == "no_live_timings"
 
 # --- Identity shape normalizer (dict rows vs legacy name strings) ------------
 
@@ -2208,8 +2247,11 @@ def test_score_run_record_hallucination_clean_caption_rate_zero():  # VLM6-R2-02
     assert scored["per_image"][0]["hallucination"]["fabricated"] is False
 
 
-def test_public_report_redacts_api_key_and_tenant_id():  # VLM6-R3
-    """Secrets on provenance must be ABSENT from the public rendered artifact."""
+def test_public_report_redacts_api_key_and_tenant_id():  # VLM6-R3-01 / R4-07
+    """Secrets on provenance must be ABSENT from the public rendered artifact.
+
+    Fail-closed allow-list drops unknown keys entirely (not rewrite-to-redacted).
+    """
     record, entries = _audience_fixtures()
     record["provenance"]["api_key"] = "sk-live-TOPSECRET-xyz"
     record["provenance"]["tenant_id"] = "tenant-private-999"
@@ -2218,8 +2260,8 @@ def test_public_report_redacts_api_key_and_tenant_id():  # VLM6-R3
         assert "sk-live-TOPSECRET-xyz" not in blob
         assert "tenant-private-999" not in blob
     scored = json.loads(json_doc)
-    assert scored["provenance"]["api_key"] == "redacted"
-    assert scored["provenance"]["tenant_id"] == "redacted"
+    assert "api_key" not in scored["provenance"]
+    assert "tenant_id" not in scored["provenance"]
     # LOCAL still shows the operator secrets (operator view, not hub-safe).
     local_json, _ = build_reports(record, entries, audience=Audience.LOCAL)
     assert "sk-live-TOPSECRET-xyz" in local_json
@@ -2248,13 +2290,13 @@ def test_public_report_redacts_absolute_local_paths():  # VLM6-R3
     assert "obama-podium.jpg" in json_doc
 
 
-def test_public_report_still_redacts_base_url():  # VLM6-R3 / VLM6-S5-BR-01
+def test_public_report_still_redacts_base_url():  # VLM6-R3-01 / VLM6-S5-BR-01
     record, entries = _audience_fixtures()
     record["provenance"]["base_url"] = "https://acx-backend.internal.example.ts.net"
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     for blob in (json_doc, md):
         assert "acx-backend.internal.example.ts.net" not in blob
-    assert json.loads(json_doc)["provenance"]["base_url"] == "redacted"
+    assert "base_url" not in json.loads(json_doc)["provenance"]
 
 
 def test_gated_score_components_surfaced_on_caption_block():
@@ -2297,6 +2339,7 @@ def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R
 
     RED before: labeled fell back to alphabetical present and would score if
     labeled_order_known were ever ignored. GREEN: excluded + empty comparison.
+    Also: 100% exclusion must populate identity_ordering.degraded_images (loud).
     """
     record, entries = _run_record(), _manifest_entries()
     assert all(not e.get("face_boxes") for e in entries)
@@ -2306,3 +2349,243 @@ def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R
     assert pos["position_total"] == 0
     # Excluded images listed (legacy no-box entries).
     assert len(pos["excluded_images"]) >= 1
+    ordering = scored["faces"]["identity_ordering"]
+    # RED without R2-04 fix: degraded_images=0 while excluded=N (silent vacuity).
+    assert ordering["degraded_images"] >= 1
+    assert ordering["order_unknown_excluded"] >= 1
+
+
+def test_public_local_roster_name_on_publishable_item_scrubbed():  # VLM6-R3-02 / R3-06
+    """Private-roster prediction on a PUBLISHABLE item must not appear in PUBLIC output.
+
+    RED without post-score scrub: wrong_names / hallucinated_names leak the private
+    name even though the item itself is publishable (item-level filter cannot help).
+    """
+    private_name = "Aunt Mary Arce"
+    record, entries = _audience_fixtures()
+    # Model asserts a local-only person on the publishable celeb image.
+    record["items"][0]["identities"] = [
+        {
+            "name": private_name,
+            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            "unpositioned": False,
+        }
+    ]
+    record["items"][0]["describe"]["alt_text_draft"] = f"{private_name} at a podium."
+    # Full roster includes private name so caption hallucination gate can trip.
+    roster = [_PUBLIC_NAME, private_name, _LOCAL_NAME]
+    local_json, _ = build_reports(
+        record, entries, audience=Audience.LOCAL, manifest_roster=roster
+    )
+    local = json.loads(local_json)
+    # Control: LOCAL must see the private assertion (proves the fixture is live).
+    assert private_name in local_json
+    assert any(
+        private_name in (row.get("hallucinated_names") or [])
+        or private_name in (row.get("wrong_name_hits") or [])
+        for row in local["per_image"]
+        if row["media_id"] == 10
+    ) or any(
+        pair[1] == private_name
+        for pair in (local["faces"]["identification"].get("wrong_names") or [])
+    )
+
+    pub_json, pub_md = build_reports(
+        record, entries, audience=Audience.PUBLIC, manifest_roster=roster
+    )
+    for blob in (pub_json, pub_md):
+        assert private_name not in blob
+        assert _LOCAL_NAME not in blob
+    pub = json.loads(pub_json)
+    assert pub["faces"]["identification"]["wrong_names"] == []
+    assert all(
+        not (row.get("hallucinated_names") or []) and not (row.get("wrong_name_hits") or [])
+        for row in pub["per_image"]
+    )
+    # Aggregates preserved from full-corpus score (not zeroed by redaction).
+    assert "precision" in pub["faces"]["identification"]
+
+
+def test_public_aggregate_parity_with_private_manifest_entries():  # VLM6-R3-03
+    """PUBLIC must not shrink closed-roster / must_right denominators.
+
+    RED without fix: filtering manifest_entries drops private roster names so a
+    publishable-item hallucination of a private name disappears and
+    must_right_defined_images collapses.
+    """
+    private_name = "Jane Private"
+    record, entries = _audience_fixtures()
+    # 1 publishable item invents a private roster name in the caption.
+    record["items"] = [record["items"][0]]
+    record["items"][0]["describe"]["alt_text_draft"] = f"{private_name} at a podium."
+    record["items"][0]["identities"] = [
+        {
+            "name": _PUBLIC_NAME,
+            "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+            "unpositioned": False,
+        }
+    ]
+    # 50 non-publishable manifest entries that only exist to widen the roster.
+    for i in range(50):
+        entries.append(
+            {
+                "path": f"localwp/private-{i}.jpg",
+                "media_id": 1000 + i,
+                "face_count": 1,
+                "present_identities": [private_name] if i == 0 else [f"Local Person {i}"],
+                "must_right": [private_name] if i == 0 else [f"Local Person {i}"],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {
+                    "source": "localwp",
+                    "license": "consented",
+                    "publishable": False,
+                },
+            }
+        )
+    local = json.loads(
+        build_reports(record, entries, audience=Audience.LOCAL)[0]
+    )
+    pub = json.loads(
+        build_reports(record, entries, audience=Audience.PUBLIC)[0]
+    )
+    # Aggregate parity: PUBLIC must not look perfect while LOCAL fails.
+    assert local["caption"]["name_precision"] == pub["caption"]["name_precision"]
+    assert local["caption"]["wrong_name_image_rate"] == pub["caption"]["wrong_name_image_rate"]
+    assert local["caption"]["mean_gated_score"] == pub["caption"]["mean_gated_score"]
+    assert local["caption"]["must_right_defined_images"] == pub["caption"]["must_right_defined_images"]
+    # Hallucination of private name is detected under both audiences.
+    assert local["caption"]["wrong_name_image_rate"] == pytest.approx(1.0)
+    # audience fixture already has 1 local entry + 50 added private entries
+    assert pub["redaction"]["withheld_manifest_entries"] == 51
+    # Private name absent from PUBLIC rendered detail (R3-02) but gate still tripped.
+    assert private_name not in build_reports(record, entries, audience=Audience.PUBLIC)[0]
+
+
+def test_public_provenance_allow_list_drops_unknown_keys():  # VLM6-R3-01 / R4-07 / R3-06
+    """Unknown provenance keys and nested path leaks must be absent from PUBLIC.
+
+    RED without allow-list: weave_bench_source.path / images_dir / tenant_id pass through.
+    """
+    record, entries = _audience_fixtures()
+    record["provenance"]["tenant_id"] = "tenant-secret-42"
+    record["provenance"]["images_dir"] = "/Volumes/Chimay/___Books/corpus646"
+    record["provenance"]["weave_bench_source"] = {
+        "path": "/Users/daniel/Local Sites/wp-acx/out/bakeoff/run-secret.json",
+        "sha256": "a" * 64,
+    }
+    record["provenance"]["totally_unknown_future_key"] = "should-never-publish"
+    record["items"][0]["describe"]["model_id"] = (
+        "/Users/daniel/models/Qwen3-VL-27B-Q4_K_M.gguf"
+    )
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    prov = scored["provenance"]
+    for key in (
+        "tenant_id",
+        "images_dir",
+        "weave_bench_source",
+        "totally_unknown_future_key",
+        "base_url",
+    ):
+        assert key not in prov
+    for blob in (json_doc, md):
+        assert "tenant-secret-42" not in blob
+        assert "/Volumes/Chimay" not in blob
+        assert "run-secret.json" not in blob or "Local Sites" not in blob
+        assert "should-never-publish" not in blob
+        assert "/Users/daniel/models" not in blob
+    # Allowed keys still present.
+    assert "head_sha" in prov
+    assert "manifest_sha256" in prov
+
+
+def test_public_validates_record_kind_before_audience_branch():  # VLM6-R3-04
+    """PUBLIC must raise ReportError on wrong kind, not KeyError('items')."""
+    bogus = {"schema": "acx-eval/v1", "kind": "report", "provenance": {}}
+    with pytest.raises(ReportError, match="run_record"):
+        build_reports(bogus, [], audience=Audience.PUBLIC)
+
+
+def test_predicted_order_degraded_excluded_from_positional():  # VLM6-R4-06
+    """identity_ordering=degraded must not contaminate position_accuracy.
+
+    RED without fix: alphabetically-ordered predictions scored as if spatial.
+    """
+    record, entries = _identity_scoring_pair()
+    # Two-person image with face_boxes establishing L→R labeled order.
+    entries[0]["present_identities"] = ["Alice Example", "Bob Builder"]
+    entries[0]["face_count"] = 2
+    entries[0]["face_boxes"] = [
+        {"name": "Alice Example", "x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+        {"name": "Bob Builder", "x": 80.0, "y": 40.0, "width": 50.0, "height": 60.0},
+    ]
+    # Predicted order is swapped AND stamped degraded (alphabetical append path).
+    record["items"] = [record["items"][0]]
+    record["items"][0]["identities"] = [
+        _dict_identity("Bob Builder", x=10.0),
+        _dict_identity("Alice Example", x=80.0),
+    ]
+    record["items"][0]["face_count"] = 2
+    record["items"][0]["identity_ordering"] = "degraded"
+    record["items"][0]["describe"]["alt_text_draft"] = "Alice Example and Bob Builder."
+    scored = score_run_record(record, entries)
+    pos = scored["faces"]["identification"]["positional"]
+    assert pos["compared_images"] == 0
+    assert record["items"][0]["path"] in pos["excluded_images"] or any(
+        "alice" in p.lower() for p in pos["excluded_images"]
+    )
+
+
+def test_strata_by_difficulty_and_domain():  # VLM6-R4-05
+    """Caption gate must emit per-difficulty / per-domain blocks with n."""
+    record, entries = _run_record(), _manifest_entries()
+    entries[0]["difficulty"] = "easy"
+    entries[0]["domain"] = "portrait"
+    entries[1]["difficulty"] = "hard"
+    entries[1]["domain"] = "group"
+    scored = score_run_record(record, entries)
+    assert "strata" in scored
+    by_diff = scored["strata"]["by_difficulty"]
+    by_dom = scored["strata"]["by_domain"]
+    assert "easy" in by_diff and by_diff["easy"]["n"] >= 1
+    assert "hard" in by_diff and by_diff["hard"]["n"] >= 1
+    assert "portrait" in by_dom and "group" in by_dom
+    assert "mean_gated_score" in by_diff["easy"]
+    _json_doc, md = build_reports(record, entries)
+    assert "difficulty=easy" in md or "difficulty=" in md
+
+
+def test_wrong_name_rate_is_per_image_not_assertion_pairs():  # VLM6-S2A-B-09
+    """One image with two wrong names must contribute 1.0 rate when scored_n=1.
+
+    RED without fix: rate = 2/1 = 2.0 (unbounded 'rate').
+    """
+    record, entries = _identity_scoring_pair()
+    record["items"] = [record["items"][1]]  # Bob misnamed
+    # Two wrong predicted names on the same image.
+    record["items"][0]["identities"] = [
+        _dict_identity("Alice Example", x=10.0),
+        _dict_identity("Zoe Intruder", x=80.0),
+    ]
+    record["items"][0]["face_count"] = 2
+    entries = [entries[1]]
+    entries[0]["face_count"] = 1
+    scored = score_run_record(record, entries)
+    rate = scored["verdict"]["wrong_name_rate"]
+    assert rate <= 1.0
+    assert rate == pytest.approx(1.0)
+    assert scored["verdict"]["wrong_name_images"] == 1
+    assert scored["verdict"]["wrong_name_assertions"] >= 1
+
+
+def test_identity_names_lives_on_report_module():  # VLM6-RH-07
+    """report.identity_names is the scoring normalizer (no cli import cycle)."""
+    from scripts.eval_harness.report import identity_names as report_identity_names
+
+    names = report_identity_names(
+        [{"name": "Zoe Alone", "bbox": None, "unpositioned": True}]
+    )
+    assert names == ["Zoe Alone"]
+    with pytest.raises(TypeError, match="list of dict rows"):
+        report_identity_names("not-a-list")

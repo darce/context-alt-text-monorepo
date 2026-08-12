@@ -175,21 +175,25 @@ class ReportError(Exception):
     run-record item whose media_id is absent from the score-time manifest."""
 
 
-# Run-level provenance fields withheld from PUBLIC artifacts. Item-level redaction
-# (paths/names) is not enough: ``base_url`` is the live recognition endpoint, an
-# internal host on real bake-off runs (localhost curation tenant or an OCI/Tailscale
-# VM), and would leak infrastructure topology into the hub-safe surface (VLM6-S5-BR-01).
-# api_key / tenant_id / token fields are secrets or tenant identifiers that must
-# never reach a hub-safe surface even if a caller stamped them onto provenance.
-_PUBLIC_PROVENANCE_REDACTED = "redacted"
-_PUBLIC_PROVENANCE_WITHHELD_FIELDS = (
-    "base_url",
-    "api_key",
-    "tenant_id",
-    "authorization",
-    "token",
-    "access_token",
-    "auth_token",
+# PUBLIC provenance is fail-closed: only these keys may leave the render boundary
+# (VLM6-R3-01 / VLM6-R4-07). Deny-lists leak on schema growth; an allow-list drops
+# unknown keys (tenant_id, images_dir, weave_bench_source, base_url, …) by default.
+# Nested ``model`` is path-redacted separately so absolute GGUF paths collapse.
+_PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "head_sha",
+        "manifest_sha256",
+        "score_manifest_sha256",
+        "manifest_matches_fetch",
+        "started_at",
+        "eval_mode",
+        "model_versions",
+        "model",
+        "prompt_variant",
+        "two_pass",
+        "dual_length",
+        "face_gate",
+    }
 )
 
 
@@ -218,7 +222,12 @@ def _filter_for_public_audience(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
-    """Keep only publishable items/entries before scoring. Returns withheld count."""
+    """Legacy pre-score filter retained for callers/tests that still need it.
+
+    Prefer score-then-redact via ``_redact_caption_report_for_public`` (VLM6-R3-03):
+    shrinking ``manifest_entries`` here silently drops closed-roster names and
+    Must-Right denominators from the PUBLIC artifact.
+    """
     entries = _entry_index(manifest_entries)
     kept_items: list[dict[str, Any]] = []
     for item in run_record["items"]:
@@ -226,10 +235,203 @@ def _filter_for_public_audience(
         if _entry_is_publishable(entries.get(media_id)):
             kept_items.append(item)
     filtered_record = {**run_record, "items": kept_items}
-    # Rubric / lookup surface: only publishable entries so public metrics stay scoped.
     filtered_entries = [e for e in manifest_entries if _entry_is_publishable(e)]
     withheld = len(run_record["items"]) - len(kept_items)
     return filtered_record, filtered_entries, withheld
+
+
+def identity_names(identities: object) -> list[str]:
+    """Turn stored ``identities`` into an ordered list of name strings.
+
+    Pure data normalizer owned by the scoring module so report does not import
+    ``cli`` at call time (VLM6-RH-07 — entrypoints depend on libraries, not the
+    reverse). Greenfield: only dict rows with a non-empty ``name`` are accepted.
+    """
+    if not isinstance(identities, list):
+        raise TypeError(
+            f"identities must be a list of dict rows, got {type(identities).__name__}"
+        )
+    names: list[str] = []
+    for index, entry in enumerate(identities):
+        if not isinstance(entry, dict):
+            raise TypeError(
+                f"identities[{index}] must be a dict identity row; got "
+                f"{type(entry).__name__} — greenfield rejects bare-string identity lists"
+            )
+        name = entry.get("name")
+        if not name:
+            raise ValueError(
+                f"identities[{index}] has empty/missing 'name' "
+                f"(keys present: {sorted(entry)!r})"
+            )
+        names.append(str(name))
+    return names
+
+
+def _publishable_media_ids(manifest_entries: list[dict[str, Any]]) -> set[int]:
+    return {int(e["media_id"]) for e in manifest_entries if _entry_is_publishable(e)}
+
+
+def _public_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail-closed allow-list projection for PUBLIC provenance (VLM6-R3-01 / R4-07)."""
+    out: dict[str, Any] = {}
+    for key in _PUBLIC_PROVENANCE_ALLOW_FIELDS:
+        if key not in provenance:
+            continue
+        value = provenance[key]
+        if key == "model" and isinstance(value, dict):
+            # model_ids may carry absolute GGUF paths — collapse to basenames.
+            model_out: dict[str, Any] = {}
+            for mk, mv in value.items():
+                if mk in ("model_ids", "adapters", "model_versions") and isinstance(mv, list):
+                    model_out[mk] = [
+                        _public_safe_path(str(x)) if isinstance(x, str) else x for x in mv
+                    ]
+                elif isinstance(mv, str):
+                    model_out[mk] = _public_safe_path(mv)
+                else:
+                    model_out[mk] = mv
+            out[key] = model_out
+        else:
+            out[key] = value
+    return out
+
+
+def _redact_caption_report_for_public(
+    scored: dict[str, Any],
+    *,
+    run_record: Mapping[str, Any],
+    manifest_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Post-score PUBLIC redaction for the caption/face report path (VLM6-R3-*).
+
+    Score the full corpus first (roster + rubric denominators intact), then:
+    - allow-list provenance
+    - strip identity-bearing detail lists that can name private people
+    - drop non-publishable per_image rows from the rendered surface
+    - split withheld (non-publishable) vs unknown_media (absent from manifest)
+    Aggregate rates/denominators stay from the full-corpus score (parity with LOCAL).
+    """
+    redacted = copy.deepcopy(scored)
+    entries = _entry_index(manifest_entries)
+    publishable_ids = _publishable_media_ids(manifest_entries)
+    publishable_names = {
+        name
+        for e in manifest_entries
+        if int(e["media_id"]) in publishable_ids
+        for name in (
+            list(e.get("present_identities") or [])
+            + list(e.get("must_right") or [])
+            + list(e.get("easy_wrong") or [])
+        )
+    }
+
+    items = list(run_record.get("items") or [])
+    total_items = len(items)
+    unknown_media_items = 0
+    withheld_items = 0
+    for item in items:
+        media_id = int(item["media_id"])
+        if media_id not in entries:
+            unknown_media_items += 1
+        elif media_id not in publishable_ids:
+            withheld_items += 1
+    withheld_manifest_entries = sum(
+        1 for e in manifest_entries if int(e["media_id"]) not in publishable_ids
+    )
+
+    # Provenance: allow-list only (unknown keys dropped, not deny-listed).
+    redacted["provenance"] = _public_provenance(redacted.get("provenance") or {})
+
+    publishable_paths = {
+        str(e["path"]) for e in manifest_entries if int(e["media_id"]) in publishable_ids
+    }
+
+    def _keep_publishable_paths(paths: list[Any]) -> list[Any]:
+        kept: list[Any] = []
+        for p in paths:
+            if isinstance(p, str) and p in publishable_paths:
+                kept.append(p)
+            elif not isinstance(p, str):
+                kept.append(p)
+        return kept
+
+    faces = redacted.get("faces") or {}
+    identification = faces.get("identification") or {}
+    # Identity-name surfaces: empty detail lists, keep aggregate tp/fp/fn.
+    identification["wrong_names"] = []
+    identification["ignored_wrong_names"] = []
+    per_identity = identification.get("per_identity") or {}
+    identification["per_identity"] = {
+        name: stats for name, stats in per_identity.items() if name in publishable_names
+    }
+    # Path lists can name local-only media — keep publishable paths only.
+    identification["excluded_images"] = _keep_publishable_paths(
+        list(identification.get("excluded_images") or [])
+    )
+    positional = identification.get("positional") or {}
+    if positional:
+        positional["excluded_images"] = _keep_publishable_paths(
+            list(positional.get("excluded_images") or [])
+        )
+        identification["positional"] = positional
+    faces["identification"] = identification
+    ordering = faces.get("identity_ordering") or {}
+    if ordering:
+        ordering["degraded_paths"] = _keep_publishable_paths(
+            list(ordering.get("degraded_paths") or [])
+        )
+        faces["identity_ordering"] = ordering
+    redacted["faces"] = faces
+
+    # Per-image: only publishable rows; clear model-asserted private names.
+    kept_rows: list[dict[str, Any]] = []
+    for row in redacted.get("per_image") or []:
+        media_id = int(row.get("media_id", -1))
+        if media_id not in publishable_ids:
+            continue
+        row["hallucinated_names"] = []
+        row["wrong_name_hits"] = []
+        if isinstance(row.get("long"), dict):
+            row["long"]["hallucinated_names"] = []
+            row["long"]["wrong_name_hits"] = []
+        kept_rows.append(row)
+    redacted["per_image"] = kept_rows
+
+    # Quality title block may list hallucinated roster names — clear for PUBLIC.
+    quality = redacted.get("quality") or {}
+    title_q = quality.get("title")
+    if isinstance(title_q, dict):
+        title_q["hallucinated_names"] = []
+        quality["title"] = title_q
+        redacted["quality"] = quality
+
+    # Failures: keep unknown-media rows (corpus integrity);
+    # drop non-publishable local-only failure detail; keep publishable timeouts.
+    kept_failures: list[dict[str, Any]] = []
+    for fail in redacted.get("failures") or []:
+        media_id = int(fail.get("media_id", -1))
+        if media_id not in entries:
+            kept_failures.append(fail)
+        elif media_id in publishable_ids:
+            kept_failures.append(fail)
+    redacted["failures"] = kept_failures
+
+    redacted["redaction"] = {
+        "audience": Audience.PUBLIC.value,
+        "mode": "post_score_redact_caption_report",
+        "withheld_items": withheld_items,
+        "unknown_media_items": unknown_media_items,
+        "withheld_manifest_entries": withheld_manifest_entries,
+        "total_items": total_items,
+        "total_manifest_entries": len(manifest_entries),
+        "note": (
+            "Aggregates scored on the full corpus (roster/rubric intact); "
+            "identity-bearing detail lists and non-publishable per_image rows "
+            "stripped. unknown_media_items are corpus-integrity failures, not privacy."
+        ),
+    }
+    return _redact_public_paths(redacted)
 
 
 def _public_safe_path(path: str) -> str:
@@ -421,22 +623,47 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     Wall-clock per image = sum of ``describe.passes[*].latency_s`` when the item
     carries timed passes (multi-call pipelines), else the walker's single
     ``latency_s`` item field. Model calls per image = ``len(passes)`` or 1.
-    Items with an error, no timing data, or a cache hit (``describe.cached`` /
-    contract field; HARM-02) are skipped — cache hits are not open-loop inference
-    measurements and must not dilute p50/p95 (VLM6-R4-04). Returns ``None`` when
-    nothing is timed so untimed (pre-Slice-3 fixture) records keep their exact
-    report shape (additive schema). Pure and deterministic; NO cost math here —
-    $/1k images stays a memo-time formula (plan §Slice 3)."""
+    Items with an error, no timing data, or a cache hit (``describe.cached``)
+    are excluded from the percentile sample and counted beside ``images_timed``
+    so coordinated omission is visible (VLM6-R4-04 / PERF-03). Emits p99 + max
+    and a small-n caveat when nearest-rank p95 is tail-blind (VLM6-R4-09).
+    Returns ``None`` when nothing is timed so untimed fixtures keep shape.
+    """
     wall_clock: list[float] = []
     calls: list[int] = []
     cache_hits_excluded = 0
+    error_items_excluded = 0
+    timed_out_images = 0
+
+    def _item_has_timing(item: dict[str, Any], describe: Mapping[str, Any]) -> bool:
+        passes = describe.get("passes")
+        if isinstance(passes, list) and passes:
+            return any(
+                isinstance(p, dict) and isinstance(p.get("latency_s"), int | float) for p in passes
+            )
+        return isinstance(item.get("latency_s"), int | float)
+
     for item in items:
         if item.get("error"):
+            # Only count errors that would have contributed a timing sample.
+            if _item_has_timing(item, item.get("describe") or {}):
+                error_items_excluded += 1
+                err = str(item.get("error") or "").lower()
+                if "timeout" in err or "timed out" in err:
+                    timed_out_images += 1
+            else:
+                # Untimed error items still counted when any live timings exist
+                # so the timeout tail is visible beside images_timed (R4-04).
+                err = str(item.get("error") or "").lower()
+                if "timeout" in err or "timed out" in err:
+                    error_items_excluded += 1
+                    timed_out_images += 1
             continue
         describe = item.get("describe") or {}
         # Cache hits are not live inference timings (VLM6-R4-04).
         if bool(describe.get("cached", False)):
-            cache_hits_excluded += 1
+            if _item_has_timing(item, describe):
+                cache_hits_excluded += 1
             continue
         passes = describe.get("passes")
         if isinstance(passes, list) and passes:
@@ -454,21 +681,41 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
             wall_clock.append(round(float(latency), 3))
             calls.append(1)
     if not wall_clock:
-        return None
+        # Additive schema: pre-Slice-3 / untimed fixtures keep no latency key.
+        # Only surface a zeroed block when cache hits were the sole timed samples
+        # (warm-cache re-score must not silently omit the pollution — VLM6-R4-04).
+        if not cache_hits_excluded:
+            return None
+        return {
+            "images_timed": 0,
+            "wall_clock_s": {"p50": None, "p95": None, "p99": None, "max": None},
+            "model_calls": {"per_image_mean": None, "total": 0},
+            "cache_hits_excluded": cache_hits_excluded,
+            "error_items_excluded": error_items_excluded,
+            "timed_out_images": timed_out_images,
+            "percentile_caveat": "no_live_timings",
+        }
     ordered = sorted(wall_clock)
+    n = len(ordered)
     result: dict[str, Any] = {
-        "images_timed": len(wall_clock),
+        "images_timed": n,
         "wall_clock_s": {
             "p50": round(_percentile(ordered, 0.5), 3),
             "p95": round(_percentile(ordered, 0.95), 3),
+            "p99": round(_percentile(ordered, 0.99), 3),
+            "max": round(ordered[-1], 3),
         },
         "model_calls": {
             "per_image_mean": round(sum(calls) / len(calls), 4),
             "total": sum(calls),
         },
+        "cache_hits_excluded": cache_hits_excluded,
+        "error_items_excluded": error_items_excluded,
+        "timed_out_images": timed_out_images,
     }
-    if cache_hits_excluded:
-        result["cache_hits_excluded"] = cache_hits_excluded
+    # Nearest-rank p95 needs n>=20 for the worst observation to be able to move it.
+    if n < 20:
+        result["percentile_caveat"] = f"n={n}_below_p95_rank_threshold"
     return result
 
 
@@ -483,21 +730,27 @@ def _total_wrong_name_count(ident: Mapping[str, Any]) -> int:
     return len(live) + len(ignored)
 
 
+def _wrong_name_images(ident: Mapping[str, Any]) -> set[str]:
+    """Unique image paths that asserted at least one wrong name (live + ignored)."""
+    images: set[str] = set()
+    for pair in list(ident.get("wrong_names") or []) + list(ident.get("ignored_wrong_names") or []):
+        if isinstance(pair, list | tuple) and pair:
+            images.add(str(pair[0]))
+    return images
+
+
 def face_wrong_name_rate(scored: Mapping[str, Any]) -> float:
-    """Wrong-name rate = (live + ignored wrong names) / counts.scored.
+    """Per-image wrong-name rate = unique wrong-name images / counts.scored.
 
-    Denominator is scored images (not total): items that failed to score are
-    gated separately by the failed-items exit path. Empty scored set → 0.0 so
-    the wrong-name floor never fires vacuously on an all-failed run.
-
-    Numerator includes ignore-list-triaged pairs (F1-5 / OBS-04): suppression is
-    presentation-only and cannot certify a model that names every image wrong.
+    VLM6-S2A-B-09: the numerator is images (not (image,name) assertion pairs), so
+    a multi-name image contributes 1 and the rate is bounded by [0, 1].
+    Denominator is scored images; empty scored set → 0.0. Ignore-list pairs still
+    count (F1-5 / OBS-04).
     """
     scored_n = int(scored["counts"]["scored"])
     if scored_n <= 0:
         return 0.0
-    wrong_n = _total_wrong_name_count(scored["faces"]["identification"])
-    return wrong_n / scored_n
+    return len(_wrong_name_images(scored["faces"]["identification"])) / scored_n
 
 
 def build_score_verdict(
@@ -570,6 +823,7 @@ def build_score_verdict(
     # so a rate-only gate cannot go red. Display still rounds; the gate does not.
     rate = face_wrong_name_rate(scored)
     wrong_n = _total_wrong_name_count(ident)
+    wrong_image_n = len(_wrong_name_images(ident))
     ignored_n = len(ident.get("ignored_wrong_names") or [])
     if WRONG_NAME_RATE_FLOOR == 0.0:
         floor_breach = wrong_n > 0
@@ -578,8 +832,14 @@ def build_score_verdict(
     if floor_breach:
         reasons.append(
             f"wrong_name_rate={rate:.4f} exceeds floor={WRONG_NAME_RATE_FLOOR} "
-            f"(wrong_names={wrong_n}, ignored={ignored_n}, scored={scored_n})"
+            f"(wrong_name_images={wrong_image_n}, assertions={wrong_n}, "
+            f"ignored={ignored_n}, scored={scored_n})"
         )
+
+    # VLM6-R2-04 vacuity is surfaced on faces.identity_ordering.degraded_images
+    # (and order_unknown_excluded), not as an automatic hard-fail: the shipped
+    # golden corpus still lacks face_boxes, so a hard gate would fail every run
+    # until curation lands. Operators read the degraded count + MD warning.
 
     if reasons:
         verdict_value = ScoreVerdict.FAIL.value
@@ -591,8 +851,11 @@ def build_score_verdict(
         "verdict": verdict_value,
         "reasons": reasons,
         # Display-only rounding — comparisons above use count / unrounded rate.
+        # Rate is unique wrong-name images / scored (VLM6-S2A-B-09), not assertions.
         "wrong_name_rate": round(rate, 4),
         "wrong_name_rate_floor": WRONG_NAME_RATE_FLOOR,
+        "wrong_name_images": wrong_image_n,
+        "wrong_name_assertions": wrong_n,
         "insertion_rate": caption.get("insertion_rate"),
         "mean_gated_score": caption.get("mean_gated_score"),
         "must_right_failed_images": caption.get("must_right_failed_images"),
@@ -611,9 +874,7 @@ def score_run_record(
     rubric_gate: str = "enforce",
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict."""
-    # Lazy: cli imports report at module load; avoid circular import at import time.
-    from .cli import identity_names
-
+    # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
@@ -773,12 +1034,21 @@ def score_run_record(
         # VLM6-R2-04: never feed alphabetical present_identities as labeled when
         # order is unknown — that was a dead/no-op path (excluded anyway) that
         # invited accidental re-enablement of alphabetical scoring.
-        predicted_names = identity_names(item.get("identities", []))
+        try:
+            predicted_names = identity_names(item.get("identities", []))
+        except (TypeError, ValueError) as exc:
+            raise ReportError(str(exc)) from exc
         present = list(entry["present_identities"])
         ordered_labeled = labeled_left_to_right(entry.get("face_boxes") or [])
-        order_known = ordered_labeled is not None
+        labeled_order_known = ordered_labeled is not None
+        # VLM6-R4-06: predicted order is only spatial when the fetch stamp says so.
+        # ``degraded`` means unpositioned rows were appended alphabetically — exclude
+        # from positional scoring so the L→R swap metric is not contaminated.
+        ordering_stamp = item.get("identity_ordering")
+        predicted_order_known = ordering_stamp != "degraded"
+        order_known = labeled_order_known and predicted_order_known
         # Set-based identification_pr still uses present_identities (order-blind).
-        # Positional uses face-box L→R when known; otherwise excluded (empty labeled).
+        # Positional uses face-box L→R when both labeled and predicted order known.
         identifications.append(
             ImageIdentities(
                 image=path,
@@ -1074,16 +1344,43 @@ def score_run_record(
                     "excluded_images": list(positional.excluded_images),
                 },
             },
-            # A-07: loud surface for bbox-missing ordering degradation.
+            # A-07 / VLM6-R2-04: loud surface for bbox-missing / degraded order.
+            # When every image is positional-excluded, fold exclusions into
+            # degraded_images so vacuity is visible (not degraded=0 + excluded=N).
             "identity_ordering": {
                 "positional_images": ordering_positional,
-                "degraded_images": ordering_degraded,
-                "degraded_paths": degraded_paths,
+                "degraded_images": (
+                    ordering_degraded
+                    if ordering_degraded
+                    else (
+                        len(positional.excluded_images)
+                        if positional.compared_images == 0 and positional.excluded_images
+                        else 0
+                    )
+                ),
+                "degraded_paths": (
+                    degraded_paths
+                    if degraded_paths
+                    else (
+                        list(positional.excluded_images)
+                        if positional.compared_images == 0 and positional.excluded_images
+                        else []
+                    )
+                ),
+                "order_unknown_excluded": len(positional.excluded_images),
             },
         },
         "per_image": per_image,
         "failures": failures,
     }
+    # VLM6-R4-05: per-stratum caption/placement/positional floors (EVAL-04).
+    result["strata"] = _stratum_blocks(
+        per_image=per_image,
+        entries=entries,
+        positional_items=positional_items,
+        caption_scores=caption_scores,
+        placement_scores=placement_scores,
+    )
     # VLM-6 S2A: machine-readable scored verdict (pass/fail + reasons). Built
     # after the face/caption blocks so rate derives from live wrong_names.
     # rubric_gate is operator-declared CLI mode (enforce|skip), not derived
@@ -1156,6 +1453,79 @@ def _fmt(value: float | None) -> str:
     return "null" if value is None else f"{value:.3f}"
 
 
+def _stratum_blocks(
+    *,
+    per_image: list[dict[str, Any]],
+    entries: dict[int, dict[str, Any]],
+    positional_items: list[ImageIdentities],
+    caption_scores: list[CaptionScores],
+    placement_scores: list[PlacementScores],
+) -> dict[str, Any]:
+    """Per-difficulty / per-domain aggregates for caption + placement + positional (VLM6-R4-05).
+
+    Mirrors the face bake-off ``by_cohort`` shape: each stratum carries ``n`` and the
+    headline rates so Simpson's paradox is visible at the caption gate.
+    """
+    # Map path → positional item for order-sensitive rates.
+    pos_by_path = {item.image: item for item in positional_items}
+
+    def _bucket_key(entry: dict[str, Any], field: str) -> str:
+        raw = entry.get(field)
+        if raw is None or raw == "":
+            return "unspecified"
+        return str(raw)
+
+    def _build(field: str) -> dict[str, Any]:
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for row in per_image:
+            media_id = int(row["media_id"])
+            entry = entries.get(media_id)
+            if entry is None:
+                continue
+            key = _bucket_key(entry, field)
+            buckets.setdefault(key, []).append(row)
+        out: dict[str, Any] = {}
+        for key, rows in sorted(buckets.items()):
+            gated = [r["gated_score"] for r in rows if r.get("gated_score") is not None]
+            place_acc = [
+                r["placement"]["accuracy"]
+                for r in rows
+                if isinstance(r.get("placement"), dict) and r["placement"].get("accuracy") is not None
+            ]
+            # Positional within stratum: re-score only items in this bucket.
+            pos_items = [pos_by_path[r["path"]] for r in rows if r["path"] in pos_by_path]
+            pos = positional_identification(pos_items) if pos_items else None
+            wrong_name_images = sum(1 for r in rows if r.get("wrong_name_hits") or r.get("hallucinated_names"))
+            out[key] = {
+                "n": len(rows),
+                "mean_gated_score": (round(sum(gated) / len(gated), 4) if gated else None),
+                "wrong_name_images": wrong_name_images,
+                "placement_accuracy": (
+                    round(sum(place_acc) / len(place_acc), 4) if place_acc else None
+                ),
+                "positional": (
+                    {
+                        "compared_images": pos.compared_images,
+                        "position_accuracy": pos.position_accuracy,
+                        "exact_order_rate": pos.exact_order_rate,
+                        "swap_images": pos.swap_images,
+                        "excluded_images": len(pos.excluded_images),
+                    }
+                    if pos is not None
+                    else None
+                ),
+            }
+        return out
+
+    # caption_scores / placement_scores kept in signature for call-site symmetry;
+    # per_image already carries the rolled values we need.
+    _ = caption_scores, placement_scores
+    return {
+        "by_difficulty": _build("difficulty"),
+        "by_domain": _build("domain"),
+    }
+
+
 def _markdown(scored: dict[str, Any]) -> str:
     prov = scored["provenance"]
     model = prov.get("model", {})
@@ -1196,10 +1566,23 @@ def _markdown(scored: dict[str, Any]) -> str:
     # Honest redaction: public reports must state what they withheld (VLM-6 S1).
     redaction = scored.get("redaction")
     if redaction:
-        lines.append(
-            f"- redaction: audience=`{redaction['audience']}` — "
+        unknown_n = redaction.get("unknown_media_items", 0)
+        withheld_manifest = redaction.get("withheld_manifest_entries")
+        redaction_bits = [
             f"withheld {redaction['withheld_items']} of {redaction['total_items']} items "
             "(local-only / non-publishable)"
+        ]
+        if unknown_n:
+            redaction_bits.append(
+                f"{unknown_n} unknown-media item(s) (corpus integrity, not privacy)"
+            )
+        if withheld_manifest is not None:
+            redaction_bits.append(
+                f"withheld_manifest_entries={withheld_manifest}/"
+                f"{redaction.get('total_manifest_entries', '?')}"
+            )
+        lines.append(
+            f"- redaction: audience=`{redaction['audience']}` — " + "; ".join(redaction_bits)
         )
     if "seeded" in model.get("adapters", []):
         lines.append(
@@ -1247,15 +1630,25 @@ def _markdown(scored: dict[str, Any]) -> str:
     if latency:
         wall = latency["wall_clock_s"]
         calls = latency["model_calls"]
-        cache_note = (
-            f", cache-hits excluded={latency['cache_hits_excluded']}"
-            if latency.get("cache_hits_excluded")
-            else ""
-        )
+        excl_bits: list[str] = []
+        if latency.get("cache_hits_excluded"):
+            excl_bits.append(f"cache-hits excluded={latency['cache_hits_excluded']}")
+        if latency.get("error_items_excluded"):
+            excl_bits.append(f"errors excluded={latency['error_items_excluded']}")
+        if latency.get("timed_out_images"):
+            excl_bits.append(f"timed-out={latency['timed_out_images']}")
+        excl_note = f", {', '.join(excl_bits)}" if excl_bits else ""
+        p99 = wall.get("p99")
+        wall_max = wall.get("max")
+        tail = ""
+        if p99 is not None or wall_max is not None:
+            tail = f" p99 {p99}s max {wall_max}s"
+        caveat = latency.get("percentile_caveat")
+        caveat_note = f" ⚠ {caveat}" if caveat else ""
         lines.append(
-            f"- latency: per-image wall-clock p50 {wall['p50']}s p95 {wall['p95']}s "
-            f"({latency['images_timed']} timed{cache_note}) · model calls/image: {calls['per_image_mean']} "
-            f"(total {calls['total']})"
+            f"- latency: per-image wall-clock p50 {wall['p50']}s p95 {wall['p95']}s{tail} "
+            f"({latency['images_timed']} timed{excl_note}) · model calls/image: {calls['per_image_mean']} "
+            f"(total {calls['total']}){caveat_note}"
         )
     lines += [
         "",
@@ -1290,6 +1683,21 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"(correct={place.get('correct')} wrong={place.get('wrong')} "
             f"claims={place.get('claims')} abstained={place.get('abstained')})",
         ]
+    strata = scored.get("strata") or {}
+    if strata.get("by_difficulty") or strata.get("by_domain"):
+        lines += ["", "### Strata (difficulty / domain)", ""]
+        for axis, label in (("by_difficulty", "difficulty"), ("by_domain", "domain")):
+            block = strata.get(axis) or {}
+            for key, stats in block.items():
+                pos = stats.get("positional") or {}
+                lines.append(
+                    f"- {label}={key}: n={stats.get('n')} "
+                    f"mean_gated={_fmt(stats.get('mean_gated_score'))} "
+                    f"wrong_name_images={stats.get('wrong_name_images')} "
+                    f"placement={_fmt(stats.get('placement_accuracy'))} "
+                    f"positional={_fmt(pos.get('position_accuracy'))} "
+                    f"(compared={pos.get('compared_images')})"
+                )
 
     def _quality_lines(quality: dict[str, Any]) -> list[str]:
         band = quality.get("sentence_band", [])
@@ -1411,43 +1819,31 @@ def build_reports(
     """Return (json_report, markdown_report) — deterministic for identical inputs.
 
     ``audience=LOCAL`` (default) scores the full corpus — byte-identical to the
-    pre-audience contract. ``audience=PUBLIC`` filters to publishable items only
-    (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
-    so withheld local-only items are never silent.
+    pre-audience contract. ``audience=PUBLIC`` uses the same full-corpus score
+    (roster/rubric denominators intact — VLM6-R3-03) then post-score redacts
+    identity-bearing detail, non-publishable per_image rows, and provenance
+    via a fail-closed allow-list (VLM6-R3-01/02). Signature unchanged for the
+    concurrent cli lane.
 
     ``rubric_gate`` is the operator-declared Must-Right exit-gate mode
     (``enforce``|``skip``); stamped into ``verdict.rubric_gate`` (F1b-2 / F1-12).
     """
-    score_record = run_record
-    score_entries = manifest_entries
-    redaction: dict[str, Any] | None = None
-    if audience is Audience.PUBLIC:
-        total_items = len(run_record["items"])
-        score_record, score_entries, withheld = _filter_for_public_audience(run_record, manifest_entries)
-        redaction = {
-            "audience": Audience.PUBLIC.value,
-            "withheld_items": withheld,
-            "total_items": total_items,
-        }
+    # VLM6-R3-04: validate at every trust boundary before audience branching.
+    _validate_record_kind(run_record)
     scored = score_run_record(
-        score_record,
-        score_entries,
+        run_record,
+        manifest_entries,
         ignore_list=ignore_list,
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
         rubric_gate=rubric_gate,
     )
-    if redaction is not None:
-        scored["redaction"] = redaction
-        # Withhold internal run-level provenance (base_url endpoint + secrets) so
-        # the hub-safe public artifact never discloses infrastructure topology or
-        # credentials (VLM6-S5-BR-01 / VLM6-R3). Redact at the render boundary —
-        # underlying computation already finished above.
-        for field_name in _PUBLIC_PROVENANCE_WITHHELD_FIELDS:
-            if scored["provenance"].get(field_name):
-                scored["provenance"][field_name] = _PUBLIC_PROVENANCE_REDACTED
-        # Absolute local filesystem paths → basename only (render boundary).
-        scored = _redact_public_paths(scored)
+    if audience is Audience.PUBLIC:
+        scored = _redact_caption_report_for_public(
+            scored,
+            run_record=run_record,
+            manifest_entries=manifest_entries,
+        )
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
 
 

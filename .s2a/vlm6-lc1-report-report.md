@@ -11,70 +11,76 @@
 
 ## Summary
 
-Wired placement + fabricated-fact hallucination into scored report JSON/MD;
-excluded cache hits from latency percentiles; expanded public-report redaction
-(secrets, absolute paths); surface gated-score components and quality-axis
-aggregates that were previously computed only on `per_image`. `build_reports()`
-signature unchanged (no breaking CLI interface change).
+Reconciled prior pass against the real 16 finding IDs (inlined re-dispatch).
+Completed remaining R3 public-report integrity/leak fixes (score-then-redact,
+provenance allow-list, identity scrub), latency disclosure (timeouts/p99/max),
+positional predicted-order exclusion, and per-stratum caption blocks.
+`build_reports()` signature unchanged.
 
 ## Gate counts
 
 | When | Result |
 | --- | --- |
-| **Before** | **86 passed** |
-| **After** | **97 passed** |
+| **Before reconcile** | **97 passed** (prior pass) |
+| **After reconcile** | **105 passed** |
 
 ```
 cd apps/prototype-description-service && uv run --extra dev pytest \
   scene/tests/test_eval_harness_report.py scene/tests/test_eval_harness_bakeoff_report.py -q -p no:randomly
 ```
 
-## Note on findings source
+## Per-finding table (real IDs only)
 
-`.lane-brief/findings.md` was **not provisioned** into this sandbox (git-excluded
-and absent from the clone; handoff.db empty). Findings below were reconstructed
-from the assignment themes + code probes + sibling-lane reports (la1/la2).
-IDs marked *reconstructed* map to assignment clusters; line anchors from the
-original brief are unavailable here.
-
-## Per-finding table
-
-| Finding ID | What changed | RED-before assertion | GREEN-after |
+| Finding ID | Status | What changed | RED-without-it assertion |
 | --- | --- | --- | --- |
-| **VLM6-R4-02** (placement) | `score_placement` / `placement_accuracy` wired into `score_run_record` → top-level `placement` + per-image `placement` + MD line | `assert 'placement' in scored` → **AssertionError: assert 'placement' in {…}** | accuracy=1.0 on correct claim; accuracy=0.0 on wrong claim; MD has `placement accuracy` |
-| **VLM6-R2-02** (hallucination) | `score_hallucination` / `fabricated_fact_rate` / `fabrication_by_kind` → top-level `hallucination` + per-image + MD | `assert 'hallucination' in scored` → **AssertionError: assert 'hallucination' in {…}** | fabricated_fact_rate=1.0 when trap hit; 0.0 when clean; MD has `fabricated-fact rate` |
-| **VLM6-R4-04** (latency/cache) | `_latency_summary` skips `describe.cached=True`; reports `cache_hits_excluded` | `assert summary["images_timed"] == 2` → **assert 3 == 2** (cache hit counted) | images_timed=2 over live only; cache_hits_excluded=1; all-cache → None |
-| **VLM6-R3-01..05** (public leaks, cluster) | Expanded `_PUBLIC_PROVENANCE_WITHHELD_FIELDS` (api_key, tenant_id, tokens…); render-boundary `_redact_public_paths` collapses absolute paths to basename; still redacts `base_url` | `assert 'sk-live-TOPSECRET-xyz' not in blob` **fails**; `assert '/Users/daniel' not in blob` **fails** | secrets → `"redacted"`; abs path → basename only; LOCAL unchanged |
-| **VLM6-R2-04** (positional labeled-order) | When `face_boxes` missing, positional `labeled=[]` + `labeled_order_known=False` (no alphabetical `present` fallback as dead labeled input) | Pre-existing exclude behavior; new test pins `compared_images==0` / empty totals | excluded legacy entries; no alphabetical compare |
-| **R4-05/06/07/09 group** (quality aggregates, *reconstructed*) | `quality` block now surfaces `mean_fkre`, `mean_repetition_ratio`, `mean_tag_coverage`, `first_sentence_gist_ok_rate` (were per_image-only dead paths) | `assert quality.get("mean_fkre") is not None` → **assert None is not None** | mean_fkre present; MD lines for FKRE/repetition/tag/gist |
-| **gated components** (la1 wiring / *likely R4 or S2A-B-09*) | `aggregate_gated_scores` → `gated_score_scored` / `gated_score_excluded` on caption + MD | `assert 'gated_score_scored' in scored["caption"]` fails | components sum to scored count; MD shows `excluded=` |
-| **RH-07 / S2A-B-09** | Mapped into gated components + quality aggregate surfacing above; exact original text unavailable without findings.md | (see gated/quality rows) | (see gated/quality rows) |
+| **VLM6-R4-04** | fixed | `_latency_summary` excludes cache hits; emits `cache_hits_excluded`, `error_items_excluded`, `timed_out_images`; MD discloses exclusions | `assert summary["images_timed"] == 2` fails if cache counted; `assert summary["timed_out_images"] == 1` fails without timeout count |
+| **VLM6-R4-02** | fixed (prior) | `score_placement` / `placement_accuracy` in `score_run_record` → top-level `placement` + per_image + MD | `assert "placement" in scored` → AssertionError without wiring |
+| **VLM6-R3-03** | fixed | Score full corpus always; do not shrink `manifest_entries` pre-score; `withheld_manifest_entries` on redaction; LOCAL/PUBLIC aggregate parity | `assert local["caption"]["name_precision"] == pub[...]` fails if PUBLIC filters roster; private-name hallucination becomes perfect under PUBLIC without fix |
+| **VLM6-R3-02** | fixed | Post-score scrub: empty `wrong_names`/`ignored_wrong_names`, clear `hallucinated_names`/`wrong_name_hits`, drop non-publishable `per_identity` keys | `assert private_name not in pub_json` fails without scrub (Aunt Mary Arce on publishable item) |
+| **VLM6-R3-01** | fixed | Provenance fail-closed **allow-list** (not deny-list); unknown keys dropped; model_ids path basenames | `assert "totally_unknown_future_key" not in prov` / `assert "/Users/daniel/models" not in blob` fail under deny-list passthrough |
+| **VLM6-R2-04** | fixed | No alphabetical labeled fallback; when `compared_images==0`, fold exclusions into `identity_ordering.degraded_images` + `order_unknown_excluded` | `assert ordering["degraded_images"] >= 1` fails when excluded=N but degraded=0 |
+| **VLM6-R2-02** | fixed (prior) | `score_hallucination` / fabricated-fact rate → top-level `hallucination` + MD | `assert "hallucination" in scored` → AssertionError without wiring |
+| **VLM6-R4-07** | fixed | Same allow-list as R3-01 (medium twin of high provenance leak) | same as R3-01 unknown-key drop test |
+| **VLM6-R4-06** | fixed | `identity_ordering == "degraded"` ⇒ `labeled_order_known=False` for positional items | `assert pos["compared_images"] == 0` fails if degraded predictions still scored |
+| **VLM6-R4-05** | fixed | `strata.by_difficulty` / `strata.by_domain` with n, mean_gated, placement, positional | `assert "easy" in scored["strata"]["by_difficulty"]` fails without strata |
+| **VLM6-R3-06** | fixed | Non-tautology leak tests: private name on publishable item; unknown provenance keys; nested paths | tests go red if scrub/allow-list regress |
+| **VLM6-R3-05** | fixed | Split `withheld_items` vs `unknown_media_items`; unknown stays in `failures`/`counts.failed` | `assert redaction["unknown_media_items"] == 1` and `media_id==999 in failures` fail if conflated into withheld |
+| **VLM6-R3-04** | fixed | `_validate_record_kind` at top of `build_reports` before audience branch | `build_reports({kind:report}, audience=PUBLIC)` raises `ReportError` not `KeyError('items')` |
+| **VLM6-RH-07** | partial | `identity_names` moved into `report.py` (no lazy cli import). Full `identities.py` + multi-caller retarget **out of owned_paths** (cli/face_pass/describe_baseline belong to sibling lanes) | `from scripts.eval_harness.report import identity_names` works; report no longer imports cli |
+| **VLM6-S2A-B-09** | fixed | `face_wrong_name_rate` = unique wrong-name images / scored (bounded [0,1]); verdict also stamps `wrong_name_assertions` | `assert rate <= 1.0` fails when 2 assertions on 1 image yielded rate 2.0 |
+| **VLM6-R4-09** | fixed | Emit p99 + max; `percentile_caveat` when n&lt;20 | `assert "p99" in wall` / `assert "max" in wall` fail without tail fields |
 
 ## Explicitly NOT fixed / caveats
 
 | Item | Why |
 | --- | --- |
-| Exact R3-01 vs R3-02 vs … split | findings.md missing; treated as one public-redaction cluster with 5 leak surfaces (base_url already present, api_key, tenant_id, abs paths, local-name exclusion already covered by existing tests) |
-| RH-07 / S2A-B-09 exact text | IDs named in assignment group only; implemented closest dead-path surfaces (quality rollups + gated components). Orchestrator should re-map if IDs targeted different lines. |
+| **VLM6-RH-07** full module extract | Creating `identities.py` and editing `cli.py` / `face_pass.py` / `describe_baseline.py` is outside owned_paths (sibling-lane collision). report-local normalizer breaks the cycle for this lane. |
+| **VLM6-R2-04** hard-fail verdict on 100% positional exclude | Soft surface only (`degraded_images` + MD warning). Hard gate would fail every no-`face_boxes` golden run until corpus curation (not owned by this lane). |
 | `build_reports()` signature change | **Not done** — hard pin for concurrent `vlm6-lc2-cli` |
-| `cli.py` / `--audience` flag | Out of owned paths (sibling lc2) |
-| `manifest.py`, bakeoff-results anchors | Forbidden by runtime guidance |
-| `build_bakeoff_report.py` | Not owned; bakeoff_report tests untouched (still pass) |
+| `cli.py` / `manifest.py` / bakeoff-results | Forbidden by runtime guidance |
+
+## Unrequested improvements (no invented finding IDs)
+
+Kept from prior pass / side effects of real fixes:
+
+- `quality.mean_fkre` / `mean_repetition_ratio` / `mean_tag_coverage` / `first_sentence_gist_ok_rate` aggregates (were per_image-only)
+- `caption.gated_score_scored` / `gated_score_excluded` via `aggregate_gated_scores`
+- Absolute path basename collapse on PUBLIC path fields (`_redact_public_paths`)
 
 ## Cross-lane dependencies
 
-- **vlm6-lc2-cli**: no interface break; `build_reports(..., audience=, rubric_gate=)` unchanged.
-- **la1 caption-metrics**: consumes `aggregate_gated_scores` as recommended in la1 report.
-- **la2 placement-metrics**: consumes fixed `score_placement` (paraphrase-capable).
+- **vlm6-lc2-cli**: no interface break; `build_reports(..., audience=, rubric_gate=)` signature preserved.
+- Full `identities.py` extraction (RH-07 remainder) needs a follow-up that can touch cli consumers.
 
 ## Diff summary (`report.py`)
 
-1. Import placement + hallucination scorers and `aggregate_gated_scores`.
-2. Per-item: parse `spatial_facts` / `reference_facts`; score; attach to `per_image`.
-3. Corpus: `placement` + `hallucination` blocks; gated scored/excluded; quality axis rollups.
-4. Latency: skip cache hits; optional `cache_hits_excluded`.
-5. Public render: expand provenance redaction fields; basename absolute paths.
-6. Markdown: placement, hallucination, gated components, quality axes, cache-hit note.
+1. Provenance allow-list + post-score `_redact_caption_report_for_public` (score full corpus).
+2. Placement + hallucination wiring (prior) retained.
+3. Latency: cache/error/timeout denominators + p99/max + small-n caveat.
+4. Positional: degraded predicted-order exclusion; degraded_images vacuity surface.
+5. Strata by difficulty/domain.
+6. `identity_names` owned by report module.
+7. Per-image wrong-name rate (S2A-B-09).
 
 ## Commits
 

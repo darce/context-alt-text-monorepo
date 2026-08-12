@@ -20,6 +20,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox, type ComboboxOption } from '../../../../components/ui/combobox';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
   buildNamingOptions,
@@ -95,10 +96,6 @@ const withTimeout = async <T,>(
   } finally {
     window.clearTimeout(timeoutId);
   }
-};
-
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
 };
 
 const renderNamingOption = (option: ComboboxOption): React.ReactNode => {

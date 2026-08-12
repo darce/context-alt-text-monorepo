@@ -1254,8 +1254,20 @@ button.acx-accent-primary-action {
   &__previews {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--acx-space-4);
-    margin-bottom: var(--acx-space-12);
+    // LAY-03: intra-strip gap < strip-to-neighbour (margin-bottom space-16).
+    gap: var(--acx-space-8);
+    margin-bottom: var(--acx-space-16);
+  }
+
+  &__preview {
+    // Box size is owned by FINDINGS_PREVIEW_SIZE_PX inline styles on Avatar / FaceThumbnail.
+    flex: 0 0 auto;
+  }
+
+  &__preview--uncropped {
+    // Distinguish uncropped / non-face fallbacks from real face crops (A11Y-02 companion).
+    outline: 1px dashed var(--acx-color-border);
+    outline-offset: calc(var(--acx-space-2) * -1);
   }
 
   &__empty {

@@ -2,6 +2,7 @@
 
 **Lane:** `gx5`  
 **Branch:** `fix/gx5` (forked from `feature/vlm-6` @ `8ae228aa0ec8af2b3235f16e47855dbf4b5b3e6b`)  
+**Implementation land:** `a35ecf2cfeb88c53577a1c6e6e7c9ab2f4007113`  
 **Scope:** `scripts/check_lane_report_shas.py`, its unit tests, f1a/f2b comment tokens only.  
 **Heuristics:** TEST-15, AUDIT-07, EVAL-23, rg-006, rg-015, sr-001.
 

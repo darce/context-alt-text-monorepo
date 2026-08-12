@@ -121,11 +121,28 @@ class AssociationResult:
     ious: tuple[tuple[int, int, float], ...]  # (det_i, gt_j, iou) for audit
 
 
+def gt_box_name(gt: Any) -> str | None:
+    """Canonical GT box name (HARM-06 / rg-005).
+
+    ``None`` and empty/whitespace-only strings are anonymous. One predicate
+    shared by association, detection, and identification paths — empty string
+    must not flip between "named" and "stranger" across modules.
+    """
+    if isinstance(gt, Mapping):
+        name = gt.get("name")
+    else:
+        name = getattr(gt, "name", None)
+    if name is None:
+        return None
+    text = str(name).strip()
+    return text if text else None
+
+
 def _gt_fields(gt: Any) -> tuple[float, float, float, float, str | None]:
     """Extract centre box + name from FaceBox-like or mapping."""
     if isinstance(gt, Mapping):
-        return float(gt["x"]), float(gt["y"]), float(gt["w"]), float(gt["h"]), gt.get("name")
-    return float(gt.x), float(gt.y), float(gt.w), float(gt.h), gt.name
+        return float(gt["x"]), float(gt["y"]), float(gt["w"]), float(gt["h"]), gt_box_name(gt)
+    return float(gt.x), float(gt.y), float(gt.w), float(gt.h), gt_box_name(gt)
 
 
 def associate_detections(
@@ -941,6 +958,7 @@ __all__ = [
     "FaceDecision",
     "AssignmentResult",
     "SimilarPeopleAssignment",
+    "gt_box_name",
     "gt_normalized_centre_to_pixel_corner",
     "iou_pixel_corner",
     "associate_detections",

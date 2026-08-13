@@ -14,6 +14,8 @@ from db.models import (
     ClusterMergeSuggestion,
     IdentityCluster,
     IdentityClusteringJob,
+    IdentityClusterRepresentative,
+    IdentityMember,
     IdentitySuggestion,
     MediaIdentity,
     Tenant,
@@ -112,6 +114,106 @@ async def test_list_name_suggestions_filters_expired_and_confidence(db_session: 
     assert [item.suggested_name for item in suggestions] == ["Avery Rhodes"]
     assert suggestions[0].source is SuggestedLabelSource.IDENTITY
     assert suggestions[0].source_job_id == str(job.id)
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_includes_eager_loaded_representatives(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    identity = await _create_identity(db_session, tenant)
+    db_session.add(
+        IdentityClusterRepresentative(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            identity_id=identity.id,
+            embedding=_unit_embedding(),
+            quality_score=0.94,
+            is_user_selected=True,
+        )
+    )
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="Avery Rhodes",
+            confidence_score=0.91,
+            source=SuggestedLabelSource.IDENTITY.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    assert len(suggestions[0].representatives) == 1
+    rep = suggestions[0].representatives[0]
+    assert rep.media_id == 101
+    assert rep.media_url == "http://example.test/media-101.jpg"
+    assert (rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height) == (0, 0, 10, 10)
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_without_representatives_returns_empty_list(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="No Reps",
+            confidence_score=0.88,
+            source=SuggestedLabelSource.ROSTER.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    assert suggestions[0].representatives == []
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_member_fallback_when_no_pinned_representative(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    identity = await _create_identity(db_session, tenant)
+    db_session.add(
+        IdentityMember(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            identity_id=identity.id,
+            similarity=0.97,
+        )
+    )
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="Fallback Face",
+            confidence_score=0.9,
+            source=SuggestedLabelSource.IDENTITY.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    assert len(suggestions[0].representatives) == 1
+    rep = suggestions[0].representatives[0]
+    assert rep.media_id == 101
+    assert rep.media_url == "http://example.test/media-101.jpg"
+    assert (rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height) == (0, 0, 10, 10)
 
 
 @pytest.mark.asyncio

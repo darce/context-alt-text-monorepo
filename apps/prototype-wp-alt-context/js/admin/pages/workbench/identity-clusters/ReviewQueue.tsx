@@ -53,6 +53,7 @@ import {
   type ReviewQueueItem,
 } from './reviewQueueDriver';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
 import {
   useBulkReviewCommit,
@@ -1647,6 +1648,9 @@ const CurrentCard = ({
           <SuggestionCard
             suggestion={suggestion}
             accentPrimary={accentPrimary}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
               runScheduled(() => scheduleAccept(suggestion.suggestionId));
@@ -1727,7 +1731,12 @@ const CurrentCard = ({
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
       return (
-        <div
+        <ReviewCardGroupShell
+          kind="name"
+          labelId={`acx-name-pos-${suggestion.id}`}
+          // BR-41: pass ordinal only when both are defined (position chrome available).
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
           className="acx-suggestion-card acx-name-suggestion-card"
           data-testid="acx-review-card"
           data-review-kind="name"
@@ -1780,7 +1789,7 @@ const CurrentCard = ({
             </button>
             {!afterAccept ? nameHold : null}
           </div>
-        </div>
+        </ReviewCardGroupShell>
       );
     }
     case NEXT_ACTION_KIND.CLUSTER: {
@@ -1806,13 +1815,21 @@ const CurrentCard = ({
         );
       }
       return (
-        <div data-testid="acx-review-card" data-review-kind="cluster">
+        <>
           {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
-          <TopClusterCard cluster={cluster} onLabel={() => undefined} isReadOnly onReview={onReview} />
+          <TopClusterCard
+            cluster={cluster}
+            onLabel={() => undefined}
+            isReadOnly
+            onReview={onReview}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+          />
           {personCommitFor(item.clusterId, NEXT_ACTION_KIND.CLUSTER, {
             suggestedCreateName: cluster.suggested_label,
           })}
-        </div>
+        </>
       );
     }
     default:

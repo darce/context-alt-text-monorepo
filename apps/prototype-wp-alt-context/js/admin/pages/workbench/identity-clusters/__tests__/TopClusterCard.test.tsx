@@ -12,7 +12,7 @@ vi.mock('@wordpress/i18n', () => ({
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (template: string, ...args: (string | number)[]) => {
     let index = 0;
-    return template.replace(/%d/g, () => String(args[index++]));
+    return template.replace(/%(\d+\$)?[sd]/g, () => String(args[index++] ?? ''));
   },
 }));
 
@@ -265,5 +265,56 @@ describe('TopClusterCard', () => {
     expect(screen.getByText(/Is this\s*Pat Rivera\?/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Yes' }));
     expect(onConfirmSuggestedLabel).toHaveBeenCalledWith('cluster-1', 'Pat Rivera', 'cluster-target');
+  });
+
+  // BR-41: cluster review group accname folds queue ordinal on the card root.
+  describe('BR-41 cluster group accname', () => {
+    it('card root has Cluster review 1 of 2 when ordinal valid', () => {
+      render(
+        <TopClusterCard
+          cluster={buildCluster()}
+          onLabel={vi.fn()}
+          isReadOnly
+          queuePosition={1}
+          queueTotal={2}
+        />,
+      );
+
+      const card = screen.getByRole('group');
+      expect(card).toHaveClass('acx-top-cluster-card');
+      expect(card).toHaveAccessibleName(/Cluster review 1 of 2/);
+    });
+
+    it.each([
+      { label: 'total=0', queuePosition: 1, queueTotal: 0 },
+      { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
+      { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
+      { label: 'position=float', queuePosition: 1.5, queueTotal: 2 },
+    ])(
+      'invalid queue ordinals fall back to kind-only Cluster review — $label',
+      ({ label, queuePosition, queueTotal }) => {
+        render(
+          <TopClusterCard
+            cluster={buildCluster({ id: `cluster-${label}` })}
+            onLabel={vi.fn()}
+            isReadOnly
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+          />,
+        );
+
+        const card = screen.getByRole('group');
+        expect(card, label).toHaveAccessibleName('Cluster review');
+        expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5/i);
+      },
+    );
+
+    it('without queuePosition/queueTotal, accname is kind-only Cluster review (never empty)', () => {
+      render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} isReadOnly />);
+
+      const card = screen.getByRole('group');
+      expect(card).toHaveAccessibleName('Cluster review');
+      expect(screen.queryByText(/Cluster review \d+ of \d+/)).toBeNull();
+    });
   });
 });

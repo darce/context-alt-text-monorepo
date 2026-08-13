@@ -252,6 +252,7 @@ class NameSuggestionResponse(BaseModel):
     created_at: datetime | None = None
     expires_at: datetime | None = None
     resolved_at: datetime | None = None
+    representatives: list[RepresentativeResponse] = Field(default_factory=list)
 
     @field_validator("id", "cluster_id")
     @classmethod

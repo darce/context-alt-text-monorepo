@@ -5,6 +5,7 @@ import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 import { isHumanLabeledTarget } from './suggestionProjection';
+import { isValidQueueOrdinal } from './reviewQueueDriver';
 
 export interface MergeSuggestionCardProps {
   suggestion: PendingMergeSuggestion;
@@ -107,8 +108,6 @@ export const MergeSuggestionCard = ({
     sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
   // BR-35/BR-40: only when BOTH ordinal props are integers >= 1 — otherwise
   // keep today's no-ordinal labels (rejects 0, negative, NaN, Infinity, floats).
-  const isValidQueueOrdinal = (value: number | undefined): value is number =>
-    typeof value === 'number' && Number.isInteger(value) && value >= 1;
   const hasQueueOrdinal =
     isValidQueueOrdinal(queuePosition) && isValidQueueOrdinal(queueTotal);
   const faceControlALabel = hasQueueOrdinal

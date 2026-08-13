@@ -15,6 +15,7 @@ require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/interface-clusters-repository.php';
 require_once __DIR__ . '/../repositories/interface-identity-members-repository.php';
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
@@ -22,6 +23,7 @@ use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Support\Telemetry;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function function_exists;
 use function get_current_user_id;
@@ -33,6 +35,8 @@ use function sprintf;
 use function trim;
 
 final class ConflictResolutionService {
+	use DetectsSystemDefinedLabels;
+
 	public const OUTBOX_OPERATION_CLUSTER_LABEL_UPDATED = 'cluster_label_updated';
 	public const OUTBOX_OPERATION_IDENTITY_REASSIGNED   = 'identity_reassigned';
 
@@ -619,6 +623,11 @@ final class ConflictResolutionService {
 	private function resolve_merge_acceptance( array $conflict, string $tenant_id, string $merged_value ): bool {
 		$conflict_code = (string) ( $conflict['conflict_code'] ?? '' );
 		if ( 'person_name_conflict' === $conflict_code ) {
+			if ( $this->is_reserved_label_shape( $merged_value ) ) {
+				$this->log_reserved_label_write_skipped( $conflict, 'merged' );
+				return true;
+			}
+
 			return $this->clusters_repository->update_label( (string) ( $conflict['entity_key'] ?? '' ), $merged_value, true ) > 0;
 		}
 
@@ -647,7 +656,26 @@ final class ConflictResolutionService {
 			return false;
 		}
 
+		if ( $this->is_reserved_label_shape( $backend_value ) ) {
+			$this->log_reserved_label_write_skipped( $conflict, 'backend' );
+			return true;
+		}
+
 		return $this->clusters_repository->update_label( $entity_key, $backend_value, false ) > 0;
+	}
+
+	/**
+	 * @param array<string,mixed> $conflict
+	 */
+	private function log_reserved_label_write_skipped( array $conflict, string $source ): void {
+		Telemetry::log_line(
+			sprintf(
+				'acx conflict resolution skipped reserved label write: conflict_id=%d entity_key=%s source=%s',
+				(int) ( $conflict['id'] ?? 0 ),
+				(string) ( $conflict['entity_key'] ?? '' ),
+				$source
+			)
+		);
 	}
 
 	/**

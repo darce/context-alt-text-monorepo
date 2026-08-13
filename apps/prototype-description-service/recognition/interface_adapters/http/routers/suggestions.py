@@ -35,6 +35,7 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
+from recognition.interface_adapters.http.face_box import representative_response_from_domain
 from recognition.interface_adapters.http.schemas.requests import BulkAcceptSuggestionsRequest, SuggestionActionRequest
 from recognition.interface_adapters.http.schemas.responses import (
     BulkAcceptResponse,
@@ -44,6 +45,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     IdentitySuggestionsResponse,
     MergeSuggestionResponse,
     NameSuggestionResponse,
+    RepresentativeResponse,
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
@@ -540,6 +542,9 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
 
 def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
     """Convert a name suggestion to the API response model."""
+    representatives: list[RepresentativeResponse] = [
+        representative_response_from_domain(rep) for rep in (getattr(suggestion, "representatives", None) or [])
+    ]
     return NameSuggestionResponse(
         id=suggestion.id,
         cluster_id=suggestion.cluster_id,
@@ -551,6 +556,7 @@ def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
         created_at=suggestion.created_at,
         expires_at=suggestion.expires_at,
         resolved_at=suggestion.resolved_at,
+        representatives=representatives,
     )
 
 

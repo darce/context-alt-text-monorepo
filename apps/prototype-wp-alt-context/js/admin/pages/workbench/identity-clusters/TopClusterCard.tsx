@@ -11,6 +11,7 @@ import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { isHumanLabeledTarget } from './suggestionProjection';
 
 const resolveRepresentativeThumbUrl = (
@@ -80,6 +81,13 @@ interface TopClusterCardProps {
   onDismiss?: (clusterId: string) => void;
   isConfirming?: boolean;
   isDismissing?: boolean;
+  /**
+   * BR-41: 1-based queue position. When BOTH `queuePosition` and `queueTotal` are
+   * valid integers >= 1, ordinal text folds into the group accname.
+   */
+  queuePosition?: number;
+  /** BR-41: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
 }
 
 export const TopClusterCard = ({
@@ -91,6 +99,8 @@ export const TopClusterCard = ({
   onDismiss,
   isConfirming = false,
   isDismissing = false,
+  queuePosition,
+  queueTotal,
 }: TopClusterCardProps): React.JSX.Element => {
   const gridSizePx = 80;
   const gapPx = 2;
@@ -123,6 +133,7 @@ export const TopClusterCard = ({
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
   const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
+  const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
     if (!suggestedLabel || !onConfirmSuggestedLabel) {
@@ -140,7 +151,15 @@ export const TopClusterCard = ({
   };
 
   return (
-    <div className="acx-top-cluster-card">
+    <ReviewCardGroupShell
+      kind="cluster"
+      labelId={groupLabelId}
+      queuePosition={queuePosition}
+      queueTotal={queueTotal}
+      className="acx-top-cluster-card"
+      data-testid="acx-review-card"
+      data-review-kind="cluster"
+    >
       <div className="acx-top-cluster-card__faces">
         {reps.length > 0 ? (
           <div className={gridClassName} style={gridStyle}>
@@ -265,6 +284,6 @@ export const TopClusterCard = ({
           </button>
         )}
       </div>
-    </div>
+    </ReviewCardGroupShell>
   );
 };

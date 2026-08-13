@@ -6,8 +6,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
+from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
@@ -542,6 +544,83 @@ async def test_accept_and_reject_suggestion(
     )
     assert reject_resp.status_code == 200
     assert reject_resp.json()["status"] == "rejected"
+
+
+def test_name_suggestions_include_representative_preview_fields(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    cluster_id = str(uuid.uuid4())
+    rep_id = str(uuid.uuid4())
+    suggestion = FakeNameSuggestion(
+        cluster_id=cluster_id,
+        suggested_name="Avery Rhodes",
+        source="identity",
+        confidence_score=0.93,
+    )
+    suggestion.representatives = [
+        ClusterRepresentative(
+            id=rep_id,
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=101,
+            media_url=f"file:///tmp/blob-root/{tenant_id}/job-42/101.bin",
+            bbox_x=12,
+            bbox_y=8,
+            bbox_width=40,
+            bbox_height=30,
+            is_user_selected=False,
+        )
+    ]
+    fake_suggestion_extension_service.name_suggestions[suggestion.id] = suggestion
+
+    resp = api_client.get(
+        "/recognition/suggestions/name",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    rep = body[0]["representatives"][0]
+    assert rep["id"] == rep_id
+    assert rep["media_id"] == "101"
+    assert rep["media_url"] == "/recognition/blobs/job-42/101"
+    assert rep["thumb_url"] == "/recognition/face-thumbs/job-42/101?x=12&y=8&width=40&height=30"
+    assert rep["bbox"] == {"x": 12, "y": 8, "width": 40, "height": 30}
+
+    accept_resp = api_client.post(
+        f"/recognition/suggestions/name/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+    assert accept_resp.status_code == 200
+    accept_rep = accept_resp.json()["representatives"][0]
+    assert accept_rep["id"] == rep_id
+    assert accept_rep["bbox"] == {"x": 12, "y": 8, "width": 40, "height": 30}
+
+
+def test_name_suggestions_without_representatives_return_empty_list(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    suggestion = FakeNameSuggestion(
+        cluster_id=str(uuid.uuid4()),
+        suggested_name="Jordan Lee",
+        source="roster",
+        confidence_score=0.81,
+    )
+    fake_suggestion_extension_service.name_suggestions[suggestion.id] = suggestion
+
+    resp = api_client.get(
+        "/recognition/suggestions/name",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["representatives"] == []
 
 
 def test_name_suggestion_list_accept_reject_and_bulk_accept(

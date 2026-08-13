@@ -10864,3 +10864,161 @@ class TestF13NcDoorPromotionTrailingException:
         assert policy.audit_derived_from_model("myarcface").ok is True
         assert policy.audit_derived_from_model("not-insightface").ok is True
 
+
+class TestF13HeadPositionDenyNcCompactGlue:
+    """F13-3 / R15-L-2: deny/NC head + exception rem at min seed len 5.
+
+    ``_DENY_COMPACT_PREFIX_GLUE_MIN_SEED_LEN = 11`` left seeds of compact
+    length 5–10 blind in head position: ``arcfaceyolox`` / ``yolov8yolox``
+    admitted while their mirrors denied. Accept the head hit when the
+    remainder is an exception-family spelling (or any known seed).
+    """
+
+    NC_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("arcfaceyolox", "arcface"),
+        ("antelopev2yolox", "antelopev2"),
+    )
+    AGPL_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolov8yolox", "yolov8"),
+        ("yolov8yolox_s", "yolov8"),
+    )
+    MIRROR_CONTROLS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxarcface", "arcface"),
+        ("yoloxyolov8", "yolov8"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", NC_WITNESSES)
+    def test_nc_head_exception_rem_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must scanner-HIT (F13-3 head glue)"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES)
+    def test_agpl_head_exception_rem_denies_honest(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (F13-3 head glue)"
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token,expected_pkg", MIRROR_CONTROLS)
+    def test_mirrors_still_deny(self, token: str, expected_pkg: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    def test_red_proof_head_known_rem_glue(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_deny_head_known_rem_glue``.
+
+        ``arcfaceyolox`` / ``yolov8yolox`` admit; B13-5
+        ``ultralyticsplus`` and F12-1 ``yoloxyolo`` stay denied.
+        """
+        for token, _pkg in self.NC_WITNESSES + self.AGPL_WITNESSES:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_deny_head_known_rem_glue", lambda *_a, **_k: False
+        )
+        for token, _pkg in self.NC_WITNESSES + self.AGPL_WITNESSES:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with head-known-rem glue off, {token!r} "
+                "must admit"
+            )
+        assert policy._package_denylist_hit("ultralyticsplus") is not None
+        assert policy._package_denylist_hit("yoloxyolo") is not None
+        assert policy._package_denylist_hit("yolodummy") is None
+
+
+class TestF13JunkPrefixExceptionDenyAdjacency:
+    """F13-3 / R15-L-3: junk prefix must not defeat F12-1 steal.
+
+    ``xyoloxyolo`` / ``myyoloxyolo`` / ``abcyoloxyolo`` admitted while
+    ``yoloxyolo`` denied. Scan exception-seed occurrences at compact
+    offset > 0 when the remainder is deny material.
+    """
+
+    WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("xyoloxyolo", "yolo"),
+        ("myyoloxyolo", "yolo"),
+        ("abcyoloxyolo", "yolo"),
+    )
+    CONTROLS_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxyolo", "yolo"),
+        ("my_yoloxyolo", "yolo"),
+        ("myyoloxultralytics", "ultralytics"),
+    )
+    CONTROLS_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolodummy",
+        "yoloxs",
+        "yolox",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", WITNESSES)
+    def test_junk_prefix_exception_deny_denies_honest(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F13-3 junk-prefix adjacency)"
+        )
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token,expected_pkg", CONTROLS_DENY)
+    def test_existing_deny_controls_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"control {token!r} must still deny"
+        assert hit.package_id == expected_pkg
+
+    @pytest.mark.parametrize("token", CONTROLS_ADMIT)
+    def test_admit_controls_hold(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+
+    def test_red_proof_mid_exception_adjacency(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_compact_mid_exception_deny_adjacency``.
+
+        Junk-prefix witnesses admit; F12-1 ``yoloxyolo`` and (e)
+        ``myyoloxultralytics`` stay denied.
+        """
+        for token, _pkg in self.WITNESSES:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_compact_mid_exception_deny_adjacency", lambda _t: None
+        )
+        for token, _pkg in self.WITNESSES:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with mid-adjacency off, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("yoloxyolo") is not None
+        assert policy._package_denylist_hit("myyoloxultralytics") is not None
+        assert policy._package_denylist_hit("my_yoloxyolo") is not None
+        assert policy._package_denylist_hit("yolodummy") is None
+

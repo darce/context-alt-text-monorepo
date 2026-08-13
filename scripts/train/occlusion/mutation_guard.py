@@ -3287,6 +3287,8 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_max_reconst_segments_perturbation",
             "test_red_proof_steal_flag_turns_compact_glue_red",
             "test_red_proof_seg_in_inventory_would_admit",
+            "test_half_separated_compact_glue_denies",
+            "test_red_proof_steal_flag_turns_half_separated_red",
         ),
     ),
     Mutation(
@@ -3314,6 +3316,7 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_max_reconst_segments_perturbation",
             "test_unicode_fullwidth_compact_glue_denies",
             "test_yolos_seg_forms_deny",
+            "test_half_separated_compact_glue_denies",
         ),
     ),
     Mutation(

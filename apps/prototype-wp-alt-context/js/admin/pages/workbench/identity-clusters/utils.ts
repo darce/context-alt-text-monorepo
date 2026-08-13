@@ -3,14 +3,18 @@
  */
 
 import type { DetectedIdentity } from '../../../api/recognition';
+import { isHumanLabeledTarget } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 
 /**
  * Format a cluster label for display.
  *
  * - If no cluster ID, returns the raw label as-is
- * - If a user-assigned label exists (not auto), returns that
+ * - If a user-assigned label exists (not auto-shape), returns that
  * - Otherwise generates a display name from the cluster ID
+ *
+ * Display honesty: even when `isAutoLabel` is false/omitted, auto-shape labels
+ * (`cluster-*`) must not render as confirmed person names (E21-15-BR-27).
  *
  * @param clusterId - The cluster UUID or null
  * @param rawLabel - The label from the API
@@ -26,7 +30,7 @@ export const formatClusterLabel = (
     return rawLabel;
   }
 
-  if (rawLabel && !isAutoLabel) {
+  if (rawLabel && !isAutoLabel && isHumanLabeledTarget(rawLabel)) {
     return rawLabel;
   }
 

@@ -10,6 +10,12 @@ export const PROJECTION_TOP_K = 5;
 export const AUTO_LABEL_PREFIX = 'cluster-' as const;
 
 /**
+ * PHP-parity system-label detector: `cluster[-_]` case-insensitively on the
+ * trimmed label. Display-honesty only — survivor ranking uses a separate predicate.
+ */
+const AUTO_LABEL_PREFIX_RE = /^cluster[-_]/i;
+
+/**
  * Canonical resolution values for assignment suggestions.
  * Identity-keyed legs treat only pending/undefined as active; review may surface resolved rows.
  */
@@ -65,13 +71,15 @@ export interface ProjectedSuggestion {
 
 /**
  * Single eligibility predicate for every leg: truthy trimmed label ∧ not auto-label-prefixed.
+ * Prefix check matches PHP (`cluster[-_]` case-insensitive) so `Cluster-*` / `cluster_*`
+ * cannot pass the display gate as confirmed names.
  */
 export const isHumanLabeledTarget = (label: string | null | undefined): boolean => {
   const trimmed = label?.trim();
   if (!trimmed) {
     return false;
   }
-  return !trimmed.startsWith(AUTO_LABEL_PREFIX);
+  return !AUTO_LABEL_PREFIX_RE.test(trimmed);
 };
 
 /**

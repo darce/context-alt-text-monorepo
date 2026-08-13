@@ -42,6 +42,18 @@ describe('isHumanLabeledTarget', () => {
     expect(isHumanLabeledTarget('cluster-auto-1')).toBe(false);
     expect(isHumanLabeledTarget('  cluster-xyz  ')).toBe(false);
   });
+
+  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively.
+  it('rejects case-insensitive cluster[-_] prefixes (PHP parity)', () => {
+    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('CLUSTER-xyz')).toBe(false);
+    expect(isHumanLabeledTarget('  Cluster-abcdef12  ')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster_abcdef12  ')).toBe(false);
+    // Non-prefix / missing separator must still pass as human-format.
+    expect(isHumanLabeledTarget('mycluster-foo')).toBe(true);
+    expect(isHumanLabeledTarget('clusterabc')).toBe(true);
+  });
 });
 
 describe('isIdentityLegResolution', () => {

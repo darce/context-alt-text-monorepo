@@ -622,10 +622,7 @@ describe('ClusterLabelingPanel', () => {
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
-  it('remote guard collides on machine-shaped label via raw equality (BR-42 / FIX-8)', async () => {
-    // BR-46: typed machine-shaped labels are rejected at input before the remote guard runs.
-    // Raw case-insensitive equality (no isHumanLabeledTarget conjunct) remains in
-    // evaluateRemoteDuplicateGuard and is covered by the null-safe collision tests below.
+  it('reserved machine-shaped input is rejected before remote guard runs (BR-46)', async () => {
     const machineDuplicate = {
       ...duplicateClusterMatch,
       id: 'machine-target-id',
@@ -663,6 +660,42 @@ describe('ClusterLabelingPanel', () => {
     expect(
       vi.mocked(listRecognitionClusters).mock.calls.some((call) => call[0]?.limit === 10),
     ).toBe(false);
+  });
+
+  it('remote guard collides on machine-shaped label via case-insensitive raw equality (BR-50 / BR-42)', async () => {
+    // Cluster-Auto-1 passes isHumanLabeledTarget (uppercase fails MACHINE_RE; non-hex fails HEX_RE)
+    // while the remote row is lowercase cluster-auto-1 — raw equality must still arm the guard.
+    const machineDuplicate = {
+      ...duplicateClusterMatch,
+      id: 'machine-target-id',
+      label: 'cluster-auto-1',
+      identity_count: 3,
+    };
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([machineDuplicate]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'Cluster-Auto-1');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText('A name matching "Cluster-Auto-1" already exists. Choose how to proceed.'),
+    ).toBeInTheDocument();
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
   });
 
   it('BR-46: remote guard ignores null labels and still collides on a real match', async () => {
@@ -707,14 +740,16 @@ describe('ClusterLabelingPanel', () => {
   });
 
   it('BR-46: remote guard with only a null-labeled row resolves to no collision', async () => {
-    // Null-only labeled_only hit must not arm the guard (and must not take a distinguishable error path).
+    // Null-only labeled_only hit must not arm the guard. Oracle: remote guard ran (limit:10)
+    // and save completed via the normal no-collision path (updateClusterLabel with typed label).
     const nullLabeledRow = {
       ...duplicateClusterMatch,
       id: 'null-only-cluster',
       label: null as string | null,
       identity_count: 1,
     };
-    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+    const listMock = vi.mocked(listRecognitionClusters);
+    listMock.mockImplementation((params?: { limit?: number }) => {
       if (params?.limit === 10) {
         return Promise.resolve(makeClusterListResponse([nullLabeledRow]));
       }
@@ -735,6 +770,9 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
+      expect(listMock.mock.calls.some((call) => call[0]?.limit === 10 && call[0]?.labeled_only === true)).toBe(
+        true,
+      );
       expect(updateClusterLabel).toHaveBeenCalledWith(
         'source-cluster-id',
         'Unique Name Zq',

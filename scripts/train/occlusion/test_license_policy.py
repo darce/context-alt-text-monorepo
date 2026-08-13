@@ -10047,3 +10047,99 @@ class TestF12HalfSeparatedCompactGlue:
         assert policy._package_denylist_hit("yolox_pt_trt") is None
         assert policy._package_denylist_hit("yolox_s_pt") is None
 
+
+class TestF12NcDoorPromotionUnboundedCompact:
+    """F12-3 / R14-G1-4: NC scanner hits must reach weights doors.
+
+    ``_package_denylist_hit`` already returns the NC entry for
+    ``yoloxinsightface`` (rule (e) / F12-1 steal), but door promotion
+    only takes AGPL from that scan. The NC path required
+    ``_token_has_exception_family`` (structural strip), which misses
+    unbounded compact claims. Fail closed when scanner and door disagree.
+    """
+
+    WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxinsightface", "insightface"),
+        ("yoloxarcface", "arcface"),
+        ("yoloxantelopev2", "antelopev2"),
+        ("yoloxyolo_nas", "yolonas"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", WITNESSES)
+    def test_unbounded_exception_nc_denies_on_floor(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit NC on the scanner"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected NC entry {expected_pkg!r}, got "
+            f"{hit.package_id!r}"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", WITNESSES)
+    def test_unbounded_exception_nc_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, (
+                f"door must deny {token!r} (scanner/door fail-closed)"
+            )
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+                f"{token!r}: expected nc_model_derived, got {result.reason} "
+                f"({result.detail})"
+            )
+            # Honest NC entry — either membership note or floor entry id.
+            detail_cf = (result.detail or "").casefold()
+            assert expected_pkg.replace("_", "") in detail_cf.replace("_", ""), (
+                f"{token!r}: door detail must name {expected_pkg!r}; "
+                f"got {result.detail!r}"
+            )
+
+    def test_controls_exception_clean_and_existing_nc_compound(self) -> None:
+        assert policy._package_denylist_hit("yolox") is None
+        assert policy._package_denylist_hit("yolox_s") is None
+        for token in ("yolox", "yolox_s"):
+            for door in (
+                policy.audit_derived_from_model,
+                policy.audit_source,
+            ):
+                result = door(token)
+                assert result.ok is True, (
+                    f"control {token!r} must stay PASS; got {result.reason} "
+                    f"({result.detail})"
+                )
+        buffalo = policy.audit_derived_from_model("yolox_s_buffalo_l")
+        assert buffalo.ok is False
+        assert buffalo.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        # Door-precision: compact (e) over-block of myarcface stays floor-only.
+        assert policy._package_denylist_hit("myarcface") is not None
+        assert policy.audit_derived_from_model("myarcface").ok is True
+        assert policy.audit_derived_from_model("not-insightface").ok is True
+
+    def test_red_proof_token_has_exception_family_unbounded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: unbounded exception family is load-bearing for NC doors.
+
+        Neuter ``_token_has_exception_family`` → ``yoloxinsightface`` door
+        admits (scanner still hits; NC promotion is gated on the family
+        helper so BR-28 ``myarcface`` stays floor-only).
+        """
+        token = "yoloxinsightface"
+        assert policy._package_denylist_hit(token) is not None
+        assert policy.audit_derived_from_model(token).ok is False
+        monkeypatch.setattr(
+            policy, "_token_has_exception_family", lambda _t: False
+        )
+        assert policy._package_denylist_hit(token) is not None, (
+            "scanner must still hit after family-helper neuter"
+        )
+        assert policy.audit_derived_from_model(token).ok is True, (
+            "red-proof: with exception-family helper off, door must admit"
+        )
+

@@ -232,6 +232,44 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
   });
 });
 
+const RESERVED_LABEL_MESSAGE =
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+
+const createAndConfirmAssignment = async (name: string, onCommitCluster = vi.fn()) => {
+  const user = userEvent.setup();
+  render(<ClusterDrawerPanel {...baseProps} onCommitCluster={onCommitCluster} />);
+
+  await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+  const search = screen.getByPlaceholderText('Assign to…');
+  await user.clear(search);
+  await user.type(search, name);
+  await user.click(screen.getByRole('button', { name: `Create "${name}"` }));
+  await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+
+  return onCommitCluster;
+};
+
+describe('ClusterDrawerPanel create-commit reserved-label gate (BR-59)', () => {
+  it('rejects cluster-7 without calling onCommitCluster and shows reserved message', async () => {
+    const onCommitCluster = await createAndConfirmAssignment('cluster-7');
+
+    expect(onCommitCluster).not.toHaveBeenCalled();
+    expect(screen.getByText(RESERVED_LABEL_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+  });
+
+  it('commits Pat Rivera via onCommitCluster (human-label control)', async () => {
+    const onCommitCluster = await createAndConfirmAssignment('Pat Rivera');
+
+    expect(onCommitCluster).toHaveBeenCalledTimes(1);
+    expect(onCommitCluster).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cluster-1' }),
+      { newEntryName: 'Pat Rivera' },
+    );
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+  });
+});
+
 describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
   it('renders Cluster <id8> when label is empty string', () => {
     render(
@@ -241,7 +279,9 @@ describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' })).toBeInTheDocument();
+    const heading = screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' });
+    // BR-61: exact textContent (role accessible-name normalizes whitespace).
+    expect(heading.textContent).toBe('Cluster abcdef01');
   });
 
   it('renders Cluster <id8> when label is null', () => {
@@ -263,7 +303,9 @@ describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' })).toBeInTheDocument();
+    const heading = screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' });
+    // BR-61: exact textContent kills concat(whitespace + fallback) false-greens.
+    expect(heading.textContent).toBe('Cluster abcdef01');
   });
 
   it('renders the human label when present', () => {

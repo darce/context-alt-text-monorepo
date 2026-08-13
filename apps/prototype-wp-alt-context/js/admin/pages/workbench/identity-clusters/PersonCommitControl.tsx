@@ -26,6 +26,7 @@ import {
   VIEW_IN_ROSTER_COPY,
   VIEW_IN_ROSTER_HREF,
 } from './personCommitCopy';
+import { isHumanLabeledTarget } from './suggestionProjection';
 import type { PersonCommitPhase, PersonCommitRequest } from './useSuggestionReviewMutations';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -67,7 +68,14 @@ export const PersonCommitControl = ({
   const [newEntryName, setNewEntryName] = React.useState('');
   /** BR-35: live combobox search draft for the always-available create action. */
   const [draftInput, setDraftInput] = React.useState('');
+  /** BR-59: reserved create-name rejection (inline, same role=alert pattern as commit failure). */
+  const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === 'committing' || disabled;
+
+  const reservedLabelMessage = __(
+    'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+    'alt-context',
+  );
 
   const rosterQuery = useQuery({
     queryKey: queryKeys.roster.entries(),
@@ -82,6 +90,7 @@ export const PersonCommitControl = ({
     setSelectedEntryId('');
     setNewEntryName('');
     setDraftInput('');
+    setReservedError(null);
     const trimmed = suggestedCreateName?.trim() ?? '';
     if (trimmed.length > 0) {
       setSelectedEntryId('create');
@@ -95,12 +104,14 @@ export const PersonCommitControl = ({
     if (!trimmed) {
       return;
     }
+    setReservedError(null);
     setSelectedEntryId('create');
     setNewEntryName(trimmed);
     setDraftInput(trimmed);
   };
 
   const handleSelectEntry = (nextValue: string): void => {
+    setReservedError(null);
     setSelectedEntryId(nextValue);
     if (nextValue !== 'create') {
       setNewEntryName('');
@@ -127,9 +138,17 @@ export const PersonCommitControl = ({
       return;
     }
     if (isCreatingEntry) {
-      onCommit({ clusterId, newEntryName: newEntryName.trim() });
+      const trimmed = newEntryName.trim();
+      // BR-59: reject reserved machine-shaped create names before POST.
+      if (!isHumanLabeledTarget(trimmed)) {
+        setReservedError(reservedLabelMessage);
+        return;
+      }
+      setReservedError(null);
+      onCommit({ clusterId, newEntryName: trimmed });
       return;
     }
+    setReservedError(null);
     onCommit({ clusterId, rosterEntryId: Number.parseInt(selectedEntryId, 10) });
   };
 
@@ -204,6 +223,12 @@ export const PersonCommitControl = ({
         >
           {sprintf(__(PERSON_COMMIT_CREATE_NEW_COPY, 'alt-context'), createCandidate)}
         </button>
+      ) : null}
+
+      {reservedError ? (
+        <p className="acx-person-commit__failure-message" role="alert">
+          {reservedError}
+        </p>
       ) : null}
 
       {phase === 'failed' ? (

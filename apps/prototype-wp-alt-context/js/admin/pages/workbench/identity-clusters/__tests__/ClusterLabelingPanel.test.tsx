@@ -665,6 +665,7 @@ describe('ClusterLabelingPanel', () => {
   it('remote guard collides on machine-shaped label via case-insensitive raw equality (BR-50 / BR-42)', async () => {
     // Cluster-Auto-1 passes isHumanLabeledTarget (uppercase fails MACHINE_RE; non-hex fails HEX_RE)
     // while the remote row is lowercase cluster-auto-1 — raw equality must still arm the guard.
+    // BR-58: collision warning stays, but merge affordance is suppressed for machine-labeled targets.
     const machineDuplicate = {
       ...duplicateClusterMatch,
       id: 'machine-target-id',
@@ -694,12 +695,16 @@ describe('ClusterLabelingPanel', () => {
     expect(
       await screen.findByText('A name matching "Cluster-Auto-1" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Merge target: cluster "cluster-auto-1"/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Merge into cluster/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rename anyway' })).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
   it('BR-46: remote guard ignores null labels and still collides on a real match', async () => {
     // Predicted first failure (pre B): cluster.label.toLowerCase() throws on null → catch fail-open
+    // BR-58 control: human-labeled collision still offers the merge button.
     const nullLabeledRow = {
       ...duplicateClusterMatch,
       id: 'null-label-cluster',
@@ -735,6 +740,7 @@ describe('ClusterLabelingPanel', () => {
     expect(
       await screen.findByText('A name matching "Pat Rivera" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge into cluster "Pat Rivera"' })).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
   });

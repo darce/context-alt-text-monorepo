@@ -7,6 +7,12 @@ import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from '
 import { ConfirmDialog } from './ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 export interface RosterEntriesTableProps {
   entries: RosterEntry[];
@@ -132,15 +138,23 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [name, setName] = useState(entry.name);
   const [tags, setTags] = useState(entry.tags.join(', '));
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const updatePerson = useUpdatePerson();
   const deletePerson = useDeletePerson();
 
   const handleSave = () => {
+    const trimmedName = name.trim();
+    // BR-60: reject reserved machine-shaped person names before rename.
+    if (!isHumanLabeledTarget(trimmedName)) {
+      setNameError(RESERVED_LABEL_MESSAGE);
+      return;
+    }
+    setNameError(null);
     updatePerson.mutate(
       {
         id: entry.id,
-        name: name.trim(),
+        name: trimmedName,
         tags: tags
           .split(',')
           .map((t) => t.trim())
@@ -155,6 +169,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   const handleCancel = () => {
     setName(entry.name);
     setTags(entry.tags.join(', '));
+    setNameError(null);
     setIsEditing(false);
   };
 
@@ -165,6 +180,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   };
 
   if (isEditing) {
+    const nameErrorId = `acx-roster-edit-name-error-${entry.id}`;
     return (
       <tr>
         <td>
@@ -173,10 +189,22 @@ const EditableRow = ({ entry }: EditableRowProps) => {
             type="text"
             className="acx-input"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (nameError) {
+                setNameError(null);
+              }
+            }}
             disabled={updatePerson.isPending}
             autoFocus
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError ? nameErrorId : undefined}
           />
+          {nameError && (
+            <p id={nameErrorId} className="acx-roster-entries__name-error" role="alert">
+              {nameError}
+            </p>
+          )}
         </td>
         <PersonStateCell entry={entry} />
         <td>

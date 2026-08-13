@@ -9,6 +9,12 @@ import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 export interface ClusterReassignTarget {
   id: string;
@@ -270,11 +276,18 @@ export const ClusterDrawerPanel = ({
       return;
     }
 
-    const assignment = isCreatingEntry
-      ? { newEntryName: newEntryName.trim() }
-      : { rosterEntryId: Number.parseInt(selectedEntryId, 10) };
+    if (isCreatingEntry) {
+      const trimmedName = newEntryName.trim();
+      // BR-59: reject reserved machine-shaped create names before commit.
+      if (!isHumanLabeledTarget(trimmedName)) {
+        setStatusMessage(RESERVED_LABEL_MESSAGE);
+        return;
+      }
+      onCommitCluster(cluster, { newEntryName: trimmedName });
+      return;
+    }
 
-    onCommitCluster(cluster, assignment);
+    onCommitCluster(cluster, { rosterEntryId: Number.parseInt(selectedEntryId, 10) });
   };
 
   return (

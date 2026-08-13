@@ -374,6 +374,40 @@ describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
     // of remounted nodes is not always observable beyond the bumped attribute).
     expect(status2).toHaveAttribute('data-announce-seq', seq2);
   });
+
+  it('BR-68: reassign success message survives picker create (handleCreate)', async () => {
+    const user = userEvent.setup();
+    const onReassignFace = vi.fn();
+    const panelProps = {
+      ...baseProps,
+      reassignTargets,
+      onReassignFace,
+      onCommitCluster: vi.fn(),
+    };
+
+    const { rerender } = render(<ClusterDrawerPanel {...panelProps} isReassigning={false} />);
+
+    await user.click(screen.getByRole('button', { name: /Move to… identity from media 10/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Target Alpha' }));
+
+    // Toggle isReassigning like the parent mutation hook: pending → settled → Moved.
+    rerender(<ClusterDrawerPanel {...panelProps} isReassigning={true} />);
+    rerender(<ClusterDrawerPanel {...panelProps} isReassigning={false} />);
+
+    const status = screen.getByTestId('cluster-drawer-reassign-status');
+    expect(status).toHaveTextContent('Moved identity to Target Alpha.');
+
+    // handleCreate → clearReservedStatus; must not wipe the reassign success copy.
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    const search = screen.getByPlaceholderText('Assign to…');
+    await user.clear(search);
+    await user.type(search, 'Pat Rivera');
+    await user.click(screen.getByRole('button', { name: 'Create "Pat Rivera"' }));
+
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent(
+      'Moved identity to Target Alpha.',
+    );
+  });
 });
 
 describe('ClusterDrawerPanel heading fallback (BR-51)', () => {

@@ -1902,12 +1902,19 @@ def _nc_covering_seed_for_head(head: str) -> str | None:
 
 
 def _token_has_exception_family(token: str) -> bool:
-    """True when any slash component hits an exception-family seed."""
+    """True when any slash component hits an exception-family seed.
+
+    Includes unbounded compact-prefix claims (F12-3 / R14-G1-4) so
+    ``yoloxinsightface`` is visible to NC door promotion — structural
+    strip alone misses those forms and dropped a known scanner NC hit.
+    """
     c = canonical(token) if token else None
     if not c:
         return False
     parts = [p for p in c.split("/") if p] if "/" in c else [c]
     for part in parts:
+        if _exception_seed_match_for_residual(part) is not None:
+            return True
         if _best_exception_hit_with_residual(part) is not None:
             return True
     return False
@@ -4379,6 +4386,17 @@ def _door_package_floor_promotion(
     nc = _whole_component_nc_package_hit(value)
     if nc is not None:
         return nc
+    # F12-3 / R14-G1-4: fail closed when the uniform scanner already
+    # found NC but whole-component promotion missed (unbounded exception
+    # compact + NC residual). Restricted to exception-family tokens so
+    # BR-28 door-precision (``myarcface`` / ``not-insightface``) stays
+    # floor-only.
+    if _token_has_exception_family(value):
+        scanned_nc = _package_denylist_hit(
+            value, reasons=frozenset({RejectionReason.NC_MODEL_DERIVED})
+        )
+        if scanned_nc is not None:
+            return scanned_nc
     return None
 
 

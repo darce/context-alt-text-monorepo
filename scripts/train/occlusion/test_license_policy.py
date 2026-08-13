@@ -10761,3 +10761,106 @@ class TestF13UnofficialSeparatorFolding:
         assert policy._package_denylist_hit("yolox_yolo") is not None
         assert policy._package_denylist_hit("yolox_pt_trt") is None
 
+
+class TestF13NcDoorPromotionTrailingException:
+    """F13-2 / R15-L-1: exception after the NC head must reach doors.
+
+    ``_token_has_exception_family`` was prefix-anchored, so scanner-NC
+    hits with a trailing exception segment (``insightface_yolox``)
+    door-passed. Segment-aware identity + compact-tail detection
+    promotes those hits. BR-28 ``myarcface`` / ``not-insightface``
+    have no exception segment and stay floor-only door-pass.
+    """
+
+    DOOR_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("insightface_yolox", "insightface"),
+        ("buffalo_l_yolox_s", "buffalo_l"),
+        ("arcface_yolox", "arcface"),
+        ("yolonas_yolox", "yolonas"),
+        ("insightfaceyolox", "insightface"),
+    )
+    FAMILY_ONLY: ClassVar[tuple[str, ...]] = (
+        "arcfaceyolox",
+        "antelopev2yolox",
+    )
+    FLOOR_ONLY_DOOR_PASS: ClassVar[tuple[str, ...]] = (
+        "myarcface",
+        "not-insightface",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", DOOR_DENY)
+    def test_trailing_exception_nc_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        assert policy._token_has_exception_family(token) is True, (
+            f"{token!r} must be visible as exception-family (F13-2)"
+        )
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must scanner-NC-HIT"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, (
+                f"door must deny {token!r} (trailing-exception promotion)"
+            )
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", FAMILY_ONLY)
+    def test_compact_short_seed_head_is_exception_family(
+        self, token: str
+    ) -> None:
+        """Family helper sees the trailing exception; scanner hit is F13-3."""
+        assert policy._token_has_exception_family(token) is True, (
+            f"{token!r} must expose the trailing exception seed"
+        )
+
+    @pytest.mark.parametrize("token", FLOOR_ONLY_DOOR_PASS)
+    def test_br28_floor_only_precision_preserved(self, token: str) -> None:
+        assert policy._token_has_exception_family(token) is False, (
+            f"BR-28 {token!r} must not grow an exception segment"
+        )
+        assert policy._package_denylist_hit(token) is not None, (
+            f"{token!r} must stay floor-deny"
+        )
+        assert policy.audit_derived_from_model(token).ok is True, (
+            f"{token!r} must stay door-pass (floor-only precision)"
+        )
+
+    def test_prefix_exception_nc_still_denies(self) -> None:
+        """F12-3 prefix path is independent of the F13-2 helper."""
+        token = "yoloxinsightface"
+        assert policy._token_has_exception_family(token) is True
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_red_proof_non_prefix_exception_helper(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_token_has_non_prefix_exception_family``.
+
+        Trailing-exception NC compounds door-admit; F12-3 prefix
+        ``yoloxinsightface`` still denies via the prefix-match path.
+        """
+        for token, _pkg in self.DOOR_DENY:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"precondition: {token!r} must door-deny"
+            )
+        monkeypatch.setattr(
+            policy, "_token_has_non_prefix_exception_family", lambda _p: False
+        )
+        for token, _pkg in self.DOOR_DENY:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with non-prefix helper off, {token!r} "
+                "must door-admit"
+            )
+        # Prefix-exception NC is F12-3, not this helper.
+        assert policy.audit_derived_from_model("yoloxinsightface").ok is False
+        # BR-28 controls stay door-pass.
+        assert policy.audit_derived_from_model("myarcface").ok is True
+        assert policy.audit_derived_from_model("not-insightface").ok is True
+

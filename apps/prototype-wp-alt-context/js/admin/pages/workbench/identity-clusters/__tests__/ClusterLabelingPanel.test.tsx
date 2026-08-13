@@ -622,6 +622,41 @@ describe('ClusterLabelingPanel', () => {
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
+  it('remote guard collides on machine-shaped label via raw equality (BR-42 / FIX-8)', async () => {
+    // Predicted first failure: isHumanLabeledTarget('cluster-auto-1') false → find() skips → null guard
+    const machineDuplicate = {
+      ...duplicateClusterMatch,
+      id: 'machine-target-id',
+      label: 'cluster-auto-1',
+      identity_count: 3,
+    };
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([machineDuplicate]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'cluster-auto-1');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText('A name matching "cluster-auto-1" already exists. Choose how to proceed.'),
+    ).toBeInTheDocument();
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
+  });
+
   it('person+cluster same name still offers named merge into the cluster (PR-18 / FIX-9)', async () => {
     // Predicted first failure: person-preferred dedupe hides cluster so merge not offered
     vi.mocked(listRecognitionClusters).mockResolvedValue(

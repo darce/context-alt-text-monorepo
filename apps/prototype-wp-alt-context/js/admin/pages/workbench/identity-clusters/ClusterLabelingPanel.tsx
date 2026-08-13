@@ -35,7 +35,7 @@ import {
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
+import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 interface ClusterLabelingPanelProps {
@@ -306,6 +306,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   /**
    * When the local collision set is empty/pending (limit 20, disabled <2 chars),
    * look up an exact remote labeled match so free-text create cannot silent-dupe (FIX-8).
+   * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
+   * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
    */
   const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
     try {
@@ -316,8 +318,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       });
       const normalized = trimmed.toLowerCase();
       const match = results.clusters.find(
-        (cluster) =>
-          cluster.id !== clusterId && cluster.label.toLowerCase() === normalized && isHumanLabeledTarget(cluster.label),
+        (cluster) => cluster.id !== clusterId && cluster.label.toLowerCase() === normalized,
       );
       if (!match?.id || !match.label) {
         return null;

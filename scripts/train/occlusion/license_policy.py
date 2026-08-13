@@ -124,19 +124,22 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
      ``yolox_yolop`` ADMIT after successive pure-exception strips
      (FIR-7-B7-06).
 
-**Per-family tags** (FIR-7-B12-3 / B12-4 / F10 / F12): each exception
-seed has compact-(c) tags (fit the 1–3 alnum bound) **and** separator-
-only tags (any length) reflecting real checkpoints — ``yolox``: s/m/l/x
-+ nano/tiny/darknet/darknet53; ``yolos``: tiny/small/base/large (no
-compact single-letter sizes); ``yolof``: r50 + r101/c5/1x/3x/r/50/101/coco
-(Detectron2 schedule / ``R_50`` spelling / dataset tag); ``yolop``: v2/v3;
-``ppyolo``: e/v2 + s/m/l/x/plus/crn/r50vd/dcn/300e/80e/1x/365e/coco
+**Per-family tags** (FIR-7-B12-3 / B12-4 / F10 / F12 / F13-4): each
+exception seed has compact-(c) tags (fit the 1–3 alnum bound) **and**
+separator-only tags (any length) reflecting real checkpoints —
+``yolox``: s/m/l/x + nano/tiny/darknet/darknet53 + MMDetection
+``8xb8``/``8x8``/``300e``/``coco``/``voc``; ``yolos``: tiny/small/base/large
+(no compact single-letter sizes); ``yolof``: r50 + r101/c5/1x/3x/r/50/101/coco
++ ``8xb8``/``8x8`` (Detectron2 / MMDetection schedule / ``R_50`` spelling
+/ dataset tag); ``yolop``: v2/v3; ``ppyolo``: e/v2 +
+s/m/l/x/t/plus/tiny/large/small/sod/crn/r50vd/r18vd/r101vd/mbv3/dcn/300e/80e/1x/2x/365e/650e/coco
 (PaddleDetection catalog). YOLOS single-letter size twins (``yolosx`` /
 ``yolosn`` / …) are NOT real hustvl sizes → deny; ``yoloxs`` stays
 admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
-R14-G2-4: ``yoloxtiny`` / ``ppyoloes``). Export/format tags from
-``_NC_TRAILING_SHIELD_TAGS`` are legitimate **separator** residuals for
-all families (``yolox_trt`` admits; ``yoloxpt`` denies).
+R14-G2-4: ``yoloxtiny`` / ``ppyoloes`` / ``yolox8xb8``). Export/format
+tags from ``_NC_TRAILING_SHIELD_TAGS`` are legitimate **separator**
+residuals for all families (``yolox_trt`` admits; ``yoloxpt`` denies).
+Inventories are per-family — ``yolos_8xb8`` / ``ppyolo_voc`` deny.
 
 Vendor-prefix underscore forms of pure exception seeds
 (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
@@ -3108,6 +3111,12 @@ def _family_match_abc(
             rem = token_compact[len(seed_compact) :]
             if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                 return True
+            # F13-5: documented compact-glue allowlist rem (ppyolo + eplus)
+            # is a real identity, not 1–3 debris.
+            if rem and rem in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(
+                seed_canonical, frozenset()
+            ):
+                return True
     return False
 
 
@@ -3362,6 +3371,12 @@ def _strip_exception_seed_residual(
                     rem = head_compact[len(seed_k) :]
                     if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
                         return f"{rem}_{rest}" if rest else rem
+                    # F13-5: allowlisted rem is part of the compact
+                    # identity (ppyoloeplus); residual is the tail only.
+                    if rem and rem in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(
+                        seed_c, frozenset()
+                    ):
+                        return rest
 
     return ""
 
@@ -3431,31 +3446,49 @@ _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
 # B14-3: ``seg`` deliberately absent from yolos (YOLOS is detection-only;
 # ``yolos_seg`` is Ultralytics canonical seg naming with the digit dropped).
 #
-# PP-YOLO / PP-YOLOE / PP-YOLOv2 (F12-4): real PaddleDetection catalog
-# debris. Compact tags stay ``e`` / ``v2``. Separator-only inventory:
-#   * sizes after e: s / m / l / x  (``ppyoloe_s``; compact ``ppyoloes``
-#     stays DENY — A14-1 / R14-G2-4)
-#   * variant: plus (PP-YOLOE+)
-#   * backbone: crn (CSPResNet), r50vd (ResNet-50-vd)
+# PP-YOLO / PP-YOLOE / PP-YOLOv2 (F12-4 / F13-4): real PaddleDetection
+# catalog debris. Compact tags stay ``e`` / ``v2``. Separator-only:
+#   * sizes after e: s / m / l / x / t  (``ppyoloe_s``; compact
+#     ``ppyoloes`` / ``ppyolotiny`` stay DENY — A14-1 / R14-G2-4)
+#   * variant: plus (PP-YOLOE+), tiny / large / small / sod
+#   * backbone: crn (CSPResNet), r50vd / r18vd / r101vd, mbv3
 #   * neck / op: dcn (deformable conv)
-#   * schedule: 300e / 80e / 365e (epoch budgets), 1x (Detectron-style)
+#   * schedule: 300e / 80e / 365e / 650e (epoch budgets), 1x / 2x
 #   * dataset: coco
 # These are structural training-config tags for this family, not a
 # global schedule shield. A residual containing a deny stem still denies.
-# YOLOF (F12-5 / F12b-1) reuses the same schedule/dataset debris policy
-# for Detectron2 / MMDetection catalog names (``1x`` / ``3x`` / ``coco``);
-# each family keeps its own inventory — ``coco`` is not a global dataset
-# shield.
+# YOLOF (F12-5 / F12b-1 / F13-4) reuses the same schedule/dataset debris
+# policy for Detectron2 / MMDetection catalog names (``1x`` / ``3x`` /
+# ``coco`` / ``8xb8`` / ``8x8``); each family keeps its own inventory —
+# ``coco`` / ``voc`` / ``8xb8`` are not a global dataset shield.
+# YOLOX (F13-4) adds MMDetection batch/schedule tags ``8xb8`` / ``8x8``
+# plus ``300e`` / ``coco`` / ``voc``. Compact-glue allowlist is untouched
+# (``yolox8xb8`` / ``yolofcoco`` stay DENY).
 _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
-    "yolox": frozenset({"nano", "tiny", "darknet", "darknet53"}),
+    "yolox": frozenset(
+        {
+            "nano",
+            "tiny",
+            "darknet",
+            "darknet53",
+            "8xb8",
+            "8x8",
+            "300e",
+            "coco",
+            "voc",
+        }
+    ),
     "yolos": frozenset({"tiny", "small", "base", "large"}),
-    # YOLOF Detectron2 / MMDetection catalog (F12-5 / F12b-1): r50 is
-    # compact; r101/c5 already here. Digit+x schedule tokens (1x / 3x),
-    # the split R_50 / R_101 spelling (r, 50, 101), and the trailing
-    # dataset tag (coco) are structural Detectron2 config tags. Same
-    # F12-4 schedule/dataset debris policy as ppyolo; lists are not
-    # shared (per-family inventory).
-    "yolof": frozenset({"r101", "c5", "1x", "3x", "r", "50", "101", "coco"}),
+    # YOLOF Detectron2 / MMDetection catalog (F12-5 / F12b-1 / F13-4):
+    # r50 is compact; r101/c5 already here. Digit+x schedule tokens
+    # (1x / 3x), the split R_50 / R_101 spelling (r, 50, 101), the
+    # trailing dataset tag (coco), and MMDetection batch tokens
+    # (8xb8 / 8x8) are structural config tags. Same F12-4
+    # schedule/dataset debris policy as ppyolo; lists are not shared
+    # (per-family inventory — yolos_8xb8 / ppyolo_voc stay DENY).
+    "yolof": frozenset(
+        {"r101", "c5", "1x", "3x", "r", "50", "101", "coco", "8xb8", "8x8"}
+    ),
     "yolop": frozenset(),
     "ppyolo": frozenset(
         {
@@ -3463,14 +3496,24 @@ _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
             "m",
             "l",
             "x",
+            "t",
             "plus",
+            "tiny",
+            "large",
+            "small",
+            "sod",
             "crn",
             "r50vd",
+            "r18vd",
+            "r101vd",
+            "mbv3",
             "dcn",
             "300e",
             "80e",
             "1x",
+            "2x",
             "365e",
+            "650e",
             "coco",
         }
     ),
@@ -3557,6 +3600,12 @@ def _head_compact_peel_rem(
     if head_compact.startswith(seed_k):
         rem = head_compact[len(seed_k) :]
         if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+            return rem
+        # F13-5 / R15-L-4: allowlisted compact-glue rem (eplus, 5 chars)
+        # must peel in head position so ppyoloeplus_trt is not unknown.
+        if rem and rem in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(
+            seed_c, frozenset()
+        ):
             return rem
     return None
 

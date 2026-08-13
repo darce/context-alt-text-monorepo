@@ -36,6 +36,8 @@ class DetectsSystemDefinedLabelsTest extends TestCase
             'short underscore label' => ['cluster_7'],
             'trimmed label' => [' cluster-x '],
             'case-insensitive label' => ['CLUSTER-9'],
+            'nbsp-prefixed reserved' => ["\u{00A0}cluster-9"],
+            'ideographic-space-prefixed reserved' => ["\u{3000}cluster-9"],
         ];
     }
 
@@ -63,6 +65,8 @@ class DetectsSystemDefinedLabelsTest extends TestCase
             'person name' => ['Alice'],
             'numbered person' => ['Person 2'],
             'empty' => [''],
+            'mid-string cluster-9' => ['The cluster-9 team'],
+            'mid-string cluster_x' => ['my cluster_x'],
         ];
     }
 }

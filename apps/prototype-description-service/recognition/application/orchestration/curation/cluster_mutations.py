@@ -201,6 +201,9 @@ async def create_cluster_for_identity(
     suggestion_service: SuggestionServiceProtocol | None = None,
 ) -> IdentityCluster:
     """Create a new user-labeled cluster containing a single identity."""
+    if is_reserved_label_shape(label):
+        raise ReservedClusterLabelError(label)
+
     if session is None:
         raise RuntimeError("Database session is required for create_cluster_for_identity")
 

@@ -20,6 +20,7 @@ from sqlalchemy import select
 import db.session as db_session_module
 from db.models.identity import CurationReplayRecord
 from recognition.application.tasks.clustering import run_background_surface_suggestions
+from recognition.domain.cluster import ReservedClusterLabelError
 from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.job import SplitJobPayload
 from recognition.domain.suggestion import SuggestionRefreshReason
@@ -278,6 +279,8 @@ async def create_cluster_for_identity(
             tenant_id=request.tenant_id,
             desired_cluster_id=request.desired_cluster_id,
         )
+    except ReservedClusterLabelError:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

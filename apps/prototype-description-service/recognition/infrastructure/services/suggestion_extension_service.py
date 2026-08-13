@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from db.models import ClusterMergeSuggestion, IdentityCluster, IdentityClusterRepresentative, IdentitySuggestion
 from db.models import NameSuggestion as NameSuggestionModel
+from recognition.domain.cluster import ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
@@ -255,6 +256,9 @@ class SuggestionExtensionService:
             if not self._can_apply_name_label(cluster, suggestion.suggested_name):
                 skipped_count += 1
                 continue
+            if is_reserved_label_shape(suggestion.suggested_name):
+                skipped_count += 1
+                continue
 
             self._apply_name_label(cluster, suggestion.suggested_name)
             suggestion.resolution = SuggestionStatus.ACCEPTED.value
@@ -378,6 +382,8 @@ class SuggestionExtensionService:
 
     @staticmethod
     def _apply_name_label(cluster: IdentityCluster, suggested_name: str) -> None:
+        if is_reserved_label_shape(suggested_name):
+            raise ReservedClusterLabelError(suggested_name)
         cluster.label = suggested_name
         cluster.user_confirmed = True
         cluster.confirmation_count = int(cluster.confirmation_count or 0) + 1
@@ -401,7 +407,7 @@ class SuggestionExtensionService:
     def _to_name_suggestion(
         model: NameSuggestionModel,
         *,
-        representatives: list[ClusterRepresentative] | None = None,
+        representatives: list[ClusterRepresentative],
     ) -> NameSuggestion:
         return NameSuggestion(
             id=str(model.id),
@@ -418,7 +424,7 @@ class SuggestionExtensionService:
             if model.last_exported_snapshot_id is not None
             else None,
             disposed_at=model.disposed_at,
-            representatives=list(representatives or []),
+            representatives=list(representatives),
         )
 
     @staticmethod

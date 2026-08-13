@@ -76,7 +76,7 @@ final class ConflictResolutionService {
 	}
 
 	/**
-	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool, restore_report?:array{enqueued:int, skipped:int, skipped_keys:string[]}}
+	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'reserved_label'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool, restore_report?:array{enqueued:int, skipped:int, skipped_keys:string[]}}
 	 *         restore_report is present only for successful restore_local resolutions: entities whose
 	 *         local curated state no longer exists are skipped and counted, not fatal.
 	 */
@@ -182,6 +182,18 @@ final class ConflictResolutionService {
 					return array(
 						'ok' => false,
 						'reason' => 'resolution_not_allowed',
+						'metrics_refreshed' => false,
+					);
+				}
+
+				if (
+					'person_name_conflict' === (string) ( $conflict['conflict_code'] ?? '' )
+					&& $this->is_reserved_label_shape( $normalized_merged_value )
+				) {
+					$wpdb->query( 'ROLLBACK' );
+					return array(
+						'ok' => false,
+						'reason' => 'reserved_label',
 						'metrics_refreshed' => false,
 					);
 				}
@@ -624,8 +636,7 @@ final class ConflictResolutionService {
 		$conflict_code = (string) ( $conflict['conflict_code'] ?? '' );
 		if ( 'person_name_conflict' === $conflict_code ) {
 			if ( $this->is_reserved_label_shape( $merged_value ) ) {
-				$this->log_reserved_label_write_skipped( $conflict, 'merged' );
-				return true;
+				return false;
 			}
 
 			return $this->clusters_repository->update_label( (string) ( $conflict['entity_key'] ?? '' ), $merged_value, true ) > 0;

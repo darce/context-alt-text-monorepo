@@ -38,6 +38,45 @@ def _cluster(
     )
 
 
+def test_select_merge_target_placeholder_labels_return_none_target_label() -> None:
+    """E21-17-R1-PY47-3: cluster-* survivor labels must not flow into merge guard."""
+    larger = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        label="cluster-aaa",
+        identity_count=5,
+    )
+    smaller = _cluster(
+        cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        label="cluster-bbb",
+        identity_count=2,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(larger, smaller)
+
+    assert source_id == smaller.id
+    assert target_id == larger.id
+    assert target_label is None
+
+
+def test_select_merge_target_meaningful_label_unchanged() -> None:
+    named = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        label="Alice",
+        identity_count=2,
+    )
+    placeholder = _cluster(
+        cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        label="cluster-bbb",
+        identity_count=50,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(named, placeholder)
+
+    assert source_id == placeholder.id
+    assert target_id == named.id
+    assert target_label == "Alice"
+
+
 def test_select_merge_target_user_confirmed_flips_survivor_over_larger_count() -> None:
     """user_confirmed is the SOLE discriminator: labels/counts favor the loser."""
     # E215-BR-03: larger unconfirmed has equal-or-better label + higher count;

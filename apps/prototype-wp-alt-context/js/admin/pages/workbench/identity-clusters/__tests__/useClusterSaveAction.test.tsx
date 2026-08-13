@@ -85,7 +85,15 @@ const renderSaveAction = (overrides: SaveActionOverrides = {}) => {
     }),
   );
 
-  return { result, mutations, cancelEditing, queueSaveStatus, resetSaveStatus, findClusterByLabel };
+  return {
+    result,
+    mutations,
+    cancelEditing,
+    queueSaveStatus,
+    resetSaveStatus,
+    findClusterByLabel,
+    setError,
+  };
 };
 
 describe('useClusterSaveAction person path (FIX-1)', () => {
@@ -398,5 +406,61 @@ describe('useClusterSaveAction casing grid (B6)', () => {
     expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
     expect(findClusterByLabel).not.toHaveBeenCalled();
     expect(cancelEditing).toHaveBeenCalled();
+  });
+});
+
+const RESERVED_LABEL_MSG =
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+
+describe('useClusterSaveAction reserved-label gate (BR-49)', () => {
+  it('handleSave(cluster-7) rejects reserved machine label without lookup or mutation', async () => {
+    const { result, mutations, findClusterByLabel, setError, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'Old',
+      labelInput: 'cluster-7',
+    });
+
+    await act(async () => {
+      await result.current.handleSave('cluster-7');
+    });
+
+    expect(setError).toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(findClusterByLabel).not.toHaveBeenCalled();
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(queueSaveStatus).not.toHaveBeenCalled();
+  });
+
+  it('handleSave(cluster-auto-1) rejects reserved machine label without lookup or mutation', async () => {
+    const { result, mutations, findClusterByLabel, setError, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'Old',
+      labelInput: 'cluster-auto-1',
+    });
+
+    await act(async () => {
+      await result.current.handleSave('cluster-auto-1');
+    });
+
+    expect(setError).toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(findClusterByLabel).not.toHaveBeenCalled();
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+    expect(queueSaveStatus).not.toHaveBeenCalled();
+  });
+
+  it('handleSave(Cluster-Dad) proceeds past the reserved gate on the normal path', async () => {
+    const { result, mutations, findClusterByLabel, setError } = renderSaveAction({
+      clusterLabel: 'Old',
+      labelInput: 'Cluster-Dad',
+    });
+
+    await act(async () => {
+      await result.current.handleSave('Cluster-Dad');
+    });
+
+    expect(setError).not.toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(findClusterByLabel).toHaveBeenCalledWith('Cluster-Dad', expect.any(AbortSignal));
+    expect(mutations.rename).toHaveBeenCalledWith('Cluster-Dad', expect.any(AbortSignal));
   });
 });

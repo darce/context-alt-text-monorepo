@@ -231,3 +231,38 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
     expect(moveButton).toHaveFocus();
   });
 });
+
+describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
+  it('renders Cluster <id8> when label is empty string', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={{ ...cluster, id: 'abcdef0123456789', label: '' }}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' })).toBeInTheDocument();
+  });
+
+  it('renders Cluster <id8> when label is null', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={{ ...cluster, id: 'abcdef0123456789', label: null }}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' })).toBeInTheDocument();
+  });
+
+  it('renders the human label when present', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={{ ...cluster, id: 'abcdef0123456789', label: 'Source Cluster' }}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3, name: 'Source Cluster' })).toBeInTheDocument();
+  });
+});

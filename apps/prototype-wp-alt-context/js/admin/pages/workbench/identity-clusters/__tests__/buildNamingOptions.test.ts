@@ -159,15 +159,21 @@ describe('buildNamingOptions', () => {
   });
 
   it('excludes a machine-labeled cluster row from clusterCandidates (BR-48 candidate lock)', () => {
+    // Human control row defeats vacuous-green (matchesPrefix starvation / fixture typo).
     const { options } = buildNamingOptions({
       rosterEntries: [],
-      labelMatches: [{ id: 'br48-auto', label: 'cluster-1234', identity_count: 1 }],
+      labelMatches: [
+        { id: 'br48-auto', label: 'cluster-1234', identity_count: 1 },
+        { id: 'br48-human', label: 'Pat Rivera', identity_count: 4 },
+      ],
       limit: null,
     });
 
-    expect(options).toHaveLength(0);
+    expect(options.some((option) => option.label === 'Pat Rivera')).toBe(true);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'br48-human'))).toBe(true);
     expect(options.some((option) => option.label === 'cluster-1234')).toBe(false);
     expect(options.some((option) => option.value === namingOptionValue('cluster', 'br48-auto'))).toBe(false);
+    expect(options).toHaveLength(1);
   });
 
   it('excludes the editable cluster from options and collision cluster leg', () => {

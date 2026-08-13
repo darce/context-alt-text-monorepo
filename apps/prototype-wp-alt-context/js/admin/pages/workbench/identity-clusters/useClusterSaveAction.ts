@@ -9,6 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
+import { isHumanLabeledTarget } from './suggestionProjection';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
 
@@ -198,6 +199,14 @@ export const useClusterSaveAction = ({
       // Exact dirty check (B6): case-only rename ("bob"→"Bob") must mutate.
       if (currentLabel === trimmed) {
         cancelEditing();
+        return;
+      }
+
+      // BR-49: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
+      if (!isHumanLabeledTarget(trimmed)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
         return;
       }
 

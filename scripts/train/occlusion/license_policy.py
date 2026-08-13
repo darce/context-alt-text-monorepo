@@ -3281,11 +3281,12 @@ def _scan_invariant_deny(detail: str) -> PackageDenylistEntry:
 
 
 # Per-family legitimate compact-(c) size/version tags (FIR-7-B12-3).
+# Canonical source for compact glue legitimacy (FIR-7 A14-5 / A14-1).
 # Only tags that fit the 1–3 alnum compact remainder bound and match REAL
 # checkpoints for that exception family. Digit-bearing remainders are NOT
 # globally legitimate — ``v8`` / ``s2`` / ``8`` launder through exception
 # seeds unless listed here. Longer real tags live in
-# ``_EXCEPTION_FAMILY_SEPARATOR_TAGS`` (separator-boundary (b)).
+# ``_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS`` (separator-boundary (b) only).
 _EXCEPTION_FAMILY_COMPACT_TAGS: dict[str, frozenset[str]] = {
     # YOLOX (Megvii): s/m/l/x; nano/tiny arrive via separator tags.
     "yolox": frozenset({"s", "m", "l", "x"}),
@@ -3300,17 +3301,45 @@ _EXCEPTION_FAMILY_COMPACT_TAGS: dict[str, frozenset[str]] = {
     "ppyolo": frozenset({"e", "v2"}),
 }
 
-# Per-family separator-boundary size/version/backbone tags (FIR-7 F10).
-# Used by residual classification (a): length is irrelevant — membership is.
-# Compact tags are also accepted as separator segments (``yolox_s``).
+# Explicit compact-glue allowlist beyond family compact tags (FIR-7 A14-1).
+# Empty: no export/shield/separator tag is legitimate when glued compactly
+# onto a family seed (``yoloxpt`` / ``yolostiny`` deny; ``yolox_pt`` /
+# ``yolos_tiny`` admit via separator residual classification).
+_EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
+    "yolox": frozenset(),
+    "yolos": frozenset(),
+    "yolof": frozenset(),
+    "yolop": frozenset(),
+    "ppyolo": frozenset(),
+}
+
+# Separator-only size/version/backbone tags (FIR-7 A14-5 / B14-3).
+# Not legitimate as compact glue — only as separator residual segments.
+# B14-3: ``seg`` deliberately absent from yolos (YOLOS is detection-only;
+# ``yolos_seg`` is Ultralytics canonical seg naming with the digit dropped).
+_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
+    "yolox": frozenset({"nano", "tiny", "darknet"}),
+    "yolos": frozenset({"tiny", "small", "base", "large"}),
+    "yolof": frozenset({"r101", "c5"}),
+    "yolop": frozenset(),
+    "ppyolo": frozenset(),
+}
+
+# Derived separator-boundary inventory = compact tags ∪ separator-only
+# (FIR-7 A14-5: single canonical source per form; no duplicated literals).
+# Used by residual classification (a) for separator-joined residuals.
 _EXCEPTION_FAMILY_SEPARATOR_TAGS: dict[str, frozenset[str]] = {
-    "yolox": frozenset({"s", "m", "l", "x", "nano", "tiny", "darknet"}),
-    # hustvl YOLOS size tags + real task suffix (yolos-tiny-seg pin).
-    # ``seg`` is yolos-only — ``yolox_s_seg`` must still deny (F10 A13-2).
-    "yolos": frozenset({"tiny", "small", "base", "large", "seg"}),
-    "yolof": frozenset({"r50", "r101", "c5"}),
-    "yolop": frozenset({"v2", "v3"}),
-    "ppyolo": frozenset({"e", "v2"}),
+    seed: (
+        _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed, frozenset())
+        | _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(seed, frozenset())
+    )
+    for seed in (
+        "yolox",
+        "yolos",
+        "yolof",
+        "yolop",
+        "ppyolo",
+    )
 }
 
 # Residual classification outcomes (FIR-7 F10).
@@ -3335,13 +3364,33 @@ def _is_legitimate_exception_compact_rem(rem: str, seed_c: str = "") -> bool:
     return rem in tags
 
 
+def _is_legitimate_compact_glue_residual(rem: str, seed_c: str) -> bool:
+    """True when a compact-glued residual is a real family compact tag.
+
+    FIR-7 A14-1: compact glue of a separator-only or export/shield tag
+    onto a family seed is **not** legitimate (``yoloxpt`` / ``yolostiny``
+    deny). Only per-family compact tags and the explicit (currently empty)
+    compact-glue allowlist admit. Separator-joined forms use
+    :func:`_is_legitimate_residual_segment` instead.
+    """
+    if not rem or not seed_c:
+        return False
+    if rem in _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed_c, frozenset()):
+        return True
+    if rem in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(seed_c, frozenset()):
+        return True
+    return False
+
+
 def _is_legitimate_residual_segment(segment: str, seed_c: str) -> bool:
     """True when one residual segment is a family tag or export shield tag.
 
-    FIR-7 F10 classification (a): per-family compact/separator tags **or**
-    any member of ``_NC_TRAILING_SHIELD_TAGS`` (export/format inventory is
-    the single source of truth for ``trt`` / ``pt`` / ``bin`` / ``onnx`` /
-    …). Length is never consulted.
+    FIR-7 F10 classification (a) for **separator-joined** residuals:
+    per-family compact/separator tags **or** any member of
+    ``_NC_TRAILING_SHIELD_TAGS`` (export/format inventory is the single
+    source of truth for ``trt`` / ``pt`` / ``bin`` / ``onnx`` / …).
+    Length is never consulted. Compact-glue residuals use
+    :func:`_is_legitimate_compact_glue_residual` instead (A14-1).
     """
     if not segment:
         return False
@@ -3353,6 +3402,29 @@ def _is_legitimate_residual_segment(segment: str, seed_c: str) -> bool:
         return True
     if segment in _EXCEPTION_FAMILY_SEPARATOR_TAGS.get(seed_c, frozenset()):
         return True
+    return False
+
+
+def _is_exact_deny_seed_identity(token: str) -> bool:
+    """True when ``token`` is exact folded/compact identity of a deny seed.
+
+    Used by B14-1: residual-alone exact deny seeds (``ultralytics``,
+    ``yolov8``) stay on the DEFER / trailing-(e) path so compact-suffix
+    red-proofs remain sole-path; non-exact residual deny hits
+    (``ultralyticsplus``, ``yolov8seg``) must be stolen when the walker
+    cannot re-queue the unbounded compact residual.
+    """
+    if not token:
+        return False
+    token_compact = _compact_canonical(token)
+    for seed_c, seed_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if (
+            token == seed_c
+            or token_compact == seed_k
+            or token == seed_k
+            or token_compact == seed_c
+        ):
+            return True
     return False
 
 
@@ -3460,32 +3532,6 @@ def _is_legitimate_exception_compact_spelling(token: str) -> bool:
     return False
 
 
-def _deny_seed_underlying_exception(
-    exc_seed_k: str,
-) -> PackageDenylistEntry | None:
-    """If exception compact seed is a (c) extension of a deny seed, return it.
-
-    ``yolos`` / ``yolof`` / ``yolop`` / ``yolox`` are each bare ``yolo`` + a
-    1-char compact remainder. Used when residual classification attributes
-    deny-reconstituting debris to the underlying deny lineage.
-    """
-    if not exc_seed_k:
-        return None
-    best: PackageDenylistEntry | None = None
-    best_len = -1
-    for _seed_c, deny_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
-        if not deny_k or len(deny_k) >= len(exc_seed_k):
-            continue
-        if not exc_seed_k.startswith(deny_k):
-            continue
-        rem = exc_seed_k[len(deny_k) :]
-        if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
-            if len(deny_k) > best_len:
-                best_len = len(deny_k)
-                best = entry  # type: ignore[assignment]
-    return best
-
-
 def _residual_structurally_defer(residual: str) -> bool:
     """True when residual should be residual-rescanned (own-alignment deny).
 
@@ -3561,23 +3607,22 @@ def _residual_progressive_reconst_deny(
       1. all residual segments (tag+debris chains like ``s_eg``);
       2. non-tag segments only (after peeling legit tags/shields).
 
-    Deny-reconstituting requires either an elevated/glue deny hit on the
-    glued compact form, or — for non-tag-only glue — an underlying deny
-    lineage when the exception seed is itself a compact extension of a
-    deny seed (``yolos`` ⊃ ``yolo`` → ``yolosfree`` / ``yolos_eg``).
-    Residual-alone package identities (``xultralytics``) do **not**
-    reconstitute here; they defer via :func:`_residual_structurally_defer`.
+    Deny-reconstituting requires an elevated/glue deny hit on the glued
+    compact form (``yolos``+``eg`` → ``yoloseg`` → yolo). FIR-7 B14-2:
+    pure-nonsense residuals (``zqx`` / ``blorp``) that do **not** reconstitute
+    any deny claim fall through to the honest unknown-residual entry —
+    never attribute the underlying ``yolo`` seed merely because the
+    exception seed extends it. Residual-alone package identities
+    (``xultralytics``) do **not** reconstitute here; they defer via
+    :func:`_residual_structurally_defer`.
     """
     if not residual or not seed_k:
         return None
     parts = [p for p in residual.split("_") if p]
     if not parts:
         return None
-    underlying = _deny_seed_underlying_exception(seed_k)
 
-    def _glue_parts(
-        segs: list[str], *, allow_underlying: bool
-    ) -> PackageDenylistEntry | None:
+    def _glue_parts(segs: list[str]) -> PackageDenylistEntry | None:
         acc_k = seed_k
         for part in segs[:_MAX_RECONST_SEGMENTS]:
             part_k = _compact_canonical(part)
@@ -3589,52 +3634,46 @@ def _residual_progressive_reconst_deny(
             hit = _deny_folded_ab_hit(acc_k)
             if hit is not None:
                 return hit
-            if (
-                allow_underlying
-                and underlying is not None
-                and acc_k.startswith(seed_k)
-            ):
-                rem = acc_k[len(seed_k) :]
-                # Only compact-shaped non-tag rem (or any rem after a
-                # non-tag-only glue pass) attributes to underlying.
-                if rem and not _is_legitimate_exception_compact_rem(
-                    rem, seed_c
-                ):
-                    return underlying
         return None
 
-    # Pass 1: all segments — elevated hits only (no underlying). Lets
-    # ``yolox``+``s``+``eg`` reach ``yoloxseg`` for elevated/underlying
-    # via pass 2 non-tags while not treating ``xultralytics`` residual
-    # as underlying yolo.
-    hit = _glue_parts(parts, allow_underlying=False)
+    # Pass 1: all segments. Lets ``yolox``+``s``+``eg`` skip the legit
+    # ``yoloxs`` spelling then reach deny on further glue via pass 2.
+    hit = _glue_parts(parts)
     if hit is not None:
         return hit
 
     # Pass 2: non-tag segments only (tag+debris laundering).
+    # Honest: only elevated/glue hits count — no underlying-yolo fabrication
+    # for unmatched debris (B14-2).
     non_tags = [
         p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
     ]
     if not non_tags:
         return None
-    return _glue_parts(non_tags, allow_underlying=True)
+    return _glue_parts(non_tags)
 
 
 def _classify_exception_residual(
     seed_c: str,
     seed_k: str,
     residual: str,
+    *,
+    compact_glue: bool = False,
 ) -> tuple[str, PackageDenylistEntry | None]:
-    """Classify residual after exception seed strip (FIR-7 F10).
+    """Classify residual after exception seed strip (FIR-7 F10 / F11).
 
     Returns ``(outcome, entry)`` where outcome is one of:
 
-      * ``legitimate`` — all segments are family tags or export shields;
+      * ``legitimate`` — residual is a real family tag form for the match
+        shape (compact glue: compact tags only; separator: family tags or
+        export shields);
       * ``defer`` — residual has a deny hit at its own alignment (re-scan);
       * ``deny_reconstituting`` — re-glue matches a deny claim (entry set);
       * ``unknown`` — fail-closed with honest unknown-residual entry.
 
-    Length is never the discriminator.
+    Length is never the discriminator. ``compact_glue=True`` when the
+    residual came from compact seed+rem (no separator) so export/separator
+    tags cannot launder via unbounded residual legitimacy (A14-1).
     """
     if not residual:
         return _RESIDUAL_LEGITIMATE, None
@@ -3643,9 +3682,18 @@ def _classify_exception_residual(
     if not parts:
         return _RESIDUAL_LEGITIMATE, None
 
-    # (a) every residual segment is a legit family tag or export shield.
-    if all(_is_legitimate_residual_segment(p, seed_c) for p in parts):
-        return _RESIDUAL_LEGITIMATE, None
+    # (a) legitimate residual for the match shape.
+    if compact_glue:
+        # Compact glue: only per-family compact tags / empty allowlist.
+        # Shield tags (pt/trt/…) and separator-only tags (tiny/darknet/…)
+        # require separator-joined form (FIR-7 A14-1 / B12-4).
+        if len(parts) == 1 and _is_legitimate_compact_glue_residual(
+            parts[0], seed_c
+        ):
+            return _RESIDUAL_LEGITIMATE, None
+    else:
+        if all(_is_legitimate_residual_segment(p, seed_c) for p in parts):
+            return _RESIDUAL_LEGITIMATE, None
 
     # Defer residual-alone deny seeds to residual re-scan (honest attribution).
     if _residual_structurally_defer(residual):
@@ -3656,16 +3704,22 @@ def _classify_exception_residual(
     if reconst is not None:
         return _RESIDUAL_DENY_RECONST, reconst
 
-    # Non-tag segments that did not reconstitute → (c) unknown fail-closed.
+    # (c) unknown fail-closed. Compact glue of shield/separator tags lands
+    # here even when every segment is a known separator inventory member
+    # (A14-1). Non-compact non-tag debris also lands here (B14-2 honesty).
     non_tags = [
         p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
     ]
-    if non_tags:
+    if non_tags or compact_glue:
         return _RESIDUAL_UNKNOWN, _unknown_exception_residual_entry(
             seed_c, residual
         )
 
-    return _RESIDUAL_LEGITIMATE, None
+    # Fail-closed default (A14-2): every segment-legit non-compact path
+    # already returned above; never silently admit on fall-through.
+    return _RESIDUAL_UNKNOWN, _unknown_exception_residual_entry(
+        seed_c, residual
+    )
 
 
 def _token_has_exception_seed_claim(token: str) -> bool:
@@ -3685,7 +3739,8 @@ def _token_has_legitimate_exception_boundary(token: str) -> bool:
     Residual classification (a) or empty residual → legitimate. Deny-
     reconstituting / unknown residual → not legitimate. Defer (residual-
     alone deny seed) counts as boundary so the walker can strip and
-    residual-rescan with honest attribution.
+    residual-rescan with honest attribution. Compact glue vs separator
+    residual legitimacy is distinguished via ``compact_glue`` (A14-1).
     """
     matched = _exception_seed_match_for_residual(token)
     if matched is None:
@@ -3693,7 +3748,12 @@ def _token_has_legitimate_exception_boundary(token: str) -> bool:
     seed_c, seed_k, residual = matched
     if not residual:
         return True
-    outcome, _entry = _classify_exception_residual(seed_c, seed_k, residual)
+    outcome, _entry = _classify_exception_residual(
+        seed_c,
+        seed_k,
+        residual,
+        compact_glue=("_" not in token),
+    )
     return outcome in (_RESIDUAL_LEGITIMATE, _RESIDUAL_DEFER)
 
 
@@ -3816,16 +3876,20 @@ def _exception_illegitimate_deny_steal(
 ) -> PackageDenylistEntry | None:
     """Deny entry for exception-family residual that fails F10 classification.
 
-    **Single mechanism** (FIR-7 F10) for all exception+debris forms —
+    **Single mechanism** (FIR-7 F10 / F11) for all exception+debris forms —
     short compact (``yoloseg``), long compact (``yolofree`` / ``yolosegme``
-    / ``yolosfree``), separator twins (``yolos_eg`` / ``yolof_ree``), and
-    tag+debris laundering (``yolos_tiny_eg`` / ``yolox_s_free``). Length
-    is never the discriminator.
+    / ``yolosfree``), separator twins (``yolos_eg`` / ``yolof_ree``),
+    tag+debris laundering (``yolos_tiny_eg`` / ``yolox_s_free``), compact
+    export-tag glue (``yoloxpt``; A14-1), and unbounded compact residual
+    deny glue (``yoloxultralyticsplus``; B14-1). Length is never the
+    discriminator.
 
     Classification via :func:`_classify_exception_residual`:
 
-      * legitimate tag/shield residual → ``None`` (admit / strip);
-      * defer (residual-alone deny seed) → ``None`` (walker residual-rescans);
+      * legitimate tag residual (shape-aware) → ``None`` (admit / strip);
+      * defer (residual-alone deny seed re-queueable by walker) → ``None``;
+      * B14-1 non-requeueable compact residual with non-exact deny hit →
+        residual's own elevated/glue deny entry (honest attribution);
       * deny-reconstituting → the matched deny entry (honest lineage);
       * unknown residual → fail-closed entry with honest unknown-residual
         note (never fabricates an Ultralytics attribution).
@@ -3841,13 +3905,33 @@ def _exception_illegitimate_deny_steal(
     seed_c, seed_k, residual = matched
     if not residual:
         return None
-    # Legitimate / defer residuals use the shared boundary helper so it
-    # stays load-bearing (TEST dead-helper guard) and matches carve-out.
+
+    compact_glue = "_" not in token
+
+    # B14-1: DEFER granted unboundedly (classifier) but walker strip only
+    # re-queues bounded compact rem / separator residual. When residual
+    # came from unbounded compact prefix and has a non-exact residual deny
+    # hit (ultralyticsplus / yolov8seg), return that hit — trailing (e)
+    # only fires for tokens *ending* in a deny seed. Exact residual deny
+    # seeds (ultralytics) stay DEFER so compact-suffix (e) red-proofs
+    # remain sole-path for seed-ending compact glue.
+    structural = _strip_exception_seed_residual(token, seed_c, seed_k)
+    if residual and structural != residual:
+        residual_deny = _deny_folded_ab_hit(residual)
+        if residual_deny is not None and not _is_exact_deny_seed_identity(
+            residual
+        ):
+            return residual_deny
+
+    # Legitimate / re-queueable-defer residuals use the shared boundary
+    # helper so it stays load-bearing (TEST dead-helper guard).
     if _token_has_legitimate_exception_boundary(token):
         return None
-    outcome, entry = _classify_exception_residual(seed_c, seed_k, residual)
-    if outcome in (_RESIDUAL_LEGITIMATE, _RESIDUAL_DEFER):
-        return None
+    _outcome, entry = _classify_exception_residual(
+        seed_c, seed_k, residual, compact_glue=compact_glue
+    )
+    # Boundary already returned for legitimate/defer; remaining outcomes
+    # always carry an entry (deny-reconst or unknown). Fail-closed if not.
     if entry is not None:
         return entry
     return _unknown_exception_residual_entry(seed_c, residual)

@@ -736,9 +736,14 @@ describe('recognitionApi', () => {
     expect(normalized).not.toHaveProperty('is_user_selected');
   });
 
-  // E21-17-R4-PY-2 / R5-TS: wire media_id string|null → internal number|null (null never 0).
+  // E21-17-R4-PY-2 / R5-TS / R6-TS-1: wire media_id digit string|null → number|null.
+  // Canonical wire is untrimmed /^\d+$/; whitespace-padded values reject to null.
   it.each([
     { label: '"7" → 7', wire: '7', expected: 7 },
+    { label: '"007" → 7', wire: '007', expected: 7 },
+    { label: '" 7 " → null', wire: ' 7 ', expected: null },
+    { label: '"7\\n" → null', wire: '7\n', expected: null },
+    { label: '" " → null', wire: ' ', expected: null },
     { label: 'null stays null', wire: null, expected: null },
   ])('normalizes wire media_id ($label)', async ({ wire, expected }) => {
     fetchApiMock.mockResolvedValue({

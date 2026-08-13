@@ -472,6 +472,94 @@ describe('ClusterReviewPanel', () => {
     expect(container.querySelector('.acx-cluster-member-card__image')).toBeNull();
   });
 
+  // E21-16 W3: zero-extent bbox must not enter FaceThumbnail.
+  it('does not render FaceThumbnail for a zero-extent bbox', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-zero-bbox',
+          media_id: 30,
+          similarity: 0.9,
+          confidence: 0.95,
+          bbox: { x: 0, y: 0, width: 0, height: 0 },
+          thumb_url: null,
+          media_url: 'http://example.test/media/member-zero.jpg',
+        },
+      ]),
+    );
+
+    const { container } = renderPanel('cluster-zero-bbox');
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-zero-bbox');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Member image unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+  });
+
+  it('renders FaceThumbnail for a positive-extent bbox when no dedicated thumb exists', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-positive-bbox',
+          media_id: 31,
+          similarity: 0.9,
+          confidence: 0.95,
+          bbox: { x: 4, y: 6, width: 40, height: 48 },
+          thumb_url: null,
+          media_url: 'http://example.test/media/member-positive.jpg',
+        },
+      ]),
+    );
+
+    const { container } = renderPanel('cluster-positive-bbox');
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-positive-bbox');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+      'src',
+      'http://example.test/media/member-positive.jpg',
+    );
+  });
+
+  // E21-16 W4: silent acx-placeholder must become a labelled unavailable state.
+  it('renders a visible unavailable state when the member has no usable image', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-no-image',
+          media_id: 32,
+          similarity: 0.8,
+          confidence: 0.9,
+          bbox: null,
+          thumb_url: null,
+          media_url: null,
+        },
+      ]),
+    );
+
+    const { container } = renderPanel('cluster-no-image');
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-no-image');
+    });
+
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Member image unavailable' })).toBeInTheDocument();
+    expect(container.querySelector('.acx-placeholder:empty')).toBeNull();
+  });
+
   it('shows loading state while fetching members', () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     fetchClusterMembersMock.mockReturnValue(new Promise(() => undefined));

@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BoundingBox } from '../../../../api/recognition/types/identity';
@@ -166,5 +167,44 @@ describe('TopClusterCard', () => {
     }
     expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
+  });
+
+  // E21-16 W2: machine suggested_label must not open the Yes/No confirm path.
+  it('does not prompt Yes/No for a machine cluster-* suggested_label', () => {
+    const onConfirmSuggestedLabel = vi.fn();
+
+    render(
+      <TopClusterCard
+        cluster={buildCluster({ suggested_label: 'cluster-0a1b2c3d4e' })}
+        onLabel={vi.fn()}
+        onConfirmSuggestedLabel={onConfirmSuggestedLabel}
+      />,
+    );
+
+    expect(screen.queryByText(/Is this/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Name this person' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'No' })).not.toBeInTheDocument();
+    expect(onConfirmSuggestedLabel).not.toHaveBeenCalled();
+  });
+
+  it('prompts Is this <label>? and confirms a human suggested_label', async () => {
+    const onConfirmSuggestedLabel = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: 'Pat Rivera',
+          suggested_target_cluster_id: 'cluster-target',
+        })}
+        onLabel={vi.fn()}
+        onConfirmSuggestedLabel={onConfirmSuggestedLabel}
+      />,
+    );
+
+    expect(screen.getByText(/Is this\s*Pat Rivera\?/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    expect(onConfirmSuggestedLabel).toHaveBeenCalledWith('cluster-1', 'Pat Rivera', 'cluster-target');
   });
 });

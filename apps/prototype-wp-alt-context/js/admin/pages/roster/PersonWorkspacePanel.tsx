@@ -1,7 +1,12 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { formatTimestamp } from '../../utils/formatTimestamp';
+import { FaceLightbox } from '../../../components/ui/FaceLightbox';
+import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
+import { isCroppableBbox } from '../../../components/ui/faceGeometry';
+import type { BoundingBox } from '../../api/recognition/types/identity';
 
 const QUEUE_SECTIONS = [
   {
@@ -29,6 +34,12 @@ const EVIDENCE_IMAGE_SIZE = 96;
 interface EvidenceMetadata {
   similarity: number | null;
   similarity_threshold?: number | null;
+}
+
+interface LightboxSelection {
+  mediaUrl: string;
+  bbox: BoundingBox;
+  label: string;
 }
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -60,6 +71,50 @@ const getEvidenceMetadataLines = (evidence: EvidenceMetadata | null | undefined)
   return lines;
 };
 
+const renderEvidenceMedia = ({
+  mediaUrl,
+  bbox,
+  alt,
+  onOpenLightbox,
+}: {
+  mediaUrl: string | null | undefined;
+  bbox: RosterEntryInstance['bbox'];
+  alt: string;
+  onOpenLightbox: (selection: LightboxSelection) => void;
+}): React.JSX.Element => {
+  if (typeof mediaUrl === 'string' && mediaUrl.length > 0 && isCroppableBbox(bbox)) {
+    return (
+      <button type="button" onClick={() => onOpenLightbox({ mediaUrl, bbox, label: alt })}>
+        <FaceThumbnail
+          mediaUrl={mediaUrl}
+          bbox={bbox}
+          sizePx={EVIDENCE_IMAGE_SIZE}
+          shape="square"
+          alt={alt}
+        />
+      </button>
+    );
+  }
+
+  if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
+    return (
+      <img
+        src={mediaUrl}
+        alt={alt}
+        width={EVIDENCE_IMAGE_SIZE}
+        height={EVIDENCE_IMAGE_SIZE}
+        loading="lazy"
+      />
+    );
+  }
+
+  return (
+    <div role="img" aria-label={alt}>
+      {__('No image', 'alt-context')}
+    </div>
+  );
+};
+
 interface PersonWorkspacePanelProps {
   entry: RosterEntry;
   onOpenQueue: (personUuid: string, queueId: string) => void;
@@ -68,6 +123,7 @@ interface PersonWorkspacePanelProps {
 export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
   const queueMemberships = new Set(entry.queue_memberships);
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
+  const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
 
   return (
     <section
@@ -127,65 +183,57 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
         <h4>{__('Assigned cluster evidence', 'alt-context')}</h4>
         {entry.clusters.length > 0 ? (
           <div>
-            {entry.clusters.map((cluster) => (
-              <section
-                key={cluster.cluster_id}
-                role="region"
-                aria-label={sprintf(__('Cluster %s', 'alt-context'), cluster.cluster_id)}
-              >
-                <h5>{cluster.cluster_id}</h5>
-                <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
-                {cluster.representative_identity?.media_url ? (
-                  <img
-                    src={cluster.representative_identity.media_url}
-                    alt={sprintf(__('Representative face for cluster %s', 'alt-context'), cluster.cluster_id)}
-                    width={EVIDENCE_IMAGE_SIZE}
-                    height={EVIDENCE_IMAGE_SIZE}
-                    loading="lazy"
-                  />
-                ) : (
-                  <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
-                )}
-                {getEvidenceMetadataLines(cluster.representative_identity).map((line) => (
-                  <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
-                ))}
-                <div>
-                  {cluster.instances.map((instance) => (
-                    <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
-                      {instance.media_url ? (
-                        <img
-                          src={instance.media_url}
-                          alt={sprintf(
-                            __('Instance %d for cluster %s', 'alt-context'),
-                            instance.media_id,
-                            cluster.cluster_id,
-                          )}
-                          width={EVIDENCE_IMAGE_SIZE}
-                          height={EVIDENCE_IMAGE_SIZE}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div
-                          aria-label={sprintf(
-                            __('Instance %d for cluster %s', 'alt-context'),
-                            instance.media_id,
-                            cluster.cluster_id,
-                          )}
-                        />
-                      )}
-                      <figcaption>
-                        {sprintf(__('Identity %s · media %d', 'alt-context'), instance.identity_id, instance.media_id)}
-                      </figcaption>
-                      {getEvidenceMetadataLines(instance).map((line) => (
-                        <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
-                          {line}
-                        </div>
-                      ))}
-                    </figure>
+            {entry.clusters.map((cluster, index) => {
+              const clusterLabel = sprintf(__('Cluster %d', 'alt-context'), index + 1);
+              const representativeAlt = sprintf(
+                __('Representative face for cluster %s', 'alt-context'),
+                cluster.cluster_id,
+              );
+              return (
+                <section key={cluster.cluster_id} role="region" aria-label={clusterLabel}>
+                  <h5>{clusterLabel}</h5>
+                  <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
+                  {cluster.representative_identity?.media_url ? (
+                    renderEvidenceMedia({
+                      mediaUrl: cluster.representative_identity.media_url,
+                      bbox: cluster.representative_identity.bbox,
+                      alt: representativeAlt,
+                      onOpenLightbox: setLightbox,
+                    })
+                  ) : (
+                    <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
+                  )}
+                  {getEvidenceMetadataLines(cluster.representative_identity).map((line) => (
+                    <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
                   ))}
-                </div>
-              </section>
-            ))}
+                  <div>
+                    {cluster.instances.map((instance) => {
+                      const instanceAlt = sprintf(
+                        __('Instance %d for cluster %s', 'alt-context'),
+                        instance.media_id,
+                        cluster.cluster_id,
+                      );
+                      return (
+                        <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
+                          {renderEvidenceMedia({
+                            mediaUrl: instance.media_url,
+                            bbox: instance.bbox,
+                            alt: instanceAlt,
+                            onOpenLightbox: setLightbox,
+                          })}
+                          <figcaption>{sprintf(__('Media %d', 'alt-context'), instance.media_id)}</figcaption>
+                          {getEvidenceMetadataLines(instance).map((line) => (
+                            <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
+                              {line}
+                            </div>
+                          ))}
+                        </figure>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         ) : (
           <p>{__('Assigned cluster evidence will appear after the next projection refresh.', 'alt-context')}</p>
@@ -232,6 +280,20 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           })}
         </div>
       </section>
+
+      {lightbox ? (
+        <FaceLightbox
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setLightbox(null);
+            }
+          }}
+          mediaUrl={lightbox.mediaUrl}
+          bbox={lightbox.bbox}
+          label={lightbox.label}
+        />
+      ) : null}
     </section>
   );
 };

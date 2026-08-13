@@ -20,6 +20,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox, type ComboboxOption } from '../../../../components/ui/combobox';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
@@ -520,7 +521,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
                 {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
                   <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
-                ) : member.media_url && member.bbox ? (
+                ) : member.media_url && isCroppableBbox(member.bbox) ? (
                   <FaceThumbnail
                     mediaUrl={member.media_url}
                     bbox={member.bbox}

@@ -7,9 +7,11 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import { isHumanLabeledTarget } from './suggestionProjection';
 
 const resolveRepresentativeThumbUrl = (
   representative: TopUnlabeledCluster['representatives'][number],
@@ -30,21 +32,20 @@ const resolveRepresentativeCrop = (
     return null;
   }
 
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
+  const coerced: BoundingBox = {
+    x: Number(bbox.x),
+    y: Number(bbox.y),
+    width: Number(bbox.width),
+    height: Number(bbox.height),
+  };
 
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-  if (width <= 0 || height <= 0) {
+  if (!isCroppableBbox(coerced)) {
     return null;
   }
 
   return {
     mediaUrl,
-    bbox: { x, y, width, height },
+    bbox: coerced,
   };
 };
 
@@ -95,10 +96,10 @@ export const TopClusterCard = ({
   const gapPx = 2;
   const maxThumbs = 4;
   const faceCount = cluster.identity_count;
+  const trimmedSuggested =
+    typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
   const suggestedLabel =
-    typeof cluster.suggested_label === 'string' && cluster.suggested_label.trim() !== ''
-      ? cluster.suggested_label.trim()
-      : null;
+    trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
   const title = suggestedLabel
     ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
     : __('Name this person', 'alt-context');

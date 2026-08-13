@@ -34,6 +34,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
@@ -141,7 +142,7 @@ export const ClusterReviewPanel = ({
                         alt={__('Cluster member', 'alt-context')}
                         className="acx-cluster-member-card__image"
                       />
-                    ) : member.media_url && member.bbox ? (
+                    ) : member.media_url && isCroppableBbox(member.bbox) ? (
                       <FaceThumbnail
                         mediaUrl={member.media_url}
                         bbox={member.bbox}
@@ -155,7 +156,13 @@ export const ClusterReviewPanel = ({
                         className="acx-cluster-member-card__image"
                       />
                     ) : (
-                      <div className="acx-placeholder" />
+                      <div
+                        className="acx-placeholder"
+                        role="img"
+                        aria-label={__('Member image unavailable', 'alt-context')}
+                      >
+                        <span className="acx-placeholder__label">{__('No image', 'alt-context')}</span>
+                      </div>
                     )}
                     <button
                       type="button"

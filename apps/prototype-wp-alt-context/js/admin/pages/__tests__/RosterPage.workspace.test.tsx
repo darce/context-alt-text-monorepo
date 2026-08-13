@@ -437,53 +437,26 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
-    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster cluster-alpha' });
+    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster 1' });
 
     expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('src', 'https://example.com/rep-alpha.jpg');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('loading', 'lazy');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('width', '96');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('height', '96');
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'src',
-      'https://example.com/instance-101.jpg',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'loading',
-      'lazy',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'width',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'height',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'src',
-      'https://example.com/instance-102.jpg',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'loading',
-      'lazy',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'width',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'height',
-      '96',
-    );
+    expect(within(evidenceSection).queryByText(/cluster-alpha/)).not.toBeInTheDocument();
+
+    const evidenceImages = [
+      { name: 'Representative face for cluster cluster-alpha', src: 'https://example.com/rep-alpha.jpg' },
+      { name: 'Instance 101 for cluster cluster-alpha', src: 'https://example.com/instance-101.jpg' },
+      { name: 'Instance 102 for cluster cluster-alpha', src: 'https://example.com/instance-102.jpg' },
+    ];
+    for (const { name, src } of evidenceImages) {
+      const image = within(clusterRegion).getByRole('img', { name });
+      expect(image).toHaveAttribute('src', src);
+      expect(image.closest('.acx-face-thumbnail')).not.toBeNull();
+      expect(image.closest('button')).not.toBeNull();
+      expect(image).not.toHaveAttribute('width', '96');
+    }
+
+    expect(within(clusterRegion).getByText('Media 101')).toBeInTheDocument();
+    expect(within(clusterRegion).getByText('Media 102')).toBeInTheDocument();
   });
 
   it('[PAG-M5-S5] keeps evidence useful when only fallback similarity fields are available', () => {

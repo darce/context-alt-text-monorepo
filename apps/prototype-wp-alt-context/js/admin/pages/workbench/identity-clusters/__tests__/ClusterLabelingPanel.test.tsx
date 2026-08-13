@@ -401,6 +401,61 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
+  // E21-16 W3: zero-extent bbox must not enter FaceThumbnail.
+  it('does not render FaceThumbnail for a zero-extent bbox', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-zero-bbox',
+          media_id: 200,
+          similarity: 0.9,
+          confidence: 0.95,
+          thumb_url: null,
+          media_url: 'http://example.test/media/label-zero.jpg',
+          bbox: { x: 0, y: 0, width: 0, height: 0 },
+        },
+      ]),
+    );
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail:not(.acx-face-thumbnail--placeholder)')).toBeNull();
+    expect(container.querySelector('.acx-face-thumbnail--placeholder')).not.toBeNull();
+  });
+
+  it('renders FaceThumbnail for a positive-extent bbox when no dedicated thumb exists', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-positive-bbox',
+          media_id: 201,
+          similarity: 0.9,
+          confidence: 0.95,
+          thumb_url: null,
+          media_url: 'http://example.test/media/label-positive.jpg',
+          bbox: { x: 5, y: 7, width: 30, height: 36 },
+        },
+      ]),
+    );
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+    });
+
+    expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
+    expect(container.querySelector('.acx-face-thumbnail--placeholder')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+      'src',
+      'http://example.test/media/label-positive.jpg',
+    );
+  });
+
   it('renders loading state while members query is pending', () => {
     vi.mocked(fetchClusterMembers).mockImplementationOnce(
       () =>

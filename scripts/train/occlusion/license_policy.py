@@ -1414,13 +1414,23 @@ _MODEL_FILE_EXTENSIONS: tuple[str, ...] = (
 )
 
 
+# Unofficial separators folded to ``_`` in :func:`canonical` *before* the
+# official ``[-_.\\s]`` collapse and any compact / seed matching (F13-1 /
+# R15-G1-1 / R15-G1-2 / R15-G1-3). NFKC already maps fullwidth twins
+# (``＋＝：＠＃｜``) onto these ASCII forms, so the ASCII set is sufficient.
+# Empty string disables the fold (TEST-15 red-proof / revert to old charset).
+_UNOFFICIAL_SEPARATOR_CHARS: str = "+=:@|#"
+
+
 def canonical(value: str) -> str | None:
     """NFKC → strip Cf/format chars → casefold → unify separators → collapse.
 
-    Separators unified to ``_``: runs of ``[-_.\\s]+``. Slash (``/``) and
-    backslash are preserved as path separators so slash-components can be
-    exact-matched independently. Returns ``None`` when any non-ASCII residue
-    survives (untrusted / undecidable — callers treat as ``invalid_row``).
+    Separators unified to ``_``: unofficial ``+ = : @ | #`` (and their
+    NFKC fullwidth twins) first, then runs of ``[-_.\\s]+``. Slash (``/``)
+    and backslash are preserved as path separators so slash-components can
+    be exact-matched independently. Returns ``None`` when any non-ASCII
+    residue survives (untrusted / undecidable — callers treat as
+    ``invalid_row``).
     """
     if value is None:
         return None
@@ -1442,7 +1452,12 @@ def canonical(value: str) -> str | None:
                 break
         stripped_parts.append(p)
     text = "/".join(stripped_parts)
-    # Unify non-slash separators to underscore; collapse runs; trim.
+    # F13-1: unofficial separators → ``_`` BEFORE official ``[-_.\\s]``
+    # collapse / compact folding / seed matching (SECD-05 fail-closed).
+    if _UNOFFICIAL_SEPARATOR_CHARS:
+        unofficial_cls = "[" + re.escape(_UNOFFICIAL_SEPARATOR_CHARS) + "]+"
+        text = re.sub(unofficial_cls, "_", text)
+    # Unify official non-slash separators to underscore; collapse runs; trim.
     text = re.sub(r"[-_.\s]+", "_", text)
     text = re.sub(r"_+", "_", text)
     text = "/".join(seg.strip("_") for seg in text.split("/"))

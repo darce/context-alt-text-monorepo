@@ -10608,3 +10608,156 @@ class TestF12ReasonHonesty:
         assert hit2.package_id == "yolo", (
             "red-proof: with fabrication filter off, yoloxpt must name yolo"
         )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F13 — unofficial separators, NC door position, compact glue
+# ---------------------------------------------------------------------------
+
+
+class TestF13UnofficialSeparatorFolding:
+    """F13-1 / R15-G1-1 / R15-G1-2 / R15-G1-3: fold unofficial separators.
+
+    ``canonical()`` previously unified only ``[-_.\\s]``, so ``yolox+yolo``
+    / ``yolox＝yolo`` / ``yolox:yolo`` survived as a single opaque token
+    and admitted. Fold ``+ = : @ | #`` (NFKC fullwidth twins map to these
+    ASCII forms) to ``_`` *before* compact folding / seed matching so the
+    existing scanner sees the same shape as the official-separator twin.
+    """
+
+    AGPL_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox+yolo", "yolo"),
+        ("yolox＋yolo", "yolo"),
+        ("yolox=yolo", "yolo"),
+        ("yolox:yolo", "yolo"),
+        ("yolox@yolo", "yolo"),
+        ("yoloxyolo+v8", "yolov8"),
+    )
+    UNKNOWN_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yoloxpt+trt",
+        "yoloxpt＋trt",
+        "yolofc5+pt",
+    )
+    NC_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox+insightface", "insightface"),
+        ("yolox＋insightface", "insightface"),
+        ("yolox+arcface", "arcface"),
+        ("yolox+yolo_nas", "yolo_nas"),
+    )
+    CONTROLS_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox_pt_trt",
+        "yolox_s",
+        "yoloxs",
+        "ppyoloeplus",
+        "yolof_r50_c5_1x_coco",
+        "ppyoloe_s",
+        "yolodummy",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES)
+    def test_unofficial_sep_agpl_denies_honest(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY after unofficial-separator fold (F13-1)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert _door_entry_package_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name {expected_pkg!r}; "
+                f"got {result.detail!r}"
+            )
+
+    @pytest.mark.parametrize("token", UNKNOWN_WITNESSES)
+    def test_unofficial_sep_unknown_residual_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY as unknown residual (F13-1 / F12-2 twin)"
+        )
+        assert hit.package_id.endswith("_unknown_residual"), (
+            f"{token!r}: expected *_unknown_residual, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token,expected_pkg", NC_WITNESSES)
+    def test_unofficial_sep_nc_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit NC on the scanner"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", CONTROLS_ADMIT)
+    def test_official_separator_and_f12_admits_unchanged(
+        self, token: str
+    ) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    def test_myarcface_stays_floor_only_door_pass(self) -> None:
+        assert policy._package_denylist_hit("myarcface") is not None
+        assert policy.audit_derived_from_model("myarcface").ok is True
+
+    def test_red_proof_unofficial_separator_charset_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: emptying ``_UNOFFICIAL_SEPARATOR_CHARS`` re-admits witnesses.
+
+        Neuter: ``_UNOFFICIAL_SEPARATOR_CHARS`` → ``""`` (revert to the old
+        ``[-_.\\s]``-only charset). Official-separator twins stay denied.
+        """
+        agpl_unknown = (
+            [t for t, _ in self.AGPL_WITNESSES] + list(self.UNKNOWN_WITNESSES)
+        )
+        nc = [t for t, _ in self.NC_WITNESSES]
+        for token in agpl_unknown + nc:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+            assert policy.audit_derived_from_model(token).ok is False
+        monkeypatch.setattr(policy, "_UNOFFICIAL_SEPARATOR_CHARS", "")
+        # AGPL / unknown-residual forms have no ≥5-char deny suffix, so
+        # the scanner itself admits once ``+``/``=``/… stop folding.
+        for token in agpl_unknown:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with unofficial charset emptied, {token!r} "
+                "must admit on the scanner"
+            )
+        # NC seeds (insightface / arcface / yolonas) are ≥5 compact chars,
+        # so rule (e) still scanner-hits the *unfolded* token. The fold is
+        # load-bearing for the *door*: without it, (e) is not promoted
+        # (BR-28) and the exception head is invisible.
+        for token in nc:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with unofficial charset emptied, {token!r} "
+                "must admit on the door"
+            )
+        # Official-separator twin and F12 pins stay load-bearing.
+        assert policy._package_denylist_hit("yoloxyolo") is not None
+        assert policy._package_denylist_hit("yolox_yolo") is not None
+        assert policy._package_denylist_hit("yolox_pt_trt") is None
+

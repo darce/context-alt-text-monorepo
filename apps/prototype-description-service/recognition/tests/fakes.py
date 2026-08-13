@@ -36,7 +36,11 @@ class _FakeClusterRecord:
         self.id = cluster.id
         self.label = cluster.label
         self.backend_version = int(getattr(cluster, "backend_version", 0) or 0)
-        self.user_confirmed = bool(cluster.label)
+        # Prefer explicit user_confirmed when the fake repo models it (E21-17-R2-PY-N1).
+        if hasattr(cluster, "user_confirmed"):
+            self.user_confirmed = bool(cluster.user_confirmed)
+        else:
+            self.user_confirmed = bool(cluster.label)
         self.identity_count = int(getattr(cluster, "identity_count", 0) or 0)
         self.representative_identity_id = getattr(cluster, "representative_identity_id", None)
 
@@ -78,13 +82,15 @@ class FakeClusterForRepo:
         label: str | None = None,
         identity_count: int = 1,
         backend_version: int = 0,
+        *,
+        user_confirmed: bool | None = None,
     ) -> None:
         self.id = cluster_id
         self.tenant_id = tenant_id
         self.label = label
         self.identity_count = identity_count
         self.backend_version = backend_version
-        self.user_confirmed = bool(label)
+        self.user_confirmed = bool(label) if user_confirmed is None else user_confirmed
         self.is_labeled = bool(label)
         self.created_at = datetime.now(tz=UTC)
         self.is_auto_label = False
@@ -107,8 +113,17 @@ class FakeClusterRepository:
         label: str | None = None,
         identity_count: int = 1,
         backend_version: int = 0,
+        *,
+        user_confirmed: bool | None = None,
     ) -> None:
-        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, tenant_id, label, identity_count, backend_version)
+        self.clusters[cluster_id] = FakeClusterForRepo(
+            cluster_id,
+            tenant_id,
+            label,
+            identity_count,
+            backend_version,
+            user_confirmed=user_confirmed,
+        )
         self._snapshot_version += 1
 
     def seed_member(self, *, tenant_id: str, cluster_id: str, identity_id: str, media_id: str = "1") -> None:
@@ -598,10 +613,25 @@ class FakeClusterService:
         target = next((c for c in self.clusters if c.id == target_cluster_id and c.tenant_id == tenant_id), None)
         if not source or not target:
             return None
+        final_label = target_label or target.label
         updated_target = self._copy_cluster(
-            target, label=target_label or target.label, identity_count=target.identity_count + source.identity_count
+            target, label=final_label, identity_count=target.identity_count + source.identity_count
         )
         self._replace_cluster(updated_target)
+        if self.fake_cluster_repository is not None:
+            repo_target = self.fake_cluster_repository.clusters.get(target_cluster_id)
+            if repo_target is not None:
+                # Mirror cluster_merge label/confirmation stamping so API tests can
+                # catch reserved-label user_confirmed regressions (E21-17-R2-PY-N1).
+                from recognition.domain.cluster import is_reserved_label_shape
+
+                repo_target.label = final_label
+                repo_target.is_labeled = bool(final_label)
+                repo_target.identity_count = updated_target.identity_count
+                if final_label and not is_reserved_label_shape(final_label):
+                    repo_target.user_confirmed = True
+            if not defer_recompute:
+                self.fake_cluster_repository.clusters.pop(source_cluster_id, None)
         if not defer_recompute:
             self.clusters = [c for c in self.clusters if c.id != source_cluster_id]
         return updated_target

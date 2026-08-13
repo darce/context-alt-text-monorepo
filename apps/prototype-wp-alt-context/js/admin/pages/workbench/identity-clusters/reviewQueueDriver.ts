@@ -411,3 +411,15 @@ export const nextQueueIndex = (index: number, length: number): number => {
  */
 export const isValidQueueOrdinal = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 1;
+
+/**
+ * E21-17-R1-TS41-1: pair-level gate — both singles valid and position <= total.
+ * Accname consumers must use this (not independent single checks) so "4 of 3" cannot render.
+ * Type predicate narrows `position`; pair it with `isValidQueueOrdinal(total)` at the call site
+ * so control-flow narrowing covers both sprintf args (same pattern as the old dual single-guards).
+ */
+export const isValidQueueOrdinalPair = (
+  position: number | undefined,
+  total: number | undefined,
+): position is number =>
+  isValidQueueOrdinal(position) && isValidQueueOrdinal(total) && position <= total;

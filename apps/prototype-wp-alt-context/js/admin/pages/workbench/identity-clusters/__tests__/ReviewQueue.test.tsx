@@ -1624,10 +1624,37 @@ describe('ReviewQueue', () => {
 
   // BR-41: NAME invalid/no-ordinal fallbacks (inline CurrentCard root uses ReviewCardGroupShell).
   it.each([
+    { label: '1 of 2', queuePosition: 1, queueTotal: 2 },
+    { label: '3 of 3', queuePosition: 3, queueTotal: 3 },
+    { label: '1 of 1', queuePosition: 1, queueTotal: 1 },
+  ])(
+    'BR-41: NAME valid ordinal pair keeps Name suggestion $label',
+    ({ queuePosition, queueTotal }) => {
+      render(
+        <ReviewCardGroupShell
+          kind="name"
+          labelId={`acx-name-pos-${queuePosition}-${queueTotal}`}
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
+          className="acx-suggestion-card acx-name-suggestion-card"
+          data-testid="acx-review-card"
+          data-review-kind="name"
+        />,
+      );
+
+      const card = screen.getByTestId('acx-review-card');
+      expect(card).toHaveAccessibleName(
+        new RegExp(`Name suggestion ${queuePosition} of ${queueTotal}`),
+      );
+    },
+  );
+
+  it.each([
     { label: 'total=0', queuePosition: 1, queueTotal: 0 },
     { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
     { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
     { label: 'position=float', queuePosition: 1.5, queueTotal: 2 },
+    { label: 'position>total', queuePosition: 4, queueTotal: 3 },
   ])(
     'BR-41: NAME invalid queue ordinals fall back to kind-only Name suggestion — $label',
     ({ label, queuePosition, queueTotal }) => {
@@ -1645,7 +1672,7 @@ describe('ReviewQueue', () => {
 
       const card = screen.getByTestId('acx-review-card');
       expect(card, label).toHaveAccessibleName('Name suggestion');
-      expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5/i);
+      expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5|4 of 3/i);
     },
   );
 

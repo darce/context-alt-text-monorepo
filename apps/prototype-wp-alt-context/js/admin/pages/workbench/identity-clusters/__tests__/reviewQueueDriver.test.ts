@@ -24,6 +24,7 @@ import {
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
   STRONG_SIMILARITY_MIN,
+  isValidQueueOrdinalPair,
   queueItemToNextAction,
 } from '../reviewQueueDriver';
 import { fromPendingRow, projectReviewQueue } from '../suggestionProjection';
@@ -629,5 +630,20 @@ describe('PR-54 index semantics under removal', () => {
     expect(clampQueueIndex(5, 0)).toBe(0);
     expect(clampQueueIndex(-3, 0)).toBe(0);
     expect(clampQueueIndex(-1, 4)).toBe(0);
+  });
+});
+
+describe('isValidQueueOrdinalPair (E21-17-R1-TS41-1)', () => {
+  it.each([
+    { label: '(1,2)', position: 1, total: 2, expected: true },
+    { label: '(2,2)', position: 2, total: 2, expected: true },
+    { label: '(3,2)', position: 3, total: 2, expected: false },
+    { label: 'position=0', position: 0, total: 2, expected: false },
+    { label: 'total=0', position: 1, total: 0, expected: false },
+    { label: 'position=NaN', position: Number.NaN, total: 2, expected: false },
+    { label: 'total=float', position: 1, total: 1.5, expected: false },
+    { label: 'undefined total', position: 1, total: undefined, expected: false },
+  ])('pair $label → $expected', ({ position, total, expected }) => {
+    expect(isValidQueueOrdinalPair(position, total)).toBe(expected);
   });
 });

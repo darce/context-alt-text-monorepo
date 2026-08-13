@@ -6,21 +6,22 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { isValidQueueOrdinal } from './reviewQueueDriver';
+import { isValidQueueOrdinal, isValidQueueOrdinalPair } from './reviewQueueDriver';
 
 export type ReviewCardGroupKind = 'assignment' | 'name' | 'cluster';
 
-export { isValidQueueOrdinal };
+export { isValidQueueOrdinal, isValidQueueOrdinalPair };
 
 /**
- * Kind-only fallback (never empty) or ordinal fold when both props are valid integers >= 1.
+ * Kind-only fallback (never empty) or ordinal fold when the position/total pair is valid.
  */
 export const formatReviewCardGroupLabel = (
   kind: ReviewCardGroupKind,
   queuePosition?: number,
   queueTotal?: number,
 ): string => {
-  const hasOrdinal = isValidQueueOrdinal(queuePosition) && isValidQueueOrdinal(queueTotal);
+  const hasOrdinal =
+    isValidQueueOrdinalPair(queuePosition, queueTotal) && isValidQueueOrdinal(queueTotal);
   switch (kind) {
     case 'assignment':
       return hasOrdinal

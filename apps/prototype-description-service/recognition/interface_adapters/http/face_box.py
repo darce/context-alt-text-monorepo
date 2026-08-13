@@ -24,7 +24,7 @@ def representative_response_from_domain(rep: ClusterRepresentative) -> Represent
     rep_bbox = face_box_from_components(rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height)
     return RepresentativeResponse(
         id=str(rep.id),
-        media_id=rep.media_id or 0,
+        media_id=rep.media_id,
         thumb_url=(
             build_face_thumb_path(
                 rep.media_url,
@@ -38,7 +38,8 @@ def representative_response_from_domain(rep: ClusterRepresentative) -> Represent
         ),
         media_url=rep.media_url,
         bbox=rep_bbox,
-        is_pinned=rep.is_user_selected,
+        # Wire alias is is_user_selected; populate_by_name is off — pass alias kwarg.
+        is_user_selected=rep.is_user_selected,
     )
 
 

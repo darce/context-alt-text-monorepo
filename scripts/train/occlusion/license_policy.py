@@ -37,10 +37,12 @@ Deny-family matching adds one generalisation (FIR-7-B8-03):
       ``_FAMILY_COMPACT_SUFFIX_ENABLED``): a single segment (or a whole
       one-segment compact token) whose compact form **ends with** a deny
       seed of ≥ 5 compact chars, with a non-empty leading remainder, hits
-      that seed. Catches compact glue (``xultralytics``,
-      ``yoloxultralytics``, ``yoloxsultralytics``). The ≥ 5 floor protects
-      short seeds: ``myyolo`` ends with the 4-char seed ``yolo`` and must
-      still ADMIT.
+      that seed. Catches compact glue of a ≥ 5-char deny seed that is
+      *not* an exception-prefix residual (``xultralytics``,
+      ``yolox_xultralytics``). ``yoloxultralytics`` / ``yoloxsultralytics``
+      are F12-1 steal-owned and still DENY when (e) is off. The ≥ 5 floor
+      protects short seeds: ``myyolo`` ends with the 4-char seed ``yolo``
+      and must still ADMIT.
 
 Exception-family matching keeps (a)/(b)/(c)/(d) for strip targeting —
 exception seeds are not matched via (e).
@@ -89,20 +91,22 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
          (a) **legitimate** — compact glue (no ``_``, or a head compact
              peel of a non-allowlisted rem — F12-2 ``yoloxpt_trt``):
              only per-family compact tags / the explicit compact-glue
-             allowlist (empty except documented ``ppyoloeplus``).
-             Separator residuals: family compact ∪ separator-only tags
-             ∪ ``_NC_TRAILING_SHIELD_TAGS`` (``trt`` / ``pt`` / ``bin``
-             / ``onnx`` / …). Compact glue of a shield or separator-only
-             tag (``yoloxpt`` / ``yolostiny``) is **not** legitimate;
+             allowlist (empty except documented ``ppyolo`` / ``eplus``;
+             F13-5 also peels that rem in head position so
+             ``ppyoloeplus_trt`` admits). Separator residuals: family
+             compact ∪ separator-only tags ∪ ``_NC_TRAILING_SHIELD_TAGS``
+             (``trt`` / ``pt`` / ``bin`` / ``onnx`` / …). Compact glue of
+             a shield or separator-only tag (``yoloxpt`` / ``yolostiny``)
+             is **not** legitimate;
          (b) **deny-reconstituting** — progressive re-glue matches a
              deny claim that is not a fabricated ``yolo``-via-exception-
              letter hit (F12-7) → DENY with that claim's honest entry
-             (``yolos_eg`` → ``yoloseg``);
+             (``yolos_eg`` → ``yoloseg``; ``yolos_tiny_eg`` → ``yolo``);
          (c) **unknown residual** — fail-closed DENY with an honest
              unknown-residual note (NOT a fabricated Ultralytics
              attribution). Covers compact-glue deny (A14-1), long debris
              (``yolosegme`` / ``yolosfree``), tag+debris laundering
-             (``yolos_tiny_eg`` / ``yolox_s_free``), and short non-
+             (``yolox_tiny_eg`` / ``yolox_s_free``), and short non-
              artifact rem (``yolox_z`` / ``yolos_ti``).
        **B14-1 / F12-1 steal** is the same mechanism: when the residual
        came from unbounded compact prefix (walker cannot re-queue it)
@@ -2955,7 +2959,9 @@ def _reject_non_string(
 # residual classify still closes yoloseg / yolofree (FIR-7 F10 single-
 # mechanism split); disable head-segment → yolov9t-seg admits; disable outer
 # residual-suffix scan → path-split / size-tag shields admit; disable (e) →
-# compact glue (xultralytics / yoloxultralytics) admits; disable residual
+# compact glue sole-path (xultralytics / yolox_xultralytics) admits
+# (yoloxultralytics / yoloxsultralytics stay steal-owned and still
+# deny); disable residual
 # re-scan → yolox_ultralytics admits (exception short-circuit); disable
 # multi-strip continuation → yolox_yolop_ultralytics admits; disable fail-
 # closed scan bounds → non-shrinking strip admits (synthetic invariant
@@ -3429,10 +3435,12 @@ _EXCEPTION_FAMILY_COMPACT_TAGS: dict[str, frozenset[str]] = {
 
 # Explicit compact-glue allowlist beyond family compact tags (FIR-7 A14-1).
 # Empty for every family except documented real compact spellings that
-# exceed the 1–3 compact-(c) bound. ``ppyoloeplus`` is the published
-# PP-YOLOE+ compact id (PaddleDetection); export/shield/separator tags
-# stay illegitimate as compact glue (``yoloxpt`` / ``yolostiny`` deny;
-# ``yolox_pt`` / ``yolos_tiny`` admit via separator residual classification).
+# exceed the 1–3 compact-(c) bound. ``ppyolo`` / ``eplus`` is the
+# published PP-YOLOE+ compact id (PaddleDetection); F13-5 also peels
+# that rem in head position (``ppyoloeplus_trt``). Export/shield/
+# separator tags stay illegitimate as compact glue (``yoloxpt`` /
+# ``yolostiny`` deny; ``yolox_pt`` / ``yolos_tiny`` admit via separator
+# residual classification).
 _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
     "yolox": frozenset(),
     "yolos": frozenset(),
@@ -3563,8 +3571,9 @@ def _is_legitimate_compact_glue_residual(rem: str, seed_c: str) -> bool:
 
     FIR-7 A14-1: compact glue of a separator-only or export/shield tag
     onto a family seed is **not** legitimate (``yoloxpt`` / ``yolostiny``
-    deny). Only per-family compact tags and the explicit (currently empty)
-    compact-glue allowlist admit. Separator-joined forms use
+    deny). Only per-family compact tags and the explicit compact-glue
+    allowlist (empty except documented ``ppyolo`` / ``eplus``) admit.
+    Separator-joined forms use
     :func:`_is_legitimate_residual_segment` instead.
     """
     if not rem or not seed_c:
@@ -3975,8 +3984,10 @@ def _classify_exception_residual(
       * ``unknown`` — fail-closed with honest unknown-residual entry.
 
     Length is never the discriminator. ``compact_glue=True`` when the
-    residual came from compact seed+rem (no separator) so export/separator
-    tags cannot launder via unbounded residual legitimacy (A14-1).
+    residual came from compact seed+rem (no separator) **or** from an
+    illegitimate head peel (F12-2 / F13-5: a peeled rem that is not in
+    the family's compact tags / ppyolo-eplus allowlist forces
+    compact-glue rules so a separator tail cannot launder it).
     """
     if not residual:
         return _RESIDUAL_LEGITIMATE, None
@@ -3987,9 +3998,11 @@ def _classify_exception_residual(
 
     # (a) legitimate residual for the match shape.
     if compact_glue:
-        # Compact glue: only per-family compact tags / empty allowlist.
-        # Shield tags (pt/trt/…) and separator-only tags (tiny/darknet/…)
-        # require separator-joined form (FIR-7 A14-1 / B12-4).
+        # Compact glue: only per-family compact tags / ppyolo-eplus
+        # allowlist. Forced also by an illegitimate head peel (F12-2 /
+        # F13-5). Shield tags (pt/trt/…) and separator-only tags
+        # (tiny/darknet/…) require separator-joined form
+        # (FIR-7 A14-1 / B12-4).
         if len(parts) == 1 and _is_legitimate_compact_glue_residual(
             parts[0], seed_c
         ):
@@ -4015,7 +4028,9 @@ def _classify_exception_residual(
     #   * non-compact non-tag debris that does not reconstitute an honest
     #     deny rem (``yolox_z`` / ``yolos_ti`` / ``zqx``) — B14-2 / F12-7;
     #   * compact glue of separator-only family tags (``yolostiny``).
-    # Honest reconst (``yolos_eg`` → ``yoloseg``) returns above at (b).
+    # Honest reconst (``yolos_eg`` / ``yolos_tiny_eg`` → ``yolo``)
+    # returns above at (b). ``yolox_tiny_eg`` is a true unknown
+    # witness (tiny is a yolox tag; eg does not reconstitute).
     non_tags = [
         p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
     ]
@@ -4303,13 +4318,21 @@ def _exception_illegitimate_deny_steal(
 ) -> PackageDenylistEntry | None:
     """Deny entry for exception-family residual that fails F10 classification.
 
-    **Single mechanism** (FIR-7 F10 / F11) for all exception+debris forms —
-    short compact (``yoloseg``), long compact (``yolofree`` / ``yolosegme``
-    / ``yolosfree``), separator twins (``yolos_eg`` / ``yolof_ree``),
-    tag+debris laundering (``yolos_tiny_eg`` / ``yolox_s_free``), compact
-    export-tag glue (``yoloxpt``; A14-1), and unbounded compact residual
-    deny glue (``yoloxultralyticsplus``; B14-1). Length is never the
-    discriminator.
+    **Single mechanism** (FIR-7 F10 / F11 / F12) for all exception+debris
+    forms — short compact (``yoloseg``), long compact (``yolofree`` /
+    ``yolosegme`` / ``yolosfree``), separator twins (``yolos_eg`` /
+    ``yolof_ree``), tag+debris laundering (``yolos_tiny_eg`` /
+    ``yolox_s_free``), compact export-tag glue (``yoloxpt``; A14-1), and
+    unbounded compact residual deny glue (``yoloxultralyticsplus``;
+    B14-1). Length is never the discriminator.
+
+    **F12-1 steal is a pre-classifier branch**: when the residual came
+    from unbounded compact prefix (``structural != residual``) and has
+    any deny hit — exact identity included (``yoloxyolo`` → ``yolo``)
+    as well as glue / contained long seeds (``yoloxultralyticsplus`` →
+    ``ultralytics``) — return that hit *before*
+    :func:`_classify_exception_residual` runs. ``yoloxultralytics`` /
+    ``yoloxsultralytics`` are owned here, not by rule (e).
 
     Classification via :func:`_classify_exception_residual`:
 

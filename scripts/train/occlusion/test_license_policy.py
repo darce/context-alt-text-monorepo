@@ -7031,9 +7031,11 @@ class TestB801UniformSuffixScan:
     false AGPL note and was verdict-dead for path-split pins.
 
     Red-proven independently: disable outer residual-suffix scan →
-    path-split/size-tag witnesses admit; disable (e) → compact-glue
-    witnesses admit; ``myyolo`` stays admitted under (e) (4-char seed
-    floor). Vendor-prefix exception forms admit (FIR-7-A9-01 pins).
+    path-split/size-tag witnesses admit; disable (e) → (e) sole-path
+    ``xultralytics`` / ``yolox_xultralytics`` admit (steal-owned
+    ``yoloxultralytics`` / ``yoloxsultralytics`` still deny); ``myyolo``
+    stays admitted under (e) (4-char seed floor). Vendor-prefix
+    exception forms admit (FIR-7-A9-01 pins).
     """
 
     # Path-split: second component is size-tag + deny seed (F4 residual-only
@@ -9617,7 +9619,8 @@ class TestF11A141CompactGlueTagDeny:
 
     Only separator-joined tags admit. Family compact tags (s/m/l/x, v2, …)
     still admit as compact-(c). Compact-glue allowlist is empty except
-    documented real compact ids (ppyoloeplus).
+    documented ``ppyolo`` / ``eplus`` (F13-5 also peels that rem in
+    head position).
     """
 
     # R14-G3-2: split A14-1 into unknown-path vs reconst-path and pin
@@ -9699,7 +9702,7 @@ class TestF11A141CompactGlueTagDeny:
         hit = policy._package_denylist_hit(token)
         assert hit is not None, f"unicode compact glue {token!r} must DENY"
 
-    def test_compact_glue_allowlist_is_empty(self) -> None:
+    def test_compact_glue_allowlist_is_ppyolo_eplus_only(self) -> None:
         allow = policy._EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST
         for seed, tags in allow.items():
             if seed == "ppyolo":

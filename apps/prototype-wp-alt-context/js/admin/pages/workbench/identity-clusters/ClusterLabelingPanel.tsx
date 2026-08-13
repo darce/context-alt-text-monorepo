@@ -531,7 +531,15 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                 ) : member.thumb_url ? (
                   <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
                 ) : (
-                  <div className="acx-face-thumbnail acx-face-thumbnail--placeholder" />
+                  <div
+                    className="acx-cluster-labeling-panel__face-unavailable"
+                    role="img"
+                    aria-label={__('Member image unavailable', 'alt-context')}
+                  >
+                    <span className="acx-cluster-labeling-panel__face-unavailable-label">
+                      {__('No image', 'alt-context')}
+                    </span>
+                  </div>
                 )}
               </div>
             ))

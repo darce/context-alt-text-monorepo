@@ -185,7 +185,66 @@ describe('TopClusterCard', () => {
     expect(screen.getByRole('button', { name: 'Name this person' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'No' })).not.toBeInTheDocument();
+  });
+
+  // E21-16 BR-06a: demoted machine-label path — Name this person must call onLabel, not confirm.
+  it('calls onLabel (not onConfirmSuggestedLabel) when Name this person is clicked for a machine label', async () => {
+    const onLabel = vi.fn();
+    const onConfirmSuggestedLabel = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TopClusterCard
+        cluster={buildCluster({ suggested_label: 'cluster-0a1b2c3d4e' })}
+        onLabel={onLabel}
+        onConfirmSuggestedLabel={onConfirmSuggestedLabel}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Name this person' }));
+    expect(onLabel).toHaveBeenCalledWith('cluster-1');
     expect(onConfirmSuggestedLabel).not.toHaveBeenCalled();
+  });
+
+  // E21-16 BR-06a: demoted path with onDismiss exposes Skip.
+  it('shows Skip and calls onDismiss when onDismiss is provided', async () => {
+    const onDismiss = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TopClusterCard
+        cluster={buildCluster({ suggested_label: 'cluster-0a1b2c3d4e' })}
+        onLabel={vi.fn()}
+        onDismiss={onDismiss}
+      />,
+    );
+
+    const skip = screen.getByRole('button', { name: 'Skip' });
+    expect(skip).toBeInTheDocument();
+    await user.click(skip);
+    expect(onDismiss).toHaveBeenCalledWith('cluster-1');
+  });
+
+  // E21-16 BR-06b: invalid truthy zero-extent bbox must not enter FaceThumbnail crop.
+  it('does not crop via FaceThumbnail when representative has media_url + zero-extent bbox', () => {
+    const { container } = render(
+      <TopClusterCard
+        cluster={buildCluster({
+          representatives: [
+            buildRepresentative({
+              media_url: MEDIA_URL,
+              bbox: { x: 0, y: 0, width: 0, height: 0 },
+              thumb_url: null,
+            }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
   });
 
   it('prompts Is this <label>? and confirms a human suggested_label', async () => {

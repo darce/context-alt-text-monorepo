@@ -84,13 +84,18 @@ const renderEvidenceMedia = ({
 }): React.JSX.Element => {
   if (typeof mediaUrl === 'string' && mediaUrl.length > 0 && isCroppableBbox(bbox)) {
     return (
-      <button type="button" onClick={() => onOpenLightbox({ mediaUrl, bbox, label: alt })}>
+      <button
+        type="button"
+        aria-label={alt}
+        onClick={() => onOpenLightbox({ mediaUrl, bbox, label: alt })}
+      >
         <FaceThumbnail
           mediaUrl={mediaUrl}
           bbox={bbox}
           sizePx={EVIDENCE_IMAGE_SIZE}
           shape="square"
           alt={alt}
+          loading="lazy"
         />
       </button>
     );
@@ -123,7 +128,15 @@ interface PersonWorkspacePanelProps {
 export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
   const queueMemberships = new Set(entry.queue_memberships);
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
+  const entryIdentity =
+    typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0
+      ? entry.person_uuid
+      : String(entry.id);
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
+
+  React.useEffect(() => {
+    setLightbox(null);
+  }, [entryIdentity]);
 
   return (
     <section
@@ -186,8 +199,8 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
             {entry.clusters.map((cluster, index) => {
               const clusterLabel = sprintf(__('Cluster %d', 'alt-context'), index + 1);
               const representativeAlt = sprintf(
-                __('Representative face for cluster %s', 'alt-context'),
-                cluster.cluster_id,
+                __('Representative face for Cluster %d', 'alt-context'),
+                index + 1,
               );
               return (
                 <section key={cluster.cluster_id} role="region" aria-label={clusterLabel}>
@@ -209,9 +222,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                   <div>
                     {cluster.instances.map((instance) => {
                       const instanceAlt = sprintf(
-                        __('Instance %d for cluster %s', 'alt-context'),
+                        __('Instance %d for Cluster %d', 'alt-context'),
                         instance.media_id,
-                        cluster.cluster_id,
+                        index + 1,
                       );
                       return (
                         <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>

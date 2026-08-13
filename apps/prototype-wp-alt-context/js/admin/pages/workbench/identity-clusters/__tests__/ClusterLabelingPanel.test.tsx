@@ -401,7 +401,7 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
-  // E21-16 W3: zero-extent bbox must not enter FaceThumbnail.
+  // E21-16 W3/BR-05: zero-extent bbox must not enter FaceThumbnail; show labelled unavailable.
   it('does not render FaceThumbnail for a zero-extent bbox', async () => {
     vi.mocked(fetchClusterMembers).mockResolvedValue(
       makeClusterMembersResponse([
@@ -423,8 +423,11 @@ describe('ClusterLabelingPanel', () => {
       expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
     });
 
-    expect(container.querySelector('.acx-face-thumbnail:not(.acx-face-thumbnail--placeholder)')).toBeNull();
-    expect(container.querySelector('.acx-face-thumbnail--placeholder')).not.toBeNull();
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    const unavailable = screen.getByRole('img', { name: 'Member image unavailable' });
+    expect(unavailable).toBeInTheDocument();
+    expect(unavailable).toHaveClass('acx-cluster-labeling-panel__face-unavailable');
   });
 
   it('renders FaceThumbnail for a positive-extent bbox when no dedicated thumb exists', async () => {
@@ -449,7 +452,7 @@ describe('ClusterLabelingPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
-    expect(container.querySelector('.acx-face-thumbnail--placeholder')).toBeNull();
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
       'src',
       'http://example.test/media/label-positive.jpg',

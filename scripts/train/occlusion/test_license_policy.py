@@ -9677,6 +9677,12 @@ class TestF11A141CompactGlueTagDeny:
     def test_compact_glue_allowlist_is_empty(self) -> None:
         allow = policy._EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST
         for seed, tags in allow.items():
+            if seed == "ppyolo":
+                # F12-4: ppyoloeplus is a published compact id.
+                assert tags == frozenset({"eplus"}), (
+                    f"ppyolo compact-glue allowlist must be {{eplus}}; got {tags!r}"
+                )
+                continue
             assert tags == frozenset(), (
                 f"compact-glue allowlist for {seed!r} must be empty; got {tags!r}"
             )
@@ -10141,5 +10147,109 @@ class TestF12NcDoorPromotionUnboundedCompact:
         )
         assert policy.audit_derived_from_model(token).ok is True, (
             "red-proof: with exception-family helper off, door must admit"
+        )
+
+
+class TestF12PpyoloCatalogAndResidualSplit:
+    """F12-4 / R14-G2-1 / R14-G2-6: PP-YOLO real catalog + residual split.
+
+    When the token contains ``_``, prefer the head-segment residual over
+    the unbounded compact rem so ``ppyoloe_s`` is ``e``+``s``, not ``es``.
+    Then admit the published PaddleDetection catalog spellings.
+    """
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyoloe_s",
+        "ppyoloe_m",
+        "ppyoloe_l",
+        "ppyoloe_x",
+        "ppyoloe_plus",
+        "ppyoloeplus",
+        "ppyoloe_crn_s_300e_coco",
+        "ppyoloe_plus_crn_s_80e_coco",
+        "ppyolo_r50vd_dcn_1x_coco",
+        "ppyolov2_r50vd_dcn_365e_coco",
+        "PaddleDetection/ppyoloe_crn_s_300e_coco",
+    )
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("ppyoloultralyticsplus", "ultralytics"),
+        ("ppyoloyolo", "yolo"),
+    )
+
+    def test_underscore_token_prefers_head_segment_residual(self) -> None:
+        """R14-G2-6: ppyoloe_s residual is e_s, not compact-joined es."""
+        seed_c, seed_k, residual = policy._exception_seed_match_for_residual(
+            "ppyoloe_s"
+        )
+        assert seed_c == "ppyolo"
+        assert residual == "e_s", (
+            f"ppyoloe_s residual must be segmented e_s, got {residual!r}"
+        )
+        structural = policy._strip_exception_seed_residual(
+            "ppyoloe_s", seed_c, seed_k
+        )
+        assert structural == "e_s"
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_ppyolo_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (PaddleDetection PP-YOLO catalog)"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is True, (
+                f"door must admit {token!r}; got {result.reason} "
+                f"({result.detail})"
+            )
+            detail_cf = (result.detail or "").casefold()
+            assert "ultralytics" not in detail_cf
+            assert "agpl" not in detail_cf
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_ppyolo_deny_stems_still_deny(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must still DENY"
+        assert hit.package_id == expected_pkg
+
+    def test_compact_orthography_of_separator_tags_stays_deny(self) -> None:
+        """R14-G2-4 non-goal: ppyoloes (compact s) stays DENY."""
+        hit = policy._package_denylist_hit("ppyoloes")
+        assert hit is not None, "ppyoloes compact size glue must stay DENY"
+
+    def test_red_proof_inventory_drop_turns_catalog_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: dropping ppyolo separator tags re-denies ppyoloe_s."""
+        witness = "ppyoloe_s"
+        assert policy._package_denylist_hit(witness) is None
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS",
+            {
+                **policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS,
+                "ppyolo": frozenset(),
+            },
+        )
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_TAGS",
+            {
+                seed: (
+                    policy._EXCEPTION_FAMILY_COMPACT_TAGS.get(seed, frozenset())
+                    | policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(
+                        seed, frozenset()
+                    )
+                )
+                for seed in policy._EXCEPTION_FAMILY_COMPACT_TAGS
+            },
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            "red-proof: with ppyolo separator tags emptied, "
+            f"{witness!r} must DENY"
         )
 

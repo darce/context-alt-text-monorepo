@@ -3236,7 +3236,10 @@ def _strip_exception_seed_residual(
         return token[len(boundary) :]
 
     # (c) bounded compact remainder: residual is the compact rem as a token.
-    if seed_k and token_compact.startswith(seed_k):
+    # F12-4 / R14-G2-6: when the token contains ``_``, prefer the
+    # head-segment residual so ``ppyoloe_s`` is ``e``+``s``, not the
+    # compact-joined rem ``es``.
+    if "_" not in token and seed_k and token_compact.startswith(seed_k):
         rem = token_compact[len(seed_k) :]
         if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
             return rem
@@ -3309,27 +3312,57 @@ _EXCEPTION_FAMILY_COMPACT_TAGS: dict[str, frozenset[str]] = {
 }
 
 # Explicit compact-glue allowlist beyond family compact tags (FIR-7 A14-1).
-# Empty: no export/shield/separator tag is legitimate when glued compactly
-# onto a family seed (``yoloxpt`` / ``yolostiny`` deny; ``yolox_pt`` /
-# ``yolos_tiny`` admit via separator residual classification).
+# Empty for every family except documented real compact spellings that
+# exceed the 1–3 compact-(c) bound. ``ppyoloeplus`` is the published
+# PP-YOLOE+ compact id (PaddleDetection); export/shield/separator tags
+# stay illegitimate as compact glue (``yoloxpt`` / ``yolostiny`` deny;
+# ``yolox_pt`` / ``yolos_tiny`` admit via separator residual classification).
 _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
     "yolox": frozenset(),
     "yolos": frozenset(),
     "yolof": frozenset(),
     "yolop": frozenset(),
-    "ppyolo": frozenset(),
+    "ppyolo": frozenset({"eplus"}),
 }
 
 # Separator-only size/version/backbone tags (FIR-7 A14-5 / B14-3).
 # Not legitimate as compact glue — only as separator residual segments.
 # B14-3: ``seg`` deliberately absent from yolos (YOLOS is detection-only;
 # ``yolos_seg`` is Ultralytics canonical seg naming with the digit dropped).
+#
+# PP-YOLO / PP-YOLOE / PP-YOLOv2 (F12-4): real PaddleDetection catalog
+# debris. Compact tags stay ``e`` / ``v2``. Separator-only inventory:
+#   * sizes after e: s / m / l / x  (``ppyoloe_s``; compact ``ppyoloes``
+#     stays DENY — A14-1 / R14-G2-4)
+#   * variant: plus (PP-YOLOE+)
+#   * backbone: crn (CSPResNet), r50vd (ResNet-50-vd)
+#   * neck / op: dcn (deformable conv)
+#   * schedule: 300e / 80e / 365e (epoch budgets), 1x (Detectron-style)
+#   * dataset: coco
+# These are structural training-config tags for this family, not a
+# global schedule shield. A residual containing a deny stem still denies.
 _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
     "yolox": frozenset({"nano", "tiny", "darknet"}),
     "yolos": frozenset({"tiny", "small", "base", "large"}),
     "yolof": frozenset({"r101", "c5"}),
     "yolop": frozenset(),
-    "ppyolo": frozenset(),
+    "ppyolo": frozenset(
+        {
+            "s",
+            "m",
+            "l",
+            "x",
+            "plus",
+            "crn",
+            "r50vd",
+            "dcn",
+            "300e",
+            "80e",
+            "1x",
+            "365e",
+            "coco",
+        }
+    ),
 }
 
 # Derived separator-boundary inventory = compact tags ∪ separator-only

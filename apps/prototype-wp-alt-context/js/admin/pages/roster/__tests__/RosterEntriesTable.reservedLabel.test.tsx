@@ -132,3 +132,35 @@ describe('RosterEntriesTable legacy reserved name save gate (BR-63)', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
   });
 });
+
+describe('RosterEntriesTable trim-normalization pin (BR-67)', () => {
+  it('allows tag-only save when backend name has trailing padding (cluster-7 )', async () => {
+    const user = userEvent.setup();
+    render(
+      <RosterEntriesTable
+        entries={[makeEntry({ name: 'cluster-7 ', tags: ['family'] })]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Edit person/i }));
+    const [nameInput, tagsInput] = screen.getAllByRole<HTMLInputElement>('textbox');
+    // getByDisplayValue collapses trailing whitespace; assert the raw padded value.
+    expect(nameInput).toHaveValue('cluster-7 ');
+    expect(nameInput.value.trim()).toBe('cluster-7');
+    await user.clear(tagsInput);
+    await user.type(tagsInput, 'vip, alumni');
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    expect(updateMutation.mutate).toHaveBeenCalledTimes(1);
+    expect(updateMutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 1,
+        name: 'cluster-7',
+        tags: ['vip', 'alumni'],
+      }),
+      expect.any(Object),
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+  });
+});

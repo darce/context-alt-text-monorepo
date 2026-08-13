@@ -10253,3 +10253,137 @@ class TestF12PpyoloCatalogAndResidualSplit:
             f"{witness!r} must DENY"
         )
 
+
+class TestF12YolofDetectron2ScheduleTags:
+    """F12-5 / R14-G2-2: YOLOF Detectron2 schedule / R_50 tags admit."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolof_r50_c5_1x",
+        "yolof_r50_c5_3x",
+        "yolof_r101_c5_1x",
+        "YOLOF_R_50_C5_1x",
+        "facebookresearch/detectron2/yolof_r50_c5_1x",
+    )
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolofultralyticsplus", "ultralytics"),
+        ("yolofyolo", "yolo"),
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_yolof_schedule_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (YOLOF Detectron2 catalog)"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is True, (
+                f"door must admit {token!r}; got {result.reason} "
+                f"({result.detail})"
+            )
+            detail_cf = (result.detail or "").casefold()
+            assert "ultralytics" not in detail_cf
+            assert "agpl" not in detail_cf
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_yolof_deny_stems_still_deny(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must still DENY"
+        assert hit.package_id == expected_pkg
+
+    def test_red_proof_schedule_tag_drop_turns_yolof_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: dropping 1x from yolof tags re-denies yolof_r50_c5_1x."""
+        witness = "yolof_r50_c5_1x"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolof"]
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS",
+            {
+                **policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS,
+                "yolof": frozenset(t for t in current if t != "1x"),
+            },
+        )
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_TAGS",
+            {
+                seed: (
+                    policy._EXCEPTION_FAMILY_COMPACT_TAGS.get(seed, frozenset())
+                    | policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(
+                        seed, frozenset()
+                    )
+                )
+                for seed in policy._EXCEPTION_FAMILY_COMPACT_TAGS
+            },
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without 1x in yolof tags, {witness!r} must DENY"
+        )
+
+
+class TestF12YoloxDarknet53:
+    """F12-6 / R14-G2-5: darknet53 is a real YOLOX backbone tag."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox_darknet53",
+        "yolox-darknet53",
+        "YOLOX-DarkNet53",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_yolox_darknet53_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (YOLOX darknet53 backbone)"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is True, (
+                f"door must admit {token!r}; got {result.reason} "
+                f"({result.detail})"
+            )
+            detail_cf = (result.detail or "").casefold()
+            assert "ultralytics" not in detail_cf
+            assert "agpl" not in detail_cf
+
+    def test_red_proof_darknet53_drop_turns_admit_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: dropping darknet53 from yolox tags re-denies the witness."""
+        witness = "yolox_darknet53"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolox"]
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS",
+            {
+                **policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS,
+                "yolox": frozenset(t for t in current if t != "darknet53"),
+            },
+        )
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_TAGS",
+            {
+                seed: (
+                    policy._EXCEPTION_FAMILY_COMPACT_TAGS.get(seed, frozenset())
+                    | policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(
+                        seed, frozenset()
+                    )
+                )
+                for seed in policy._EXCEPTION_FAMILY_COMPACT_TAGS
+            },
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without darknet53 in yolox tags, {witness!r} must DENY"
+        )
+

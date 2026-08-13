@@ -459,23 +459,20 @@ describe('MergeSuggestionCard', () => {
   });
 
   // BR-40: invalid ordinals (0 / NaN / Infinity) must not leak into accnames via sprintf coerce.
-  it('BR-40: invalid queue ordinals fall back to no-ordinal accnames (no of 0 / NaN)', () => {
-    const fallbackFaceNames = [
-      'View original photo, first face',
-      'View original photo, second face',
-    ];
-    const invalidCases: {
-      label: string;
-      queuePosition?: number;
-      queueTotal?: number;
-    }[] = [
-      { label: 'total=0', queuePosition: 1, queueTotal: 0 },
-      { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
-      { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
-    ];
+  // BR-45: it.each so each invalid case reports independently (for-loop masked later failures).
+  it.each([
+    { label: 'total=0', queuePosition: 1, queueTotal: 0 },
+    { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
+    { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
+  ])(
+    'BR-40: invalid queue ordinals fall back to no-ordinal accnames (no of 0 / NaN) — $label',
+    ({ label, queuePosition, queueTotal }) => {
+      const fallbackFaceNames = [
+        'View original photo, first face',
+        'View original photo, second face',
+      ];
 
-    for (const { label, queuePosition, queueTotal } of invalidCases) {
-      const { unmount } = render(
+      render(
         <MergeSuggestionCard
           suggestion={withFaces({
             id: `merge-invalid-${label}`,
@@ -511,8 +508,6 @@ describe('MergeSuggestionCard', () => {
       );
       expect(yes, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);
       expect(no, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);
-
-      unmount();
-    }
-  });
+    },
+  );
 });

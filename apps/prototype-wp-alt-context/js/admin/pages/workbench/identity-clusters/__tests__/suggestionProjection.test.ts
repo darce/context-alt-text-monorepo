@@ -72,32 +72,39 @@ describe('isHumanLabeledTarget', () => {
   });
 
   // BR-37/BR-38: two-shape reject — PHP-parity long hex (any case) OR lowercase machine forms.
-  it('gates non-hex lowercase machine shapes (BR-37/BR-38)', () => {
-    expect(isHumanLabeledTarget('cluster-xyz')).toBe(false);
-    expect(isHumanLabeledTarget('  cluster-xyz  ')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-auto-1')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-g7x2')).toBe(false);
-    expect(isHumanLabeledTarget('cluster_12_final')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-dad')).toBe(false);
+  // BR-44: it.each so each matrix input reports independently (vitest aborts at first expect in a shared it).
+  it.each([
+    'cluster-xyz',
+    '  cluster-xyz  ',
+    'cluster-auto-1',
+    'cluster-g7x2',
+    'cluster_12_final',
+    'cluster-dad',
+  ])('gates non-hex lowercase machine shapes (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(false);
   });
 
-  it('gates hex machine labels across lengths and case (BR-37/BR-38)', () => {
-    expect(isHumanLabeledTarget('cluster-7')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-ab')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-1234')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-abcdef01')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-123e4567-e89b-12d3-a456-426614174000')).toBe(false);
-    expect(isHumanLabeledTarget('CLUSTER-ABCDEF12')).toBe(false);
-    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
-    expect(isHumanLabeledTarget('cluster_ABCDEF1234')).toBe(false);
+  it.each([
+    'cluster-7',
+    'cluster-ab',
+    'cluster-1234',
+    'cluster-abcdef01',
+    'cluster-123e4567-e89b-12d3-a456-426614174000',
+    'CLUSTER-ABCDEF12',
+    'Cluster-abcdef12',
+    'cluster_ABCDEF1234',
+  ])('gates hex machine labels across lengths and case (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(false);
   });
 
-  it('passes hex-word human Cluster* names with uppercase letters (BR-37/BR-38)', () => {
-    expect(isHumanLabeledTarget('Cluster-Dad')).toBe(true);
-    expect(isHumanLabeledTarget('Cluster-ace')).toBe(true);
-    expect(isHumanLabeledTarget('Cluster-BEEF')).toBe(true);
-    expect(isHumanLabeledTarget('Cluster-Cafe')).toBe(true);
-    expect(isHumanLabeledTarget('Alex')).toBe(true);
+  it.each([
+    'Cluster-Dad',
+    'Cluster-ace',
+    'Cluster-BEEF',
+    'Cluster-Cafe',
+    'Alex',
+  ])('passes hex-word human Cluster* names with uppercase letters (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(true);
   });
 });
 

@@ -285,7 +285,7 @@ export const ClusterDrawerPanel = ({
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label || sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
+              {cluster.label ?? sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
             </h3>
             <ul className="acx-cluster-drawer__meta">
               <li>

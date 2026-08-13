@@ -456,14 +456,8 @@ describe('RosterPage projection-aware workspace shell', () => {
       expect(image).not.toHaveAttribute('width', '96');
     }
 
-    const named = [
-      ...within(clusterRegion).queryAllByRole('img'),
-      ...within(clusterRegion).queryAllByRole('button'),
-      ...within(clusterRegion).queryAllByRole('region'),
-    ];
-    for (const el of named) {
-      const accessibleName = el.getAttribute('aria-label') ?? el.getAttribute('alt') ?? el.textContent ?? '';
-      expect(accessibleName).not.toMatch(/cluster-alpha/i);
+    for (const role of ['img', 'button', 'region'] as const) {
+      expect(within(clusterRegion).queryByRole(role, { name: /cluster-alpha/i })).toBeNull();
     }
 
     expect(within(clusterRegion).getByText('Media 101')).toBeInTheDocument();

@@ -116,6 +116,130 @@ describe('PersonWorkspacePanel evidence images', () => {
     expect(screen.queryByRole('dialog', { name: 'Original media with face highlight' })).not.toBeInTheDocument();
   });
 
+  it('resets lightbox when entry id changes with empty person_uuid', async () => {
+    const user = userEvent.setup();
+    const entryId1 = baseEntry({ id: 1, person_uuid: '', name: 'Alice' });
+    const entryId2 = baseEntry({
+      id: 2,
+      person_uuid: '',
+      name: 'Bob',
+      clusters: [
+        {
+          cluster_id: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'identity-rep-b',
+            media_id: 200,
+            media_url: 'https://example.com/rep-b.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.9,
+          },
+          instances: [
+            {
+              identity_id: 'identity-b1',
+              media_id: 201,
+              media_url: 'https://example.com/instance-201.jpg',
+              bbox: { x: 10, y: 20, width: 30, height: 40 },
+              similarity: 0.8,
+            },
+          ],
+        },
+      ],
+    });
+
+    const { rerender } = render(<PersonWorkspacePanel entry={entryId1} onOpenQueue={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
+
+    rerender(<PersonWorkspacePanel entry={entryId2} onOpenQueue={vi.fn()} />);
+
+    expect(screen.queryByRole('dialog', { name: 'Original media with face highlight' })).not.toBeInTheDocument();
+  });
+
+  it('resets lightbox when person_uuid changes with the same entry id', async () => {
+    const user = userEvent.setup();
+    const personA = baseEntry({ id: 1, person_uuid: 'person-a', name: 'Alice' });
+    const personB = baseEntry({
+      id: 1,
+      person_uuid: 'person-b',
+      name: 'Bob',
+      clusters: [
+        {
+          cluster_id: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'identity-rep-b',
+            media_id: 200,
+            media_url: 'https://example.com/rep-b.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.9,
+          },
+          instances: [
+            {
+              identity_id: 'identity-b1',
+              media_id: 201,
+              media_url: 'https://example.com/instance-201.jpg',
+              bbox: { x: 10, y: 20, width: 30, height: 40 },
+              similarity: 0.8,
+            },
+          ],
+        },
+      ],
+    });
+
+    const { rerender } = render(<PersonWorkspacePanel entry={personA} onOpenQueue={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
+
+    rerender(<PersonWorkspacePanel entry={personB} onOpenQueue={vi.fn()} />);
+
+    expect(screen.queryByRole('dialog', { name: 'Original media with face highlight' })).not.toBeInTheDocument();
+  });
+
+  it('resets lightbox when person_uuid collides with prior entry id', async () => {
+    const user = userEvent.setup();
+    // Absent-uuid path uses String(id)="1"; next entry's person_uuid="1" collides without a composite key.
+    const entryAbsentUuid = baseEntry({ id: 1, person_uuid: '', name: 'Alice' });
+    const entryUuidEqualsPriorId = baseEntry({
+      id: 2,
+      person_uuid: '1',
+      name: 'Bob',
+      clusters: [
+        {
+          cluster_id: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'identity-rep-b',
+            media_id: 200,
+            media_url: 'https://example.com/rep-b.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.9,
+          },
+          instances: [
+            {
+              identity_id: 'identity-b1',
+              media_id: 201,
+              media_url: 'https://example.com/instance-201.jpg',
+              bbox: { x: 10, y: 20, width: 30, height: 40 },
+              similarity: 0.8,
+            },
+          ],
+        },
+      ],
+    });
+
+    const { rerender } = render(<PersonWorkspacePanel entry={entryAbsentUuid} onOpenQueue={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
+
+    rerender(<PersonWorkspacePanel entry={entryUuidEqualsPriorId} onOpenQueue={vi.fn()} />);
+
+    expect(screen.queryByRole('dialog', { name: 'Original media with face highlight' })).not.toBeInTheDocument();
+  });
+
   it('closes lightbox via dialog close affordance and allows reopen', async () => {
     const user = userEvent.setup();
     render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
@@ -226,6 +350,7 @@ describe('PersonWorkspacePanel evidence images', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
+      expect(within(openButton).getByRole('img', { name: 'Face image unavailable' })).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: 'Face image unavailable' })).not.toBeInTheDocument();
   });
@@ -247,10 +372,80 @@ describe('PersonWorkspacePanel evidence images', () => {
     expect(screen.getByRole('img', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Instance 102 for Cluster 1' })).toBeInTheDocument();
 
-    const named = screen.queryAllByRole('img').concat(screen.queryAllByRole('button'), screen.queryAllByRole('region'));
-    for (const el of named) {
-      const accessibleName = el.getAttribute('aria-label') ?? el.getAttribute('alt') ?? el.textContent ?? '';
-      expect(accessibleName).not.toMatch(new RegExp(CLUSTER_UUID, 'i'));
+    for (const role of ['img', 'button', 'region'] as const) {
+      expect(screen.queryByRole(role, { name: new RegExp(CLUSTER_UUID, 'i') })).toBeNull();
     }
+  });
+
+  it('renders distinct ordinal accessible names for multi-cluster evidence', () => {
+    const clusterA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const clusterB = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffff';
+    render(
+      <PersonWorkspacePanel
+        entry={baseEntry({
+          cluster_count: 2,
+          clusters: [
+            {
+              cluster_id: clusterA,
+              identity_count: 2,
+              representative_identity: {
+                identity_id: 'identity-rep-a',
+                media_id: 100,
+                media_url: 'https://example.com/rep-a.jpg',
+                bbox: { x: 10, y: 20, width: 30, height: 40 },
+                similarity: 0.95,
+              },
+              instances: [
+                {
+                  identity_id: 'identity-a1',
+                  media_id: 101,
+                  media_url: 'https://example.com/instance-101.jpg',
+                  bbox: { x: 10, y: 20, width: 30, height: 40 },
+                  similarity: 0.9,
+                },
+              ],
+            },
+            {
+              cluster_id: clusterB,
+              identity_count: 2,
+              representative_identity: {
+                identity_id: 'identity-rep-b',
+                media_id: 200,
+                media_url: 'https://example.com/rep-b.jpg',
+                bbox: { x: 10, y: 20, width: 30, height: 40 },
+                similarity: 0.91,
+              },
+              instances: [
+                {
+                  identity_id: 'identity-b1',
+                  media_id: 201,
+                  media_url: 'https://example.com/instance-201.jpg',
+                  bbox: { x: 10, y: 20, width: 30, height: 40 },
+                  similarity: 0.88,
+                },
+              ],
+            },
+          ],
+        })}
+        onOpenQueue={vi.fn()}
+      />,
+    );
+
+    const repCluster1 = screen.getByRole('img', { name: 'Representative face for Cluster 1' });
+    const repCluster2 = screen.getByRole('img', { name: 'Representative face for Cluster 2' });
+    expect(repCluster1).toBeInTheDocument();
+    expect(repCluster2).toBeInTheDocument();
+    expect(repCluster1).not.toBe(repCluster2);
+
+    expect(screen.getByRole('img', { name: 'Instance 201 for Cluster 2' })).toBeInTheDocument();
+
+    for (const role of ['img', 'button', 'region'] as const) {
+      expect(screen.queryByRole(role, { name: new RegExp(clusterA, 'i') })).toBeNull();
+      expect(screen.queryByRole(role, { name: new RegExp(clusterB, 'i') })).toBeNull();
+    }
+
+    const cluster2Region = screen.getByRole('region', { name: 'Cluster 2' });
+    expect(within(cluster2Region).getByText('Media 201')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Cluster 1' })).getByText('Media 101')).toBeInTheDocument();
   });
 });

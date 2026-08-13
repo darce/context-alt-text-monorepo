@@ -128,10 +128,7 @@ interface PersonWorkspacePanelProps {
 export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
   const queueMemberships = new Set(entry.queue_memberships);
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
-  const entryIdentity =
-    typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0
-      ? entry.person_uuid
-      : String(entry.id);
+  const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
 
   React.useEffect(() => {

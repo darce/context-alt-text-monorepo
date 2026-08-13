@@ -11022,3 +11022,209 @@ class TestF13JunkPrefixExceptionDenyAdjacency:
         assert policy._package_denylist_hit("my_yoloxyolo") is not None
         assert policy._package_denylist_hit("yolodummy") is None
 
+
+def _retag_separator_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    seed: str,
+    tags: frozenset[str],
+) -> None:
+    """Swap one family's separator-only tags and re-derive the union."""
+    monkeypatch.setattr(
+        policy,
+        "_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS",
+        {
+            **policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS,
+            seed: tags,
+        },
+    )
+    monkeypatch.setattr(
+        policy,
+        "_EXCEPTION_FAMILY_SEPARATOR_TAGS",
+        {
+            s: (
+                policy._EXCEPTION_FAMILY_COMPACT_TAGS.get(s, frozenset())
+                | policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(
+                    s, frozenset()
+                )
+            )
+            for s in policy._EXCEPTION_FAMILY_COMPACT_TAGS
+        },
+    )
+
+
+class TestF13CatalogSeparatorTags:
+    """F13-4 / R15-G2-1 / R15-G2-2 / R15-CDX-1 / R15-G2-3: catalog admits.
+
+    Separator-only inventory (compact-glue allowlist untouched).
+    """
+
+    PPYOLO_ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyolo_tiny_650e_coco",
+        "ppyolo_mbv3_large_coco",
+        "ppyolo_r50vd_dcn_2x_coco",
+        "ppyolov2_r101vd_dcn_365e_coco",
+        "ppyolo_r18vd_coco",
+        "ppyoloe_plus_sod_crn_l_80e_coco",
+    )
+    YOLOX_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox_s_8xb8-300e_coco",
+        "yolox_tiny_8xb8-300e_coco",
+        "yolox_s_8x8_300e_coco",
+        "yolox_voc_s",
+        "yolox_s_coco",
+    )
+    YOLOF_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolof_r50-c5_8xb8-1x_coco",
+    )
+    COMPACT_GLUE_DENY: ClassVar[tuple[str, ...]] = (
+        "ppyoloes",
+        "yoloxtiny",
+        "yolox8xb8",
+        "ppyolotiny",
+        "yolofcoco",
+        "yoloxcoco",
+        "ppyolo650e",
+    )
+    CROSS_FAMILY_DENY: ClassVar[tuple[str, ...]] = (
+        "yolos_8xb8",
+        "ppyolo_voc",
+    )
+
+    @pytest.mark.parametrize(
+        "token", PPYOLO_ADMIT + YOLOX_ADMIT + YOLOF_ADMIT
+    )
+    def test_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (F13-4 catalog tag)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token", COMPACT_GLUE_DENY)
+    def test_compact_glue_of_new_tags_stays_deny(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"compact glue {token!r} must stay DENY (allowlist untouched)"
+        )
+
+    @pytest.mark.parametrize("token", CROSS_FAMILY_DENY)
+    def test_cross_family_tags_stay_deny(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"cross-family {token!r} must DENY (per-family inventory)"
+        )
+
+    def test_red_proof_ppyolo_tiny_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove ``tiny`` from ppyolo separator-only tags."""
+        witness = "ppyolo_tiny_650e_coco"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["ppyolo"]
+        _retag_separator_inventory(
+            monkeypatch, "ppyolo", frozenset(t for t in current if t != "tiny")
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without tiny in ppyolo tags, {witness!r} must DENY"
+        )
+
+    def test_red_proof_yolox_8xb8_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove ``8xb8`` from yolox separator-only tags."""
+        witness = "yolox_s_8xb8-300e_coco"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolox"]
+        _retag_separator_inventory(
+            monkeypatch, "yolox", frozenset(t for t in current if t != "8xb8")
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without 8xb8 in yolox tags, {witness!r} must DENY"
+        )
+
+    def test_red_proof_yolof_8xb8_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove ``8xb8`` from yolof separator-only tags."""
+        witness = "yolof_r50-c5_8xb8-1x_coco"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolof"]
+        _retag_separator_inventory(
+            monkeypatch, "yolof", frozenset(t for t in current if t != "8xb8")
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without 8xb8 in yolof tags, {witness!r} must DENY"
+        )
+
+    def test_red_proof_yolox_voc_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove ``voc`` from yolox separator-only tags."""
+        witness = "yolox_voc_s"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolox"]
+        _retag_separator_inventory(
+            monkeypatch, "yolox", frozenset(t for t in current if t != "voc")
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without voc in yolox tags, {witness!r} must DENY"
+        )
+
+
+class TestF13EplusHeadPeel:
+    """F13-5 / R15-L-4: head peel must accept compact-glue allowlist rem.
+
+    ``_head_compact_peel_rem`` capped rem at 1–3 chars, so allowlisted
+    ``eplus`` (5) never peeled: ``ppyoloeplus_trt`` denied while
+    ``ppyoloeplus`` and ``ppyoloe_plus_trt`` passed.
+    """
+
+    def test_ppyoloeplus_trt_admits(self) -> None:
+        token = "ppyoloeplus_trt"
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (F13-5 eplus head peel)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    def test_ppyoloeplus_and_separator_twin_still_admit(self) -> None:
+        for token in ("ppyoloeplus", "ppyoloe_plus_trt"):
+            assert policy._package_denylist_hit(token) is None, (
+                f"control {token!r} must stay PASS"
+            )
+
+    def test_ppyoloes_still_denies(self) -> None:
+        hit = policy._package_denylist_hit("ppyoloes")
+        assert hit is not None, "ppyoloes compact size glue must stay DENY"
+
+    def test_red_proof_eplus_allowlist_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop ``eplus`` from the ppyolo compact-glue allowlist.
+
+        Neuter: ``_EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST['ppyolo']`` →
+        empty. Head peel / strip / abc all lose the 5-char rem, so
+        ``ppyoloeplus_trt`` (and bare ``ppyoloeplus``) deny.
+        """
+        token = "ppyoloeplus_trt"
+        assert policy._package_denylist_hit(token) is None
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST",
+            {
+                **policy._EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST,
+                "ppyolo": frozenset(),
+            },
+        )
+        assert policy._package_denylist_hit(token) is not None, (
+            f"red-proof: without eplus in the allowlist, {token!r} must DENY"
+        )
+        assert policy._package_denylist_hit("ppyoloeplus") is not None
+        assert policy._package_denylist_hit("ppyoloes") is not None
+        # Separator twin does not need the compact-glue allowlist.
+        assert policy._package_denylist_hit("ppyoloe_plus_trt") is None
+

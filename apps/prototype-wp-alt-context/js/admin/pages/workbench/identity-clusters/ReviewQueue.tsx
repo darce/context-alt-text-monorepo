@@ -1238,6 +1238,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
               accentPrimary={!bulkCommitOwnsAccent}
+              // BR-35: same 1-based numbers as the visible position span; omit when the
+              // REVIEW_QUEUE_POSITION_UNAVAILABLE outage path makes count unmeasurable
+              // (length===0 — CurrentCard is not mounted then, but keep the gate explicit).
+              queuePosition={length > 0 ? safeIndex + 1 : undefined}
+              queueTotal={length > 0 ? length : undefined}
               assignmentById={assignmentById}
               mergeById={mergeById}
               nameById={nameById}
@@ -1330,6 +1335,13 @@ interface CurrentCardProps {
    * exactly one element carries the accent per viewport.
    */
   accentPrimary: boolean;
+  /**
+   * BR-35: 1-based queue position from the same state as the visible
+   * `%1$d of %2$d` chrome. Omit (with `queueTotal`) when position is unavailable.
+   */
+  queuePosition?: number;
+  /** BR-35: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
   assignmentById: Map<string, ReviewSuggestion>;
   mergeById: Map<string, PendingMergeSuggestion>;
   nameById: Map<string, PendingNameSuggestion>;
@@ -1468,6 +1480,8 @@ export const CommitHoldRegion = ({
 const CurrentCard = ({
   item,
   accentPrimary,
+  queuePosition,
+  queueTotal,
   assignmentById,
   mergeById,
   nameById,
@@ -1674,6 +1688,9 @@ const CurrentCard = ({
           <MergeSuggestionCard
             suggestion={suggestion}
             accentPrimary={accentPrimary}
+            // BR-35: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
             onAccept={() => {
               runScheduled(() => scheduleAcceptMerge(suggestion.id));
             }}

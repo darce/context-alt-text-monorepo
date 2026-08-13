@@ -622,6 +622,245 @@ describe('ClusterLabelingPanel', () => {
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
+  it('reserved machine-shaped input is rejected before remote guard runs (BR-46)', async () => {
+    const machineDuplicate = {
+      ...duplicateClusterMatch,
+      id: 'machine-target-id',
+      label: 'cluster-auto-1',
+      identity_count: 3,
+    };
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([machineDuplicate]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'cluster-auto-1');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByRole('alert'),
+    ).toHaveTextContent(
+      'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+    );
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(listRecognitionClusters).mock.calls.some((call) => call[0]?.limit === 10),
+    ).toBe(false);
+  });
+
+  it('remote guard collides on machine-shaped label via case-insensitive raw equality (BR-50 / BR-42)', async () => {
+    // Cluster-Auto-1 passes isHumanLabeledTarget (uppercase fails MACHINE_RE; non-hex fails HEX_RE)
+    // while the remote row is lowercase cluster-auto-1 — raw equality must still arm the guard.
+    // BR-58 / BR-66: collision warning stays, but merge affordance AND outcome-sample copy are
+    // suppressed for machine-labeled targets (copy must not advertise a merge the button withholds).
+    const machineDuplicate = {
+      ...duplicateClusterMatch,
+      id: 'machine-target-id',
+      label: 'cluster-auto-1',
+      identity_count: 3,
+    };
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([machineDuplicate]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'Cluster-Auto-1');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText('A name matching "Cluster-Auto-1" already exists. Choose how to proceed.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Merge target: cluster "cluster-auto-1"/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Merge into cluster/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rename anyway' })).toBeInTheDocument();
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
+  });
+
+  it('BR-46 / BR-66: human-labeled merge target offers copy + clickable merge (control)', async () => {
+    // Predicted first failure (pre B): cluster.label.toLowerCase() throws on null → catch fail-open
+    // BR-58/BR-66 control: human-labeled collision offers merge copy + button; click closes oracle gap.
+    const nullLabeledRow = {
+      ...duplicateClusterMatch,
+      id: 'null-label-cluster',
+      label: null as string | null,
+      identity_count: 2,
+    };
+    const realMatch = {
+      ...duplicateClusterMatch,
+      id: 'real-match-id',
+      label: 'Pat Rivera',
+      identity_count: 7,
+    };
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([nullLabeledRow, realMatch]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'Pat Rivera');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText('A name matching "Pat Rivera" already exists. Choose how to proceed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Merge target: cluster "Pat Rivera"/)).toBeInTheDocument();
+    const mergeButton = screen.getByRole('button', { name: 'Merge into cluster "Pat Rivera"' });
+    expect(mergeButton).toBeInTheDocument();
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
+
+    await user.click(mergeButton);
+    await waitFor(() => {
+      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'real-match-id', 'Pat Rivera');
+    });
+  });
+
+  it('BR-46: remote guard with only a null-labeled row resolves to no collision', async () => {
+    // Null-only labeled_only hit must not arm the guard. Oracle: remote guard ran (limit:10)
+    // and save completed via the normal no-collision path (updateClusterLabel with typed label).
+    const nullLabeledRow = {
+      ...duplicateClusterMatch,
+      id: 'null-only-cluster',
+      label: null as string | null,
+      identity_count: 1,
+    };
+    const listMock = vi.mocked(listRecognitionClusters);
+    listMock.mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([nullLabeledRow]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'Unique Name Zq');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(listMock.mock.calls.some((call) => call[0]?.limit === 10 && call[0]?.labeled_only === true)).toBe(
+        true,
+      );
+      expect(updateClusterLabel).toHaveBeenCalledWith(
+        'source-cluster-id',
+        'Unique Name Zq',
+        expect.any(AbortSignal),
+      );
+    });
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('BR-46: reserved machine-shaped label is rejected before remote guard', async () => {
+    // Predicted first failure (pre C): save reaches remote guard / update without reserved inline error
+    const listMock = vi.mocked(listRecognitionClusters);
+    listMock.mockImplementation((params?: { limit?: number }) => {
+      if (params?.limit === 10) {
+        return Promise.resolve(makeClusterListResponse([duplicateClusterMatch]));
+      }
+      return Promise.resolve(makeClusterListResponse([]));
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'cluster-1a2b3c4d');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    // Snapshot remote-guard-shaped calls before Save (union query uses limit:20).
+    const remoteGuardCallsBefore = listMock.mock.calls.filter((call) => call[0]?.limit === 10).length;
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByRole('alert'),
+    ).toHaveTextContent(
+      'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+    );
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(mergeCluster).not.toHaveBeenCalled();
+    expect(listMock.mock.calls.filter((call) => call[0]?.limit === 10).length).toBe(
+      remoteGuardCallsBefore,
+    );
+  });
+
+  it('BR-46: human label Cluster-Dad proceeds past reserved validation to save', async () => {
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse([]));
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.clear(search);
+    await user.type(search, 'Cluster-Dad');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledWith(
+        'source-cluster-id',
+        'Cluster-Dad',
+        expect.any(AbortSignal),
+      );
+    });
+    expect(screen.queryByText(/reserved for automatic cluster IDs/i)).not.toBeInTheDocument();
+  });
+
   it('person+cluster same name still offers named merge into the cluster (PR-18 / FIX-9)', async () => {
     // Predicted first failure: person-preferred dedupe hides cluster so merge not offered
     vi.mocked(listRecognitionClusters).mockResolvedValue(

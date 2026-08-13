@@ -20,6 +20,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox, type ComboboxOption } from '../../../../components/ui/combobox';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
   buildNamingOptions,
@@ -95,10 +96,6 @@ const withTimeout = async <T,>(
   } finally {
     window.clearTimeout(timeoutId);
   }
-};
-
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
 };
 
 const renderNamingOption = (option: ComboboxOption): React.ReactNode => {
@@ -218,7 +215,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     () =>
       buildNamingOptions({
         rosterEntries: rosterError ? [] : persons,
-        labelMatches: labeledClusters,
+        // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+        labelMatches: labeledClusters.filter(
+          (cluster): cluster is typeof cluster & { label: string } =>
+            typeof cluster.label === 'string' && cluster.label.trim() !== '',
+        ),
         filter: labelInput,
         excludeClusterId: clusterId,
       }),
@@ -309,6 +310,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   /**
    * When the local collision set is empty/pending (limit 20, disabled <2 chars),
    * look up an exact remote labeled match so free-text create cannot silent-dupe (FIX-8).
+   * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
+   * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
    */
   const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
     try {
@@ -320,7 +323,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       const normalized = trimmed.toLowerCase();
       const match = results.clusters.find(
         (cluster) =>
-          cluster.id !== clusterId && cluster.label.toLowerCase() === normalized && isHumanLabeledTarget(cluster.label),
+          cluster.id !== clusterId &&
+          typeof cluster.label === 'string' &&
+          cluster.label.toLowerCase() === normalized,
       );
       if (!match?.id || !match.label) {
         return null;
@@ -348,6 +353,14 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       return;
     }
     setError(null);
+
+    // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
+    if (!isHumanLabeledTarget(trimmed)) {
+      setError(
+        __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+      );
+      return;
+    }
 
     if (!allowRenameAnyway) {
       const localGuard = evaluateDuplicateGuard(trimmed);
@@ -430,6 +443,13 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const mergeTargetId = duplicateGuard?.mergeTarget ? unwrapClusterOptionId(duplicateGuard.mergeTarget.value) : null;
   const mergeTargetLabel = duplicateGuard?.mergeTarget?.label;
   const mergeTargetCount = duplicateGuard?.mergeTarget?.identityCount;
+  // BR-66 / BR-58: outcome-sample copy must match the merge button predicate — never advertise
+  // a merge that the machine-labeled-target guard suppresses.
+  const canOfferMerge =
+    Boolean(mergeTargetId) &&
+    typeof mergeTargetLabel === 'string' &&
+    mergeTargetLabel.length > 0 &&
+    isHumanLabeledTarget(mergeTargetLabel);
 
   if (lastMerge) {
     return (
@@ -596,7 +616,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                   duplicateGuard.label,
                 )}
               </p>
-              {mergeTargetId && mergeTargetLabel && (
+              {canOfferMerge ? (
                 <p className="acx-cluster-labeling-panel__outcome-sample">
                   {typeof mergeTargetCount === 'number'
                     ? sprintf(
@@ -611,9 +631,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                         mergeTargetLabel,
                       )}
                 </p>
-              )}
+              ) : null}
               <div className="acx-cluster-labeling-panel__suggestion-actions">
-                {mergeTargetId && mergeTargetLabel ? (
+                {canOfferMerge && mergeTargetId ? (
                   <button
                     type="button"
                     className="button button-primary"

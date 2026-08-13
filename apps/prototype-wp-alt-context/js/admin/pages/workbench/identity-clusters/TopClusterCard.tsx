@@ -7,6 +7,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 
@@ -18,10 +19,6 @@ const resolveRepresentativeThumbUrl = (
     return null;
   }
   return rawUrl;
-};
-
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
 };
 
 const resolveRepresentativeCrop = (

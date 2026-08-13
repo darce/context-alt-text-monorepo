@@ -128,9 +128,9 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
 seed has compact-(c) tags (fit the 1–3 alnum bound) **and** separator-
 only tags (any length) reflecting real checkpoints — ``yolox``: s/m/l/x
 + nano/tiny/darknet/darknet53; ``yolos``: tiny/small/base/large (no
-compact single-letter sizes); ``yolof``: r50 + r101/c5/1x/3x/r/50/101
-(Detectron2 schedule / ``R_50`` spelling); ``yolop``: v2/v3; ``ppyolo``:
-e/v2 + s/m/l/x/plus/crn/r50vd/dcn/300e/80e/1x/365e/coco
+compact single-letter sizes); ``yolof``: r50 + r101/c5/1x/3x/r/50/101/coco
+(Detectron2 schedule / ``R_50`` spelling / dataset tag); ``yolop``: v2/v3;
+``ppyolo``: e/v2 + s/m/l/x/plus/crn/r50vd/dcn/300e/80e/1x/365e/coco
 (PaddleDetection catalog). YOLOS single-letter size twins (``yolosx`` /
 ``yolosn`` / …) are NOT real hustvl sizes → deny; ``yoloxs`` stays
 admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
@@ -3352,13 +3352,20 @@ _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
 #   * dataset: coco
 # These are structural training-config tags for this family, not a
 # global schedule shield. A residual containing a deny stem still denies.
+# YOLOF (F12-5 / F12b-1) reuses the same schedule/dataset debris policy
+# for Detectron2 / MMDetection catalog names (``1x`` / ``3x`` / ``coco``);
+# each family keeps its own inventory — ``coco`` is not a global dataset
+# shield.
 _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
     "yolox": frozenset({"nano", "tiny", "darknet", "darknet53"}),
     "yolos": frozenset({"tiny", "small", "base", "large"}),
-    # YOLOF Detectron2 catalog (F12-5): r50 is compact; r101/c5 already
-    # here. Digit+x schedule tokens (1x / 3x) and the split R_50 / R_101
-    # spelling (r, 50, 101) are structural Detectron2 config tags.
-    "yolof": frozenset({"r101", "c5", "1x", "3x", "r", "50", "101"}),
+    # YOLOF Detectron2 / MMDetection catalog (F12-5 / F12b-1): r50 is
+    # compact; r101/c5 already here. Digit+x schedule tokens (1x / 3x),
+    # the split R_50 / R_101 spelling (r, 50, 101), and the trailing
+    # dataset tag (coco) are structural Detectron2 config tags. Same
+    # F12-4 schedule/dataset debris policy as ppyolo; lists are not
+    # shared (per-family inventory).
+    "yolof": frozenset({"r101", "c5", "1x", "3x", "r", "50", "101", "coco"}),
     "yolop": frozenset(),
     "ppyolo": frozenset(
         {

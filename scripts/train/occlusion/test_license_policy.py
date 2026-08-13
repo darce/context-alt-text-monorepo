@@ -10352,6 +10352,99 @@ class TestF12YolofDetectron2ScheduleTags:
         )
 
 
+class TestF12bYolofDatasetTag:
+    """F12b-1 / R14-CDX-03 residue: YOLOF Detectron2/MMDetection ``coco`` tag.
+
+    F12-5 admitted schedule tags (``1x`` / ``3x``) and backbone splits
+    (``r`` / ``50`` / ``101``) but not the trailing dataset tag used by
+    real Detectron2 / MMDetection artifact names
+    (``yolof_r50_c5_1x_coco``). Same structural-debris policy as F12-4
+    documented for ppyolo's schedule/dataset inventory.
+    """
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolof_r50_c5_1x_coco",
+        "yolof_r50_c5_3x_coco",
+        "yolof_r101_c5_1x_coco",
+        "YOLOF_R_50_C5_1x_coco",
+    )
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolofultralyticsplus", "ultralytics"),
+        ("yolofyolo", "yolo"),
+        ("yolofc5_pt", "yolof_unknown_residual"),
+        ("yolof_z", "yolof_unknown_residual"),
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_yolof_dataset_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (YOLOF Detectron2/MMDetection catalog)"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is True, (
+                f"door must admit {token!r}; got {result.reason} "
+                f"({result.detail})"
+            )
+            detail_cf = (result.detail or "").casefold()
+            assert "ultralytics" not in detail_cf
+            assert "agpl" not in detail_cf
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_yolof_dataset_deny_stems_still_deny(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must still DENY"
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected honest {expected_pkg!r}, got "
+            f"{hit.package_id!r} notes={hit.notes!r}"
+        )
+        if expected_pkg.endswith("_unknown_residual"):
+            notes_cf = hit.notes.casefold()
+            assert "ultralytics" not in notes_cf
+            assert "agpl family alias" not in notes_cf
+
+    def test_red_proof_coco_tag_drop_turns_yolof_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: dropping coco from yolof tags re-denies yolof_r50_c5_1x_coco.
+
+        Neuter: remove ``coco`` from ``_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS``
+        [``yolof``] (and re-derive ``_EXCEPTION_FAMILY_SEPARATOR_TAGS``).
+        """
+        witness = "yolof_r50_c5_1x_coco"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["yolof"]
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS",
+            {
+                **policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS,
+                "yolof": frozenset(t for t in current if t != "coco"),
+            },
+        )
+        monkeypatch.setattr(
+            policy,
+            "_EXCEPTION_FAMILY_SEPARATOR_TAGS",
+            {
+                seed: (
+                    policy._EXCEPTION_FAMILY_COMPACT_TAGS.get(seed, frozenset())
+                    | policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS.get(
+                        seed, frozenset()
+                    )
+                )
+                for seed in policy._EXCEPTION_FAMILY_COMPACT_TAGS
+            },
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without coco in yolof tags, {witness!r} must DENY"
+        )
+
+
 class TestF12YoloxDarknet53:
     """F12-6 / R14-G2-5: darknet53 is a real YOLOX backbone tag."""
 

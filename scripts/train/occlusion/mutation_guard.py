@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1959  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1968  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1521,6 +1521,15 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF12YoloxDarknet53::test_yolox_darknet53_admits[YOLOX-DarkNet53]',
     'test_license_policy.py::TestF12YoloxDarknet53::test_yolox_darknet53_admits[yolox-darknet53]',
     'test_license_policy.py::TestF12YoloxDarknet53::test_yolox_darknet53_admits[yolox_darknet53]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_red_proof_coco_tag_drop_turns_yolof_red',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_catalog_admits[YOLOF_R_50_C5_1x_coco]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_catalog_admits[yolof_r101_c5_1x_coco]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_catalog_admits[yolof_r50_c5_1x_coco]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_catalog_admits[yolof_r50_c5_3x_coco]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_deny_stems_still_deny[yolof_z-yolof_unknown_residual]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_deny_stems_still_deny[yolofc5_pt-yolof_unknown_residual]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_deny_stems_still_deny[yolofultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF12bYolofDatasetTag::test_yolof_dataset_deny_stems_still_deny[yolofyolo-yolo]',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',
@@ -3264,6 +3273,9 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_inventory_drop_turns_catalog_red",
             "test_red_proof_schedule_tag_drop_turns_yolof_red",
             "test_red_proof_darknet53_drop_turns_admit_red",
+            # F12b-1: YOLOF coco dataset-tag deny controls + red-proof.
+            "test_yolof_dataset_deny_stems_still_deny",
+            "test_red_proof_coco_tag_drop_turns_yolof_red",
         ),
     ),
     Mutation(
@@ -3441,6 +3453,10 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_schedule_tag_drop_turns_yolof_red",
             "test_red_proof_darknet53_drop_turns_admit_red",
             "test_red_proof_reconst_suppression_is_load_bearing",
+            # F12b-1: coco drop / unknown-residual honesty die when
+            # residual classify always returns legitimate.
+            "test_yolof_dataset_deny_stems_still_deny",
+            "test_red_proof_coco_tag_drop_turns_yolof_red",
         ),
     ),
     Mutation(
@@ -3520,6 +3536,9 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_schedule_tag_drop_turns_yolof_red",
             "test_red_proof_darknet53_drop_turns_admit_red",
             "test_red_proof_reconst_suppression_is_load_bearing",
+            # F12b-1: unknown residual + coco-drop red-proof land here.
+            "test_yolof_dataset_deny_stems_still_deny",
+            "test_red_proof_coco_tag_drop_turns_yolof_red",
         ),
     ),
     Mutation(
@@ -3544,6 +3563,8 @@ MUTATIONS: list[Mutation] = [
             "test_ppyolo_deny_stems_still_deny",
             "test_yolof_deny_stems_still_deny",
             "test_f12_1_witnesses_keep_true_entries",
+            # F12b-1: yolofultralyticsplus / yolofyolo still need steal.
+            "test_yolof_dataset_deny_stems_still_deny",
         ),
     ),
 ]

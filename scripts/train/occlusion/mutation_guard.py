@@ -40,6 +40,10 @@ Mutations:
   M20 force PASS→FAIL to pin GATE-32 pass-witness (RF-01)
   M21 denylist reason→RESEARCH_ONLY_SOURCE on BR-53 floor rows (RF-02)
   M22 research reason→DENYLISTED_LICENSE on BR-53 research rows (RF-02)
+  M23 residual classify always legitimate (F11 A14-3 branch flip)
+  M24 deny-reconstituting → legitimate (F11 A14-3 reconst flip)
+  M25 unknown residual fail-closed default → legitimate (F11 A14-3)
+  M26 B14-1 unbounded-defer residual deny steal skipped (F11 A14-3)
 
 Also mediates a checked-in node-id baseline (subset: live ⊇ recorded),
 reports per-mutant collateral (RF-03), strong-form victim attribution
@@ -97,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 1774  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 1851  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -498,7 +502,6 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolof_r50]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolop]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolopv2]',
-    'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolos-tiny-seg]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolos-tiny]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolos]',
     'test_license_policy.py::TestB501StructuralFamilyBoundary::test_exception_family_admits[yolox]',
@@ -1326,12 +1329,90 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolospose]',
     'test_license_policy.py::TestF10LongDebrisFailClosed::test_long_debris_denies_on_doors_and_row[yolossegment]',
     'test_license_policy.py::TestF10MaxReconstSegmentsPin::test_max_reconst_segments_is_module_level',
+    'test_license_policy.py::TestF10MaxReconstSegmentsPin::test_red_proof_max_reconst_exact_value_is_load_bearing',
     'test_license_policy.py::TestF10MaxReconstSegmentsPin::test_red_proof_max_reconst_segments_perturbation',
     'test_license_policy.py::TestF10ResidualClassifyMechanism::test_export_shield_is_legitimate_residual_segment',
     'test_license_policy.py::TestF10ResidualClassifyMechanism::test_prior_admit_set_still_holds',
     'test_license_policy.py::TestF10ResidualClassifyMechanism::test_prior_deny_set_still_holds',
     'test_license_policy.py::TestF10ResidualClassifyMechanism::test_separator_tag_inventory_pins',
-    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics[ppyolo-zzzwombat]',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics[yolof-zqx]',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics[yolop-zqx]',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics[yolos-blorp]',
+    'test_license_policy.py::TestF10ResidualClassifyMechanism::test_unknown_residual_honest_note_not_fabricated_ultralytics[yolox-zqx]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_allowlist_is_empty',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolofc5]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolospt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolosseg]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolossmall]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolostiny]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yolostrt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxbin]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxdarknet]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxnano]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxonnx]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxpretrained]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxpt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxpttrt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxsafetensors]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxtensorrt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxtiny]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_compact_glue_tags_deny[yoloxtrt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_red_proof_steal_flag_turns_compact_glue_red',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[ppyoloe]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolof_c5]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolof_r50]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolofr50]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolopv2]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolos_tiny]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_bin]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_darknet]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_nano]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_onnx]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_pt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yolox_trt]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_separator_and_family_compact_admit[yoloxs]',
+    'test_license_policy.py::TestF11A141CompactGlueTagDeny::test_unicode_fullwidth_compact_glue_denies',
+    'test_license_policy.py::TestF11A142DeadBranchCleanup::test_classify_fail_closed_default_is_unknown',
+    'test_license_policy.py::TestF11A142DeadBranchCleanup::test_no_deny_seed_underlying_exception_helper',
+    'test_license_policy.py::TestF11A142DeadBranchCleanup::test_steal_returns_entry_for_unknown_compact_glue',
+    'test_license_policy.py::TestF11A145TagInventorySingleSource::test_compact_tags_subset_of_separator_tags',
+    'test_license_policy.py::TestF11A145TagInventorySingleSource::test_separator_tags_derived_from_canonical_sources',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[ppyoloultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yolofultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yolopultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yolosultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yoloxultralyticshub-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yoloxultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_doors_and_row_deny_unbounded_defer[yoloxyolov8seg-yolov8s]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_red_proof_steal_flag_turns_unbounded_defer_red',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_separator_twin_and_bare_still_deny',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[ppyoloultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yolofultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yolopultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yolosultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yoloxultralyticshub-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yoloxultralyticsplus-ultralytics]',
+    'test_license_policy.py::TestF11B141UnboundedDeferCompactResidual::test_unbounded_defer_compact_denies_honest[yoloxyolov8seg-yolov8s]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_red_proof_seg_in_inventory_would_admit',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_seg_absent_from_yolos_inventories',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos-tiny-seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos.seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_bin_seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_pt_seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_seg_bin]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_seg_pt]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_seg_trt]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_tiny_seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolos_trt_seg]',
+    'test_license_policy.py::TestF11B143YolosSegDeny::test_yolos_seg_forms_deny[yolosseg]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolof_bin]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolop_trt]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolos_pt]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolox_bin]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolox_pt]',
+    'test_license_policy.py::TestF11ConverseExportAdmit::test_export_separator_admits_without_agpl_lineage[yolox_trt]',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',
@@ -2583,6 +2664,114 @@ def audit_provenance_row(row, category=PolicyCategory.TRAINING_DATA):  # type: i
 """
 
 
+def _m23_residual_classify_always_legitimate(src: str) -> str:
+    """Force residual classifier to always return legitimate (F11 A14-3).
+
+    Flips legitimate↔deny-reconstituting/unknown: exception+debris and
+    compact-glue witnesses admit when residual classification is neutered
+    to the admit branch.
+    """
+    old = (
+        "    if compact_glue:\n"
+        "        # Compact glue: only per-family compact tags / empty allowlist.\n"
+        "        # Shield tags (pt/trt/…) and separator-only tags (tiny/darknet/…)\n"
+        "        # require separator-joined form (FIR-7 A14-1 / B12-4).\n"
+        "        if len(parts) == 1 and _is_legitimate_compact_glue_residual(\n"
+        "            parts[0], seed_c\n"
+        "        ):\n"
+        "            return _RESIDUAL_LEGITIMATE, None"
+    )
+    new = (
+        "    # MUTATION M23: residual classification always legitimate\n"
+        "    return _RESIDUAL_LEGITIMATE, None\n"
+        "    if compact_glue:\n"
+        "        # Compact glue: only per-family compact tags / empty allowlist.\n"
+        "        # Shield tags (pt/trt/…) and separator-only tags (tiny/darknet/…)\n"
+        "        # require separator-joined form (FIR-7 A14-1 / B12-4).\n"
+        "        if len(parts) == 1 and _is_legitimate_compact_glue_residual(\n"
+        "            parts[0], seed_c\n"
+        "        ):\n"
+        "            return _RESIDUAL_LEGITIMATE, None"
+    )
+    return _replace_unique(src, old, new, "M23")
+
+
+def _m24_deny_reconst_to_legitimate(src: str) -> str:
+    """Flip deny-reconstituting branch to legitimate (F11 A14-3).
+
+    ``yolos_eg`` / ``yoloseg`` / separator twins that only close via
+    progressive reconst admit instead of deny-reconstituting.
+    """
+    old = (
+        "    # (b) progressive re-glue reconstitutes a deny claim.\n"
+        "    reconst = _residual_progressive_reconst_deny(seed_c, seed_k, residual)\n"
+        "    if reconst is not None:\n"
+        "        return _RESIDUAL_DENY_RECONST, reconst"
+    )
+    new = (
+        "    # MUTATION M24: deny-reconstituting flipped to legitimate admit\n"
+        "    reconst = _residual_progressive_reconst_deny(seed_c, seed_k, residual)\n"
+        "    if reconst is not None:\n"
+        "        return _RESIDUAL_LEGITIMATE, None"
+    )
+    return _replace_unique(src, old, new, "M24")
+
+
+def _m25_unknown_default_to_legitimate(src: str) -> str:
+    """Flip fail-closed unknown default to legitimate (F11 A14-3).
+
+    Compact-glue shield residuals and pure-nonsense residuals that reach
+    the unknown path admit instead of fail-closed deny.
+    """
+    old = (
+        "    if non_tags or compact_glue:\n"
+        "        return _RESIDUAL_UNKNOWN, _unknown_exception_residual_entry(\n"
+        "            seed_c, residual\n"
+        "        )\n"
+        "\n"
+        "    # Fail-closed default (A14-2): every segment-legit non-compact path\n"
+        "    # already returned above; never silently admit on fall-through.\n"
+        "    return _RESIDUAL_UNKNOWN, _unknown_exception_residual_entry(\n"
+        "        seed_c, residual\n"
+        "    )"
+    )
+    new = (
+        "    # MUTATION M25: unknown fail-closed default → legitimate admit\n"
+        "    if non_tags or compact_glue:\n"
+        "        return _RESIDUAL_LEGITIMATE, None\n"
+        "\n"
+        "    # Fail-closed default (A14-2) mutated to legitimate.\n"
+        "    return _RESIDUAL_LEGITIMATE, None"
+    )
+    return _replace_unique(src, old, new, "M25")
+
+
+def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
+    """Skip B14-1 unbounded-defer residual deny steal (F11 A14-3).
+
+    ``yoloxultralyticsplus`` and siblings admit again (DEFER granted,
+    re-queue never runs, trailing (e) does not fire).
+    """
+    old = (
+        "    if residual and structural != residual:\n"
+        "        residual_deny = _deny_folded_ab_hit(residual)\n"
+        "        if residual_deny is not None and not _is_exact_deny_seed_identity(\n"
+        "            residual\n"
+        "        ):\n"
+        "            return residual_deny"
+    )
+    new = (
+        "    # MUTATION M26: B14-1 unbounded-defer steal skipped\n"
+        "    if residual and structural != residual:\n"
+        "        residual_deny = _deny_folded_ab_hit(residual)\n"
+        "        if residual_deny is not None and not _is_exact_deny_seed_identity(\n"
+        "            residual\n"
+        "        ):\n"
+        "            pass  # mutated: do not return residual deny"
+    )
+    return _replace_unique(src, old, new, "M26")
+
+
 def _m22_br53_research_reason_to_denylist(src: str) -> str:
     """RF-02: keep RESEARCH_ONLY_SOURCE FAIL, swap reason on BR-53 research rows.
 
@@ -2928,6 +3117,20 @@ MUTATIONS: list[Mutation] = [
             "test_prior_admit_set_still_holds",  # also pins yolop_s_ultralytics deny
             "test_causal_free_in_shield_admits_exception_residual",
             "test_red_proof_max_reconst_segments_perturbation",
+            # Wave F11: compact-glue / unbounded-defer / yolos-seg / honesty pins.
+            "test_unbounded_defer_compact_denies_honest",
+            "test_doors_and_row_deny_unbounded_defer",
+            "test_compact_glue_tags_deny",
+            "test_yolos_seg_forms_deny",
+            "test_unknown_residual_honest_note_not_fabricated_ultralytics",
+            "test_unicode_fullwidth_compact_glue_denies",
+            "test_steal_returns_entry_for_unknown_compact_glue",
+            # F11 red-proofs / controls that also die when hit always misses
+            # (RV-07: must be named so attribution is not collateral).
+            "test_separator_twin_and_bare_still_deny",
+            "test_red_proof_steal_flag_turns_unbounded_defer_red",
+            "test_red_proof_steal_flag_turns_compact_glue_red",
+            "test_red_proof_seg_in_inventory_would_admit",
         ),
     ),
     Mutation(
@@ -2976,6 +3179,9 @@ MUTATIONS: list[Mutation] = [
             "test_ultralyticsplus_denies_agpl",
             "test_ultralyticsplus_buffalo_l_agpl_precedence",
             "test_long_debris_denies_on_doors_and_row",
+            # Wave F11: B14-1 unbounded-defer door pins assert denylisted
+            # package reason via the same shared helper (RV-07).
+            "test_doors_and_row_deny_unbounded_defer",
         ),
     ),
     Mutation(
@@ -3046,6 +3252,123 @@ MUTATIONS: list[Mutation] = [
             "test_research_source_rejected_by_every_door",
         ),
     ),
+    # FIR-7 F11 A14-3: residual-classification branch flips.
+    # expected_victims = full kill-run failure bases (RV-07 strong-form).
+    Mutation(
+        name="M23",
+        description=(
+            "residual classify always legitimate "
+            "(F11 A14-3 legitimate↔deny/unknown flip)"
+        ),
+        apply="m23",
+        expected_victims=(
+            # Core residual-classify / compact-glue / unknown pins.
+            "test_compact_glue_tags_deny",
+            "test_long_debris_denies",
+            "test_long_debris_denies_on_doors_and_row",
+            "test_tag_glue_denies",
+            "test_yolos_seg_forms_deny",
+            "test_unknown_residual_honest_note_not_fabricated_ultralytics",
+            "test_red_proof_residual_classify_flag_is_load_bearing",
+            "test_residual_classify_owns_exception_debris",
+            "test_prior_deny_set_still_holds",
+            "test_steal_returns_entry_for_unknown_compact_glue",
+            "test_classify_fail_closed_default_is_unknown",
+            "test_unicode_fullwidth_compact_glue_denies",
+            # Reconst / debris / letter-twin surfaces that also die when
+            # residual classification always returns legitimate.
+            "test_digit_laundering_denies",
+            "test_yolos_letter_twins_deny",
+            "test_separator_twins_deny",
+            "test_full_row_and_doors_deny_separator_twins",
+            "test_ultralytics_artifact_forms_deny",
+            "test_ultralytics_artifact_forms_deny_on_training_data_row",
+            "test_each_flag_flip_alone_changes_a_pinned_outcome",
+            "test_red_proof_elevated_c_alone_turns_pure_deny_pins_red",
+            "test_red_proof_residual_classify_alone_turns_debris_pins_red",
+            "test_causal_free_in_shield_admits_exception_residual",
+            "test_red_proof_elevated_c_flag_is_load_bearing",
+            "test_red_proof_max_reconst_segments_perturbation",
+            "test_red_proof_steal_flag_turns_compact_glue_red",
+            "test_red_proof_seg_in_inventory_would_admit",
+        ),
+    ),
+    Mutation(
+        name="M24",
+        description=(
+            "deny-reconstituting branch → legitimate "
+            "(F11 A14-3 reconst↔legitimate flip)"
+        ),
+        apply="m24",
+        expected_victims=(
+            "test_prior_deny_set_still_holds",
+            "test_yolos_letter_twins_deny",
+            "test_digit_laundering_denies",
+            "test_separator_twins_deny",
+            "test_residual_classify_owns_exception_debris",
+            # Full kill-run bases (RV-07): reconst flip also admits
+            # artifact-form / compact-glue / tag-glue reconst paths.
+            "test_ultralytics_artifact_forms_deny",
+            "test_ultralytics_artifact_forms_deny_on_training_data_row",
+            "test_compact_glue_tags_deny",
+            "test_tag_glue_denies",
+            "test_full_row_and_doors_deny_separator_twins",
+            "test_red_proof_residual_classify_alone_turns_debris_pins_red",
+            "test_red_proof_residual_classify_flag_is_load_bearing",
+            "test_red_proof_max_reconst_segments_perturbation",
+            "test_unicode_fullwidth_compact_glue_denies",
+            "test_yolos_seg_forms_deny",
+        ),
+    ),
+    Mutation(
+        name="M25",
+        description=(
+            "unknown residual fail-closed default → legitimate "
+            "(F11 A14-3 fail-open unknown default)"
+        ),
+        apply="m25",
+        expected_victims=(
+            "test_compact_glue_tags_deny",
+            "test_unknown_residual_honest_note_not_fabricated_ultralytics",
+            "test_yolos_seg_forms_deny",
+            "test_unicode_fullwidth_compact_glue_denies",
+            "test_steal_returns_entry_for_unknown_compact_glue",
+            "test_classify_fail_closed_default_is_unknown",
+            "test_long_debris_denies",
+            "test_long_debris_denies_on_doors_and_row",
+            "test_tag_glue_denies",
+            # Full kill-run bases (RV-07): unknown→legitimate also opens
+            # reconst / debris / artifact-form surfaces.
+            "test_ultralytics_artifact_forms_deny",
+            "test_ultralytics_artifact_forms_deny_on_training_data_row",
+            "test_residual_classify_owns_exception_debris",
+            "test_red_proof_elevated_c_alone_turns_pure_deny_pins_red",
+            "test_red_proof_residual_classify_alone_turns_debris_pins_red",
+            "test_separator_twins_deny",
+            "test_full_row_and_doors_deny_separator_twins",
+            "test_digit_laundering_denies",
+            "test_causal_free_in_shield_admits_exception_residual",
+            "test_red_proof_residual_classify_flag_is_load_bearing",
+            "test_red_proof_elevated_c_flag_is_load_bearing",
+            "test_red_proof_max_reconst_segments_perturbation",
+            "test_prior_deny_set_still_holds",
+            "test_red_proof_steal_flag_turns_compact_glue_red",
+            "test_red_proof_seg_in_inventory_would_admit",
+        ),
+    ),
+    Mutation(
+        name="M26",
+        description=(
+            "B14-1 unbounded-defer residual deny steal skipped "
+            "(F11 A14-3 defer re-queue hole)"
+        ),
+        apply="m26",
+        expected_victims=(
+            "test_unbounded_defer_compact_denies_honest",
+            "test_doors_and_row_deny_unbounded_defer",
+            "test_red_proof_steal_flag_turns_unbounded_defer_red",
+        ),
+    ),
 ]
 
 _APPLIERS = {
@@ -3072,6 +3395,10 @@ _APPLIERS = {
     "m20": _m20_gate32_pass_witness_probe,
     "m21": _m21_br53_denylist_reason_to_research,
     "m22": _m22_br53_research_reason_to_denylist,
+    "m23": _m23_residual_classify_always_legitimate,
+    "m24": _m24_deny_reconst_to_legitimate,
+    "m25": _m25_unknown_default_to_legitimate,
+    "m26": _m26_b141_unbounded_defer_steal_skip,
 }
 
 

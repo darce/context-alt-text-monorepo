@@ -7066,12 +7066,12 @@ class TestB801UniformSuffixScan:
     # (e)-only cells: compact segment ends with deny seed ≥ 5 chars.
     # (Exclude yolox_xultralytics_yolox — with (e) off it can still hit bare
     # yolo compact on a residual path; still pinned as a deny witness above.)
-    # F12-1: ``yoloxultralytics`` is steal-owned (exact residual ``ultralytics``)
-    # so it is no longer (e) sole-path; ``xultralytics`` replaces it.
+    # F12-1 / F12-7: ``yoloxultralytics`` (exact residual) and
+    # ``yoloxsultralytics`` (contained ultralytics seed) are steal-owned;
+    # (e) sole-path is the residual token / separator-deferred re-queue.
     E_RULE_WITNESSES: ClassVar[tuple[str, ...]] = (
         "yolox_xultralytics",
         "xultralytics",
-        "yoloxsultralytics",
     )
 
     # FIR-7-A9-01: underscore vendor-prefix exception forms (were false-denied
@@ -9618,24 +9618,34 @@ class TestF11A141CompactGlueTagDeny:
     still admit as compact-(c). Explicit compact-glue allowlist is empty.
     """
 
-    COMPACT_GLUE_DENY: ClassVar[tuple[str, ...]] = (
-        "yoloxpt",
-        "yoloxtrt",
-        "yoloxbin",
-        "yolospt",
-        "yolostrt",
-        "yolosseg",
-        "yolofc5",
-        "yoloxonnx",
-        "yoloxtensorrt",
-        "yoloxsafetensors",
-        "yoloxpretrained",
-        "yoloxdarknet",
-        "yolostiny",
-        "yolossmall",
-        "yoloxnano",
-        "yoloxtiny",
-        "yoloxpttrt",  # two-tag compact already denied; stays denied
+    # R14-G3-2: split A14-1 into unknown-path vs reconst-path and pin
+    # package_id per group. After F12-7, compact glue of shield/separator
+    # tags lands on honest unknown residual (not fabricated yolo).
+    UNKNOWN_PATH: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxpt", "yolox_unknown_residual"),
+        ("yoloxtrt", "yolox_unknown_residual"),
+        ("yoloxbin", "yolox_unknown_residual"),
+        ("yolospt", "yolos_unknown_residual"),
+        ("yolostrt", "yolos_unknown_residual"),
+        ("yolosseg", "yolos_unknown_residual"),
+        ("yolofc5", "yolof_unknown_residual"),
+        ("yoloxonnx", "yolox_unknown_residual"),
+        ("yoloxtensorrt", "yolox_unknown_residual"),
+        ("yoloxsafetensors", "yolox_unknown_residual"),
+        ("yoloxpretrained", "yolox_unknown_residual"),
+        ("yoloxdarknet", "yolox_unknown_residual"),
+        ("yolostiny", "yolos_unknown_residual"),
+        ("yolossmall", "yolos_unknown_residual"),
+        ("yoloxnano", "yolox_unknown_residual"),
+        ("yoloxtiny", "yolox_unknown_residual"),
+        ("yoloxpttrt", "yolox_unknown_residual"),
+    )
+    # No A14-1 compact-glue token reconstitutes a deny seed after F12-7
+    # (reconst is reserved for residual debris that itself matches a deny
+    # seed, e.g. yolos_eg → yoloseg). Kept as an explicit empty group.
+    RECONST_PATH: ClassVar[tuple[tuple[str, str], ...]] = ()
+    COMPACT_GLUE_DENY: ClassVar[tuple[str, ...]] = tuple(
+        t for t, _ in UNKNOWN_PATH
     )
 
     SEPARATOR_ADMIT: ClassVar[tuple[str, ...]] = (
@@ -9653,6 +9663,19 @@ class TestF11A141CompactGlueTagDeny:
         "yoloxs",
         "ppyoloe",
     )
+
+    @pytest.mark.parametrize("token,expected_pkg", UNKNOWN_PATH)
+    def test_compact_glue_unknown_path_package_id(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"compact glue {token!r} must DENY (A14-1 unknown path)"
+        )
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
 
     @pytest.mark.parametrize("token", COMPACT_GLUE_DENY)
     def test_compact_glue_tags_deny(self, token: str) -> None:
@@ -10385,5 +10408,110 @@ class TestF12YoloxDarknet53:
         )
         assert policy._package_denylist_hit(witness) is not None, (
             f"red-proof: without darknet53 in yolox tags, {witness!r} must DENY"
+        )
+
+
+class TestF12ReasonHonesty:
+    """F12-7 / R14-G2-3 / R14-G1-5: do not fabricate Ultralytics for short rem.
+
+    Progressive reconst of exception_seed + short debris hit ``yolo``
+    because every exception seed is ``yolo`` + 1 char. Those denies stay
+    DENY but must report ``*_unknown_residual``, not entry ``yolo``.
+    """
+
+    UNKNOWN_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxpt", "yolox_unknown_residual"),
+        ("yolospt", "yolos_unknown_residual"),
+        ("yolofc5", "yolof_unknown_residual"),
+        ("yolox_z", "yolox_unknown_residual"),
+        ("yolox_ab", "yolox_unknown_residual"),
+        ("yolof_z", "yolof_unknown_residual"),
+        ("yolop_z", "yolop_unknown_residual"),
+        ("yolos_ti", "yolos_unknown_residual"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", UNKNOWN_WITNESSES)
+    def test_short_residual_unknown_not_fabricated_yolo(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must stay DENY"
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected honest {expected_pkg!r}, got "
+            f"{hit.package_id!r} notes={hit.notes!r}"
+        )
+        notes_cf = hit.notes.casefold()
+        assert "ultralytics" not in notes_cf
+        assert "agpl family alias" not in notes_cf
+
+    @pytest.mark.parametrize("token,expected_pkg", UNKNOWN_WITNESSES)
+    def test_short_residual_unknown_on_doors_exact_entry(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        """R14-G3-3: door detail names the exact package_id."""
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert _door_entry_package_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name entry {expected_pkg!r}; "
+                f"got {result.detail!r}"
+            )
+
+    def test_f12_1_witnesses_keep_true_entries(self) -> None:
+        """F12-1 steal of residual identity outranks suppressed reconst."""
+        for token, expected in (
+            ("yoloxyolo", "yolo"),
+            ("yolosyolo", "yolo"),
+            ("yoloxyolo_v8", "yolov8"),
+            ("yoloxyolo_nas", "yolonas"),
+        ):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None
+            assert hit.package_id == expected, (
+                f"{token!r}: F12-1 true entry {expected!r}, got "
+                f"{hit.package_id!r}"
+            )
+
+    def test_yoloseg_reconst_path_still_yolo(self) -> None:
+        """Honest reconst: yolos+eg → yoloseg is a real yolo compact rem."""
+        hit = policy._package_denylist_hit("yoloseg")
+        assert hit is not None
+        assert hit.package_id == "yolo"
+        hit2 = policy._package_denylist_hit("yolos_eg")
+        assert hit2 is not None
+        assert hit2.package_id == "yolo"
+
+    def test_strongest_hit_names_ultralytics_in_compound(self) -> None:
+        """R14-G1-6: yoloxyoloultralyticsplus names ultralytics, not unknown."""
+        token = "yoloxyoloultralyticsplus"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == "ultralytics", (
+            f"{token!r}: expected ultralytics-class content, got "
+            f"{hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == "ultralytics"
+
+    def test_red_proof_reconst_suppression_is_load_bearing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restoring fabricated yolo reconst flips yoloxpt reason."""
+        token = "yoloxpt"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+        monkeypatch.setattr(
+            policy, "_is_fabricated_exception_yolo_hit", lambda *_a, **_k: False
+        )
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "yolo", (
+            "red-proof: with fabrication filter off, yoloxpt must name yolo"
         )
 

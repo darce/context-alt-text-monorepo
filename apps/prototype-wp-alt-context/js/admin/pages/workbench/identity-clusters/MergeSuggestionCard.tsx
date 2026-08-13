@@ -1,5 +1,5 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
@@ -25,11 +25,13 @@ const FaceCropControl = ({
   mediaUrl,
   bbox,
   alt,
+  controlAriaLabel,
   onOpen,
 }: {
   mediaUrl: string;
   bbox: NonNullable<PendingMergeSuggestion['cluster_a_representative_bbox']>;
   alt: string;
+  controlAriaLabel: string;
   onOpen?: (target: FaceOriginalTarget) => void;
 }): React.JSX.Element => {
   if (!onOpen) {
@@ -49,7 +51,7 @@ const FaceCropControl = ({
       type="button"
       className="acx-face-crop-control"
       onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
-      aria-label={__('View original photo', 'alt-context')}
+      aria-label={controlAriaLabel}
     >
       <FaceThumbnail
         mediaUrl={mediaUrl}
@@ -86,8 +88,21 @@ export const MergeSuggestionCard = ({
     : null;
   const clusterALabel = humanLabelA ?? __('Unnamed cluster', 'alt-context');
   const clusterBLabel = humanLabelB ?? __('Unnamed cluster', 'alt-context');
-  const clusterAAlt = humanLabelA ?? __('Detected face', 'alt-context');
-  const clusterBAlt = humanLabelB ?? __('Detected face', 'alt-context');
+  // BR-30: per-side alt differentiators for auto labels; human names stay unchanged.
+  const clusterAAlt =
+    humanLabelA ??
+    sprintf(__('Detected face (%s)', 'alt-context'), __('first cluster', 'alt-context'));
+  const clusterBAlt =
+    humanLabelB ??
+    sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
+  const faceControlALabel = sprintf(
+    __('View original photo, %s', 'alt-context'),
+    __('first face', 'alt-context'),
+  );
+  const faceControlBLabel = sprintf(
+    __('View original photo, %s', 'alt-context'),
+    __('second face', 'alt-context'),
+  );
   const hasClusterAFace = Boolean(
     suggestion.cluster_a_representative_media_url && suggestion.cluster_a_representative_bbox,
   );
@@ -97,11 +112,29 @@ export const MergeSuggestionCard = ({
   const clusterACount = suggestion.cluster_a_identity_count;
   const clusterBCount = suggestion.cluster_b_identity_count;
 
+  // BR-30: per-card context so co-rendered Yes/No pairs resolve distinctly via
+  // aria-describedby (keeps accessible name = visible "Yes"/"No" for label-in-name).
+  // DOM ids may key on suggestion.id; accessible text never includes raw cluster-* labels.
+  const questionId = `acx-merge-q-${suggestion.id}`;
+  const contextId = `acx-merge-ctx-${suggestion.id}`;
+  const sideAContext = humanLabelA ?? __('first cluster', 'alt-context');
+  const sideBContext = humanLabelB ?? __('second cluster', 'alt-context');
+  const cardContext = sprintf(
+    /* translators: 1: first side label, 2: second side label, 3: match percent label (e.g. "87% match") */
+    __('%1$s and %2$s, %3$s', 'alt-context'),
+    sideAContext,
+    sideBContext,
+    `${matchPercent}% ${__('match', 'alt-context')}`,
+  );
+
   return (
     <div
       className="acx-suggestion-card acx-suggestion-card--merge"
       data-testid="acx-review-card"
       data-review-kind="merge"
+      role="group"
+      aria-labelledby={questionId}
+      aria-describedby={contextId}
     >
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face">
@@ -110,6 +143,7 @@ export const MergeSuggestionCard = ({
               mediaUrl={suggestion.cluster_a_representative_media_url!}
               bbox={suggestion.cluster_a_representative_bbox!}
               alt={clusterAAlt}
+              controlAriaLabel={faceControlALabel}
               onOpen={onOpenOriginal}
             />
           ) : (
@@ -126,6 +160,7 @@ export const MergeSuggestionCard = ({
               mediaUrl={suggestion.cluster_b_representative_media_url!}
               bbox={suggestion.cluster_b_representative_bbox!}
               alt={clusterBAlt}
+              controlAriaLabel={faceControlBLabel}
               onOpen={onOpenOriginal}
             />
           ) : (
@@ -138,10 +173,15 @@ export const MergeSuggestionCard = ({
         </div>
       </div>
       <div className="acx-suggestion-card__content">
-        <p className="acx-suggestion-card__question">{__('Are these the same person?', 'alt-context')}</p>
+        <p id={questionId} className="acx-suggestion-card__question">
+          {__('Are these the same person?', 'alt-context')}
+        </p>
         <p className="acx-suggestion-card__match">
           {matchPercent}% {__('match', 'alt-context')}
         </p>
+        <span id={contextId} className="screen-reader-text">
+          {cardContext}
+        </span>
       </div>
 
       <div className="acx-suggestion-card__actions">
@@ -155,6 +195,7 @@ export const MergeSuggestionCard = ({
           onClick={onAccept}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
+          aria-describedby={`${questionId} ${contextId}`}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {__('Yes', 'alt-context')}
@@ -166,6 +207,7 @@ export const MergeSuggestionCard = ({
           onClick={onReject}
           disabled={isPending}
           title={isPending && disabledReason ? disabledReason : undefined}
+          aria-describedby={`${questionId} ${contextId}`}
         >
           {__('No', 'alt-context')}
         </button>

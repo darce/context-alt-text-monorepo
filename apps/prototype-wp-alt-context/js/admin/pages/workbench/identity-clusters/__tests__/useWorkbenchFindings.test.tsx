@@ -928,6 +928,38 @@ describe('buildWorkbenchFindings', () => {
     });
   });
 
+  // BR-28: findings merge preview must null case/underscore auto-labels (same predicate).
+  it('nulls merge cluster_a_label for Cluster- and cluster_ auto-labels', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-case',
+            cluster_a_label: 'Cluster-abcdef12',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-case.jpg',
+          }),
+          makeMerge({
+            id: 'merge-underscore',
+            cluster_a_label: 'cluster_abcdef12',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-underscore.jpg',
+          }),
+        ],
+        mergeTotal: 2,
+      }),
+      makeState(),
+    );
+
+    const byKey = Object.fromEntries(model.previews.map((preview) => [preview.key, preview]));
+    expect(byKey['merge-merge-case']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+    expect(byKey['merge-merge-underscore']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+  });
+
   // FIX-2 / BR-26 / A11Y-02 / HAI-01: assignments provenance — upstream isHumanLabeledTarget
   // is the single gate; findings layer must not surface auto-label rows that slip past it.
   it('produces no assignment preview for auto cluster_* labels (upstream gate provenance)', () => {

@@ -7,16 +7,7 @@ export const useRosterFaceRoute = (): {
   requestedFaceId: string | null;
   writeFace: (faceId: string | null, personUuid: string | null) => void;
 } => {
-  let searchParams: URLSearchParams;
-  let setSearchParams: ReturnType<typeof useSearchParams>[1];
-
-  try {
-    [searchParams, setSearchParams] = useSearchParams();
-  } catch {
-    searchParams = new URLSearchParams();
-    setSearchParams = ((next: URLSearchParams) => next) as ReturnType<typeof useSearchParams>[1];
-  }
-
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedFaceId = getRouteParam(searchParams, 'face');
 
   const writeFace = useCallback(

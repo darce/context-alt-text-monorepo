@@ -12,8 +12,8 @@ interface PersonFaceFilmstripProps {
   faces: readonly PersonScrubFace[];
   selectedId: string | null;
   onSelect: (faceId: string) => void;
-  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   railRef?: React.Ref<HTMLDivElement>;
+  clusterOrdinal: number;
 }
 
 const renderRailMedia = (face: PersonScrubFace, alt: string): React.JSX.Element => {
@@ -45,20 +45,49 @@ export const PersonFaceFilmstrip = ({
   faces,
   selectedId,
   onSelect,
-  onKeyDown,
   railRef,
+  clusterOrdinal,
 }: PersonFaceFilmstripProps): React.JSX.Element => {
-  const activeId = selectedId ? rosterFaceDomId(selectedId) : undefined;
+  const visibleIds = faces.map((face) => face.faceId);
+  const selectedInRail = selectedId !== null && visibleIds.includes(selectedId);
+  const activeId = selectedInRail && selectedId ? rosterFaceDomId(selectedId) : undefined;
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (visibleIds.length === 0) {
+      return;
+    }
+
+    const currentIndex = selectedInRail && selectedId ? visibleIds.indexOf(selectedId) : 0;
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = Math.min(visibleIds.length - 1, Math.max(0, currentIndex) + 1);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = Math.max(0, (currentIndex < 0 ? 0 : currentIndex) - 1);
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = visibleIds.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const nextId = visibleIds[nextIndex];
+    if (nextId) {
+      onSelect(nextId);
+    }
+  };
 
   return (
     <div
       ref={railRef}
       className="acx-roster__person-workspace-rail"
       role="listbox"
-      aria-label={__('Face instances', 'alt-context')}
+      aria-label={sprintf(__('Face instances for Cluster %d', 'alt-context'), clusterOrdinal)}
+      aria-orientation="horizontal"
       aria-activedescendant={activeId}
       tabIndex={0}
-      onKeyDown={onKeyDown}
+      onKeyDown={handleKeyDown}
     >
       {faces.map((face) => {
         const alt = sprintf(
@@ -66,23 +95,28 @@ export const PersonFaceFilmstrip = ({
           face.mediaId,
           face.clusterIndex + 1,
         );
-        const isSelected = face.identityId === selectedId;
+        const isSelected = face.faceId === selectedId;
         return (
           <button
-            key={`${face.clusterId}-${face.identityId}-${face.mediaId}`}
+            key={face.faceId}
             type="button"
             role="option"
-            id={rosterFaceDomId(face.identityId)}
+            id={rosterFaceDomId(face.faceId)}
             className="acx-roster__person-workspace-rail-cell"
             aria-label={alt}
             aria-selected={isSelected}
-            tabIndex={isSelected ? 0 : -1}
-            onClick={() => onSelect(face.identityId)}
+            tabIndex={-1}
+            onClick={() => onSelect(face.faceId)}
           >
             {renderRailMedia(face, alt)}
             <span className="acx-roster__person-workspace-rail-caption">
               {sprintf(__('Media %d', 'alt-context'), face.mediaId)}
             </span>
+            {isSelected ? (
+              <span className="acx-roster__person-workspace-rail-selected" aria-hidden="true">
+                {__('Selected', 'alt-context')}
+              </span>
+            ) : null}
           </button>
         );
       })}

@@ -4,7 +4,7 @@ import { __ } from '@wordpress/i18n';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { isCroppableBbox } from '../../../components/ui/faceGeometry';
 import type { BoundingBox } from '../../api/recognition/types/identity';
-import type { PersonScrubFace } from './personFaces';
+import { getSelectedFacePreviewLabel, type PersonScrubFace } from './personFaces';
 
 const PREVIEW_SIZE_PX = 240;
 
@@ -14,8 +14,6 @@ interface PersonFacePreviewProps {
 }
 
 export const PersonFacePreview = ({ face, onOpenLightbox }: PersonFacePreviewProps): React.JSX.Element => {
-  const alt = __('Selected face preview', 'alt-context');
-
   if (!face) {
     return (
       <div className="acx-roster__person-workspace-preview">
@@ -24,6 +22,7 @@ export const PersonFacePreview = ({ face, onOpenLightbox }: PersonFacePreviewPro
     );
   }
 
+  const alt = getSelectedFacePreviewLabel(face);
   const mediaUrl = face.mediaUrl;
   const croppableBbox = isCroppableBbox(face.bbox) ? face.bbox : null;
   const canOpenLightbox = typeof mediaUrl === 'string' && mediaUrl.length > 0 && croppableBbox !== null;

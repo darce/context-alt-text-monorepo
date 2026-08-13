@@ -40,10 +40,12 @@ export interface ClusterLabelsResponse {
 
 export interface TopUnlabeledRepresentative {
   id: string;
-  media_id: number;
+  /** Normalized from wire `string | null`; null must not coerce to 0. */
+  media_id: number | null;
   thumb_url?: string | null;
   media_url?: string | null;
   bbox?: BoundingBox | null;
+  /** Internal pin flag; wire name is `is_user_selected`. */
   is_pinned: boolean;
 }
 

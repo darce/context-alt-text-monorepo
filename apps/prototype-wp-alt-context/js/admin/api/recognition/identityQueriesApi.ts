@@ -5,11 +5,27 @@ import type {
   IdentityBatchSuggestionsResponse,
   MediaIdentitiesResponse,
   PendingMergeSuggestionsResponse,
+  PendingNameSuggestion,
   PendingNameSuggestionsResponse,
   PendingSuggestionsResponse,
 } from './types';
+import {
+  normalizeTopUnlabeledRepresentative,
+  type TopUnlabeledRepresentativePayload,
+} from './normalizeTopUnlabeledRepresentative';
 import { mapPendingMergeSuggestions, mapPendingSuggestions } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
+
+type PendingNameSuggestionPayload = Omit<PendingNameSuggestion, 'representatives'> & {
+  representatives?: TopUnlabeledRepresentativePayload[] | null;
+};
+
+interface PendingNameSuggestionsResponsePayload {
+  suggestions?: PendingNameSuggestionPayload[] | null;
+  limit?: number | null;
+  offset?: number | null;
+  data_source?: string | null;
+}
 
 const requireEnvelopeNumber = (value: unknown, fieldName: string, responseName: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -135,7 +151,7 @@ export const fetchPendingNameSuggestions = async (
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  return fetchRequiredApi<PendingNameSuggestionsResponse>(url.toString(), {
+  return fetchRequiredApi<PendingNameSuggestionsResponsePayload>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),
@@ -145,7 +161,12 @@ export const fetchPendingNameSuggestions = async (
     }
 
     return {
-      suggestions: response.suggestions,
+      suggestions: response.suggestions.map((suggestion) => ({
+        ...suggestion,
+        representatives: Array.isArray(suggestion.representatives)
+          ? suggestion.representatives.map(normalizeTopUnlabeledRepresentative)
+          : [],
+      })),
       // COR-3 (rg-015): no authoritative total forwarded; consumers count loaded items.
       limit: requireEnvelopeNumber(response.limit, 'limit', 'Pending name suggestions response'),
       offset: requireEnvelopeNumber(response.offset, 'offset', 'Pending name suggestions response'),

@@ -225,6 +225,29 @@ describe('TopClusterCard', () => {
     expect(onDismiss).toHaveBeenCalledWith('cluster-1');
   });
 
+  // E21-17-R4-PY-1 / R5-TS: pinned rep not first must win when suggested_label selects one face.
+  it('prefers a pinned representative that is not first in the list', () => {
+    const pinnedThumb = `${FACE_THUMB_URL}?pinned=1`;
+    const firstThumb = `${FACE_THUMB_URL}?first=1`;
+
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: 'Pat Rivera',
+          representatives: [
+            buildRepresentative({ id: 'rep-first', thumb_url: firstThumb, is_pinned: false }),
+            buildRepresentative({ id: 'rep-pinned', thumb_url: pinnedThumb, is_pinned: true }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const image = screen.getByAltText(FACE_ALT);
+    expect(image).toHaveAttribute('src', pinnedThumb);
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(1);
+  });
+
   // E21-16 BR-06b: invalid truthy zero-extent bbox must not enter FaceThumbnail crop.
   it('does not crop via FaceThumbnail when representative has media_url + zero-extent bbox', () => {
     const { container } = render(

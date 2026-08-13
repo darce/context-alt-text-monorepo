@@ -7,14 +7,17 @@ import { FaceLightbox } from '../../../components/ui/FaceLightbox';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { isCroppableBbox } from '../../../components/ui/faceGeometry';
 import type { BoundingBox } from '../../api/recognition/types/identity';
+import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useAriaAnnounce } from './hooks/useAriaAnnounce';
-import { usePinRepresentative } from './hooks/usePinRepresentative';
+import { PIN_REPRESENTATIVE_ERROR_COPY, usePinRepresentative } from './hooks/usePinRepresentative';
 import { useRosterFaceCursor } from './hooks/useRosterFaceCursor';
 import { useRosterFaceRoute } from './hooks/useRosterFaceRoute';
+import { rosterFaceDomId } from './faceDomId';
 import { PersonFaceFilmstrip } from './PersonFaceFilmstrip';
 import { PersonFaceMetadataPanel } from './PersonFaceMetadataPanel';
 import { PersonFacePreview } from './PersonFacePreview';
 import { collectPersonFaces } from './personFaces';
+import { getSelectedFaceMetadataLines } from './similarityCopy';
 
 const QUEUE_SECTIONS = [
   {
@@ -39,45 +42,11 @@ const QUEUE_SECTIONS = [
 
 const EVIDENCE_IMAGE_SIZE = 96;
 
-interface EvidenceMetadata {
-  similarity: number | null;
-  similarity_threshold?: number | null;
-}
-
 interface LightboxSelection {
   mediaUrl: string;
   bbox: BoundingBox;
   label: string;
 }
-
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-
-const formatEvidencePercent = (value: number, fractionDigits = 0): string =>
-  `${(value * 100).toFixed(fractionDigits)}%`;
-
-const getEvidenceMetadataLines = (evidence: EvidenceMetadata | null | undefined): string[] => {
-  if (!evidence) {
-    return [];
-  }
-
-  const lines: string[] = [];
-
-  if (isFiniteNumber(evidence.similarity)) {
-    lines.push(`${formatEvidencePercent(evidence.similarity)} ${__('similarity', 'alt-context')}`);
-  } else {
-    lines.push(__('Similarity pending next projection refresh.', 'alt-context'));
-  }
-
-  const thresholdParts: string[] = [];
-  if (isFiniteNumber(evidence.similarity_threshold)) {
-    thresholdParts.push(`${__('Threshold', 'alt-context')} ${formatEvidencePercent(evidence.similarity_threshold, 1)}`);
-  }
-  if (thresholdParts.length > 0) {
-    lines.push(thresholdParts.join(' · '));
-  }
-
-  return lines;
-};
 
 const renderEvidenceMedia = ({
   mediaUrl,
@@ -139,79 +108,102 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
   const faces = React.useMemo(() => collectPersonFaces(entry), [entry]);
-  const visibleIds = React.useMemo(() => faces.map((face) => face.identityId), [faces]);
+  const visibleIds = React.useMemo(() => faces.map((face) => face.faceId), [faces]);
   const { requestedFaceId, writeFace } = useRosterFaceRoute();
-  const { selectedId, select, retainVisible } = useRosterFaceCursor(visibleIds, requestedFaceId);
-  const selectedFace = faces.find((face) => face.identityId === selectedId) ?? null;
-  const resolvedId = selectedId;
-  const { pin, isPinning } = usePinRepresentative(selectedFace?.clusterId ?? null);
+  const { selectedId, select } = useRosterFaceCursor(visibleIds, requestedFaceId);
+  const selectedFace = faces.find((face) => face.faceId === selectedId) ?? null;
+  const { pin, isPinning, pinError } = usePinRepresentative();
   const { message, seq, announce } = useAriaAnnounce();
-  const railRef = React.useRef<HTMLDivElement | null>(null);
-  const scrollLeftRef = React.useRef(0);
+  const railRefs = React.useRef(new Map<string, HTMLDivElement>());
+  const railCallbackRefs = React.useRef(new Map<string, (node: HTMLDivElement | null) => void>());
+  const scrollLeftByRailRef = React.useRef(new Map<string, number>());
+  const previousSelectedIdRef = React.useRef<string | null>(selectedId);
+
+  const bindRailRef = React.useCallback((clusterId: string) => {
+    const existing = railCallbackRefs.current.get(clusterId);
+    if (existing) {
+      return existing;
+    }
+    const callback = (node: HTMLDivElement | null): void => {
+      if (node) {
+        railRefs.current.set(clusterId, node);
+        node.scrollLeft = scrollLeftByRailRef.current.get(clusterId) ?? 0;
+        return;
+      }
+      const current = railRefs.current.get(clusterId);
+      if (current) {
+        scrollLeftByRailRef.current.set(clusterId, current.scrollLeft);
+      }
+      railRefs.current.delete(clusterId);
+    };
+    railCallbackRefs.current.set(clusterId, callback);
+    return callback;
+  }, []);
 
   React.useEffect(() => {
     setLightbox(null);
   }, [entryIdentity]);
 
   React.useEffect(() => {
-    retainVisible(visibleIds);
-  }, [retainVisible, visibleIds]);
+    if (requestedFaceId === selectedId) {
+      return;
+    }
+    writeFace(selectedId, personUuid);
+  }, [personUuid, requestedFaceId, selectedId, writeFace]);
+
+  React.useEffect(() => {
+    if (!pinError) {
+      return;
+    }
+    announce(PIN_REPRESENTATIVE_ERROR_COPY);
+  }, [announce, pinError]);
 
   React.useLayoutEffect(() => {
-    const rail = railRef.current;
-    if (!rail) {
-      return undefined;
-    }
-    rail.scrollLeft = scrollLeftRef.current;
+    const rails = railRefs.current;
+    const saved = scrollLeftByRailRef.current;
+    rails.forEach((rail, clusterId) => {
+      rail.scrollLeft = saved.get(clusterId) ?? 0;
+    });
     return () => {
-      scrollLeftRef.current = rail.scrollLeft;
+      rails.forEach((rail, clusterId) => {
+        saved.set(clusterId, rail.scrollLeft);
+      });
     };
   });
 
+  React.useEffect(() => {
+    const previousId = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = selectedId;
+    if (!previousId || previousId === selectedId || visibleIds.includes(previousId)) {
+      return;
+    }
+
+    const active = document.activeElement;
+    const focusLostToBody = active === document.body || active === document.documentElement || active === null;
+    const activeInRemovedOption = Boolean(
+      active instanceof HTMLElement && active.id === rosterFaceDomId(previousId),
+    );
+    if (!focusLostToBody && !activeInRemovedOption) {
+      return;
+    }
+
+    const survivingOption = selectedId ? document.getElementById(rosterFaceDomId(selectedId)) : null;
+    const survivingRail = survivingOption?.closest<HTMLElement>('[role="listbox"]');
+    survivingRail?.focus();
+  }, [selectedId, visibleIds]);
+
   const selectFace = React.useCallback(
-    (faceId: string, announceSelection = false) => {
+    (faceId: string) => {
       select(faceId);
       writeFace(faceId, personUuid);
-      if (announceSelection) {
-        const nextIndex = visibleIds.indexOf(faceId);
-        if (nextIndex >= 0) {
-          announce(
-            sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, visibleIds.length),
-          );
-        }
+      const nextIndex = visibleIds.indexOf(faceId);
+      if (nextIndex >= 0) {
+        announce(
+          sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, visibleIds.length),
+        );
       }
     },
     [announce, personUuid, select, visibleIds, writeFace],
-  );
-
-  const handleRailKeyDown = React.useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (visibleIds.length === 0) {
-        return;
-      }
-      const currentIndex = resolvedId ? visibleIds.indexOf(resolvedId) : 0;
-      let nextIndex = currentIndex;
-      if (event.key === 'ArrowRight') {
-        nextIndex = Math.min(visibleIds.length - 1, Math.max(0, currentIndex) + 1);
-      } else if (event.key === 'ArrowLeft') {
-        nextIndex = Math.max(0, currentIndex);
-        nextIndex = Math.max(0, (currentIndex < 0 ? 0 : currentIndex) - 1);
-      } else if (event.key === 'Home') {
-        nextIndex = 0;
-      } else if (event.key === 'End') {
-        nextIndex = visibleIds.length - 1;
-      } else {
-        return;
-      }
-      event.preventDefault();
-      const nextId = visibleIds[nextIndex];
-      if (nextId && nextId !== resolvedId) {
-        selectFace(nextId, true);
-      } else if (nextId) {
-        announce(sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, visibleIds.length));
-      }
-    },
-    [announce, resolvedId, selectFace, visibleIds],
   );
 
   const canPin = Boolean(selectedFace && !selectedFace.isRepresentative && selectedFace.clusterId);
@@ -284,20 +276,22 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                 if (!selectedFace) {
                   return;
                 }
-                pin(selectedFace.identityId, true);
+                pin(selectedFace.clusterId, selectedFace.identityId, true);
               }}
             >
               {__('Set as representative', 'alt-context')}
             </button>
+            {pinError ? (
+              <UserFacingErrorNotice error={pinError} fallback={PIN_REPRESENTATIVE_ERROR_COPY} />
+            ) : null}
           </div>
           <div
-            key={seq}
             className="acx-roster__person-workspace-live"
             role="status"
             aria-live="polite"
             aria-label={__('Face selection announcements', 'alt-context')}
           >
-            {message}
+            {message ? `${message}${seq % 2 === 1 ? '\u200b' : ''}` : null}
           </div>
         </div>
         {entry.clusters.length > 0 ? (
@@ -323,22 +317,22 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                   ) : (
                     <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
                   )}
-                  {getEvidenceMetadataLines(cluster.representative_identity).map((line) => (
+                  {getSelectedFaceMetadataLines(cluster.representative_identity).map((line) => (
                     <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
                   ))}
                   {clusterFaces.length > 0 ? (
                     <PersonFaceFilmstrip
                       faces={clusterFaces}
-                      selectedId={resolvedId}
-                      onSelect={(faceId) => selectFace(faceId, true)}
-                      onKeyDown={handleRailKeyDown}
-                      railRef={index === 0 ? railRef : undefined}
+                      selectedId={selectedId}
+                      onSelect={selectFace}
+                      railRef={bindRailRef(cluster.cluster_id)}
+                      clusterOrdinal={index + 1}
                     />
                   ) : null}
                   <div>
                     {cluster.instances.map((instance) => (
                       <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
-                        {getEvidenceMetadataLines(instance).map((line) => (
+                        {getSelectedFaceMetadataLines(instance).map((line) => (
                           <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
                             {line}
                           </div>

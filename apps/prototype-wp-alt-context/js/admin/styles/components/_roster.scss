@@ -595,6 +595,7 @@
 
   &[aria-selected='true'] {
     border-color: var(--acx-color-accent);
+    border-width: var(--acx-space-2);
     box-shadow: var(--acx-shadow-1);
   }
 
@@ -608,4 +609,18 @@
   font-size: var(--acx-text-xs);
   font-weight: var(--acx-font-weight-medium);
   color: var(--acx-color-text-muted);
+}
+
+.acx-roster__person-workspace-rail-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--acx-space-4);
+  font-size: var(--acx-text-xs);
+  font-weight: var(--acx-font-weight-semibold);
+  color: var(--acx-color-text);
+
+  &::before {
+    content: '✓';
+    font-weight: var(--acx-font-weight-bold);
+  }
 }

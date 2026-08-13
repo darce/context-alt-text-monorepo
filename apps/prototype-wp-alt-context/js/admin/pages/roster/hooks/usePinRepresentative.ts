@@ -1,64 +1,54 @@
-import { useMemo } from 'react';
-import { QueryClient, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { __ } from '@wordpress/i18n';
 
 import { pinRepresentative } from '../../../api/recognition/clusterApiMutations';
 import { queryKeys } from '../../../api/queryKeys';
+
+export const PIN_REPRESENTATIVE_ERROR_COPY = __(
+  'Could not set this face as representative.',
+  'alt-context',
+);
 
 const isAbortError = (err: unknown): boolean =>
   Boolean(err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError');
 
 interface PinRepresentativeVariables {
+  clusterId: string;
   representativeId: string;
   isPinned: boolean;
   signal?: AbortSignal;
 }
 
-export const usePinRepresentative = (
-  clusterId: string | null,
-): {
-  pin: (representativeId: string, isPinned?: boolean, signal?: AbortSignal) => void;
+export const usePinRepresentative = (): {
+  pin: (clusterId: string, representativeId: string, isPinned?: boolean, signal?: AbortSignal) => void;
   isPinning: boolean;
+  pinError: unknown;
 } => {
-  const fallbackClient = useMemo(
-    () => new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } }),
-    [],
-  );
+  const queryClient = useQueryClient();
 
-  let queryClient: QueryClient;
-  try {
-    queryClient = useQueryClient();
-  } catch {
-    queryClient = fallbackClient;
-  }
-
-  const pinMutation = useMutation<void, Error, PinRepresentativeVariables>(
-    {
-      mutationKey: ['pin-representative', clusterId],
-      mutationFn: async ({ representativeId, isPinned, signal }) => {
-        if (!clusterId) {
-          throw new Error('Cannot pin representative: no cluster ID');
-        }
-        const pinSignal = signal ?? new AbortController().signal;
-        await pinRepresentative(clusterId, representativeId, isPinned, pinSignal);
-      },
-      retry: false,
-      onSuccess: () => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-      },
-      onError: (err: unknown) => {
-        if (isAbortError(err)) {
-          return;
-        }
-      },
+  const pinMutation = useMutation<void, Error, PinRepresentativeVariables>({
+    mutationKey: ['pin-representative'],
+    mutationFn: async ({ clusterId, representativeId, isPinned, signal }) => {
+      const pinSignal = signal ?? new AbortController().signal;
+      await pinRepresentative(clusterId, representativeId, isPinned, pinSignal);
     },
-    queryClient,
-  );
+    retry: false,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+    },
+  });
+
+  const pinError = pinMutation.isError && !isAbortError(pinMutation.error) ? pinMutation.error : null;
 
   return {
-    pin: (representativeId: string, isPinned = true, signal?: AbortSignal) => {
-      pinMutation.mutate({ representativeId, isPinned, signal });
+    pin: (clusterId, representativeId, isPinned = true, signal?) => {
+      if (pinMutation.isPending) {
+        return;
+      }
+      pinMutation.mutate({ clusterId, representativeId, isPinned, signal });
     },
     isPinning: pinMutation.isPending,
+    pinError,
   };
 };

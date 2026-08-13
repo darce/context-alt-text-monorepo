@@ -52,6 +52,9 @@ describe('formatClusterLabel (E21-15-BR-27)', () => {
 
 describe('groupIdentitiesByClusters → formatClusterLabel display path (E21-15-BR-27)', () => {
   it('does not surface cluster-7 as a name when is_auto_label is omitted', () => {
+    // BR-36: fixture must self-discriminate — omit means the key is absent, not false.
+    expect(identityWithOmittedAutoFlag()).not.toHaveProperty('is_auto_label');
+
     // Omitted flag → Boolean(undefined) === false (looks "human" to the old gate).
     const groups = groupIdentitiesByClusters([identityWithOmittedAutoFlag()]);
     expect(groups).toHaveLength(1);

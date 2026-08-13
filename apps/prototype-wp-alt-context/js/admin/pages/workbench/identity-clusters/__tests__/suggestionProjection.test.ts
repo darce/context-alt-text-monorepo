@@ -39,20 +39,36 @@ describe('isHumanLabeledTarget', () => {
 
   it(`rejects ${AUTO_LABEL_PREFIX}-prefixed auto-labels`, () => {
     expect(isHumanLabeledTarget('cluster-1234')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-auto-1')).toBe(false);
-    expect(isHumanLabeledTarget('  cluster-xyz  ')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-abcdef01')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster-ab  ')).toBe(false);
   });
 
-  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively.
-  it('rejects case-insensitive cluster[-_] prefixes (PHP parity)', () => {
+  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively (hex suffixes).
+  it('rejects case-insensitive cluster[-_] machine labels (PHP parity / hex)', () => {
     expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
     expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
-    expect(isHumanLabeledTarget('CLUSTER-xyz')).toBe(false);
+    expect(isHumanLabeledTarget('CLUSTER-abcdef')).toBe(false);
     expect(isHumanLabeledTarget('  Cluster-abcdef12  ')).toBe(false);
     expect(isHumanLabeledTarget('  cluster_abcdef12  ')).toBe(false);
     // Non-prefix / missing separator must still pass as human-format.
     expect(isHumanLabeledTarget('mycluster-foo')).toBe(true);
     expect(isHumanLabeledTarget('clusterabc')).toBe(true);
+  });
+
+  // BR-34: anchored machine shape — short forms + UUID hex stay gated; human Cluster* pass.
+  it('gates short and UUID-shaped cluster[-_][0-9a-f-]+ machine labels (BR-34)', () => {
+    expect(isHumanLabeledTarget('cluster-7')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster-7')).toBe(false);
+    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBe(false);
+  });
+
+  it('passes operator-plausible human Cluster* labels that are not machine-shaped (BR-34)', () => {
+    expect(isHumanLabeledTarget('Cluster-Bomb Collective')).toBe(true);
+    expect(isHumanLabeledTarget('CLUSTER_HQ')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster_X')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster Nine')).toBe(true);
   });
 });
 

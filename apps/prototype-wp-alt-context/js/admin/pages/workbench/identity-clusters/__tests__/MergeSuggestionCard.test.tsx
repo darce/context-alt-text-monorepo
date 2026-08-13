@@ -329,4 +329,132 @@ describe('MergeSuggestionCard', () => {
     // Must not leak raw auto-label ids into accessible naming context.
     expect(`${yesDescA} ${yesDescB} ${noDescA} ${noDescB}`).not.toMatch(/cluster[-_]\w/i);
   });
+
+  // BR-35: per-card ordinal props disambiguate co-rendered merge cards with equal match%.
+  it('BR-35: queue ordinal makes co-rendered equal-match cards unique in group/Yes/face accnames', () => {
+    render(
+      <>
+        <MergeSuggestionCard
+          suggestion={withFaces({
+            id: 'merge-ord-a',
+            cluster_a_label: 'cluster-7',
+            cluster_b_label: 'cluster-9',
+            cluster_a_identity_count: 2,
+            cluster_b_identity_count: 5,
+            similarity: 0.87,
+          })}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onOpenOriginal={vi.fn()}
+          isPending={false}
+          queuePosition={1}
+          queueTotal={2}
+        />
+        <MergeSuggestionCard
+          suggestion={withFaces({
+            id: 'merge-ord-b',
+            cluster_a_label: 'cluster-11',
+            cluster_b_label: 'cluster-13',
+            cluster_a_identity_count: 3,
+            cluster_b_identity_count: 4,
+            similarity: 0.87,
+          })}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onOpenOriginal={vi.fn()}
+          isPending={false}
+          queuePosition={2}
+          queueTotal={2}
+        />
+      </>,
+    );
+
+    const question = 'Are these the same person?';
+    const groups = screen.getAllByRole('group');
+    expect(groups).toHaveLength(2);
+
+    const groupNameA = groups[0].getAttribute('aria-labelledby')
+      ? (groups[0].getAttribute('aria-labelledby') ?? '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent ?? '')
+          .join(' ')
+      : groups[0].textContent ?? '';
+    const groupNameB = groups[1].getAttribute('aria-labelledby')
+      ? (groups[1].getAttribute('aria-labelledby') ?? '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent ?? '')
+          .join(' ')
+      : groups[1].textContent ?? '';
+
+    // Prefer Testing Library accessible-name oracles when available.
+    expect(groups[0]).toHaveAccessibleName(/Merge suggestion 1 of 2/);
+    expect(groups[1]).toHaveAccessibleName(/Merge suggestion 2 of 2/);
+    expect(groups[0]).toHaveAccessibleName(new RegExp(question.replace('?', '\\?')));
+    expect(groups[1]).toHaveAccessibleName(new RegExp(question.replace('?', '\\?')));
+    expect(groupNameA).not.toBe(groupNameB);
+    expect(groupNameA).toMatch(/Merge suggestion 1 of 2/);
+    expect(groupNameB).toMatch(/Merge suggestion 2 of 2/);
+    expect(groupNameA).toContain(question);
+    expect(groupNameB).toContain(question);
+
+    const cards = screen.getAllByTestId('acx-review-card');
+    const yesA = within(cards[0]).getByRole('button', { name: 'Yes' });
+    const yesB = within(cards[1]).getByRole('button', { name: 'Yes' });
+    expect(yesA).toHaveAccessibleDescription(/suggestion 1 of 2|Merge suggestion 1 of 2/i);
+    expect(yesB).toHaveAccessibleDescription(/suggestion 2 of 2|Merge suggestion 2 of 2/i);
+    const descA = yesA.getAttribute('aria-describedby') ?? '';
+    const descB = yesB.getAttribute('aria-describedby') ?? '';
+    const resolveDesc = (ids: string) =>
+      ids
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((id) => document.getElementById(id)?.textContent ?? '')
+        .join(' ');
+    expect(resolveDesc(descA)).not.toBe(resolveDesc(descB));
+
+    const faceA = within(cards[0]).getAllByRole('button', { name: /View original photo/i });
+    const faceB = within(cards[1]).getAllByRole('button', { name: /View original photo/i });
+    expect(faceA).toHaveLength(2);
+    expect(faceB).toHaveLength(2);
+    const namesA = faceA.map((btn) => btn.getAttribute('aria-label') ?? '');
+    const namesB = faceB.map((btn) => btn.getAttribute('aria-label') ?? '');
+    expect(namesA.every((n) => n.includes('suggestion 1 of 2'))).toBe(true);
+    expect(namesB.every((n) => n.includes('suggestion 2 of 2'))).toBe(true);
+    expect(new Set([...namesA, ...namesB]).size).toBe(4);
+  });
+
+  it('BR-35: without queuePosition/queueTotal, accnames stay byte-identical to today', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={withFaces({
+          id: 'merge-fallback',
+          cluster_a_label: 'cluster-7',
+          cluster_b_label: 'cluster-9',
+          similarity: 0.87,
+        })}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={vi.fn()}
+        isPending={false}
+      />,
+    );
+
+    const group = screen.getByRole('group');
+    expect(group).toHaveAccessibleName('Are these the same person?');
+    expect(screen.queryByText(/Merge suggestion \d+ of \d+/)).toBeNull();
+
+    const faceControls = screen.getAllByRole('button', { name: /View original photo/i });
+    const controlNames = faceControls.map((btn) => btn.getAttribute('aria-label') ?? '');
+    expect(controlNames).toEqual([
+      'View original photo, first face',
+      'View original photo, second face',
+    ]);
+    expect(controlNames.join(' ')).not.toMatch(/suggestion \d+ of/);
+
+    const yes = screen.getByRole('button', { name: 'Yes' });
+    expect(yes).toHaveAccessibleDescription(/first cluster.*second cluster.*87% match/i);
+    expect(yes).not.toHaveAccessibleDescription(/suggestion \d+ of/i);
+  });
 });

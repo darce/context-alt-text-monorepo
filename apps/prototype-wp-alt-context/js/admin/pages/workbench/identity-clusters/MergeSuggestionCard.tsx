@@ -19,6 +19,14 @@ export interface MergeSuggestionCardProps {
   actionAccessoryAfter?: 'accept' | 'reject';
   /** §7 single accent primary: mark + accent-style Accept as this card's primary (COL-03). */
   accentPrimary?: boolean;
+  /**
+   * BR-35: 1-based queue position. When BOTH `queuePosition` and `queueTotal` are
+   * provided, ordinal text disambiguates group / Yes-No / face-control accnames.
+   * Omit both (or either) for byte-identical fallback strings.
+   */
+  queuePosition?: number;
+  /** BR-35: total items in the filtered review queue (paired with `queuePosition`). */
+  queueTotal?: number;
 }
 
 const FaceCropControl = ({
@@ -74,6 +82,8 @@ export const MergeSuggestionCard = ({
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
   accentPrimary = false,
+  queuePosition,
+  queueTotal,
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
   // WHY (A11Y-02 / HAI-01): cluster_*_label is the raw cluster.label column — no
@@ -95,14 +105,33 @@ export const MergeSuggestionCard = ({
   const clusterBAlt =
     humanLabelB ??
     sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
-  const faceControlALabel = sprintf(
-    __('View original photo, %s', 'alt-context'),
-    __('first face', 'alt-context'),
-  );
-  const faceControlBLabel = sprintf(
-    __('View original photo, %s', 'alt-context'),
-    __('second face', 'alt-context'),
-  );
+  // BR-35: only when BOTH ordinal props are present — otherwise keep today's labels.
+  const hasQueueOrdinal =
+    typeof queuePosition === 'number' && typeof queueTotal === 'number';
+  const faceControlALabel = hasQueueOrdinal
+    ? sprintf(
+        /* translators: 1: face side (e.g. "first face"), 2: 1-based position, 3: queue total */
+        __('View original photo, %1$s, suggestion %2$d of %3$d', 'alt-context'),
+        __('first face', 'alt-context'),
+        queuePosition,
+        queueTotal,
+      )
+    : sprintf(
+        __('View original photo, %s', 'alt-context'),
+        __('first face', 'alt-context'),
+      );
+  const faceControlBLabel = hasQueueOrdinal
+    ? sprintf(
+        /* translators: 1: face side (e.g. "second face"), 2: 1-based position, 3: queue total */
+        __('View original photo, %1$s, suggestion %2$d of %3$d', 'alt-context'),
+        __('second face', 'alt-context'),
+        queuePosition,
+        queueTotal,
+      )
+    : sprintf(
+        __('View original photo, %s', 'alt-context'),
+        __('second face', 'alt-context'),
+      );
   const hasClusterAFace = Boolean(
     suggestion.cluster_a_representative_media_url && suggestion.cluster_a_representative_bbox,
   );
@@ -117,15 +146,37 @@ export const MergeSuggestionCard = ({
   // DOM ids may key on suggestion.id; accessible text never includes raw cluster-* labels.
   const questionId = `acx-merge-q-${suggestion.id}`;
   const contextId = `acx-merge-ctx-${suggestion.id}`;
+  const positionId = `acx-merge-pos-${suggestion.id}`;
   const sideAContext = humanLabelA ?? __('first cluster', 'alt-context');
   const sideBContext = humanLabelB ?? __('second cluster', 'alt-context');
-  const cardContext = sprintf(
+  const matchContext = `${matchPercent}% ${__('match', 'alt-context')}`;
+  const baseCardContext = sprintf(
     /* translators: 1: first side label, 2: second side label, 3: match percent label (e.g. "87% match") */
     __('%1$s and %2$s, %3$s', 'alt-context'),
     sideAContext,
     sideBContext,
-    `${matchPercent}% ${__('match', 'alt-context')}`,
+    matchContext,
   );
+  // BR-35: fold ordinal into describedby target so Yes/No descriptions stay unique
+  // across equal-match cards (group name alone is not enough for button descriptions).
+  const cardContext = hasQueueOrdinal
+    ? sprintf(
+        /* translators: 1: side/match context, 2: 1-based position, 3: queue total */
+        __('%1$s, suggestion %2$d of %3$d', 'alt-context'),
+        baseCardContext,
+        queuePosition,
+        queueTotal,
+      )
+    : baseCardContext;
+  const positionLabel = hasQueueOrdinal
+    ? sprintf(
+        /* translators: 1: 1-based position, 2: queue total */
+        __('Merge suggestion %1$d of %2$d', 'alt-context'),
+        queuePosition,
+        queueTotal,
+      )
+    : null;
+  const groupLabelledBy = positionLabel ? `${positionId} ${questionId}` : questionId;
 
   return (
     <div
@@ -133,7 +184,7 @@ export const MergeSuggestionCard = ({
       data-testid="acx-review-card"
       data-review-kind="merge"
       role="group"
-      aria-labelledby={questionId}
+      aria-labelledby={groupLabelledBy}
       aria-describedby={contextId}
     >
       <div className="acx-suggestion-card__faces">
@@ -173,6 +224,11 @@ export const MergeSuggestionCard = ({
         </div>
       </div>
       <div className="acx-suggestion-card__content">
+        {positionLabel ? (
+          <span id={positionId} className="screen-reader-text">
+            {positionLabel}
+          </span>
+        ) : null}
         <p id={questionId} className="acx-suggestion-card__question">
           {__('Are these the same person?', 'alt-context')}
         </p>

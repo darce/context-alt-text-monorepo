@@ -81,13 +81,14 @@ const clusterFirstThenHumanMatches: ClusterSuggestion[] = [
   buildClusterMatch({
     suggestion_id: 'sug-cf-1',
     cluster_id: 'cluster-auto-1',
-    label: 'cluster-auto-1',
+    // BR-34: machine stand-ins must be hex-shaped (`cluster-auto-*` is not).
+    label: 'cluster-a1',
     similarity: 0.99,
   }),
   buildClusterMatch({
     suggestion_id: 'sug-cf-2',
     cluster_id: 'cluster-auto-2',
-    label: 'cluster-auto-2',
+    label: 'cluster-a2',
     similarity: 0.95,
   }),
   buildClusterMatch({

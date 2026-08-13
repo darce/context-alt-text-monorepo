@@ -1455,6 +1455,50 @@ describe('ReviewQueue', () => {
     expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
   });
 
+  // BR-35: CurrentCard pipes queue chrome position into MERGE card ordinal props.
+  it('BR-35: MERGE card receives queue ordinal from position chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'merge-1',
+          cluster_a_id: 'a',
+          cluster_b_id: 'b',
+          similarity: 0.88,
+          status: 'pending',
+          cluster_a_label: 'Alex',
+          cluster_b_label: 'Jordan',
+        },
+        {
+          id: 'merge-2',
+          cluster_a_id: 'c',
+          cluster_b_id: 'd',
+          similarity: 0.9,
+          status: 'pending',
+          cluster_a_label: 'Sam',
+          cluster_b_label: 'Riley',
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText('Are these the same person?');
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    const card = screen.getByTestId('acx-review-card');
+    expect(card).toHaveAccessibleName(/Merge suggestion 1 of 2/);
+    expect(card).toHaveAccessibleName(/Are these the same person\?/);
+    expect(document.getElementById('acx-merge-pos-merge-1')).toHaveTextContent(
+      'Merge suggestion 1 of 2',
+    );
+  });
+
   it('shows person-commit as primary on NAME cards with disclosure', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],

@@ -3342,9 +3342,12 @@ _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
 # These are structural training-config tags for this family, not a
 # global schedule shield. A residual containing a deny stem still denies.
 _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
-    "yolox": frozenset({"nano", "tiny", "darknet"}),
+    "yolox": frozenset({"nano", "tiny", "darknet", "darknet53"}),
     "yolos": frozenset({"tiny", "small", "base", "large"}),
-    "yolof": frozenset({"r101", "c5"}),
+    # YOLOF Detectron2 catalog (F12-5): r50 is compact; r101/c5 already
+    # here. Digit+x schedule tokens (1x / 3x) and the split R_50 / R_101
+    # spelling (r, 50, 101) are structural Detectron2 config tags.
+    "yolof": frozenset({"r101", "c5", "1x", "3x", "r", "50", "101"}),
     "yolop": frozenset(),
     "ppyolo": frozenset(
         {

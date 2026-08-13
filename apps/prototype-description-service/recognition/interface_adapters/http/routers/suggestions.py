@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     BulkAcceptResult,
@@ -293,6 +293,8 @@ async def accept_name_suggestion(
         suggestion = await suggestion_extension_service.accept_name_suggestion(request.tenant_id, suggestion_id)
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
+    except ReservedClusterLabelError:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
 
@@ -713,7 +715,10 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     source = cluster_b if target is cluster_a else cluster_a
     if not target.id or not source.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cluster identifiers missing")
-    return source.id, target.id, target.label
+    # Placeholder cluster-* labels must not enter merge's reserved-label guard;
+    # None falls back to preserving target.label in the use case.
+    selected_label = target.label if _is_meaningful_label(target.label) else None
+    return source.id, target.id, selected_label
 
 
 async def _resolve_accepted_merge_ids(

@@ -5,13 +5,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 
+from recognition.domain.cluster import ReservedClusterLabelError
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
+from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.tests.api.conftest import FakeNameSuggestion, FakeSuggestion
 
@@ -307,6 +310,86 @@ async def test_bulk_accept_merge_skips_expired_and_performs_merge(
     assert resp.json() == {"accepted_count": 1, "skipped_count": 0}
     merge_calls = [c for c in fake_cluster_service.calls if c.get("method") == "merge_cluster"]
     assert len(merge_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """E21-17-R1-PY47-3: merge of two cluster-* labeled clusters must not 400."""
+    from recognition.domain.suggestion import SuggestionStatus
+
+    cluster_a_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    suggestion_id = str(uuid.uuid4())
+
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2)
+    fake_cluster_service.clusters.extend(
+        [
+            ClusterResponse(
+                id=cluster_a_id,
+                tenant_id=tenant_id,
+                label="cluster-aaa",
+                is_labeled=True,
+                is_auto_label=True,
+                identity_count=5,
+                representatives=[],
+            ),
+            ClusterResponse(
+                id=cluster_b_id,
+                tenant_id=tenant_id,
+                label="cluster-bbb",
+                is_labeled=True,
+                is_auto_label=True,
+                identity_count=2,
+                representatives=[],
+            ),
+        ]
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        cluster_a_id=cluster_a_id,
+        cluster_b_id=cluster_b_id,
+        similarity=0.91,
+        status=SuggestionStatus.PENDING,
+        confidence_score=0.91,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+    async def fake_get_by_id(self, tenant_id_arg: str, sid: str):  # noqa: ANN001
+        assert tenant_id_arg == tenant_id
+        assert sid == suggestion_id
+        return suggestion
+
+    async def fake_delete_by_cluster(self, tenant_id_arg: str, cluster_id: str) -> int:  # noqa: ANN001
+        return 0
+
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion_id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "accepted"
+    assert body["target_cluster_id"] == cluster_a_id
+    assert body["source_cluster_id"] == cluster_b_id
+    merge_calls = [c for c in fake_cluster_service.calls if c["method"] == "merge_cluster"]
+    assert merge_calls
+    assert merge_calls[-1]["target_label"] is None
+    survivor = next(c for c in fake_cluster_service.clusters if c.id == cluster_a_id)
+    assert survivor.label == "cluster-aaa"
 
 
 @pytest.mark.asyncio
@@ -692,6 +775,32 @@ def test_accept_name_suggestion_returns_404_when_not_found(
         json={"tenant_id": tenant_id},
     )
     assert resp.status_code == 404
+
+
+def test_accept_name_suggestion_rejects_reserved_label_with_400(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    """E21-17-R1-PY47-4: reserved suggested_name must surface 400, not ValueError shadow."""
+    register_exception_handlers(api_client.app)
+    suggestion = FakeNameSuggestion(
+        cluster_id=str(uuid.uuid4()),
+        suggested_name="cluster-9",
+        source="identity",
+        confidence_score=0.9,
+    )
+    fake_suggestion_extension_service.name_suggestions[suggestion.id] = suggestion
+    fake_suggestion_extension_service.accept_name_suggestion = AsyncMock(
+        side_effect=ReservedClusterLabelError("cluster-9")
+    )
+
+    resp = api_client.post(
+        f"/recognition/suggestions/name/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "ReservedClusterLabelError"
 
 
 def test_reject_name_suggestion_returns_404_when_not_found(

@@ -844,6 +844,79 @@ class ConflictResolutionServiceTest extends TestCase
         $this->assertSame([[92, 'merge', $tenantId]], $repository->marked);
     }
 
+    public function testResolveMergeReservedMergedValueRejectsWithoutMutating(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        $repository = new class() extends ConflictRepository {
+            public array $marked = [];
+
+            public function find_conflict_by_id(int $conflict_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $conflict_id,
+                    'tenant_id' => $tenant_id,
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-person',
+                    'outbox_id' => 95,
+                    'backend_version' => 19,
+                    'resolution_status' => 'open',
+                    'conflict_code' => 'person_name_conflict',
+                    'backend_proposed_value' => 'Backend Name',
+                    'machine_payload' => ['proposed_value' => 'Backend Name'],
+                    'local_payload' => ['label' => 'Local Name'],
+                ];
+            }
+
+            public function mark_resolved(int $conflict_id, string $resolution_status, string $tenant_id): bool
+            {
+                $this->marked[] = [$conflict_id, $resolution_status, $tenant_id];
+                return true;
+            }
+        };
+
+        $outboxDrain = new class() extends OutboxDrain {
+            public array $reenqueued = [];
+
+            public function find_operation_by_id(int $outbox_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $outbox_id,
+                    'tenant_id' => $tenant_id,
+                    'operation_type' => 'cluster_label_updated',
+                    'status' => 'conflict',
+                    'payload' => ['label' => 'Local Name'],
+                ];
+            }
+
+            public function re_enqueue_with_current_base(int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null): bool
+            {
+                $this->reenqueued[] = [$outbox_id, $backend_version, $tenant_id, $merged_value];
+                return true;
+            }
+        };
+
+        $clustersRepository = new class() extends NullClustersRepository {
+            public array $updatedLabels = [];
+
+            public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int
+            {
+                $this->updatedLabels[] = [$cluster_uuid, $label, $mark_user_confirmed];
+                return 1;
+            }
+        };
+
+        $service = new ConflictResolutionService($repository, $outboxDrain, $clustersRepository, new NullIdentityMembersRepository());
+        $GLOBALS['wpdb']->reset();
+
+        $result = $service->resolve(95, 'merge', $tenantId, 'cluster-9');
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('reserved_label', $result['reason']);
+        $this->assertSame([], $clustersRepository->updatedLabels);
+        $this->assertSame([], $outboxDrain->reenqueued);
+        $this->assertSame([], $repository->marked);
+    }
+
     public function testResolveDriftConflictAcceptBackendClearsCuratedState(): void
     {
         $tenantId = md5((string) \get_site_url());

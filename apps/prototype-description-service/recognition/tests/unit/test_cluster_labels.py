@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from recognition.application.orchestration.cluster_merge import merge_cluster
-from recognition.application.orchestration.curation.cluster_mutations import update_cluster
+from recognition.application.orchestration.curation.cluster_mutations import (
+    create_cluster_for_identity,
+    update_cluster,
+)
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
@@ -18,7 +21,10 @@ def test_reserved_label_shape_is_detected(label: str) -> None:
     assert is_reserved_label_shape(label) is True
 
 
-@pytest.mark.parametrize("label", ["Cluster Nine", "Alice", "Person 2", None, ""])
+@pytest.mark.parametrize(
+    "label",
+    ["Cluster Nine", "Alice", "Person 2", None, "", "The cluster-9 team", "my cluster_x"],
+)
 def test_non_reserved_label_shape_is_allowed(label: str | None) -> None:
     assert is_reserved_label_shape(label) is False
 
@@ -99,3 +105,27 @@ async def test_assignment_writer_rejects_reserved_label_without_mutation() -> No
 
     assert cluster.label is None
     cluster_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_cluster_for_identity_rejects_reserved_label_before_persist() -> None:
+    """E21-17-R1-PY47-2: reserved label must raise before any repository write."""
+    writer = Mock()
+    writer.persist_new_cluster = AsyncMock()
+    writer.update_cluster_metadata = AsyncMock()
+    writer.cluster_repository = AsyncMock()
+    writer.member_repository = AsyncMock()
+    session = AsyncMock()
+
+    with pytest.raises(ReservedClusterLabelError):
+        await create_cluster_for_identity(
+            identity_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            label="cluster-x",
+            tenant_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            desired_cluster_id=None,
+            session=session,
+            assignment_writer=writer,
+        )
+
+    writer.persist_new_cluster.assert_not_awaited()
+    session.get.assert_not_awaited()

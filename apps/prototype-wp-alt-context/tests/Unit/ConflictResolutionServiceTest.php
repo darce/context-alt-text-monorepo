@@ -723,6 +723,55 @@ class ConflictResolutionServiceTest extends TestCase
         $this->assertSame([[91, 'accept_backend', $tenantId]], $repository->marked);
     }
 
+    public function testResolveReservedBackendPersonNameSkipsLabelWriteAndCompletes(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        $repository = new class() extends ConflictRepository {
+            public array $marked = [];
+
+            public function find_conflict_by_id(int $conflict_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $conflict_id,
+                    'tenant_id' => $tenant_id,
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-person',
+                    'outbox_id' => 0,
+                    'backend_version' => 19,
+                    'resolution_status' => 'open',
+                    'conflict_code' => 'person_name_conflict',
+                    'backend_proposed_value' => 'cluster-abcdef01',
+                ];
+            }
+
+            public function mark_resolved(int $conflict_id, string $resolution_status, string $tenant_id): bool
+            {
+                $this->marked[] = [$conflict_id, $resolution_status, $tenant_id];
+                return true;
+            }
+        };
+
+        $clustersRepository = new class() extends NullClustersRepository {
+            public array $updatedLabels = [];
+
+            public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int
+            {
+                $this->updatedLabels[] = [$cluster_uuid, $label, $mark_user_confirmed];
+                return 1;
+            }
+        };
+
+        $GLOBALS['__ac_error_log'] = [];
+        $service = new ConflictResolutionService($repository, new OutboxDrain(), $clustersRepository, new NullIdentityMembersRepository());
+        $result = $service->resolve(94, 'accept_backend', $tenantId);
+
+        $this->assertSame(['ok' => true, 'reason' => 'success', 'metrics_refreshed' => false], $result);
+        $this->assertSame([], $clustersRepository->updatedLabels);
+        $this->assertSame([[94, 'accept_backend', $tenantId]], $repository->marked);
+        $this->assertStringContainsString('reserved label', implode("\n", $GLOBALS['__ac_error_log']));
+        unset($GLOBALS['__ac_error_log']);
+    }
+
     public function testResolvePersonNameConflictMergeUpdatesLabelAndReenqueuesMergedValue(): void
     {
         $tenantId = md5((string) \get_site_url());

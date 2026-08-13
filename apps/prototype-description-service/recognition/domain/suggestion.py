@@ -4,9 +4,11 @@ Assignment suggestion domain model for human-in-the-loop review.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
+
+from recognition.domain.representative import ClusterRepresentative
 
 
 class SuggestionStatus(Enum):
@@ -96,7 +98,11 @@ class MergeSuggestion:
 
 @dataclass
 class NameSuggestion:
-    """Represents a proposed cluster label awaiting review."""
+    """Represents a proposed cluster label awaiting review.
+
+    ``representatives`` carries domain ``ClusterRepresentative`` rows for preview
+    thumbnails. HTTP thumb URL rewriting stays in the interface-adapter layer.
+    """
 
     id: str
     cluster_id: str
@@ -110,3 +116,4 @@ class NameSuggestion:
     resolved_at: datetime | None = None
     last_exported_snapshot_id: str | None = None
     disposed_at: datetime | None = None
+    representatives: list[ClusterRepresentative] = field(default_factory=list)

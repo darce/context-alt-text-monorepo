@@ -404,3 +404,10 @@ export const nextQueueIndex = (index: number, length: number): number => {
   const clamped = clampQueueIndex(index, length);
   return Math.min(clamped + 1, length - 1);
 };
+
+/**
+ * BR-35/BR-40/BR-41: queue ordinal props are integers >= 1 only.
+ * Rejects 0, negative, NaN, Infinity, and floats so sprintf cannot coerce junk into accnames.
+ */
+export const isValidQueueOrdinal = (value: number | undefined): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1;

@@ -4,6 +4,7 @@ import { __ } from '@wordpress/i18n';
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -36,6 +37,13 @@ interface SuggestionCardProps {
    * is present per rendered viewport.
    */
   accentPrimary?: boolean;
+  /**
+   * BR-41: 1-based queue position. When BOTH `queuePosition` and `queueTotal` are
+   * valid integers >= 1, ordinal text folds into the group accname.
+   */
+  queuePosition?: number;
+  /** BR-41: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
 }
 
 const FaceCropControl = ({
@@ -91,6 +99,8 @@ export const SuggestionCard = ({
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
   accentPrimary = false,
+  queuePosition,
+  queueTotal,
 }: SuggestionCardProps): React.JSX.Element => {
   // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
   const displayLabel = suggestion.label ?? '';
@@ -110,9 +120,14 @@ export const SuggestionCard = ({
   const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
+  const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
 
   return (
-    <div
+    <ReviewCardGroupShell
+      kind="assignment"
+      labelId={groupLabelId}
+      queuePosition={queuePosition}
+      queueTotal={queueTotal}
       className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}
       data-testid="acx-review-card"
       data-review-kind="assignment"
@@ -215,6 +230,6 @@ export const SuggestionCard = ({
           </button>
         ) : null}
       </div>
-    </div>
+    </ReviewCardGroupShell>
   );
 };

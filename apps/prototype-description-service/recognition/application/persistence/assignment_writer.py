@@ -24,7 +24,7 @@ from recognition.application.persistence.representative_selector import (
     passes_enrollment_floors,
 )
 from recognition.application.settings.clustering import ClusteringSettings
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
 from recognition.domain.repositories import ClusterNotFoundError, ClusterRepository, MemberData, MemberRepository
@@ -798,6 +798,9 @@ class AssignmentWriter:
         representative_id: str | None = None,
     ) -> IdentityCluster:
         """Update cluster label or representative metadata."""
+        if is_reserved_label_shape(label):
+            raise ReservedClusterLabelError(label)
+
         cluster = await self._clusters.get_by_id(cluster_id)
         if not cluster:
             raise ClusterNotFoundError(cluster_id)

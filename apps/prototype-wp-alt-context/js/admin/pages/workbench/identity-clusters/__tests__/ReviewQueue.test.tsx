@@ -37,6 +37,7 @@ import {
 } from '../personCommitCopy';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
@@ -1497,6 +1498,171 @@ describe('ReviewQueue', () => {
     expect(document.getElementById('acx-merge-pos-merge-1')).toHaveTextContent(
       'Merge suggestion 1 of 2',
     );
+  });
+
+  // BR-41: CurrentCard pipes queue chrome ordinal into ASSIGNMENT / NAME / CLUSTER group accnames.
+  it('BR-41: ASSIGNMENT card receives queue ordinal from position chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    const card = screen.getByTestId('acx-review-card');
+    expect(card).toHaveAccessibleName(/Face suggestion 1 of 2/);
+  });
+
+  it('BR-41: NAME card receives queue ordinal from position chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-2',
+          cluster_id: 'cluster-name-2',
+          suggested_name: 'Riley',
+          confidence_score: 0.88,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    renderQueue();
+
+    await screen.findByText(/Suggested name:/);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    const card = screen.getByTestId('acx-review-card');
+    expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
+  });
+
+  it('BR-41: CLUSTER card receives queue ordinal from position chrome', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+        {
+          id: 'cluster-top-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 3,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    const card = screen.getByTestId('acx-review-card');
+    expect(card).toHaveAccessibleName(/Cluster review 1 of 2/);
+  });
+
+  // BR-41: NAME invalid/no-ordinal fallbacks (inline CurrentCard root uses ReviewCardGroupShell).
+  it.each([
+    { label: 'total=0', queuePosition: 1, queueTotal: 0 },
+    { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
+    { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
+    { label: 'position=float', queuePosition: 1.5, queueTotal: 2 },
+  ])(
+    'BR-41: NAME invalid queue ordinals fall back to kind-only Name suggestion — $label',
+    ({ label, queuePosition, queueTotal }) => {
+      render(
+        <ReviewCardGroupShell
+          kind="name"
+          labelId={`acx-name-pos-${label}`}
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
+          className="acx-suggestion-card acx-name-suggestion-card"
+          data-testid="acx-review-card"
+          data-review-kind="name"
+        />,
+      );
+
+      const card = screen.getByTestId('acx-review-card');
+      expect(card, label).toHaveAccessibleName('Name suggestion');
+      expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5/i);
+    },
+  );
+
+  it('BR-41: NAME without queue ordinal has kind-only Name suggestion (never empty)', () => {
+    render(
+      <ReviewCardGroupShell
+        kind="name"
+        labelId="acx-name-pos-none"
+        className="acx-suggestion-card acx-name-suggestion-card"
+        data-testid="acx-review-card"
+        data-review-kind="name"
+      />,
+    );
+
+    const card = screen.getByTestId('acx-review-card');
+    expect(card).toHaveAccessibleName('Name suggestion');
+    expect(screen.queryByText(/Name suggestion \d+ of \d+/)).toBeNull();
   });
 
   it('shows person-commit as primary on NAME cards with disclosure', async () => {

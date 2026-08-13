@@ -20,6 +20,16 @@ class ClusterCurationWriterTest extends TestCase
         $this->writer = new ClusterCurationWriter('wp_acx_clusters');
     }
 
+    public function testUpdateLabelRejectsReservedShape(): void
+    {
+        global $wpdb;
+
+        $result = $this->writer->update_label('cluster-1', 'cluster-abcdef01');
+
+        $this->assertSame(0, $result);
+        $this->assertSame([], $wpdb->queries);
+    }
+
     public function testUpdateLabelSetsUserConfirmedAndBumpsRevision(): void
     {
         global $wpdb;

@@ -22,7 +22,7 @@ from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.domain.suggestion import SuggestionStatus
@@ -252,6 +252,9 @@ async def merge_cluster(
     moved_by_merge_id: str | None = None,
 ) -> IdentityCluster | None:
     """Merge a source cluster into a target cluster by reassigning members."""
+    if is_reserved_label_shape(target_label):
+        raise ReservedClusterLabelError(target_label)
+
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     member_repo: MemberRepository = assignment_writer.member_repository
 

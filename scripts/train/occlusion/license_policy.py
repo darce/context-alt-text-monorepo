@@ -64,7 +64,7 @@ never on the joined full token. Testing the joined form first let bare
 ``yolo_`` + ``nas/weights``), falsely denying component-clean paths and
 disagreeing with component-level exception/deny outcomes.
 
-**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7 / F8 / F9 / F10):
+**Uniform component scanner** (FIR-7 Wave F5 / F6 / F7 / F8 / F9 / F10 / F11 / F12):
 every slash component is scanned by one iterative **deny-first** suffix
 walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
 
@@ -82,30 +82,36 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
        compact prefix). Folded (a)/(b) claims always win (``yolo_x`` /
        ``yolo_seg``) even when an exception compact spelling collides.
      * **Exception residual classification** (single mechanism, FIR-7 F10
-       — flag ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED``) replaces the
-       F9 length-heuristic band split (elevated rem ≤ 3 vs steal rem > 3)
-       and the accidental ``len(segment) ≤ 3`` reconstitution gate. After
-       an exception seed is stripped, every residual (compact rem or
-       separator segment chain) is classified without using length as a
-       discriminator:
-         (a) **legitimate** — every residual segment is a per-family
-             size/version tag **or** an export/format shield tag from
-             ``_NC_TRAILING_SHIELD_TAGS`` (``trt`` / ``pt`` / ``bin`` /
-             ``onnx`` / …) → admit carve-out / continue strip;
-         (b) **deny-reconstituting** — progressive re-glue of residual
-             segments onto the exception seed head matches a deny claim
-             that is not a legitimate exception spelling → DENY with
-             that claim's honest entry (``yolos_eg`` → ``yoloseg``);
+       / F11 / F12 — flag ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED``).
+       After an exception seed is stripped, every residual is classified
+       without using length as a discriminator. Residual-(a) is
+       **shape-aware** (A14-1):
+         (a) **legitimate** — compact glue (no ``_``, or a head compact
+             peel of a non-allowlisted rem — F12-2 ``yoloxpt_trt``):
+             only per-family compact tags / the explicit compact-glue
+             allowlist (empty except documented ``ppyoloeplus``).
+             Separator residuals: family compact ∪ separator-only tags
+             ∪ ``_NC_TRAILING_SHIELD_TAGS`` (``trt`` / ``pt`` / ``bin``
+             / ``onnx`` / …). Compact glue of a shield or separator-only
+             tag (``yoloxpt`` / ``yolostiny``) is **not** legitimate;
+         (b) **deny-reconstituting** — progressive re-glue matches a
+             deny claim that is not a fabricated ``yolo``-via-exception-
+             letter hit (F12-7) → DENY with that claim's honest entry
+             (``yolos_eg`` → ``yoloseg``);
          (c) **unknown residual** — fail-closed DENY with an honest
              unknown-residual note (NOT a fabricated Ultralytics
-             attribution). Covers long debris (``yolosegme`` /
-             ``yolosfree`` / ``yolos_segment``), tag+debris laundering
-             (``yolos_tiny_eg`` / ``yolox_s_free``), and any residual
-             that is neither a real tag nor a matched deny claim.
-       Residual-alone deny seeds (``yolox_ultralytics`` → residual
-       ``ultralytics``) **defer** to residual re-scan so attribution
-       stays honest. Export short tags (``yolox_trt`` / ``yolox_pt``)
-       admit as (a).
+             attribution). Covers compact-glue deny (A14-1), long debris
+             (``yolosegme`` / ``yolosfree``), tag+debris laundering
+             (``yolos_tiny_eg`` / ``yolox_s_free``), and short non-
+             artifact rem (``yolox_z`` / ``yolos_ti``).
+       **B14-1 / F12-1 steal** is the same mechanism: when the residual
+       came from unbounded compact prefix (walker cannot re-queue it)
+       and has any deny hit — exact identity included (``yoloxyolo`` →
+       ``yolo``) as well as glue / contained long seeds
+       (``yoloxultralyticsplus`` → ``ultralytics``) — return that hit.
+       Residual-alone deny seeds that the walker *can* re-queue
+       (``yolox_ultralytics``) **defer** so attribution stays honest.
+       Separator export tags (``yolox_trt`` / ``yolox_pt``) admit as (a).
      * Else exception-family hit → strip seed; pure-exception (empty
        residual) only continues to later suffixes — it never early-returns
        admit past un-scanned deny content (fixes
@@ -118,16 +124,19 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
      ``yolox_yolop`` ADMIT after successive pure-exception strips
      (FIR-7-B7-06).
 
-**Per-family tags** (FIR-7-B12-3 / B12-4 / F10): each exception seed has
-compact-(c) tags (fit the 1–3 alnum bound) **and** separator-boundary
-tags (any length) reflecting real checkpoints — ``yolox``: s/m/l/x +
-nano/tiny/darknet; ``yolos``: tiny/small/base/large (no compact single-
-letter sizes); ``yolof``: r50/r101 + c5; ``yolop``: v2/v3; ``ppyolo``:
-e/v2. YOLOS single-letter size twins (``yolosx`` / ``yolosn`` / …) are
-NOT real hustvl sizes → deny; ``yoloxs`` stays admitted. Export/format
-tags from ``_NC_TRAILING_SHIELD_TAGS`` are legitimate residuals for
-**all** families regardless of tag length (``yolox_trt`` admits;
-``yolox_s_trt`` admits).
+**Per-family tags** (FIR-7-B12-3 / B12-4 / F10 / F12): each exception
+seed has compact-(c) tags (fit the 1–3 alnum bound) **and** separator-
+only tags (any length) reflecting real checkpoints — ``yolox``: s/m/l/x
++ nano/tiny/darknet/darknet53; ``yolos``: tiny/small/base/large (no
+compact single-letter sizes); ``yolof``: r50 + r101/c5/1x/3x/r/50/101
+(Detectron2 schedule / ``R_50`` spelling); ``yolop``: v2/v3; ``ppyolo``:
+e/v2 + s/m/l/x/plus/crn/r50vd/dcn/300e/80e/1x/365e/coco
+(PaddleDetection catalog). YOLOS single-letter size twins (``yolosx`` /
+``yolosn`` / …) are NOT real hustvl sizes → deny; ``yoloxs`` stays
+admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
+R14-G2-4: ``yoloxtiny`` / ``ppyoloes``). Export/format tags from
+``_NC_TRAILING_SHIELD_TAGS`` are legitimate **separator** residuals for
+all families (``yolox_trt`` admits; ``yoloxpt`` denies).
 
 Vendor-prefix underscore forms of pure exception seeds
 (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
@@ -197,10 +206,12 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      non-member residuals (export-shaped rest under a base seed); it
      must never veto a member. Closes compact heads of underscore-
      bearing seeds (``yolonasl_trt`` / ``buffalol2_trt`` / ``yolonas_int8``).
-  3. when an exception-family component is present, promote a package-floor
+  3. when an exception-family component is present (structural **or**
+     unbounded compact prefix — F12-3), promote a package-floor
      ``nc_model_derived`` hit so residual NC compounds
-     (``yolox_s_buffalo_l`` / ``yolox_s_yolo_nas``) reject on the derived
-     door too.
+     (``yolox_s_buffalo_l`` / ``yoloxinsightface`` / ``yoloxyolo_nas``)
+     reject on the derived door too. BR-28 door-precision
+     (``myarcface`` / ``not-insightface``) stays floor-only.
   4. **Multi-axis door promotion** (FIR-7-A10-01 / B11-02): doors consider
      **all** floor hits in a compound, not just the ranked winner. If any
      suffix/component hits an AGPL/``denylisted_package`` entry, reject

@@ -43,11 +43,11 @@ describe('isHumanLabeledTarget', () => {
     expect(isHumanLabeledTarget('  cluster-ab  ')).toBe(false);
   });
 
-  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively (hex suffixes).
+  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively (hex suffixes, ≥8).
   it('rejects case-insensitive cluster[-_] machine labels (PHP parity / hex)', () => {
     expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
     expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
-    expect(isHumanLabeledTarget('CLUSTER-abcdef')).toBe(false);
+    expect(isHumanLabeledTarget('CLUSTER-ABCDEF12')).toBe(false);
     expect(isHumanLabeledTarget('  Cluster-abcdef12  ')).toBe(false);
     expect(isHumanLabeledTarget('  cluster_abcdef12  ')).toBe(false);
     // Non-prefix / missing separator must still pass as human-format.
@@ -69,6 +69,35 @@ describe('isHumanLabeledTarget', () => {
     expect(isHumanLabeledTarget('CLUSTER_HQ')).toBe(true);
     expect(isHumanLabeledTarget('Cluster_X')).toBe(true);
     expect(isHumanLabeledTarget('Cluster Nine')).toBe(true);
+  });
+
+  // BR-37/BR-38: two-shape reject — PHP-parity long hex (any case) OR lowercase machine forms.
+  it('gates non-hex lowercase machine shapes (BR-37/BR-38)', () => {
+    expect(isHumanLabeledTarget('cluster-xyz')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster-xyz  ')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-auto-1')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-g7x2')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_12_final')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-dad')).toBe(false);
+  });
+
+  it('gates hex machine labels across lengths and case (BR-37/BR-38)', () => {
+    expect(isHumanLabeledTarget('cluster-7')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-ab')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-1234')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-abcdef01')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-123e4567-e89b-12d3-a456-426614174000')).toBe(false);
+    expect(isHumanLabeledTarget('CLUSTER-ABCDEF12')).toBe(false);
+    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_ABCDEF1234')).toBe(false);
+  });
+
+  it('passes hex-word human Cluster* names with uppercase letters (BR-37/BR-38)', () => {
+    expect(isHumanLabeledTarget('Cluster-Dad')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster-ace')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster-BEEF')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster-Cafe')).toBe(true);
+    expect(isHumanLabeledTarget('Alex')).toBe(true);
   });
 });
 

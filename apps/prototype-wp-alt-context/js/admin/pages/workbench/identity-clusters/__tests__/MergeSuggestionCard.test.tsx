@@ -457,4 +457,62 @@ describe('MergeSuggestionCard', () => {
     expect(yes).toHaveAccessibleDescription(/first cluster.*second cluster.*87% match/i);
     expect(yes).not.toHaveAccessibleDescription(/suggestion \d+ of/i);
   });
+
+  // BR-40: invalid ordinals (0 / NaN / Infinity) must not leak into accnames via sprintf coerce.
+  it('BR-40: invalid queue ordinals fall back to no-ordinal accnames (no of 0 / NaN)', () => {
+    const fallbackFaceNames = [
+      'View original photo, first face',
+      'View original photo, second face',
+    ];
+    const invalidCases: {
+      label: string;
+      queuePosition?: number;
+      queueTotal?: number;
+    }[] = [
+      { label: 'total=0', queuePosition: 1, queueTotal: 0 },
+      { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
+      { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
+    ];
+
+    for (const { label, queuePosition, queueTotal } of invalidCases) {
+      const { unmount } = render(
+        <MergeSuggestionCard
+          suggestion={withFaces({
+            id: `merge-invalid-${label}`,
+            cluster_a_label: 'cluster-7',
+            cluster_b_label: 'cluster-9',
+            similarity: 0.87,
+          })}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onOpenOriginal={vi.fn()}
+          isPending={false}
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
+        />,
+      );
+
+      const group = screen.getByRole('group');
+      expect(group, label).toHaveAccessibleName('Are these the same person?');
+      expect(group, label).not.toHaveAccessibleName(/of 0|NaN|Infinity/i);
+
+      const faceControls = screen.getAllByRole('button', { name: /View original photo/i });
+      const controlNames = faceControls.map((btn) => btn.getAttribute('aria-label') ?? '');
+      expect(controlNames, label).toEqual(fallbackFaceNames);
+      expect(controlNames.join(' '), label).not.toMatch(/of 0|NaN|Infinity/i);
+
+      const yes = screen.getByRole('button', { name: 'Yes' });
+      const no = screen.getByRole('button', { name: 'No' });
+      expect(yes, label).toHaveAccessibleDescription(
+        /first cluster.*second cluster.*87% match/i,
+      );
+      expect(no, label).toHaveAccessibleDescription(
+        /first cluster.*second cluster.*87% match/i,
+      );
+      expect(yes, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);
+      expect(no, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);
+
+      unmount();
+    }
+  });
 });

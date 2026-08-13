@@ -7,7 +7,7 @@ import type { BoundingBox, ClusterIdentity, RepresentativeBounds } from './ident
 
 export interface ClusterSummary {
   id: string;
-  label: string;
+  label: string | null;
   is_auto_label?: boolean;
   identity_count: number;
   member_ids: string[];

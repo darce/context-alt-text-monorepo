@@ -141,6 +141,35 @@ describe('buildNamingOptions', () => {
     });
   });
 
+  // BR-48 dual-lock: collision registration vs candidate exclusion must be independently pinned.
+  it('registers a collision for a machine-labeled cluster row (BR-48 collision lock)', () => {
+    const { collisionsByLabel } = buildNamingOptions({
+      rosterEntries: [],
+      labelMatches: [{ id: 'br48-auto', label: 'cluster-1234', identity_count: 1 }],
+      limit: null,
+    });
+
+    const collisions = findCollisionsForLabel(collisionsByLabel, 'cluster-1234');
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]).toMatchObject({
+      label: 'cluster-1234',
+      source: 'cluster',
+      value: namingOptionValue('cluster', 'br48-auto'),
+    });
+  });
+
+  it('excludes a machine-labeled cluster row from clusterCandidates (BR-48 candidate lock)', () => {
+    const { options } = buildNamingOptions({
+      rosterEntries: [],
+      labelMatches: [{ id: 'br48-auto', label: 'cluster-1234', identity_count: 1 }],
+      limit: null,
+    });
+
+    expect(options).toHaveLength(0);
+    expect(options.some((option) => option.label === 'cluster-1234')).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'br48-auto'))).toBe(false);
+  });
+
   it('excludes the editable cluster from options and collision cluster leg', () => {
     const { options, collisionsByLabel } = buildNamingOptions({
       rosterEntries: [],

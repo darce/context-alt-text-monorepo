@@ -35,7 +35,7 @@ import {
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import { invalidateSuggestionProjection } from './suggestionProjection';
+import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 interface ClusterLabelingPanelProps {
@@ -215,7 +215,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     () =>
       buildNamingOptions({
         rosterEntries: rosterError ? [] : persons,
-        labelMatches: labeledClusters,
+        // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+        labelMatches: labeledClusters.filter(
+          (cluster): cluster is typeof cluster & { label: string } =>
+            typeof cluster.label === 'string' && cluster.label.trim() !== '',
+        ),
         filter: labelInput,
         excludeClusterId: clusterId,
       }),
@@ -318,7 +322,10 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       });
       const normalized = trimmed.toLowerCase();
       const match = results.clusters.find(
-        (cluster) => cluster.id !== clusterId && cluster.label.toLowerCase() === normalized,
+        (cluster) =>
+          cluster.id !== clusterId &&
+          typeof cluster.label === 'string' &&
+          cluster.label.toLowerCase() === normalized,
       );
       if (!match?.id || !match.label) {
         return null;
@@ -346,6 +353,14 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       return;
     }
     setError(null);
+
+    // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
+    if (!isHumanLabeledTarget(trimmed)) {
+      setError(
+        __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+      );
+      return;
+    }
 
     if (!allowRenameAnyway) {
       const localGuard = evaluateDuplicateGuard(trimmed);

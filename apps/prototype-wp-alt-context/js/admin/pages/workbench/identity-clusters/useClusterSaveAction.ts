@@ -100,6 +100,13 @@ export const useClusterSaveAction = ({
         setError(__('Provide a label before saving.', 'alt-context'));
         return false;
       }
+      // BR-55: shared sink rejects reserved machine labels (defense-in-depth).
+      if (!isHumanLabeledTarget(trimmed)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
+        return false;
+      }
       if (editableClusterId) {
         mutations.rename(trimmed, abortController.signal);
         return true;
@@ -133,6 +140,14 @@ export const useClusterSaveAction = ({
       // Exact dirty check (B6): "bob"→"Bob" proceeds; "Bob"→"Bob" still no-ops.
       if (currentLabel === canonical) {
         cancelEditing();
+        return;
+      }
+
+      // BR-55: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
+      if (!isHumanLabeledTarget(canonical)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
         return;
       }
 

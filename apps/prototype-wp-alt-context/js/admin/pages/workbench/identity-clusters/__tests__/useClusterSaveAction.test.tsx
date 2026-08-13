@@ -464,3 +464,65 @@ describe('useClusterSaveAction reserved-label gate (BR-49)', () => {
     expect(mutations.rename).toHaveBeenCalledWith('Cluster-Dad', expect.any(AbortSignal));
   });
 });
+
+describe('useClusterSaveAction person-confirm reserved-label gate (BR-55)', () => {
+  // Tests 1–2: layered reject (gate 1 + sink). Red-proof A removes gate 1 only — these
+  // still pass via applyPersonLabel. queueSaveStatus early-bail is asserted separately
+  // (gate 1 property; fails under sink-only).
+  it('handlePersonSelect(cluster-7) rejects reserved label without rename/create mutation', () => {
+    const { result, mutations, setError } = renderSaveAction({
+      clusterLabel: 'Old',
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('cluster-7');
+    });
+
+    expect(setError).toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+  });
+
+  it('handlePersonSelect(cluster-auto-1) rejects reserved label without rename/create mutation', () => {
+    const { result, mutations, setError } = renderSaveAction({
+      clusterLabel: 'Old',
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('cluster-auto-1');
+    });
+
+    expect(setError).toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+  });
+
+  it('handlePersonSelect reserved label short-circuits before queueSaveStatus (gate 1)', () => {
+    const { result, queueSaveStatus, setError } = renderSaveAction({
+      clusterLabel: 'Old',
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('cluster-7');
+    });
+
+    expect(setError).toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(queueSaveStatus).not.toHaveBeenCalled();
+  });
+
+  it('handlePersonSelect(Pat Rivera) proceeds to rename (control)', () => {
+    const { result, mutations, setError, queueSaveStatus } = renderSaveAction({
+      clusterLabel: 'Old',
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('Pat Rivera');
+    });
+
+    expect(setError).not.toHaveBeenCalledWith(RESERVED_LABEL_MSG);
+    expect(mutations.rename).toHaveBeenCalledWith('Pat Rivera', expect.any(AbortSignal));
+    expect(queueSaveStatus).toHaveBeenCalled();
+  });
+});

@@ -665,7 +665,8 @@ describe('ClusterLabelingPanel', () => {
   it('remote guard collides on machine-shaped label via case-insensitive raw equality (BR-50 / BR-42)', async () => {
     // Cluster-Auto-1 passes isHumanLabeledTarget (uppercase fails MACHINE_RE; non-hex fails HEX_RE)
     // while the remote row is lowercase cluster-auto-1 — raw equality must still arm the guard.
-    // BR-58: collision warning stays, but merge affordance is suppressed for machine-labeled targets.
+    // BR-58 / BR-66: collision warning stays, but merge affordance AND outcome-sample copy are
+    // suppressed for machine-labeled targets (copy must not advertise a merge the button withholds).
     const machineDuplicate = {
       ...duplicateClusterMatch,
       id: 'machine-target-id',
@@ -695,16 +696,16 @@ describe('ClusterLabelingPanel', () => {
     expect(
       await screen.findByText('A name matching "Cluster-Auto-1" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Merge target: cluster "cluster-auto-1"/)).toBeInTheDocument();
+    expect(screen.queryByText(/Merge target: cluster "cluster-auto-1"/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Merge into cluster/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rename anyway' })).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
-  it('BR-46: remote guard ignores null labels and still collides on a real match', async () => {
+  it('BR-46 / BR-66: human-labeled merge target offers copy + clickable merge (control)', async () => {
     // Predicted first failure (pre B): cluster.label.toLowerCase() throws on null → catch fail-open
-    // BR-58 control: human-labeled collision still offers the merge button.
+    // BR-58/BR-66 control: human-labeled collision offers merge copy + button; click closes oracle gap.
     const nullLabeledRow = {
       ...duplicateClusterMatch,
       id: 'null-label-cluster',
@@ -740,9 +741,16 @@ describe('ClusterLabelingPanel', () => {
     expect(
       await screen.findByText('A name matching "Pat Rivera" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Merge into cluster "Pat Rivera"' })).toBeInTheDocument();
+    expect(screen.getByText(/Merge target: cluster "Pat Rivera"/)).toBeInTheDocument();
+    const mergeButton = screen.getByRole('button', { name: 'Merge into cluster "Pat Rivera"' });
+    expect(mergeButton).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
+
+    await user.click(mergeButton);
+    await waitFor(() => {
+      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'real-match-id', 'Pat Rivera');
+    });
   });
 
   it('BR-46: remote guard with only a null-labeled row resolves to no collision', async () => {

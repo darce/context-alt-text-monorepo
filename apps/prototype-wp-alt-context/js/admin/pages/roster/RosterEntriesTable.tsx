@@ -145,8 +145,10 @@ const EditableRow = ({ entry }: EditableRowProps) => {
 
   const handleSave = () => {
     const trimmedName = name.trim();
-    // BR-60: reject reserved machine-shaped person names before rename.
-    if (!isHumanLabeledTarget(trimmedName)) {
+    // BR-60/BR-63: reject reserved machine-shaped names on rename only;
+    // allow tag-only saves when the existing (possibly legacy) name is unchanged.
+    const nameUnchanged = trimmedName === entry.name.trim();
+    if (!nameUnchanged && !isHumanLabeledTarget(trimmedName)) {
       setNameError(RESERVED_LABEL_MESSAGE);
       return;
     }

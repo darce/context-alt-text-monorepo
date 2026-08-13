@@ -86,3 +86,49 @@ describe('RosterEntriesTable rename reserved-label gate (BR-60)', () => {
     expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
   });
 });
+
+describe('RosterEntriesTable legacy reserved name save gate (BR-63)', () => {
+  it('allows tag-only save when existing name is unchanged cluster-7', async () => {
+    const user = userEvent.setup();
+    render(
+      <RosterEntriesTable
+        entries={[makeEntry({ name: 'cluster-7', tags: ['family'] })]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Edit person/i }));
+    expect(screen.getByDisplayValue('cluster-7')).toBeInTheDocument();
+    const tagsInput = screen.getByDisplayValue('family');
+    await user.clear(tagsInput);
+    await user.type(tagsInput, 'vip, alumni');
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    expect(updateMutation.mutate).toHaveBeenCalledTimes(1);
+    expect(updateMutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 1,
+        name: 'cluster-7',
+        tags: ['vip', 'alumni'],
+      }),
+      expect.any(Object),
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  it('rejects rename from cluster-7 to a different reserved value cluster-9', async () => {
+    const user = userEvent.setup();
+    render(
+      <RosterEntriesTable entries={[makeEntry({ name: 'cluster-7' })]} />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Edit person/i }));
+    const nameInput = screen.getByDisplayValue('cluster-7');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'cluster-9');
+    await user.click(screen.getByRole('button', { name: /Save changes/i }));
+
+    expect(updateMutation.mutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+  });
+});

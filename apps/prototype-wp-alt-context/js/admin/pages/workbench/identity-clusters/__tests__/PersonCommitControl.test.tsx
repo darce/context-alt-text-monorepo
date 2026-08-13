@@ -73,4 +73,79 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
     });
     expect(screen.queryByText(RESERVED_MESSAGE)).not.toBeInTheDocument();
   });
+
+  it('select-existing entry commits without reserved blocking', async () => {
+    vi.mocked(listRosterEntries).mockResolvedValue([
+      {
+        id: 42,
+        person_uuid: 'person-uuid-alex',
+        name: 'Alex Carter',
+        tags: [],
+        cluster_count: 0,
+        clusters: [],
+        queue_memberships: [],
+        updated_at: new Date().toISOString(),
+        source_version: 1,
+        projection_status: 'current',
+        projection_refreshed_at: new Date().toISOString(),
+      },
+    ]);
+    const { onCommit } = renderControl();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: 'Alex Carter' }));
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    expect(onCommit).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: 42,
+    });
+    expect(screen.queryByText(RESERVED_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  it('reserved error clears when switching to an existing entry after reject', async () => {
+    vi.mocked(listRosterEntries).mockResolvedValue([
+      {
+        id: 42,
+        person_uuid: 'person-uuid-alex',
+        name: 'Alex Carter',
+        tags: [],
+        cluster_count: 0,
+        clusters: [],
+        queue_memberships: [],
+        updated_at: new Date().toISOString(),
+        source_version: 1,
+        projection_status: 'current',
+        projection_refreshed_at: new Date().toISOString(),
+      },
+    ]);
+    const { onCommit } = renderControl({ suggestedCreateName: 'cluster-7' });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(RESERVED_MESSAGE);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(await screen.findByRole('option', { name: 'Alex Carter' }));
+
+    expect(screen.queryByText(RESERVED_MESSAGE)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    expect(onCommit).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: 42,
+    });
+  });
+
+  it('create name is trimmed before the reserved gate', async () => {
+    const { onCommit } = renderControl({ suggestedCreateName: '  cluster-7  ' });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent(RESERVED_MESSAGE);
+  });
 });

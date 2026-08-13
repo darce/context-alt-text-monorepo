@@ -6,6 +6,12 @@ import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -111,6 +117,7 @@ export interface RosterEntriesSectionProps {
 export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
   const [createHiddenBySearchNotice, setCreateHiddenBySearchNotice] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const createPerson = useCreatePerson();
@@ -251,12 +258,19 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     }
 
     const submittedName = newName.trim();
+    // BR-60: reject reserved machine-shaped person names before create.
+    if (!isHumanLabeledTarget(submittedName)) {
+      setNameError(RESERVED_LABEL_MESSAGE);
+      return;
+    }
+    setNameError(null);
     createPerson.mutate(
       { name: submittedName },
       {
         onSuccess: () => {
           setNewName('');
           setIsAdding(false);
+          setNameError(null);
           // A successful create that vanishes behind an active search reads as
           // a failed add. Surface the recovery when the new name would not match.
           if (hasActiveSearch && !submittedName.toLowerCase().includes(normalizedSearch)) {
@@ -311,7 +325,14 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           )}
         </div>
         {!isAdding && (
-          <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
+          <button
+            type="button"
+            className="acx-button acx-button--primary"
+            onClick={() => {
+              setNameError(null);
+              setIsAdding(true);
+            }}
+          >
             <UserPlus size={16} aria-hidden="true" />
             {__('Add Person', 'alt-context')}
           </button>
@@ -391,10 +412,26 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               className="acx-input"
               placeholder={__('Full Name', 'alt-context')}
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={(e) => {
+                setNewName(e.target.value);
+                if (nameError) {
+                  setNameError(null);
+                }
+              }}
               disabled={createPerson.isPending}
               autoFocus
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'acx-roster-add-name-error' : undefined}
             />
+            {nameError && (
+              <p
+                id="acx-roster-add-name-error"
+                className="acx-roster-section__name-error"
+                role="alert"
+              >
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="acx-form-actions">
             <button
@@ -408,7 +445,10 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
             <button
               type="button"
               className="acx-button acx-button--secondary"
-              onClick={() => setIsAdding(false)}
+              onClick={() => {
+                setNameError(null);
+                setIsAdding(false);
+              }}
               disabled={createPerson.isPending}
             >
               <X size={16} aria-hidden="true" />

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as buildNamingOptionsModule from '../buildNamingOptions';
 import { namingOptionValue } from '../buildNamingOptions';
 import { selectClusterSuggestions, useClusterSuggestions } from '../useClusterSuggestions';
 import { PROJECTION_TOP_K } from '../suggestionProjection';
@@ -501,6 +502,69 @@ describe('useClusterSuggestions', () => {
     await waitFor(() => expect(result.current.options.some((option) => option.label === 'Human Label')).toBe(true));
     expect(result.current.options.every((option) => !String(option.label).startsWith('cluster-'))).toBe(true);
 
+    queryClient.clear();
+  });
+
+  it('namedMatches filter keeps null-labeled ClusterSummary out of naming options (BR-53)', async () => {
+    // Real hook (unmocked loader): API returns one null-labeled row + one named row.
+    // Options contain the named row only; spy asserts namedMatches filtered before buildNamingOptions
+    // (buildNamingOptions itself null-skips, so options alone cannot red-proof the loader filter).
+    const { wrapper, queryClient } = createWrapper();
+    const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+    const buildSpy = vi.spyOn(buildNamingOptionsModule, 'buildNamingOptions');
+
+    fetchIdentitiesSuggestionsMock.mockResolvedValue({ matches: { 'identity-1': [] } });
+
+    const baseCluster = {
+      member_ids: [],
+      representative_identity: {
+        media_id: null,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      },
+      sample_identities: [],
+    };
+
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [
+        { ...baseCluster, id: 'null-label-row', label: null, identity_count: 1 },
+        { ...baseCluster, id: 'named-row', label: 'Named Match', identity_count: 2 },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useClusterSuggestions({
+          identityId: 'identity-1',
+          enabled: true,
+          labelInput: 'Na',
+          debounceMs: 0,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() =>
+      expect(result.current.options.some((option) => option.label === 'Named Match')).toBe(true),
+    );
+    expect(result.current.options.every((option) => typeof option.label === 'string' && option.label !== '')).toBe(
+      true,
+    );
+    expect(result.current.options.some((option) => option.value === namingOptionValue('cluster', 'null-label-row'))).toBe(
+      false,
+    );
+
+    const labelMatchArgs = buildSpy.mock.calls
+      .map((call) => call[0]?.labelMatches ?? [])
+      .find((rows) => rows.some((row) => row.id === 'named-row'));
+    expect(labelMatchArgs).toBeDefined();
+    expect(labelMatchArgs?.every((row) => typeof row.label === 'string' && row.label !== '')).toBe(true);
+    expect(labelMatchArgs?.some((row) => row.id === 'null-label-row')).toBe(false);
+    expect(labelMatchArgs?.map((row) => row.id)).toEqual(['named-row']);
+
+    buildSpy.mockRestore();
     queryClient.clear();
   });
 });

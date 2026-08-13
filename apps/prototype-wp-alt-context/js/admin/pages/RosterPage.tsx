@@ -154,7 +154,7 @@ export const RosterPage = (): React.JSX.Element => {
         .filter((candidate) => candidate.id !== selectedClusterId)
         .map((candidate) => ({
           id: candidate.id,
-          label: candidate.label,
+          label: candidate.label ?? '',
         })),
     [clusters, selectedClusterId],
   );

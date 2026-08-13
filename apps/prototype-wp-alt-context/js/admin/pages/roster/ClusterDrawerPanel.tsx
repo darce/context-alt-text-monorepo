@@ -9,6 +9,12 @@ import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 export interface ClusterReassignTarget {
   id: string;
@@ -90,6 +96,8 @@ export const ClusterDrawerPanel = ({
   const [newEntryName, setNewEntryName] = React.useState('');
   const [pickerFaceId, setPickerFaceId] = React.useState<string | null>(null);
   const [statusMessage, setStatusMessage] = React.useState('');
+  /** BR-65: bump on every reserved reject so identical copy remounts the live region. */
+  const [statusAnnounceSeq, setStatusAnnounceSeq] = React.useState(0);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const drawerRef = React.useRef<HTMLElement>(null);
   const pickerFirstOptionRef = React.useRef<HTMLButtonElement>(null);
@@ -180,17 +188,24 @@ export const ClusterDrawerPanel = ({
     pendingReassignRef.current = null;
   }, [isReassigning, reassignErrorMessage]);
 
+  /** BR-64: drop only the reserved-reject copy; leave reassign announcements intact. */
+  const clearReservedStatus = React.useCallback(() => {
+    setStatusMessage((current) => (current === RESERVED_LABEL_MESSAGE ? '' : current));
+  }, []);
+
   const handleCreate = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) {
       return;
     }
 
+    clearReservedStatus();
     setSelectedEntryId('create');
     setNewEntryName(trimmed);
   };
 
   const handleSelectEntry = (nextValue: string) => {
+    clearReservedStatus();
     setSelectedEntryId(nextValue);
     if (nextValue !== 'create') {
       setNewEntryName('');
@@ -270,11 +285,23 @@ export const ClusterDrawerPanel = ({
       return;
     }
 
-    const assignment = isCreatingEntry
-      ? { newEntryName: newEntryName.trim() }
-      : { rosterEntryId: Number.parseInt(selectedEntryId, 10) };
+    if (isCreatingEntry) {
+      const trimmedName = newEntryName.trim();
+      // BR-59: reject reserved machine-shaped create names before commit.
+      if (!isHumanLabeledTarget(trimmedName)) {
+        setStatusMessage(RESERVED_LABEL_MESSAGE);
+        setStatusAnnounceSeq((seq) => seq + 1);
+        return;
+      }
+      // BR-64: clear stale reserved failure once the create path proceeds past the gate.
+      clearReservedStatus();
+      onCommitCluster(cluster, { newEntryName: trimmedName });
+      return;
+    }
 
-    onCommitCluster(cluster, assignment);
+    // BR-64: clear stale reserved failure on select-existing commit past the gate.
+    clearReservedStatus();
+    onCommitCluster(cluster, { rosterEntryId: Number.parseInt(selectedEntryId, 10) });
   };
 
   return (
@@ -285,7 +312,9 @@ export const ClusterDrawerPanel = ({
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label || sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
+              {cluster.label?.trim()
+                ? cluster.label
+                : sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
             </h3>
             <ul className="acx-cluster-drawer__meta">
               <li>
@@ -417,10 +446,12 @@ export const ClusterDrawerPanel = ({
         </div>
 
         <p
+          key={statusAnnounceSeq}
           className="acx-cluster-drawer__reassign-status"
           role="status"
           aria-live="polite"
           data-testid="cluster-drawer-reassign-status"
+          data-announce-seq={statusAnnounceSeq}
         >
           {statusMessage}
         </p>

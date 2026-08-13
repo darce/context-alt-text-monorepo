@@ -3405,29 +3405,6 @@ def _is_legitimate_residual_segment(segment: str, seed_c: str) -> bool:
     return False
 
 
-def _is_exact_deny_seed_identity(token: str) -> bool:
-    """True when ``token`` is exact folded/compact identity of a deny seed.
-
-    Used by B14-1: residual-alone exact deny seeds (``ultralytics``,
-    ``yolov8``) stay on the DEFER / trailing-(e) path so compact-suffix
-    red-proofs remain sole-path; non-exact residual deny hits
-    (``ultralyticsplus``, ``yolov8seg``) must be stolen when the walker
-    cannot re-queue the unbounded compact residual.
-    """
-    if not token:
-        return False
-    token_compact = _compact_canonical(token)
-    for seed_c, seed_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
-        if (
-            token == seed_c
-            or token_compact == seed_k
-            or token == seed_k
-            or token_compact == seed_c
-        ):
-            return True
-    return False
-
-
 def _exception_match_shape(
     token: str, seed_c: str, seed_k: str
 ) -> str | None:
@@ -3888,8 +3865,8 @@ def _exception_illegitimate_deny_steal(
 
       * legitimate tag residual (shape-aware) → ``None`` (admit / strip);
       * defer (residual-alone deny seed re-queueable by walker) → ``None``;
-      * B14-1 non-requeueable compact residual with non-exact deny hit →
-        residual's own elevated/glue deny entry (honest attribution);
+      * B14-1 / F12-1 non-requeueable compact residual with any deny hit
+        (exact identity included) → residual's own deny entry;
       * deny-reconstituting → the matched deny entry (honest lineage);
       * unknown residual → fail-closed entry with honest unknown-residual
         note (never fabricates an Ultralytics attribution).
@@ -3908,19 +3885,21 @@ def _exception_illegitimate_deny_steal(
 
     compact_glue = "_" not in token
 
-    # B14-1: DEFER granted unboundedly (classifier) but walker strip only
-    # re-queues bounded compact rem / separator residual. When residual
-    # came from unbounded compact prefix and has a non-exact residual deny
-    # hit (ultralyticsplus / yolov8seg), return that hit — trailing (e)
-    # only fires for tokens *ending* in a deny seed. Exact residual deny
-    # seeds (ultralytics) stay DEFER so compact-suffix (e) red-proofs
-    # remain sole-path for seed-ending compact glue.
+    # B14-1 / F12-1: DEFER granted unboundedly (classifier) but walker
+    # strip only re-queues bounded compact rem / separator residual.
+    # When residual came from unbounded compact prefix and has ANY deny
+    # hit — exact identity included (yolo / yolov8 / yolonas) as well as
+    # non-exact glue (ultralyticsplus / yolov8seg) — return that hit.
+    # Trailing (e) cannot see seeds shorter than
+    # ``_COMPACT_SUFFIX_MIN_SEED_LEN`` (``yolo``, len 4) and cannot see
+    # seeds reconstituted across segments, so leaving exact residuals on
+    # DEFER was a fail-open (R14-G1-1 / R14-G1-2 / SECD-05). Seed-ending
+    # compact glue of a ≥5-char deny seed (``xultralytics``) remains (e)
+    # sole-path; ``yoloxultralytics`` is now owned by this steal.
     structural = _strip_exception_seed_residual(token, seed_c, seed_k)
     if residual and structural != residual:
         residual_deny = _deny_folded_ab_hit(residual)
-        if residual_deny is not None and not _is_exact_deny_seed_identity(
-            residual
-        ):
+        if residual_deny is not None:
             return residual_deny
 
     # Legitimate / re-queueable-defer residuals use the shared boundary

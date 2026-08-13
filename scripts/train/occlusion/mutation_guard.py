@@ -2755,18 +2755,14 @@ def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
     old = (
         "    if residual and structural != residual:\n"
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
-        "        if residual_deny is not None and not _is_exact_deny_seed_identity(\n"
-        "            residual\n"
-        "        ):\n"
+        "        if residual_deny is not None:\n"
         "            return residual_deny"
     )
     new = (
-        "    # MUTATION M26: B14-1 unbounded-defer steal skipped\n"
+        "    # MUTATION M26: B14-1/F12-1 unbounded-defer steal skipped\n"
         "    if residual and structural != residual:\n"
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
-        "        if residual_deny is not None and not _is_exact_deny_seed_identity(\n"
-        "            residual\n"
-        "        ):\n"
+        "        if residual_deny is not None:\n"
         "            pass  # mutated: do not return residual deny"
     )
     return _replace_unique(src, old, new, "M26")
@@ -3367,6 +3363,10 @@ MUTATIONS: list[Mutation] = [
             "test_unbounded_defer_compact_denies_honest",
             "test_doors_and_row_deny_unbounded_defer",
             "test_red_proof_steal_flag_turns_unbounded_defer_red",
+            # F12-1: exact residual steal is the same unbounded-defer branch.
+            "test_exact_residual_unbounded_denies_honest",
+            "test_agpl_exact_residual_denies_on_doors",
+            "test_red_proof_steal_flag_turns_exact_residual_red",
         ),
     ),
 ]

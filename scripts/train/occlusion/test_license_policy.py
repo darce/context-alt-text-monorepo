@@ -7066,9 +7066,11 @@ class TestB801UniformSuffixScan:
     # (e)-only cells: compact segment ends with deny seed ≥ 5 chars.
     # (Exclude yolox_xultralytics_yolox — with (e) off it can still hit bare
     # yolo compact on a residual path; still pinned as a deny witness above.)
+    # F12-1: ``yoloxultralytics`` is steal-owned (exact residual ``ultralytics``)
+    # so it is no longer (e) sole-path; ``xultralytics`` replaces it.
     E_RULE_WITNESSES: ClassVar[tuple[str, ...]] = (
         "yolox_xultralytics",
-        "yoloxultralytics",
+        "xultralytics",
         "yoloxsultralytics",
     )
 
@@ -7280,7 +7282,8 @@ class TestB801UniformSuffixScan:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: with outer suffix scan disabled, {token!r} must admit"
             )
-        # Compact-glue (e) cells still deny without the outer suffix walk.
+        # Compact-glue (e) / F12-1 steal cells still deny without the outer walk.
+        assert policy._package_denylist_hit("xultralytics") is not None
         assert policy._package_denylist_hit("yoloxultralytics") is not None
         assert policy._package_denylist_hit("ultralytics") is not None
         assert policy._package_denylist_hit("yolox") is None
@@ -8068,7 +8071,7 @@ class TestA901FlagIndependence:
             "yoloseg",  # residual classify (F10)
             "yolofree",  # residual classify long debris (F10)
             "yolov9t-seg",  # (d) head-segment
-            "yoloxultralytics",  # (e)
+            "xultralytics",  # (e) sole-path after F12-1 (yoloxultralytics is steal)
             "yolox_ultralytics",  # residual re-scan
             "yolox_s_ultralytics",  # residual re-scan / outer suffix
             "yolox_yolop_ultralytics",  # multi-strip
@@ -9602,8 +9605,10 @@ class TestF11B141UnboundedDeferCompactResidual:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: with steal/classify off, {token!r} must admit"
             )
-        # Seed-ending compact still denies via (e) independently.
-        assert policy._package_denylist_hit("yoloxultralytics") is not None
+        # Seed-ending compact of a ≥5-char deny seed still denies via (e).
+        # ``yoloxultralytics`` is F12-1 steal-owned (exact residual); (e)
+        # sole-path is the residual token itself.
+        assert policy._package_denylist_hit("xultralytics") is not None
 
 
 class TestF11A141CompactGlueTagDeny:
@@ -9834,4 +9839,129 @@ class TestF11ConverseExportAdmit:
             detail_cf = (result.detail or "").casefold()
             assert "ultralytics" not in detail_cf
             assert "agpl" not in detail_cf
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F12 — exact-residual DEFER, compact-glue peel, NC doors, inventory
+# ---------------------------------------------------------------------------
+
+
+def _door_entry_package_id(detail: str) -> str | None:
+    """Extract the PACKAGE_DENYLIST entry id from a door detail line.
+
+    R14-G3-3: pin exact package_id rather than substring-loose detail.
+    Format: ``hits PACKAGE_DENYLIST entry '<id>' (<spdx>): ...``
+    """
+    marker = "hits PACKAGE_DENYLIST entry '"
+    if marker not in detail:
+        return None
+    rest = detail.split(marker, 1)[1]
+    if "'" not in rest:
+        return None
+    return rest.split("'", 1)[0]
+
+
+class TestF12ExactResidualDeferSteal:
+    """F12-1 / R14-G1-1 / R14-G1-2: exact residual DEFER must not fail-open.
+
+    ``_exception_illegitimate_deny_steal`` previously stole only *non-exact*
+    residual deny hits so rule-(e) sole-path red-proofs stayed load-bearing.
+    Exact residuals (``yolo``, ``yolov8``, ``yolonas``) stayed DEFER, but
+    (e) needs seed len ≥ 5 and the walker cannot re-queue an unbounded
+    compact rem — so ``yoloxyolo`` (residual ``yolo``, len 4) admitted.
+
+    Fix: when ``structural != residual`` (unbounded compact rem) and the
+    residual has *any* deny hit, including exact identity, return that hit.
+    """
+
+    # (token, expected package_id). NC residual yolonas is floor-pinned here;
+    # door promotion of that NC hit is F12-3.
+    AGPL_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxyolo", "yolo"),
+        ("yolosyolo", "yolo"),
+        ("yolofyolo", "yolo"),
+        ("yolopyolo", "yolo"),
+        ("ppyoloyolo", "yolo"),
+        ("yoloxyolo_v8", "yolov8"),
+        ("yolosyolo_v8", "yolov8"),
+    )
+    NC_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxyolo_nas", "yolonas"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES + NC_WITNESSES)
+    def test_exact_residual_unbounded_denies_honest(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F12-1 exact-residual unbounded DEFER hole)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected honest residual entry {expected_pkg!r}, "
+            f"got {hit.package_id!r} notes={hit.notes!r}"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES)
+    def test_agpl_exact_residual_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert _door_entry_package_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name entry {expected_pkg!r}; "
+                f"got {result.detail!r}"
+            )
+
+    def test_controls_keep_current_behavior(self) -> None:
+        """Separator / bare / seed-ending compact still deny on their paths."""
+        yolo_controls = ("yolox_yolo", "yolo")
+        for token in yolo_controls:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"control {token!r} must still deny"
+            assert hit.package_id == "yolo"
+        ultra = policy._package_denylist_hit("yoloxultralytics")
+        assert ultra is not None
+        assert ultra.package_id == "ultralytics"
+        # F11 B14-1 witnesses still deny with honest residual entries.
+        for token, expected in (
+            ("yoloxultralyticsplus", "ultralytics"),
+            ("yolosultralyticsplus", "ultralytics"),
+            ("yoloxyolov8seg", "yolov8s"),
+        ):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"B14-1 {token!r} must still deny"
+            assert hit.package_id == expected
+
+    def test_red_proof_steal_flag_turns_exact_residual_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: steal flag owns F12-1 exact-residual witnesses.
+
+        Neuter ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED`` → ``yoloxyolo``
+        admits (rule (e) cannot see seed ``yolo`` of len 4; walker cannot
+        re-queue the unbounded compact rem).
+        """
+        witnesses = [t for t, _ in self.AGPL_WITNESSES]
+        for token in witnesses:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED", False
+        )
+        for token in witnesses:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with steal off, {token!r} must admit"
+            )
+        # Seed-ending compact of a ≥5-char deny seed still denies via (e).
+        assert policy._package_denylist_hit("xultralytics") is not None
+        # Bare / separator yolo still deny independently of steal.
+        assert policy._package_denylist_hit("yolo") is not None
+        assert policy._package_denylist_hit("yolox_yolo") is not None
 

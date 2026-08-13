@@ -2755,6 +2755,8 @@ def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
     old = (
         "    if residual and structural != residual:\n"
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
+        "        if residual_deny is None:\n"
+        "            residual_deny = _contained_long_deny_seed_hit(residual)\n"
         "        if residual_deny is not None:\n"
         "            return residual_deny"
     )
@@ -2762,6 +2764,8 @@ def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
         "    # MUTATION M26: B14-1/F12-1 unbounded-defer steal skipped\n"
         "    if residual and structural != residual:\n"
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
+        "        if residual_deny is None:\n"
+        "            residual_deny = _contained_long_deny_seed_hit(residual)\n"
         "        if residual_deny is not None:\n"
         "            pass  # mutated: do not return residual deny"
     )
@@ -3289,6 +3293,10 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_seg_in_inventory_would_admit",
             "test_half_separated_compact_glue_denies",
             "test_red_proof_steal_flag_turns_half_separated_red",
+            "test_short_residual_unknown_not_fabricated_yolo",
+            "test_short_residual_unknown_on_doors_exact_entry",
+            "test_compact_glue_unknown_path_package_id",
+            "test_yoloseg_reconst_path_still_yolo",
         ),
     ),
     Mutation(
@@ -3314,9 +3322,11 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_residual_classify_alone_turns_debris_pins_red",
             "test_red_proof_residual_classify_flag_is_load_bearing",
             "test_red_proof_max_reconst_segments_perturbation",
-            "test_unicode_fullwidth_compact_glue_denies",
             "test_yolos_seg_forms_deny",
-            "test_half_separated_compact_glue_denies",
+            # F12-7: unicode yoloxpt / compact-glue pt/c5 / half-separated
+            # peel now land on unknown, not reconst. Honest reconst
+            # (yoloseg / yolos_eg) still dies here.
+            "test_yoloseg_reconst_path_still_yolo",
         ),
     ),
     Mutation(
@@ -3353,6 +3363,12 @@ MUTATIONS: list[Mutation] = [
             "test_prior_deny_set_still_holds",
             "test_red_proof_steal_flag_turns_compact_glue_red",
             "test_red_proof_seg_in_inventory_would_admit",
+            # F12-7: short rem + compact glue + half-separated peel land here.
+            "test_short_residual_unknown_not_fabricated_yolo",
+            "test_short_residual_unknown_on_doors_exact_entry",
+            "test_compact_glue_unknown_path_package_id",
+            "test_half_separated_compact_glue_denies",
+            "test_red_proof_steal_flag_turns_half_separated_red",
         ),
     ),
     Mutation(
@@ -3370,6 +3386,7 @@ MUTATIONS: list[Mutation] = [
             "test_exact_residual_unbounded_denies_honest",
             "test_agpl_exact_residual_denies_on_doors",
             "test_red_proof_steal_flag_turns_exact_residual_red",
+            "test_strongest_hit_names_ultralytics_in_compound",
         ),
     ),
 ]

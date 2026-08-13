@@ -3658,6 +3658,83 @@ def _unknown_exception_residual_entry(
     )
 
 
+# Honest ultralytics compact remainders (1–3 alnum). ``seg`` / ``sg``
+# are real YOLO-Seg spellings that share an initial letter with the
+# yolos exception seed; fabricated rem (``xpt`` / ``spt`` / ``xz``)
+# must not inherit the yolo AGPL note (F12-7 / R14-G2-3).
+_HONEST_YOLO_COMPACT_REMS: frozenset[str] = frozenset(
+    {
+        "n",
+        "s",
+        "m",
+        "l",
+        "x",
+        "t",
+        "b",
+        "v5",
+        "v6",
+        "v7",
+        "v8",
+        "v9",
+        "v11",
+        "seg",
+        "sg",
+        "cls",
+        "obb",
+        "nas",
+    }
+)
+
+
+def _is_fabricated_exception_yolo_hit(
+    seed_k: str,
+    acc_k: str,
+    hit: PackageDenylistEntry | None,
+) -> bool:
+    """True when a yolo (c) hit is only exception-letter + non-artifact rem.
+
+    ``yolox`` + ``pt`` → ``yoloxpt`` matches yolo via rem ``xpt``; that
+    rem is not a real Ultralytics compact remainder. ``yolos`` + ``eg``
+    → ``yoloseg`` matches rem ``seg``, which is honest.
+    """
+    if hit is None or hit.package_id != "yolo":
+        return False
+    if not seed_k.startswith("yolo") or len(seed_k) <= 4:
+        return False
+    extra = seed_k[4:]
+    if not extra or not acc_k.startswith("yolo"):
+        return False
+    rem = acc_k[4:]
+    if not rem.startswith(extra):
+        return False
+    return rem not in _HONEST_YOLO_COMPACT_REMS
+
+
+def _contained_long_deny_seed_hit(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """Longest deny seed of ≥ 5 compact chars appearing inside ``token``.
+
+    Best-effort strongest-hit (F12-7 / R14-G1-6): ``yoloultralyticsplus``
+    contains ``ultralytics``. Short seeds (``yolo``, len 4) are skipped
+    so every exception family does not collapse to fabricated yolo.
+    """
+    if not token:
+        return None
+    rk = _compact_canonical(token)
+    if not rk:
+        return None
+    best: PackageDenylistEntry | None = None
+    best_len = -1
+    for _seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if not seed_k or len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+            continue
+        if seed_k in rk and len(seed_k) > best_len:
+            best_len = len(seed_k)
+            best = entry  # type: ignore[assignment]
+    return best
+
+
 def _residual_progressive_reconst_deny(
     seed_c: str,
     seed_k: str,
@@ -3675,13 +3752,13 @@ def _residual_progressive_reconst_deny(
       2. non-tag segments only (after peeling legit tags/shields).
 
     Deny-reconstituting requires an elevated/glue deny hit on the glued
-    compact form (``yolos``+``eg`` → ``yoloseg`` → yolo). FIR-7 B14-2:
-    pure-nonsense residuals (``zqx`` / ``blorp``) that do **not** reconstitute
-    any deny claim fall through to the honest unknown-residual entry —
-    never attribute the underlying ``yolo`` seed merely because the
-    exception seed extends it. Residual-alone package identities
-    (``xultralytics``) do **not** reconstitute here; they defer via
-    :func:`_residual_structurally_defer`.
+    compact form (``yolos``+``eg`` → ``yoloseg`` → yolo). FIR-7 B14-2 /
+    F12-7: fabricated ``yolo`` hits whose rem is only the exception
+    family's extra letter plus non-artifact debris (``yolox``+``pt`` →
+    ``yoloxpt``) are suppressed — those land on unknown residual.
+    Honest rem (``seg`` / ``sg``) still reconstitutes. Residual-alone
+    package identities (``xultralytics``) do **not** reconstitute here;
+    they defer via :func:`_residual_structurally_defer`.
     """
     if not residual or not seed_k:
         return None
@@ -3700,6 +3777,8 @@ def _residual_progressive_reconst_deny(
                 continue
             hit = _deny_folded_ab_hit(acc_k)
             if hit is not None:
+                if _is_fabricated_exception_yolo_hit(seed_k, acc_k, hit):
+                    continue
                 return hit
         return None
 
@@ -3771,9 +3850,15 @@ def _classify_exception_residual(
     if reconst is not None:
         return _RESIDUAL_DENY_RECONST, reconst
 
-    # (c) unknown fail-closed. Compact glue of shield/separator tags lands
-    # here even when every segment is a known separator inventory member
-    # (A14-1). Non-compact non-tag debris also lands here (B14-2 honesty).
+    # (c) unknown fail-closed. Post-F12 landing paths (R14-G4-2):
+    #   * compact glue of shield/separator tags (``yoloxpt`` / ``yoloxtrt``)
+    #     — A14-1, including F12-7 reroute of short rem that previously
+    #     fabricated a yolo AGPL note;
+    #   * compact peel + separator tail (``yoloxpt_trt``) — F12-2;
+    #   * non-compact non-tag debris that does not reconstitute an honest
+    #     deny rem (``yolox_z`` / ``yolos_ti`` / ``zqx``) — B14-2 / F12-7;
+    #   * compact glue of separator-only family tags (``yolostiny``).
+    # Honest reconst (``yolos_eg`` → ``yoloseg``) returns above at (b).
     non_tags = [
         p for p in parts if not _is_legitimate_residual_segment(p, seed_c)
     ]
@@ -3993,6 +4078,8 @@ def _exception_illegitimate_deny_steal(
     structural = _strip_exception_seed_residual(token, seed_c, seed_k)
     if residual and structural != residual:
         residual_deny = _deny_folded_ab_hit(residual)
+        if residual_deny is None:
+            residual_deny = _contained_long_deny_seed_hit(residual)
         if residual_deny is not None:
             return residual_deny
 

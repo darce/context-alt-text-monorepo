@@ -410,8 +410,8 @@ describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
   });
 });
 
-describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
-  it('renders Cluster <id8> when label is empty string', () => {
+describe('ClusterDrawerPanel heading fallback (BR-51 / E21-16)', () => {
+  it('renders Unnamed cluster when label is empty string', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -419,12 +419,12 @@ describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
       />,
     );
 
-    const heading = screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' });
+    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' });
     // BR-61: exact textContent (role accessible-name normalizes whitespace).
-    expect(heading.textContent).toBe('Cluster abcdef01');
+    expect(heading.textContent).toBe('Unnamed cluster');
   });
 
-  it('renders Cluster <id8> when label is null', () => {
+  it('renders Unnamed cluster when label is null', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -432,10 +432,10 @@ describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' })).toBeInTheDocument();
   });
 
-  it('renders Cluster <id8> when label is whitespace-only', () => {
+  it('renders Unnamed cluster when label is whitespace-only', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -443,9 +443,9 @@ describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
       />,
     );
 
-    const heading = screen.getByRole('heading', { level: 3, name: 'Cluster abcdef01' });
+    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' });
     // BR-61: exact textContent kills concat(whitespace + fallback) false-greens.
-    expect(heading.textContent).toBe('Cluster abcdef01');
+    expect(heading.textContent).toBe('Unnamed cluster');
   });
 
   it('renders the human label when present', () => {

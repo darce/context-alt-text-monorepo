@@ -58,10 +58,11 @@ const EMPTY_TARGETS: ClusterReassignTarget[] = [];
 const NO_TARGETS_REASON = __('No other clusters available to move this identity into.', 'alt-context');
 const NO_TARGETS_REASON_ID = 'acx-cluster-drawer-no-move-targets-reason';
 
-const clusterTargetLabel = (target: ClusterReassignTarget): string =>
+/** Unlabeled targets: list index (type has no face count). */
+const clusterTargetLabel = (target: ClusterReassignTarget, index: number): string =>
   target.label.trim().length > 0
     ? target.label
-    : sprintf(__('Cluster %s', 'alt-context'), target.id.slice(0, 8));
+    : sprintf(__('Unnamed cluster %d', 'alt-context'), index + 1);
 
 export const ClusterDrawerPanel = ({
   cluster,
@@ -248,11 +249,11 @@ export const ClusterDrawerPanel = ({
   );
 
   const handleSelectTarget = React.useCallback(
-    (faceId: string, target: ClusterReassignTarget) => {
+    (faceId: string, target: ClusterReassignTarget, index: number) => {
       if (!onReassignFace) {
         return;
       }
-      const targetLabel = clusterTargetLabel(target);
+      const targetLabel = clusterTargetLabel(target, index);
       pendingReassignRef.current = { faceId, targetLabel };
       setStatusMessage(sprintf(__('Moving identity to %s…', 'alt-context'), targetLabel));
       closePicker(true);
@@ -312,9 +313,7 @@ export const ClusterDrawerPanel = ({
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label?.trim()
-                ? cluster.label
-                : sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
+              {cluster.label?.trim() ? cluster.label : __('Unnamed cluster', 'alt-context')}
             </h3>
             <ul className="acx-cluster-drawer__meta">
               <li>
@@ -413,7 +412,7 @@ export const ClusterDrawerPanel = ({
                           onKeyDown={handlePickerKeyDown}
                         >
                           {reassignTargets.map((target, index) => {
-                            const label = clusterTargetLabel(target);
+                            const label = clusterTargetLabel(target, index);
                             return (
                               <button
                                 key={target.id}
@@ -421,7 +420,7 @@ export const ClusterDrawerPanel = ({
                                 role="menuitem"
                                 className="acx-cluster-drawer__move-option"
                                 ref={index === 0 ? pickerFirstOptionRef : undefined}
-                                onClick={() => handleSelectTarget(identity.identity_id, target)}
+                                onClick={() => handleSelectTarget(identity.identity_id, target, index)}
                               >
                                 {label}
                               </button>

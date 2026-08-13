@@ -443,16 +443,27 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(within(evidenceSection).queryByText(/cluster-alpha/)).not.toBeInTheDocument();
 
     const evidenceImages = [
-      { name: 'Representative face for cluster cluster-alpha', src: 'https://example.com/rep-alpha.jpg' },
-      { name: 'Instance 101 for cluster cluster-alpha', src: 'https://example.com/instance-101.jpg' },
-      { name: 'Instance 102 for cluster cluster-alpha', src: 'https://example.com/instance-102.jpg' },
+      { name: 'Representative face for Cluster 1', src: 'https://example.com/rep-alpha.jpg' },
+      { name: 'Instance 101 for Cluster 1', src: 'https://example.com/instance-101.jpg' },
+      { name: 'Instance 102 for Cluster 1', src: 'https://example.com/instance-102.jpg' },
     ];
     for (const { name, src } of evidenceImages) {
       const image = within(clusterRegion).getByRole('img', { name });
       expect(image).toHaveAttribute('src', src);
+      expect(image).toHaveAttribute('loading', 'lazy');
       expect(image.closest('.acx-face-thumbnail')).not.toBeNull();
       expect(image.closest('button')).not.toBeNull();
       expect(image).not.toHaveAttribute('width', '96');
+    }
+
+    const named = [
+      ...within(clusterRegion).queryAllByRole('img'),
+      ...within(clusterRegion).queryAllByRole('button'),
+      ...within(clusterRegion).queryAllByRole('region'),
+    ];
+    for (const el of named) {
+      const accessibleName = el.getAttribute('aria-label') ?? el.getAttribute('alt') ?? el.textContent ?? '';
+      expect(accessibleName).not.toMatch(/cluster-alpha/i);
     }
 
     expect(within(clusterRegion).getByText('Media 101')).toBeInTheDocument();

@@ -4050,6 +4050,99 @@ def _deny_has_folded_ab_claim(token: str) -> bool:
     return False
 
 
+def _rem_is_known_family_or_seed(rem: str) -> bool:
+    """True when compact rem is an exception spelling or any known seed.
+
+    F13-3 / R15-L-2 remainder predicate: ``yolox`` / ``yoloxs`` (exception
+    family) and exact deny/NC identities (``yolo`` / ``yolov8``).
+    """
+    if not rem:
+        return False
+    rem_k = _compact_canonical(rem)
+    if _is_legitimate_exception_compact_spelling(rem):
+        return True
+    if rem_k != rem and _is_legitimate_exception_compact_spelling(rem_k):
+        return True
+    for mapping in (PACKAGE_EXCEPTION_ALLOWLIST, PACKAGE_DENYLIST):
+        for seed_c, seed_k, _entry in _iter_family_seeds(mapping):
+            if (
+                rem == seed_c
+                or rem == seed_k
+                or rem_k == seed_k
+                or rem_k == seed_c
+            ):
+                return True
+    return False
+
+
+def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
+    """F13-3 / R15-L-2: deny/NC head + exception/known-seed rem.
+
+    Accepts seeds of compact length ≥ ``_COMPACT_SUFFIX_MIN_SEED_LEN``
+    when the remainder is itself an exception-family spelling or any
+    known seed. Distinct from B13-5 long-seed glue (min 11, any alnum
+    rem). Single load-bearing helper (TEST-15).
+    """
+    if not token_compact or not seed_k:
+        return False
+    if len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+        return False
+    if not token_compact.startswith(seed_k):
+        return False
+    rem = token_compact[len(seed_k) :]
+    return bool(rem and _rem_is_known_family_or_seed(rem))
+
+
+def _compact_mid_exception_deny_adjacency(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """F13-3 / R15-L-3: exception seed at compact offset > 0 + deny rem.
+
+    Closes junk-prefix defeat of F12-1 (``xyoloxyolo`` / ``myyoloxyolo``
+    / ``abcyoloxyolo``). Offset 0 is owned by F12-1 steal. Separator
+    tokens are owned by the suffix walk (``my_yoloxyolo`` already
+    denies). ``yolodummy`` has no exception seed and stays admitted.
+    Single load-bearing helper (TEST-15).
+    """
+    if not token or "_" in token:
+        return None
+    compact = _compact_canonical(token)
+    if not compact:
+        return None
+    seeds = sorted(
+        (
+            (seed_k, seed_c)
+            for seed_c, seed_k, _entry in _iter_family_seeds(
+                PACKAGE_EXCEPTION_ALLOWLIST
+            )
+            if seed_k
+        ),
+        key=lambda item: -len(item[0]),
+    )
+    for seed_k, _seed_c in seeds:
+        start = 0
+        while True:
+            idx = compact.find(seed_k, start)
+            if idx < 0:
+                break
+            if idx == 0:
+                start = idx + 1
+                continue
+            rem = compact[idx + len(seed_k) :]
+            if rem:
+                deny = _deny_folded_ab_hit(rem)
+                if deny is None:
+                    deny = _contained_long_deny_seed_hit(rem)
+                if deny is None:
+                    deny = _best_family_hit(
+                        rem, PACKAGE_DENYLIST, for_deny=True
+                    )
+                if deny is not None:
+                    return deny
+            start = idx + 1
+    return None
+
+
 def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
     """Longest deny seed claiming ``token`` via (a)/(b)/(c)/glue (F10).
 
@@ -4064,6 +4157,12 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
         is owned by residual classification (``_exception_illegitimate_deny_steal``),
         not by elevated (c) — callers carve out when an exception seed
         claims the token.
+
+    F13-3 / R15-L-2: deny/NC heads of compact length ≥
+    ``_COMPACT_SUFFIX_MIN_SEED_LEN`` whose remainder is itself an
+    exception-family spelling or known seed (``arcfaceyolox`` /
+    ``yolov8yolox``) also hit — the 11-char B13-5 glue floor left
+    seeds of length 5–10 blind in head position.
 
     FIR-7-B12-1: (a), (b), and (c) are each evaluated independently —
     flag-gating only what the flag governs. The prior ``elif
@@ -4123,10 +4222,18 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
             rem = token_compact[len(seed_k) :]
             if rem and _DENY_COMPACT_PREFIX_GLUE_REMAINDER.fullmatch(rem):
                 hit = True
+        # F13-3 / R15-L-2: head-position deny/NC + known-seed rem.
+        if not hit and seed_k and _deny_head_known_rem_glue(token_compact, seed_k):
+            hit = True
         if not hit:
             continue
         spec = _family_match_specificity(token, seed_c, seed_k)
-        rank = (spec, len(seed_k), len(seed_c))
+        if spec <= 0 and _deny_head_known_rem_glue(token_compact, seed_k):
+            spec = 2
+        # Prefer the seed whose folded spelling is actually in the token
+        # (yolov8yolox → yolov8, not the yolo_v8 compact alias).
+        folded_prefix = 1 if token.startswith(seed_c) else 0
+        rank = (spec, folded_prefix, len(seed_k), len(seed_c))
         if rank > best_key:
             best_key = rank
             best = entry  # type: ignore[assignment]
@@ -4306,6 +4413,14 @@ def _uniform_component_scan(
             if steal is not None:
                 if reasons is None or steal.reason in reasons:
                     return steal
+                continue
+
+            # F13-3 / R15-L-3: junk-prefix exception+deny adjacency
+            # (xyoloxyolo). Independent of F12-1 steal (offset 0).
+            mid = _compact_mid_exception_deny_adjacency(suffix)
+            if mid is not None:
+                if reasons is None or mid.reason in reasons:
+                    return mid
                 continue
 
             exc = _best_exception_hit_with_residual(suffix)

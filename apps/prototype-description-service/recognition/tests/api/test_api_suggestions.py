@@ -712,6 +712,89 @@ def test_name_suggestions_without_representatives_return_empty_list(
     assert body[0]["representatives"] == []
 
 
+def test_name_suggestions_propagate_user_selected_representative_pin(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    """User-selected reps must serialize wire field is_user_selected=true (E21-17-R1-PY11-2)."""
+    cluster_id = str(uuid.uuid4())
+    rep_id = str(uuid.uuid4())
+    suggestion = FakeNameSuggestion(
+        cluster_id=cluster_id,
+        suggested_name="Pinned Avery",
+        source="identity",
+        confidence_score=0.95,
+    )
+    suggestion.representatives = [
+        ClusterRepresentative(
+            id=rep_id,
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=202,
+            media_url="http://example.test/media/202.jpg",
+            bbox_x=1,
+            bbox_y=2,
+            bbox_width=30,
+            bbox_height=40,
+            is_user_selected=True,
+        )
+    ]
+    fake_suggestion_extension_service.name_suggestions[suggestion.id] = suggestion
+
+    resp = api_client.get(
+        "/recognition/suggestions/name",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    rep = resp.json()[0]["representatives"][0]
+    assert rep["id"] == rep_id
+    assert rep["is_user_selected"] is True
+    assert "is_pinned" not in rep
+
+
+def test_name_suggestions_null_media_id_is_not_fabricated_to_zero(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    """Representatives lacking media_id must serialize media_id=null, never 0 (E21-17-R1-PY11-1)."""
+    cluster_id = str(uuid.uuid4())
+    suggestion = FakeNameSuggestion(
+        cluster_id=cluster_id,
+        suggested_name="No Media Avery",
+        source="roster",
+        confidence_score=0.88,
+    )
+    suggestion.representatives = [
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=None,
+            media_url=None,
+            bbox_x=None,
+            bbox_y=None,
+            bbox_width=None,
+            bbox_height=None,
+            is_user_selected=False,
+        )
+    ]
+    fake_suggestion_extension_service.name_suggestions[suggestion.id] = suggestion
+
+    resp = api_client.get(
+        "/recognition/suggestions/name",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    rep = resp.json()[0]["representatives"][0]
+    assert rep["media_id"] is None
+    assert rep["media_id"] != 0
+    assert rep["media_id"] != "0"
+
+
 def test_name_suggestion_list_accept_reject_and_bulk_accept(
     api_client, tenant_id, fake_suggestion_extension_service
 ) -> None:

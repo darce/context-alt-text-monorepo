@@ -5,7 +5,7 @@ import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 import { isHumanLabeledTarget } from './suggestionProjection';
-import { isValidQueueOrdinal } from './reviewQueueDriver';
+import { isValidQueueOrdinal, isValidQueueOrdinalPair } from './reviewQueueDriver';
 
 export interface MergeSuggestionCardProps {
   suggestion: PendingMergeSuggestion;
@@ -106,10 +106,11 @@ export const MergeSuggestionCard = ({
   const clusterBAlt =
     humanLabelB ??
     sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
-  // BR-35/BR-40: only when BOTH ordinal props are integers >= 1 — otherwise
-  // keep today's no-ordinal labels (rejects 0, negative, NaN, Infinity, floats).
+  // BR-35/BR-40/TS41-1: only when the ordinal pair is valid (ints >= 1 and position <= total).
+  // Otherwise keep today's no-ordinal / question-only labels.
+  // Pair predicate narrows position; single-guard on total restores dual narrowing for sprintf.
   const hasQueueOrdinal =
-    isValidQueueOrdinal(queuePosition) && isValidQueueOrdinal(queueTotal);
+    isValidQueueOrdinalPair(queuePosition, queueTotal) && isValidQueueOrdinal(queueTotal);
   const faceControlALabel = hasQueueOrdinal
     ? sprintf(
         /* translators: 1: face side (e.g. "first face"), 2: 1-based position, 3: queue total */

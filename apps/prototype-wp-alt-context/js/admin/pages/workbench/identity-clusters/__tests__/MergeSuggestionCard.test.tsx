@@ -458,12 +458,13 @@ describe('MergeSuggestionCard', () => {
     expect(yes).not.toHaveAccessibleDescription(/suggestion \d+ of/i);
   });
 
-  // BR-40: invalid ordinals (0 / NaN / Infinity) must not leak into accnames via sprintf coerce.
+  // BR-40: invalid ordinals (0 / NaN / Infinity / position>total) must not leak into accnames.
   // BR-45: it.each so each invalid case reports independently (for-loop masked later failures).
   it.each([
     { label: 'total=0', queuePosition: 1, queueTotal: 0 },
     { label: 'position=NaN', queuePosition: Number.NaN, queueTotal: 2 },
     { label: 'total=Infinity', queuePosition: 1, queueTotal: Number.POSITIVE_INFINITY },
+    { label: 'position>total', queuePosition: 4, queueTotal: 3 },
   ])(
     'BR-40: invalid queue ordinals fall back to no-ordinal accnames (no of 0 / NaN) — $label',
     ({ label, queuePosition, queueTotal }) => {
@@ -491,7 +492,7 @@ describe('MergeSuggestionCard', () => {
 
       const group = screen.getByRole('group');
       expect(group, label).toHaveAccessibleName('Are these the same person?');
-      expect(group, label).not.toHaveAccessibleName(/of 0|NaN|Infinity/i);
+      expect(group, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|4 of 3/i);
 
       const faceControls = screen.getAllByRole('button', { name: /View original photo/i });
       const controlNames = faceControls.map((btn) => btn.getAttribute('aria-label') ?? '');

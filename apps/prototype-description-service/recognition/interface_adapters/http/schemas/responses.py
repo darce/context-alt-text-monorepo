@@ -103,7 +103,7 @@ class RepresentativeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    media_id: str | int
+    media_id: str | int | None = None
     thumb_url: BlobUrl = None
     media_url: BlobUrl = None
     bbox: FaceBoxResponse | None = None
@@ -117,9 +117,9 @@ class RepresentativeResponse(BaseModel):
 
     @field_validator("media_id", mode="before")
     @classmethod
-    def coerce_media_id(cls, v: str | int) -> str:
-        """Accept integer or string media_id, return as string."""
-        return str(v) if v is not None else ""
+    def coerce_media_id(cls, v: str | int | None) -> str | None:
+        """Accept integer or string media_id, return as string; preserve null."""
+        return str(v) if v is not None else None
 
 
 class ClusterResponse(BaseModel):

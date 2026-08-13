@@ -64,7 +64,7 @@ List endpoints may accept:
       "thumb_url": "/recognition/face-thumbs/job-42/101?x=12&y=8&width=40&height=30",
       "media_url": "/recognition/blobs/job-42/101",
       "bbox": { "x": 12, "y": 8, "width": 40, "height": 30 },
-      "is_pinned": false
+      "is_user_selected": false
     }
   ]
 }
@@ -73,6 +73,13 @@ List endpoints may accept:
 `representatives` uses the same `RepresentativeResponse` shape as `ClusterResponse.representatives`
 (and frontend `TopUnlabeledRepresentative`). Empty list when the cluster has none — never null.
 Accept/reject name-suggestion endpoints return the same full shape, including `representatives`.
+
+Representative field notes:
+
+- `media_id` (`string | number | null`): identity media id when known; `null` when the joined
+  identity has no media id. Never fabricated to `0`.
+- `is_user_selected` (`boolean`): wire name for the user-pinned representative flag (Python field
+  `is_pinned` aliases to this). Clients must not expect `is_pinned` on the wire.
 
 ## Bulk Accept Request
 

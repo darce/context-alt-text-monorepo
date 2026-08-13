@@ -10,10 +10,12 @@ export const PROJECTION_TOP_K = 5;
 export const AUTO_LABEL_PREFIX = 'cluster-' as const;
 
 /**
- * PHP-parity system-label detector: `cluster[-_]` case-insensitively on the
- * trimmed label. Display-honesty only — survivor ranking uses a separate predicate.
+ * Anchored machine-label detector: `cluster[-_][0-9a-f-]+` case-insensitively
+ * on the trimmed label (short forms like `cluster-7` and UUID hex). Broader than
+ * PHP's `{8,}` minimum so short machine ids stay gated; display-honesty only —
+ * survivor ranking uses a separate predicate.
  */
-const AUTO_LABEL_PREFIX_RE = /^cluster[-_]/i;
+const AUTO_LABEL_RE = /^cluster[-_][0-9a-f-]+$/i;
 
 /**
  * Canonical resolution values for assignment suggestions.
@@ -70,16 +72,16 @@ export interface ProjectedSuggestion {
 }
 
 /**
- * Single eligibility predicate for every leg: truthy trimmed label ∧ not auto-label-prefixed.
- * Prefix check matches PHP (`cluster[-_]` case-insensitive) so `Cluster-*` / `cluster_*`
- * cannot pass the display gate as confirmed names.
+ * Single eligibility predicate for every leg: truthy trimmed label ∧ not machine-shaped.
+ * Machine shape is anchored `cluster[-_][0-9a-f-]+` (case-insensitive) so short forms
+ * like `cluster-7` stay gated while operator labels (`CLUSTER_HQ`, `Cluster Nine`) pass.
  */
 export const isHumanLabeledTarget = (label: string | null | undefined): boolean => {
   const trimmed = label?.trim();
   if (!trimmed) {
     return false;
   }
-  return !AUTO_LABEL_PREFIX_RE.test(trimmed);
+  return !AUTO_LABEL_RE.test(trimmed);
 };
 
 /**

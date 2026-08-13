@@ -157,6 +157,26 @@ describe('FaceOverlayLayer', () => {
       expect(chip).toHaveTextContent('Jane Doe');
     });
 
+    it('takes the curated path for CLUSTER_HQ when is_auto_label is false [E21-15-BR-34]', () => {
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-hq',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'CLUSTER_HQ',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      const chip = screen.getByRole('button', { name: 'CLUSTER_HQ' });
+      expect(chip).toHaveTextContent('CLUSTER_HQ');
+      expect(chip).toHaveClass('acx-face-overlay__chip--curated');
+    });
+
     it('names uncurated markers Unnamed face N of M', () => {
       render(
         <FaceOverlayLayer identities={outOfOrderFixture()} naturalSize={naturalSize} />,

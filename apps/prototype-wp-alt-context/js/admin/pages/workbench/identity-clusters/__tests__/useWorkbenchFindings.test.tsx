@@ -960,6 +960,28 @@ describe('buildWorkbenchFindings', () => {
     });
   });
 
+  // BR-34: operator-plausible human Cluster* labels must survive the findings merge path.
+  it('keeps merge cluster_a_label for human CLUSTER_HQ (BR-34)', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-hq',
+            cluster_a_label: 'CLUSTER_HQ',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-hq.jpg',
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.find((preview) => preview.key === 'merge-merge-hq')).toMatchObject({
+      label: 'CLUSTER_HQ',
+      labelIsSuggested: false,
+    });
+  });
+
   // FIX-2 / BR-26 / A11Y-02 / HAI-01: assignments provenance — upstream isHumanLabeledTarget
   // is the single gate; findings layer must not surface auto-label rows that slip past it.
   it('produces no assignment preview for auto cluster_* labels (upstream gate provenance)', () => {

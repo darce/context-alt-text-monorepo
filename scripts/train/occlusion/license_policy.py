@@ -1927,12 +1927,85 @@ def _nc_covering_seed_for_head(head: str) -> str | None:
     return best
 
 
+def _segment_is_exception_family_identity(seg: str) -> bool:
+    """True when ``seg`` is exact/compact identity of an exception seed.
+
+    F13-2 / R15-L-1: used by door-promotion so an exception segment
+    *after* an NC head (``insightface_yolox``) is visible. Compact
+    (c) spellings (``yoloxs``) count; junk prefixes (``myarcface``)
+    and non-exception segments (``not``, ``insightface``) do not.
+    """
+    if not seg:
+        return False
+    if _is_legitimate_exception_compact_spelling(seg):
+        return True
+    seg_k = _compact_canonical(seg)
+    for seed_c, seed_k, _entry in _iter_family_seeds(
+        PACKAGE_EXCEPTION_ALLOWLIST
+    ):
+        if (
+            seg == seed_c
+            or seg == seed_k
+            or seg_k == seed_k
+            or seg_k == seed_c
+        ):
+            return True
+    return False
+
+
+def _compact_component_has_exception_tail(part: str) -> bool:
+    """True when compact ``part`` ends with an exception seed or spelling.
+
+    Closes one-segment compact forms (``insightfaceyolox`` /
+    ``arcfaceyolox``) that have no ``_``-segment equal to an exception
+    seed. Requires a non-empty prefix so a bare exception token is
+    owned by the prefix-match path.
+    """
+    if not part:
+        return False
+    pk = _compact_canonical(part)
+    if not pk:
+        return False
+    for seed_c, seed_k, _entry in _iter_family_seeds(
+        PACKAGE_EXCEPTION_ALLOWLIST
+    ):
+        if seed_k and pk.endswith(seed_k) and len(pk) > len(seed_k):
+            return True
+        tags = _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed_c, frozenset())
+        for tag in tags:
+            glued = seed_k + tag
+            if glued and pk.endswith(glued) and len(pk) > len(glued):
+                return True
+    return False
+
+
+def _token_has_non_prefix_exception_family(part: str) -> bool:
+    """True when an exception seed sits at a non-prefix alignment.
+
+    F13-2 / R15-L-1 single load-bearing helper (TEST-15): any ``_``-
+    segment is exact/compact exception identity, or the compact form
+    ends with an exception seed / legitimate compact spelling.
+    """
+    if not part:
+        return False
+    for seg in part.split("_"):
+        if _segment_is_exception_family_identity(seg):
+            return True
+    return _compact_component_has_exception_tail(part)
+
+
 def _token_has_exception_family(token: str) -> bool:
     """True when any slash component hits an exception-family seed.
 
     Includes unbounded compact-prefix claims (F12-3 / R14-G1-4) so
     ``yoloxinsightface`` is visible to NC door promotion — structural
     strip alone misses those forms and dropped a known scanner NC hit.
+
+    F13-2 / R15-L-1: also true when any ``_``-segment is exact/compact
+    exception identity, or the compact component ends with an exception
+    seed (``insightface_yolox`` / ``insightfaceyolox``). BR-28
+    floor-only controls (``myarcface`` / ``not-insightface``) have no
+    exception segment and stay False.
     """
     c = canonical(token) if token else None
     if not c:
@@ -1942,6 +2015,8 @@ def _token_has_exception_family(token: str) -> bool:
         if _exception_seed_match_for_residual(part) is not None:
             return True
         if _best_exception_hit_with_residual(part) is not None:
+            return True
+        if _token_has_non_prefix_exception_family(part):
             return True
     return False
 

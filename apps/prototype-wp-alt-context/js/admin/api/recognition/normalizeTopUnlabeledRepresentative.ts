@@ -36,11 +36,10 @@ export const normalizeRepresentativeMediaId = (value: unknown): number | null =>
   if (typeof value !== 'string') {
     return null;
   }
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
+  if (!/^\d+$/.test(value)) {
     return null;
   }
-  const parsed = Number(trimmed);
+  const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 };
 

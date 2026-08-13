@@ -300,9 +300,13 @@ async def merge_cluster(
             await session.flush()
 
     target.identity_count = (target.identity_count or 0) + moved
-    target.label = target_label or target.label
-    target.is_labeled = bool(target.label)
-    target.user_confirmed = True
+    final_label = target_label or target.label
+    target.label = final_label
+    target.is_labeled = bool(final_label)
+    # Only stamp operator confirmation for a meaningful final label. Reserved /
+    # empty survivors must keep their prior user_confirmed (do not force False).
+    if final_label and not is_reserved_label_shape(final_label):
+        target.user_confirmed = True
     updated: IdentityCluster = await cluster_repo.update(target)
 
     # Source cluster deletion moved to end of function to prevent early commit failures

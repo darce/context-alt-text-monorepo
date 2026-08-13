@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
-from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     BulkAcceptResult,
@@ -563,9 +563,10 @@ def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
 
 
 def _is_meaningful_label(label: str | None) -> bool:
-    if not label:
+    """Return whether a label is operator-meaningful (non-empty, non-reserved)."""
+    if label is None or not str(label).strip():
         return False
-    return not str(label).startswith("cluster-")
+    return not is_reserved_label_shape(label)
 
 
 def _suggestion_confidence(suggestion: object) -> float | None:

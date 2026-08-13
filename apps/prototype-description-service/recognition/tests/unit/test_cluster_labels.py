@@ -59,6 +59,87 @@ async def test_merge_rejects_reserved_target_label_without_mutation() -> None:
     cluster_repo.update.assert_not_awaited()
 
 
+async def _merge_into(
+    *,
+    target: IdentityCluster,
+    source: IdentityCluster,
+    target_label: str | None,
+) -> IdentityCluster:
+    cluster_repo = AsyncMock()
+    cluster_repo.get_by_id.side_effect = [source, target]
+    cluster_repo.update.side_effect = lambda cluster: cluster
+    member_repo = AsyncMock()
+    member_repo.move_members.return_value = 1
+    writer = Mock()
+    writer.cluster_repository = cluster_repo
+    writer.member_repository = member_repo
+    writer.recompute_representatives = AsyncMock()
+    writer.recompute_centroid = AsyncMock()
+    writer.refresh_centroids_view = AsyncMock()
+
+    merged = await merge_cluster(
+        source_cluster_id=source.id or "source",
+        target_cluster_id=target.id or "target",
+        tenant_id="tenant",
+        target_label=target_label,
+        assignment_writer=writer,
+        suggestion_service=Mock(),
+        gate=Mock(),
+    )
+    assert merged is target
+    return target
+
+
+@pytest.mark.asyncio
+async def test_merge_none_target_label_preserves_unconfirmed_reserved_survivor() -> None:
+    """E21-17-R2-PY-N1: placeholder merge must not stamp user_confirmed=True."""
+    source = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=1, label="cluster-b", id="source", user_confirmed=False
+    )
+    target = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=2, label="cluster-a", id="target", user_confirmed=False
+    )
+
+    merged = await _merge_into(target=target, source=source, target_label=None)
+
+    assert merged.label == "cluster-a"
+    assert merged.is_labeled is True
+    assert merged.user_confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_merge_none_target_label_preserves_confirmed_reserved_survivor() -> None:
+    """E21-17-R2-PY-N1: reserved survivor that was already confirmed stays confirmed."""
+    source = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=1, label="cluster-b", id="source", user_confirmed=False
+    )
+    target = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=2, label="cluster-a", id="target", user_confirmed=True
+    )
+
+    merged = await _merge_into(target=target, source=source, target_label=None)
+
+    assert merged.label == "cluster-a"
+    assert merged.user_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_merge_meaningful_target_label_stamps_user_confirmed() -> None:
+    """E21-17-R2-PY-N1: explicit meaningful label keeps prior operator-confirm behavior."""
+    source = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=1, label="cluster-b", id="source", user_confirmed=False
+    )
+    target = IdentityCluster(
+        tenant_id="tenant", is_labeled=True, identity_count=2, label="cluster-a", id="target", user_confirmed=False
+    )
+
+    merged = await _merge_into(target=target, source=source, target_label="Alice")
+
+    assert merged.label == "Alice"
+    assert merged.is_labeled is True
+    assert merged.user_confirmed is True
+
+
 @pytest.mark.asyncio
 async def test_update_cluster_rejects_reserved_label_without_mutation() -> None:
     cluster = IdentityCluster(

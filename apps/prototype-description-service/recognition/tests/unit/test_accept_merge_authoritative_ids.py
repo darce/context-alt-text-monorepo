@@ -15,6 +15,7 @@ import pytest
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.interface_adapters.http.routers.suggestions import (
+    _is_meaningful_label,
     _select_merge_target,
     _to_merge_response,
 )
@@ -43,6 +44,45 @@ def test_select_merge_target_placeholder_labels_return_none_target_label() -> No
     larger = _cluster(
         cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         label="cluster-aaa",
+        identity_count=5,
+    )
+    smaller = _cluster(
+        cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        label="cluster-bbb",
+        identity_count=2,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(larger, smaller)
+
+    assert source_id == smaller.id
+    assert target_id == larger.id
+    assert target_label is None
+
+
+@pytest.mark.parametrize(
+    "label",
+    [" CLUSTER-9 ", "cluster_9", "CLUSTER-A"],
+)
+def test_is_meaningful_label_rejects_reserved_variants(label: str) -> None:
+    """E21-17-R2-PY-N2: canonical reserved predicate covers case/underscore/whitespace."""
+    assert _is_meaningful_label(label) is False
+
+
+@pytest.mark.parametrize("label", ["Alice", "Person 2"])
+def test_is_meaningful_label_accepts_operator_labels(label: str) -> None:
+    assert _is_meaningful_label(label) is True
+
+
+@pytest.mark.parametrize("label", ["", None, "   "])
+def test_is_meaningful_label_rejects_empty(label: str | None) -> None:
+    assert _is_meaningful_label(label) is False
+
+
+def test_select_merge_target_whitespace_reserved_label_returns_none() -> None:
+    """E21-17-R2-PY-N2: ' CLUSTER-9 ' survivor must select target_label=None (no 400)."""
+    larger = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        label=" CLUSTER-9 ",
         identity_count=5,
     )
     smaller = _cluster(

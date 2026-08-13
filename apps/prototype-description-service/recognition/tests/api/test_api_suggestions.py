@@ -320,15 +320,19 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     fake_cluster_repository,
     monkeypatch,
 ) -> None:
-    """E21-17-R1-PY47-3: merge of two cluster-* labeled clusters must not 400."""
+    """E21-17-R1-PY47-3 / R2-PY-N1: placeholder merge must not 400 or stamp confirmed."""
     from recognition.domain.suggestion import SuggestionStatus
 
     cluster_a_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     suggestion_id = str(uuid.uuid4())
 
-    fake_cluster_repository.seed(cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5)
-    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2)
+    fake_cluster_repository.seed(
+        cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5, user_confirmed=False
+    )
+    fake_cluster_repository.seed(
+        cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2, user_confirmed=False
+    )
     fake_cluster_service.clusters.extend(
         [
             ClusterResponse(
@@ -390,6 +394,8 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     assert merge_calls[-1]["target_label"] is None
     survivor = next(c for c in fake_cluster_service.clusters if c.id == cluster_a_id)
     assert survivor.label == "cluster-aaa"
+    # Fake must model user_confirmed so this assertion can catch R2-PY-N1-style stamps.
+    assert fake_cluster_repository.clusters[cluster_a_id].user_confirmed is False
 
 
 @pytest.mark.asyncio

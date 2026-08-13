@@ -4282,7 +4282,16 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
         # Prefer the seed whose folded spelling is actually in the token
         # (yolov8yolox → yolov8, not the yolo_v8 compact alias).
         folded_prefix = 1 if token.startswith(seed_c) else 0
-        rank = (spec, folded_prefix, len(seed_k), len(seed_c))
+        # F13-6 / R15-G1-4: prefer a (c) rem that is an honest task tag
+        # (seg) over a longer seed with junk rem (yolov8seg → yolov8,
+        # not yolov8s+eg).
+        honesty = 0
+        if seed_k and token_compact.startswith(seed_k):
+            rem = token_compact[len(seed_k) :]
+            if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+                if rem in _HONEST_YOLO_COMPACT_REMS:
+                    honesty = 1
+        rank = (spec, honesty, folded_prefix, len(seed_k), len(seed_c))
         if rank > best_key:
             best_key = rank
             best = entry  # type: ignore[assignment]
@@ -4344,6 +4353,11 @@ def _exception_illegitimate_deny_steal(
         residual_deny = _deny_folded_ab_hit(residual)
         if residual_deny is None:
             residual_deny = _contained_long_deny_seed_hit(residual)
+        # F13-6 / R15-G1-5: recurse steal on the residual so a
+        # multi-stack compact (yoloxyoloxyolo) names the inner deny
+        # seed (yolo) instead of landing on unknown residual.
+        if residual_deny is None and residual != token:
+            residual_deny = _exception_illegitimate_deny_steal(residual)
         if residual_deny is not None:
             return residual_deny
 

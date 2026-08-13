@@ -9519,7 +9519,7 @@ class TestF11B141UnboundedDeferCompactResidual:
     DEFER is granted via residual deny hit, but the walker only re-queues
     bounded compact rem / separator residual. Tokens like
     ``yoloxultralyticsplus`` must DENY with the residual's honest deny
-    entry (ultralytics / yolov8s), not admit as 'not on the NC pattern list'.
+    entry (ultralytics / yolov8), not admit as 'not on the NC pattern list'.
     """
 
     WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
@@ -9529,7 +9529,7 @@ class TestF11B141UnboundedDeferCompactResidual:
         ("ppyoloultralyticsplus", "ultralytics"),
         ("yolopultralyticsplus", "ultralytics"),
         ("yoloxultralyticshub", "ultralytics"),
-        ("yoloxyolov8seg", "yolov8s"),
+        ("yoloxyolov8seg", "yolov8"),
     )
 
     @pytest.mark.parametrize("token,expected_pkg", WITNESSES)
@@ -9962,7 +9962,7 @@ class TestF12ExactResidualDeferSteal:
         for token, expected in (
             ("yoloxultralyticsplus", "ultralytics"),
             ("yolosultralyticsplus", "ultralytics"),
-            ("yoloxyolov8seg", "yolov8s"),
+            ("yoloxyolov8seg", "yolov8"),
         ):
             hit = policy._package_denylist_hit(token)
             assert hit is not None, f"B14-1 {token!r} must still deny"
@@ -11227,4 +11227,85 @@ class TestF13EplusHeadPeel:
         assert policy._package_denylist_hit("ppyoloes") is not None
         # Separator twin does not need the compact-glue allowlist.
         assert policy._package_denylist_hit("ppyoloe_plus_trt") is None
+
+
+class TestF13StealRankingAndMultiStack:
+    """F13-6 / R15-G1-4 / R15-G1-5: honest rem ranking + multi-stack steal.
+
+    Prefer a folded-(c) hit whose rem is an honest task tag (``seg``)
+    over a longer seed with junk rem. Recurse steal on the residual so
+    ``yoloxyoloxyolo`` names ``yolo`` rather than unknown residual.
+    """
+
+    def test_yoloxyolov8seg_names_yolov8_not_yolov8s(self) -> None:
+        token = "yoloxyolov8seg"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must still DENY"
+        assert hit.package_id == "yolov8", (
+            f"{token!r}: expected honest rem yolov8, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == "yolov8"
+
+    def test_multi_stack_names_inner_yolo(self) -> None:
+        for token in ("yoloxyoloxyolo", "yoloxyolosyolo"):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} must DENY"
+            assert hit.package_id == "yolo", (
+                f"{token!r}: expected recurse-steal yolo, got {hit.package_id!r}"
+            )
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert _door_entry_package_id(result.detail) == "yolo"
+
+    def test_red_proof_honesty_bonus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: empty ``_HONEST_YOLO_COMPACT_REMS`` → yolov8s wins.
+
+        Neuter: the honest-rem set. Longer seed + junk rem ranks first
+        again (pre-F13-6).
+        """
+        token = "yoloxyolov8seg"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None and hit.package_id == "yolov8"
+        monkeypatch.setattr(policy, "_HONEST_YOLO_COMPACT_REMS", frozenset())
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "yolov8s", (
+            "red-proof: without honest rem ranking, yoloxyolov8seg "
+            f"must name yolov8s; got {hit2.package_id!r}"
+        )
+        assert hit2.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_red_proof_multi_stack_recurse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: skip residual recurse → multi-stack lands unknown.
+
+        Neuter: nested ``_exception_illegitimate_deny_steal`` returns
+        None so the residual cannot steal the inner ``yolo``.
+        """
+        token = "yoloxyoloxyolo"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None and hit.package_id == "yolo"
+        orig = policy._exception_illegitimate_deny_steal
+        depth = {"n": 0}
+
+        def _no_recurse(tok: str):
+            depth["n"] += 1
+            if depth["n"] > 1:
+                return None
+            return orig(tok)
+
+        monkeypatch.setattr(
+            policy, "_exception_illegitimate_deny_steal", _no_recurse
+        )
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "yolox_unknown_residual", (
+            "red-proof: without residual recurse, yoloxyoloxyolo must "
+            f"land unknown; got {hit2.package_id!r}"
+        )
 

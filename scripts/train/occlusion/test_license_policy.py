@@ -9615,7 +9615,8 @@ class TestF11A141CompactGlueTagDeny:
     """A14-1: compact glue of export/separator tags onto family seeds DENY.
 
     Only separator-joined tags admit. Family compact tags (s/m/l/x, v2, …)
-    still admit as compact-(c). Explicit compact-glue allowlist is empty.
+    still admit as compact-(c). Compact-glue allowlist is empty except
+    documented real compact ids (ppyoloeplus).
     """
 
     # R14-G3-2: split A14-1 into unknown-path vs reconst-path and pin
@@ -10514,4 +10515,3 @@ class TestF12ReasonHonesty:
         assert hit2.package_id == "yolo", (
             "red-proof: with fabrication filter off, yoloxpt must name yolo"
         )
-

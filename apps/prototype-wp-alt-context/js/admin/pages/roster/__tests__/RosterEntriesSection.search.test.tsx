@@ -423,3 +423,36 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
     expect(screen.queryByText('Filtered: Hard examples')).not.toBeInTheDocument();
   });
 });
+
+const RESERVED_LABEL_MESSAGE =
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+
+describe('RosterEntriesSection create reserved-label gate (BR-60)', () => {
+  it('rejects cluster-7 without calling createPerson and shows reserved message', async () => {
+    const user = userEvent.setup();
+    renderSection(readyQuery());
+
+    await user.click(screen.getByRole('button', { name: /Add Person/i }));
+    await user.type(screen.getByPlaceholderText('Full Name'), 'cluster-7');
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    expect(createMutation.mutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+  });
+
+  it('creates Pat Rivera via createPerson (human-label control)', async () => {
+    const user = userEvent.setup();
+    renderSection(readyQuery());
+
+    await user.click(screen.getByRole('button', { name: /Add Person/i }));
+    await user.type(screen.getByPlaceholderText('Full Name'), 'Pat Rivera');
+    await user.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    expect(createMutation.mutate).toHaveBeenCalledTimes(1);
+    expect(createMutation.mutate).toHaveBeenCalledWith(
+      { name: 'Pat Rivera' },
+      expect.any(Object),
+    );
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+  });
+});

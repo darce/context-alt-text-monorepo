@@ -626,7 +626,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                 </p>
               )}
               <div className="acx-cluster-labeling-panel__suggestion-actions">
-                {mergeTargetId && mergeTargetLabel ? (
+                {mergeTargetId && mergeTargetLabel && isHumanLabeledTarget(mergeTargetLabel) ? (
                   <button
                     type="button"
                     className="button button-primary"

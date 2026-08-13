@@ -10,12 +10,15 @@ export const PROJECTION_TOP_K = 5;
 export const AUTO_LABEL_PREFIX = 'cluster-' as const;
 
 /**
- * Anchored machine-label detector: `cluster[-_][0-9a-f-]+` case-insensitively
- * on the trimmed label (short forms like `cluster-7` and UUID hex). Broader than
- * PHP's `{8,}` minimum so short machine ids stay gated; display-honesty only —
+ * Two machine-label shapes (reject if either matches the full trimmed string):
+ * - HEX: PHP-parity long hex (`{8,}`) any case — trait-detects-system-defined-labels.
+ * - MACHINE: lowercase-only `cluster[-_][a-z0-9_-]+` — short/non-hex auto ids.
+ * Any uppercase letter in a short suffix fails MACHINE and (if <8 hex) HEX, so
+ * names like `Cluster-Dad` / `Cluster-ace` stay human. Display-honesty only —
  * survivor ranking uses a separate predicate.
  */
-const AUTO_LABEL_RE = /^cluster[-_][0-9a-f-]+$/i;
+const AUTO_LABEL_HEX_RE = /^cluster[-_][0-9a-f-]{8,}$/i;
+const AUTO_LABEL_MACHINE_RE = /^cluster[-_][a-z0-9_-]+$/;
 
 /**
  * Canonical resolution values for assignment suggestions.
@@ -73,15 +76,16 @@ export interface ProjectedSuggestion {
 
 /**
  * Single eligibility predicate for every leg: truthy trimmed label ∧ not machine-shaped.
- * Machine shape is anchored `cluster[-_][0-9a-f-]+` (case-insensitive) so short forms
- * like `cluster-7` stay gated while operator labels (`CLUSTER_HQ`, `Cluster Nine`) pass.
+ * Rejects when the trimmed label matches either AUTO_LABEL_HEX_RE (PHP-parity ≥8 hex,
+ * any case) or AUTO_LABEL_MACHINE_RE (all-lowercase machine forms). Short hex-word
+ * names with any uppercase (`Cluster-Dad`) pass; `CLUSTER_HQ` / `Cluster Nine` pass.
  */
 export const isHumanLabeledTarget = (label: string | null | undefined): boolean => {
   const trimmed = label?.trim();
   if (!trimmed) {
     return false;
   }
-  return !AUTO_LABEL_RE.test(trimmed);
+  return !(AUTO_LABEL_HEX_RE.test(trimmed) || AUTO_LABEL_MACHINE_RE.test(trimmed));
 };
 
 /**

@@ -105,9 +105,12 @@ export const MergeSuggestionCard = ({
   const clusterBAlt =
     humanLabelB ??
     sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
-  // BR-35: only when BOTH ordinal props are present — otherwise keep today's labels.
+  // BR-35/BR-40: only when BOTH ordinal props are integers >= 1 — otherwise
+  // keep today's no-ordinal labels (rejects 0, negative, NaN, Infinity, floats).
+  const isValidQueueOrdinal = (value: number | undefined): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 1;
   const hasQueueOrdinal =
-    typeof queuePosition === 'number' && typeof queueTotal === 'number';
+    isValidQueueOrdinal(queuePosition) && isValidQueueOrdinal(queueTotal);
   const faceControlALabel = hasQueueOrdinal
     ? sprintf(
         /* translators: 1: face side (e.g. "first face"), 2: 1-based position, 3: queue total */

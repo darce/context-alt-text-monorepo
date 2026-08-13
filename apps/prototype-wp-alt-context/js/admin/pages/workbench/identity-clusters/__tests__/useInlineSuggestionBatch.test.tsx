@@ -117,7 +117,8 @@ describe('useInlineSuggestionBatch', () => {
   });
 
   it('surfaces first human-labeled match inside PROJECTION_TOP_K window (clusterFirstThenHuman)', async () => {
-    // Expected first failure under commit-1: getMatch label is 'cluster-auto-1' (truthy auto rank-1), not 'Bob'
+    // Fixture rank-1/2 labels are machine-shaped (`cluster-auto-1` / `cluster-auto-2`);
+    // isHumanLabeledTarget gates them so getMatch surfaces 'Bob' (sug-cf-3).
     const { identityId, matches, expectedIdentityTopSuggestionId } = suggestionProjectionMatrix.clusterFirstThenHuman;
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({

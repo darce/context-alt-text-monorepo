@@ -3382,6 +3382,53 @@ def _is_legitimate_compact_glue_residual(rem: str, seed_c: str) -> bool:
     return False
 
 
+def _head_compact_peel_rem(
+    token: str, seed_c: str, seed_k: str
+) -> str | None:
+    """Return compact rem if ``token``'s head is a compact peel of the seed.
+
+    ``yoloxpt_trt`` → head ``yoloxpt`` peels rem ``pt``. Exact head
+    identity (``yolox_pt`` / ``yoloxs_pt``) is not a compact peel.
+    """
+    if not token or not seed_k or "_" not in token:
+        return None
+    head, _rest = token.split("_", 1)
+    if not head:
+        return None
+    head_compact = _compact_canonical(head)
+    if (
+        head == seed_c
+        or head_compact == seed_k
+        or head == seed_k
+        or head_compact == seed_c
+    ):
+        return None
+    if head_compact.startswith(seed_k):
+        rem = head_compact[len(seed_k) :]
+        if rem and _BOUNDED_COMPACT_REMAINDER.fullmatch(rem):
+            return rem
+    return None
+
+
+def _exception_residual_uses_compact_glue_rules(
+    token: str, seed_c: str, seed_k: str
+) -> bool:
+    """True when residual must be classified under compact-glue rules.
+
+    Whole-token compact (no ``_``) is always compact glue (A14-1).
+    Head compact-peel of a rem that is **not** a legitimate compact-glue
+    tag (``pt`` / ``c5`` / ``trt``) forces compact-glue rules so a
+    separator tail cannot launder it (F12-2 / ``yoloxpt_trt`` / SECD-05).
+    A legitimate compact-tag peel (``yoloxs_pt``) keeps separator rules.
+    """
+    if "_" not in token:
+        return True
+    peel = _head_compact_peel_rem(token, seed_c, seed_k)
+    if peel is None:
+        return False
+    return not _is_legitimate_compact_glue_residual(peel, seed_c)
+
+
 def _is_legitimate_residual_segment(segment: str, seed_c: str) -> bool:
     """True when one residual segment is a family tag or export shield tag.
 
@@ -3729,7 +3776,9 @@ def _token_has_legitimate_exception_boundary(token: str) -> bool:
         seed_c,
         seed_k,
         residual,
-        compact_glue=("_" not in token),
+        compact_glue=_exception_residual_uses_compact_glue_rules(
+            token, seed_c, seed_k
+        ),
     )
     return outcome in (_RESIDUAL_LEGITIMATE, _RESIDUAL_DEFER)
 
@@ -3883,7 +3932,9 @@ def _exception_illegitimate_deny_steal(
     if not residual:
         return None
 
-    compact_glue = "_" not in token
+    compact_glue = _exception_residual_uses_compact_glue_rules(
+        token, seed_c, seed_k
+    )
 
     # B14-1 / F12-1: DEFER granted unboundedly (classifier) but walker
     # strip only re-queues bounded compact rem / separator residual.

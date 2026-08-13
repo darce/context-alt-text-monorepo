@@ -9965,3 +9965,85 @@ class TestF12ExactResidualDeferSteal:
         assert policy._package_denylist_hit("yolo") is not None
         assert policy._package_denylist_hit("yolox_yolo") is not None
 
+
+class TestF12HalfSeparatedCompactGlue:
+    """F12-2 / R14-G1-3: compact peel + separator tail must not admit as (a).
+
+    ``yoloxpt_trt`` matches via head-segment (d): compact peel of ``yoloxpt``
+    yields rem ``pt``, rejoined with tail ``trt``. ``compact_glue = ("_" not
+    in token)`` then classified ``pt_trt`` with separator rules → both
+    shield tags → legitimate. A14-1 says compact glue of ``pt`` is not
+    legitimate; the separator tail must not launder it.
+    """
+
+    WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yoloxpt_trt",
+        "yoloxpt_onnx",
+        "yoloxpt_fp16",
+        "yoloxpt_int8",
+        "yoloxtrt_onnx",
+        "yoloxbin_onnx",
+        "yoloxpth_onnx",
+        "yolofc5_onnx",
+        "yolofc5_pt",
+    )
+    CONTROLS_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox_pt_trt",
+        "yolox_s_pt",
+        "yolox_pt",
+        "yolox_trt",
+        "yolofr50",
+        "yoloxs",
+    )
+
+    @pytest.mark.parametrize("token", WITNESSES)
+    def test_half_separated_compact_glue_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F12-2 compact peel + separator tail)"
+        )
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token", CONTROLS_ADMIT)
+    def test_separator_and_family_compact_controls_admit(
+        self, token: str
+    ) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is True, (
+                f"door must admit {token!r}; got {result.reason} "
+                f"({result.detail})"
+            )
+            detail_cf = (result.detail or "").casefold()
+            assert "ultralytics" not in detail_cf
+            assert "agpl" not in detail_cf
+
+    def test_red_proof_steal_flag_turns_half_separated_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: residual-classify owns F12-2 witnesses.
+
+        Neuter ``_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED`` → ``yoloxpt_trt``
+        admits (head-segment peel + shield tail looks legitimate).
+        """
+        for token in self.WITNESSES:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_EXCEPTION_ILLEGITIMATE_STEAL_ENABLED", False
+        )
+        for token in self.WITNESSES:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with steal/classify off, {token!r} must admit"
+            )
+        # True separator forms still admit (no steal needed).
+        assert policy._package_denylist_hit("yolox_pt_trt") is None
+        assert policy._package_denylist_hit("yolox_s_pt") is None
+

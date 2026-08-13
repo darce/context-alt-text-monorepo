@@ -9562,8 +9562,9 @@ class TestF11B141UnboundedDeferCompactResidual:
             result = door(token)
             assert result.ok is False, f"door must deny {token!r}"
             assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
-            assert expected_pkg in result.detail.casefold() or (
-                f"entry '{expected_pkg}'" in result.detail.casefold()
+            assert _door_entry_package_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name entry {expected_pkg!r}; "
+                f"got {result.detail!r}"
             )
         row = {
             "source": "self-generated",
@@ -9891,6 +9892,21 @@ def _door_entry_package_id(detail: str) -> str | None:
     return rest.split("'", 1)[0]
 
 
+def _door_nc_pattern_id(detail: str) -> str | None:
+    """Extract the NC membership id from a door detail line.
+
+    F13-7 / R15-G3-1: pin exact membership id, not a token substring.
+    Format: ``matches non-commercial pattern '<id>'``
+    """
+    marker = "matches non-commercial pattern '"
+    if marker not in detail:
+        return None
+    rest = detail.split(marker, 1)[1]
+    if "'" not in rest:
+        return None
+    return rest.split("'", 1)[0]
+
+
 class TestF12ExactResidualDeferSteal:
     """F12-1 / R14-G1-1 / R14-G1-2: exact residual DEFER must not fail-open.
 
@@ -10123,10 +10139,8 @@ class TestF12NcDoorPromotionUnboundedCompact:
                 f"{token!r}: expected nc_model_derived, got {result.reason} "
                 f"({result.detail})"
             )
-            # Honest NC entry — either membership note or floor entry id.
-            detail_cf = (result.detail or "").casefold()
-            assert expected_pkg.replace("_", "") in detail_cf.replace("_", ""), (
-                f"{token!r}: door detail must name {expected_pkg!r}; "
+            assert _door_nc_pattern_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name NC pattern {expected_pkg!r}; "
                 f"got {result.detail!r}"
             )
 

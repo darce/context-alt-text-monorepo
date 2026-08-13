@@ -270,6 +270,112 @@ describe('ClusterDrawerPanel create-commit reserved-label gate (BR-59)', () => {
   });
 });
 
+describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
+  it('BR-64: clears reserved status when creating a human name after reject, then commits', async () => {
+    const user = userEvent.setup();
+    const onCommitCluster = vi.fn();
+    render(<ClusterDrawerPanel {...baseProps} onCommitCluster={onCommitCluster} />);
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    const search = screen.getByPlaceholderText('Assign to…');
+    await user.clear(search);
+    await user.type(search, 'cluster-7');
+    await user.click(screen.getByRole('button', { name: 'Create "cluster-7"' }));
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+    expect(onCommitCluster).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    const searchAgain = screen.getByPlaceholderText('Assign to…');
+    await user.clear(searchAgain);
+    await user.type(searchAgain, 'Pat Rivera');
+    await user.click(screen.getByRole('button', { name: 'Create "Pat Rivera"' }));
+
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent('');
+
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+    expect(onCommitCluster).toHaveBeenCalledTimes(1);
+    expect(onCommitCluster).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cluster-1' }),
+      { newEntryName: 'Pat Rivera' },
+    );
+  });
+
+  it('BR-64: clears reserved status when selecting an existing entry after reject, then commits', async () => {
+    const user = userEvent.setup();
+    const onCommitCluster = vi.fn();
+    const rosterEntries = [
+      {
+        id: 42,
+        person_uuid: 'person-uuid-alex',
+        name: 'Alex Carter',
+        tags: [] as string[],
+        cluster_count: 0,
+        clusters: [] as never[],
+        queue_memberships: [] as never[],
+        updated_at: new Date().toISOString(),
+        source_version: 1,
+        projection_status: 'current' as const,
+        projection_refreshed_at: new Date().toISOString(),
+      },
+    ];
+    render(
+      <ClusterDrawerPanel {...baseProps} rosterEntries={rosterEntries} onCommitCluster={onCommitCluster} />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    const search = screen.getByPlaceholderText('Assign to…');
+    await user.clear(search);
+    await user.type(search, 'cluster-7');
+    await user.click(screen.getByRole('button', { name: 'Create "cluster-7"' }));
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    await user.click(screen.getByRole('option', { name: 'Alex Carter' }));
+
+    expect(screen.queryByText(RESERVED_LABEL_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent('');
+
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+    expect(onCommitCluster).toHaveBeenCalledTimes(1);
+    expect(onCommitCluster).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cluster-1' }),
+      { rosterEntryId: 42 },
+    );
+  });
+
+  it('BR-65: repeat reserved reject remounts the status region via announce seq', async () => {
+    const user = userEvent.setup();
+    render(<ClusterDrawerPanel {...baseProps} onCommitCluster={vi.fn()} />);
+
+    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
+    const search = screen.getByPlaceholderText('Assign to…');
+    await user.clear(search);
+    await user.type(search, 'cluster-7');
+    await user.click(screen.getByRole('button', { name: 'Create "cluster-7"' }));
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+
+    const status1 = screen.getByTestId('cluster-drawer-reassign-status');
+    expect(status1).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+    const seq1 = status1.getAttribute('data-announce-seq');
+    expect(seq1).toBeTruthy();
+    expect(Number(seq1)).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: /Confirm Assignment/i }));
+
+    const status2 = screen.getByTestId('cluster-drawer-reassign-status');
+    expect(status2).toHaveTextContent(RESERVED_LABEL_MESSAGE);
+    const seq2 = status2.getAttribute('data-announce-seq');
+    expect(seq2).toBeTruthy();
+    expect(Number(seq2)).toBeGreaterThan(Number(seq1));
+    // key={seq} remount: assert the seq/key mechanism directly (jsdom identity
+    // of remounted nodes is not always observable beyond the bumped attribute).
+    expect(status2).toHaveAttribute('data-announce-seq', seq2);
+  });
+});
+
 describe('ClusterDrawerPanel heading fallback (BR-51)', () => {
   it('renders Cluster <id8> when label is empty string', () => {
     render(

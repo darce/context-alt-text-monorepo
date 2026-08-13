@@ -96,6 +96,8 @@ export const ClusterDrawerPanel = ({
   const [newEntryName, setNewEntryName] = React.useState('');
   const [pickerFaceId, setPickerFaceId] = React.useState<string | null>(null);
   const [statusMessage, setStatusMessage] = React.useState('');
+  /** BR-65: bump on every reserved reject so identical copy remounts the live region. */
+  const [statusAnnounceSeq, setStatusAnnounceSeq] = React.useState(0);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const drawerRef = React.useRef<HTMLElement>(null);
   const pickerFirstOptionRef = React.useRef<HTMLButtonElement>(null);
@@ -186,17 +188,24 @@ export const ClusterDrawerPanel = ({
     pendingReassignRef.current = null;
   }, [isReassigning, reassignErrorMessage]);
 
+  /** BR-64: drop only the reserved-reject copy; leave reassign announcements intact. */
+  const clearReservedStatus = React.useCallback(() => {
+    setStatusMessage((current) => (current === RESERVED_LABEL_MESSAGE ? '' : current));
+  }, []);
+
   const handleCreate = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) {
       return;
     }
 
+    clearReservedStatus();
     setSelectedEntryId('create');
     setNewEntryName(trimmed);
   };
 
   const handleSelectEntry = (nextValue: string) => {
+    clearReservedStatus();
     setSelectedEntryId(nextValue);
     if (nextValue !== 'create') {
       setNewEntryName('');
@@ -281,12 +290,17 @@ export const ClusterDrawerPanel = ({
       // BR-59: reject reserved machine-shaped create names before commit.
       if (!isHumanLabeledTarget(trimmedName)) {
         setStatusMessage(RESERVED_LABEL_MESSAGE);
+        setStatusAnnounceSeq((seq) => seq + 1);
         return;
       }
+      // BR-64: clear stale reserved failure once the create path proceeds past the gate.
+      clearReservedStatus();
       onCommitCluster(cluster, { newEntryName: trimmedName });
       return;
     }
 
+    // BR-64: clear stale reserved failure on select-existing commit past the gate.
+    clearReservedStatus();
     onCommitCluster(cluster, { rosterEntryId: Number.parseInt(selectedEntryId, 10) });
   };
 
@@ -432,10 +446,12 @@ export const ClusterDrawerPanel = ({
         </div>
 
         <p
+          key={statusAnnounceSeq}
           className="acx-cluster-drawer__reassign-status"
           role="status"
           aria-live="polite"
           data-testid="cluster-drawer-reassign-status"
+          data-announce-seq={statusAnnounceSeq}
         >
           {statusMessage}
         </p>

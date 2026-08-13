@@ -443,6 +443,13 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const mergeTargetId = duplicateGuard?.mergeTarget ? unwrapClusterOptionId(duplicateGuard.mergeTarget.value) : null;
   const mergeTargetLabel = duplicateGuard?.mergeTarget?.label;
   const mergeTargetCount = duplicateGuard?.mergeTarget?.identityCount;
+  // BR-66 / BR-58: outcome-sample copy must match the merge button predicate — never advertise
+  // a merge that the machine-labeled-target guard suppresses.
+  const canOfferMerge =
+    Boolean(mergeTargetId) &&
+    typeof mergeTargetLabel === 'string' &&
+    mergeTargetLabel.length > 0 &&
+    isHumanLabeledTarget(mergeTargetLabel);
 
   if (lastMerge) {
     return (
@@ -609,7 +616,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                   duplicateGuard.label,
                 )}
               </p>
-              {mergeTargetId && mergeTargetLabel && (
+              {canOfferMerge ? (
                 <p className="acx-cluster-labeling-panel__outcome-sample">
                   {typeof mergeTargetCount === 'number'
                     ? sprintf(
@@ -624,9 +631,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                         mergeTargetLabel,
                       )}
                 </p>
-              )}
+              ) : null}
               <div className="acx-cluster-labeling-panel__suggestion-actions">
-                {mergeTargetId && mergeTargetLabel && isHumanLabeledTarget(mergeTargetLabel) ? (
+                {canOfferMerge && mergeTargetId ? (
                   <button
                     type="button"
                     className="button button-primary"

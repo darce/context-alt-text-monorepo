@@ -76,8 +76,8 @@ Accept/reject name-suggestion endpoints return the same full shape, including `r
 
 Representative field notes:
 
-- `media_id` (`string | number | null`): identity media id when known; `null` when the joined
-  identity has no media id. Never fabricated to `0`.
+- `media_id` (`string | null`): identity media id when known (stringified int); `null` when the
+  joined identity has no media id. Never fabricated to `0`.
 - `is_user_selected` (`boolean`): wire name for the user-pinned representative flag (Python field
   `is_pinned` aliases to this). Clients must not expect `is_pinned` on the wire.
 

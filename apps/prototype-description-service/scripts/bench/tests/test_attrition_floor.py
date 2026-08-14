@@ -41,6 +41,25 @@ def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> No
     assert report_dir.exists()
 
 
+def test_export_media_not_in_roster_fail_closed(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    foreign = {
+        "identity_id": "x",
+        "media_id": 999,
+        "cluster_id": "c1",
+        "cluster_label": "Alice Q",
+        "is_auto_label": False,
+        "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+    }
+    path = run_dir / "legs" / "acx-dev-insightface" / "exports" / "media_identities.json"
+    rows = json.loads(path.read_text())
+    rows.append(foreign)
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    with pytest.raises(BenchError) as exc:
+        compute_accepted_set(run_dir)
+    assert exc.value.code == "export_media_not_in_roster"
+
+
 def test_differential_attrition_writes_artifacts_then_refuses(tmp_path: Path) -> None:
     # One-sided: leg A accepts 1,2,3; leg B accepts only 1. |3-0|/3 = 1.0 > 0.05
     run_dir = _asymmetric_run(tmp_path, a_ok=[1, 2, 3], b_ok=[1])

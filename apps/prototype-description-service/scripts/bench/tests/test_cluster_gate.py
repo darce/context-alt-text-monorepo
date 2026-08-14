@@ -117,6 +117,17 @@ def test_refused_leg_does_not_mark_run_done(tmp_path: Path) -> None:
     assert run_doc["phase"] != "done"
 
 
+def test_invented_cluster_status_ok_is_refused(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    stack_id = "acx-dev-insightface"
+    dest = run_dir / "legs" / stack_id
+    dest.mkdir(parents=True)
+    (dest / "cluster_job.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    with pytest.raises(BenchError) as exc:
+        require_cluster_success(run_dir, stack_id)
+    assert exc.value.code == "cluster_gate_refused"
+
+
 def test_export_aborts_when_cluster_job_non_success(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     stack_id = "acx-dev-insightface"

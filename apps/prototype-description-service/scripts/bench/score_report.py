@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
-from scripts.bench.export_map import load_leg_exports, require_cluster_success, to_face_metric_inputs
+from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
 from scripts.bench.stack_pair import BenchError, StackPairConfig, load_stack_pair
 from scripts.eval_harness.face_metrics import detection_pr, identification_pr
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
@@ -394,21 +394,20 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
 
     detection_set = [e.media_id for e in accepted if is_detection_exhaustive(e)]
     zero_det = 0
+    exports_by = {stack_id: load_leg_exports(root, stack_id) for stack_id in stacks}
     for entry in accepted:
         for stack_id in stacks:
-            export = load_leg_exports(root, stack_id)
-            raw = export.media_identities
-            rows = raw if isinstance(raw, list) else (raw.get("data") or [])
+            export = exports_by[stack_id]
+            rows = _unwrap_rows(export.media_identities, keys=("data",), what="media_identities")
             stack_mid = join_by[stack_id][entry.media_id]["stack_media_id"]
             if not any(isinstance(r, dict) and r.get("media_id") == stack_mid for r in rows):
                 zero_det += 1
                 break
 
-    # export rows not in roster → fail closed
+    # export rows not in roster → fail closed (stack_media_id domain only)
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
-        raw = export.media_identities
-        rows = raw if isinstance(raw, list) else (raw.get("data") or [])
+        rows = _unwrap_rows(export.media_identities, keys=("data",), what="media_identities")
         roster_stack_ids = {
             rec.get("stack_media_id")
             for rec in records_by[stack_id]
@@ -416,14 +415,11 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         }
         for row in rows:
             if isinstance(row, dict) and isinstance(row.get("media_id"), int):
-                if row["media_id"] not in roster_stack_ids and row["media_id"] not in roster_by[stack_id]:
-                    # also accept if it matches a known stack_media_id
-                    known = {j["stack_media_id"] for j in join_by[stack_id].values()}
-                    if row["media_id"] not in known:
-                        raise BenchError(
-                            "export_media_not_in_roster",
-                            f"{stack_id} export media_id {row['media_id']} not in roster",
-                        )
+                if row["media_id"] not in roster_stack_ids:
+                    raise BenchError(
+                        "export_media_not_in_roster",
+                        f"{stack_id} export media_id {row['media_id']} not in roster",
+                    )
 
     n = len(manifest.entries)
     return AcceptedSet(

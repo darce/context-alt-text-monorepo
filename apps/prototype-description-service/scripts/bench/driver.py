@@ -22,6 +22,13 @@ from scripts.bench.corpus import (
 from scripts.bench.export_map import export_leg
 from scripts.bench.production_shaped_guard import assert_named_bench_stack
 from scripts.bench.stack_pair import BenchError, FIR23_STACK_ALLOWLIST, StackEndpoint, StackPairConfig
+from scripts.bench.status import (
+    ANALYZE_PARTIAL_SUCCESS,
+    CLUSTER_SUCCESS_STATUSES,
+    ItemOutcome,
+    ItemPhase,
+    RunPhase,
+)
 from scripts.eval_harness.remote_client import RemoteSceneClient
 
 LICENSE_BANNER = (
@@ -52,10 +59,10 @@ def evaluate_cluster_gate(items: list[Any], item_max_attempts: int = 2) -> Clust
     for item in items:
         outcome = item.get("outcome") if isinstance(item, dict) else getattr(item, "outcome", None)
         attempt = item.get("attempt", 1) if isinstance(item, dict) else getattr(item, "attempt", 1)
-        if outcome == "ok":
+        if outcome == ItemOutcome.OK:
             successes += 1
             continue
-        if outcome == "failed":
+        if outcome == ItemOutcome.FAILED:
             if int(attempt or 0) < int(item_max_attempts):
                 return ClusterGateDecision(False, None)
             continue
@@ -350,12 +357,12 @@ def run_pair(
         if not _leg_complete(root, endpoint.stack_id):
             incomplete.append(endpoint.stack_id)
     if incomplete:
-        _set_phase(root, "incomplete")
+        _set_phase(root, RunPhase.INCOMPLETE)
         raise BenchError(
             "run_incomplete",
             f"leg(s) not exported: {incomplete}; not marking run done",
         )
-    _set_phase(root, "done")
+    _set_phase(root, RunPhase.DONE)
     return root
 
 
@@ -404,9 +411,7 @@ def _analyze_job_failed(job: Any) -> bool:
     if not isinstance(job, dict):
         return False
     status = str(job.get("status", "")).lower()
-    from recognition.domain.job import JobStatus
-
-    return status == JobStatus.COMPLETED_WITH_ERRORS.value
+    return status == ANALYZE_PARTIAL_SUCCESS
 
 
 def _stack_media_id_from_job(job: Any, fallback: int) -> int:
@@ -450,7 +455,7 @@ def _cluster_status_ok(path: Path) -> bool:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return str(payload.get("status", "")).lower() in {"success", "completed", "ok", "completed_with_errors"}
+    return str(payload.get("status", "")).lower() in CLUSTER_SUCCESS_STATUSES
 
 
 def _check_deadline(deadline: float | None) -> None:

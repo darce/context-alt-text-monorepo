@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.bench.export_map import export_leg, load_leg_exports
 from scripts.bench.tests.conftest import FakeClient
 
@@ -68,3 +70,22 @@ def _assert_no_synthesised_envelope(payload: object, name: str) -> None:
             if isinstance(value, dict):
                 invented_inner = [k for k in _ENVELOPE if k in value]
                 assert invented_inner == [], f"{name} value synthesised {invented_inner}"
+
+
+def test_empty_data_does_not_fall_through_to_next_key() -> None:
+    from scripts.bench.export_map import _unwrap_rows
+
+    rows = _unwrap_rows({"data": []}, keys=("data", "clusters"), what="clusters")
+    assert rows == []
+
+
+def test_ambiguous_or_unknown_envelope_is_error() -> None:
+    from scripts.bench.export_map import _unwrap_rows
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _unwrap_rows({"items": [{"id": 1}]}, keys=("data",), what="media_identities")
+    assert exc.value.code == "export_envelope_invalid"
+    with pytest.raises(BenchError) as exc:
+        _unwrap_rows({"data": [], "clusters": []}, keys=("data", "clusters"), what="clusters")
+    assert exc.value.code == "export_envelope_invalid"

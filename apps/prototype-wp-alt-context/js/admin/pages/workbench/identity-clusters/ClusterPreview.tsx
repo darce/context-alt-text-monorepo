@@ -6,7 +6,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { DetectedIdentity } from '../../../api/recognition';
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 
 interface ClusterPreviewProps {
   /** First member to show as representative thumbnail */
@@ -21,30 +21,19 @@ interface ClusterPreviewProps {
  * Pin control removed (UXA-07) — mutation/API retained for a deferred relocation.
  */
 export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
-  const mediaUrl = representative?.media_url;
-  const bbox = representative?.bbox;
-  const hasValidThumbnail = Boolean(mediaUrl && bbox);
-  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
-
   return (
     <div className="acx-identity-cluster__preview">
-      {hasValidThumbnail && mediaUrl && bbox ? (
-        <FaceThumbnail
-          mediaUrl={mediaUrl}
-          bbox={bbox}
-          size="md"
-          alt={__('Detected identity thumbnail', 'alt-context')}
-          className="acx-identity-cluster__thumb"
-        />
-      ) : (
-        <span
-          className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder acx-identity-cluster__thumb--unavailable"
-          role="img"
-          aria-label={unavailableImageLabel}
-        >
-          <span className="acx-identity-cluster__thumb-fallback-label">{__('No image', 'alt-context')}</span>
-        </span>
-      )}
+      <DurableFaceThumb
+        source={{
+          thumbUrl: representative?.thumb_url,
+          attachmentUrl: representative?.attachment_url,
+          mediaUrl: representative?.media_url,
+          bbox: representative?.bbox,
+        }}
+        size="md"
+        alt={__('Detected identity thumbnail', 'alt-context')}
+        className="acx-identity-cluster__thumb"
+      />
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
     </div>
   );

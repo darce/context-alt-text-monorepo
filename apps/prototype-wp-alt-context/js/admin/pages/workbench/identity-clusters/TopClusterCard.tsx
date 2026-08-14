@@ -5,50 +5,10 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import { Avatar } from '../../../../components/ui/avatar';
-import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
-import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
-import type { BoundingBox } from '../../../api/recognition/types/identity';
+import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { isHumanLabeledTarget } from './suggestionProjection';
-
-const resolveRepresentativeThumbUrl = (
-  representative: TopUnlabeledCluster['representatives'][number],
-): string | null => {
-  const rawUrl = representative.thumb_url ?? null;
-  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
-    return null;
-  }
-  return rawUrl;
-};
-
-const resolveRepresentativeCrop = (
-  representative: TopUnlabeledCluster['representatives'][number],
-): { mediaUrl: string; bbox: BoundingBox } | null => {
-  const mediaUrl = representative.media_url;
-  const bbox = representative.bbox;
-  if (typeof mediaUrl !== 'string' || mediaUrl.trim() === '' || !bbox) {
-    return null;
-  }
-
-  const coerced: BoundingBox = {
-    x: Number(bbox.x),
-    y: Number(bbox.y),
-    width: Number(bbox.width),
-    height: Number(bbox.height),
-  };
-
-  if (!isCroppableBbox(coerced)) {
-    return null;
-  }
-
-  return {
-    mediaUrl,
-    bbox: coerced,
-  };
-};
 
 const getMostRepresentative = (
   representatives: TopUnlabeledCluster['representatives'],
@@ -132,7 +92,6 @@ export const TopClusterCard = ({
   };
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
-  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
   const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
@@ -164,47 +123,20 @@ export const TopClusterCard = ({
         {reps.length > 0 ? (
           <div className={gridClassName} style={gridStyle}>
             {reps.map((rep) => {
-              const cropData = resolveRepresentativeCrop(rep);
-              const thumbUrl = resolveRepresentativeThumbUrl(rep);
-              const useDedicatedThumb = isDedicatedFaceThumbUrl(thumbUrl);
               return (
                 <div key={rep.id} className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--frame">
-                  {useDedicatedThumb && thumbUrl ? (
-                    <Avatar
-                      src={thumbUrl}
-                      sizePx={cellSize}
-                      shape="square"
-                      alt={faceAltText}
-                      className="acx-top-cluster-card__thumb-image"
-                    />
-                  ) : cropData ? (
-                    <FaceThumbnail
-                      mediaUrl={cropData.mediaUrl}
-                      bbox={cropData.bbox}
-                      sizePx={cellSize}
-                      shape="square"
-                      alt={faceAltText}
-                      className="acx-top-cluster-card__thumb-image"
-                    />
-                  ) : thumbUrl ? (
-                    <Avatar
-                      src={thumbUrl}
-                      sizePx={cellSize}
-                      shape="square"
-                      alt={faceAltText}
-                      className="acx-top-cluster-card__thumb-image"
-                    />
-                  ) : (
-                    <span
-                      className="acx-top-cluster-card__thumb-image acx-top-cluster-card__thumb-image--unavailable"
-                      role="img"
-                      aria-label={unavailableImageLabel}
-                    >
-                      <span className="acx-top-cluster-card__thumb-fallback-label">
-                        {__('No image', 'alt-context')}
-                      </span>
-                    </span>
-                  )}
+                  <DurableFaceThumb
+                    source={{
+                      thumbUrl: rep.thumb_url,
+                      attachmentUrl: rep.attachment_url,
+                      mediaUrl: rep.media_url,
+                      bbox: rep.bbox,
+                    }}
+                    sizePx={cellSize}
+                    shape="square"
+                    alt={faceAltText}
+                    className="acx-top-cluster-card__thumb-image"
+                  />
                 </div>
               );
             })}

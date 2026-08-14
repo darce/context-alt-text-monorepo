@@ -181,7 +181,9 @@ export const WorkbenchFindingsPanel = ({
 
   return (
     <div className="acx-findings-panel">
-      <h3 className="acx-findings-panel__title">{__('Recognition findings', 'alt-context')}</h3>
+      <h3 id="acx-workbench-findings-heading" className="acx-findings-panel__title">
+        {__('Recognition findings', 'alt-context')}
+      </h3>
 
       {isReadOnly && (
         <p className="acx-findings-panel__notice">

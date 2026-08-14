@@ -92,6 +92,31 @@ describe('ScanActionPanel', () => {
     expect(onCancelScan).toHaveBeenCalledOnce();
   });
 
+  it('hides cancel when idle and shows scan region description (L3R-05)', () => {
+    render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: false }} onCancelScan={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    expect(
+      screen.getByText(
+        'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('suppresses cancel and progress bar when suppressPrimaryChrome is set (L3R-02)', () => {
+    const progress: JobProgress = { completed: 4, total: 10, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, progress, statusText: 'working' }}
+        onCancelScan={vi.fn()}
+        suppressPrimaryChrome
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.getByText(/Job pending: working/)).toBeTruthy();
+    expect(screen.getByText('Processed 4/10 images')).toBeTruthy();
+  });
+
   it('disables cancel button while cancelling', () => {
     render(
       <ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true, isCancelling: true }} onCancelScan={vi.fn()} />,
@@ -156,11 +181,26 @@ describe('ScanActionPanel', () => {
 
     expect(container.querySelector('[data-variant="compact"]')).toBeTruthy();
     expect(screen.getByRole('progressbar')).toBeTruthy();
-    expect(screen.getByText(/Scanning…/)).toBeTruthy();
+    // L3R-06: leading verb derived from phase (clustering), not hardcoded Scanning…
+    expect(screen.getByText(/Clustering…/)).toBeTruthy();
     expect(screen.getByText(/42%/)).toBeTruthy();
     expect(screen.getByText(/phase: Clustering/i)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancelScan).toHaveBeenCalledOnce();
+  });
+
+  it('derives compact leading verb from currentPhase (L3R-06)', () => {
+    const progress: JobProgress = { completed: 10, total: 100, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        variant="compact"
+        currentPhase="projecting"
+        scanRun={{ ...baseScanRun, isScanning: false, progress }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Syncing results…/)).toBeTruthy();
+    expect(screen.queryByText(/^Scanning…/)).toBeNull();
   });
 });
 

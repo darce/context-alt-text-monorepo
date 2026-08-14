@@ -130,6 +130,54 @@ def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
     assert native.false_negatives == 1
 
 
+def test_optimistic_native_maps_unlabeled_matched_cluster() -> None:
+    """native×optimistic must use the optimistic mapper (FIR-8 R3-02)."""
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q"],
+        entries=[
+            GoldenEntry(
+                path="miss_label.jpg",
+                sha256="c" * 64,
+                media_id=3,
+                face_count=1,
+                present_identities=["Alice Q"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+            )
+        ],
+    )
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "i1",
+                "media_id": 30,
+                "cluster_id": "c1",
+                "cluster_label": "",
+                "is_auto_label": True,
+                "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+            }
+        ],
+        "clusters": [{"id": "c1", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = {3: {"stack_media_id": 30, "image_width": 1000, "image_height": 1000}}
+    _det, id_n_opt = to_face_metric_inputs(export, manifest, join, "optimistic", frame="native")
+    _det, id_n_pri = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    _det, id_e_opt = to_face_metric_inputs(export, manifest, join, "optimistic", frame="e2e")
+    native_opt = identification_pr(id_n_opt)
+    native_pri = identification_pr(id_n_pri)
+    e2e_opt = identification_pr(id_e_opt)
+    assert id_n_opt[0].predicted == ["Alice Q"]
+    assert native_opt.true_positives == 1
+    assert native_opt.recall == 1.0
+    assert native_pri.false_negatives == 1
+    assert e2e_opt.true_positives == 1
+
+
 def test_optimistic_maps_unlabeled_cluster_by_overlap() -> None:
     from scripts.bench.export_map import map_cluster_labels_optimistic
 

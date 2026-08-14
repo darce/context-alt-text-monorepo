@@ -480,11 +480,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
     ignore_list = _load_ignore_list(record_path.parent)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
     json_doc, md_doc = build_reports(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
+        annotation_mode=manifest.annotation_mode,
     )
     if args.check_determinism:
         json_again, md_again = build_reports(
-            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+            record,
+            entries,
+            ignore_list=ignore_list,
+            score_manifest_sha256=manifest_sha,
+            manifest_roster=roster,
+            annotation_mode=manifest.annotation_mode,
         )
         if json_doc != json_again or md_doc != md_again:
             sys.exit("determinism check FAILED: re-score produced different output")
@@ -494,7 +504,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
     scored = score_run_record(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
+        annotation_mode=manifest.annotation_mode,
     )
     print(md_path)
     print(

@@ -53,7 +53,7 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
 )
-from .manifest import Provenance, ProvenanceSource, SliceTag
+from .manifest import AnnotationMode, ManifestError, Provenance, ProvenanceSource, SliceTag
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
@@ -324,8 +324,15 @@ def score_run_record(
     *,
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
+    annotation_mode: AnnotationMode | str | None = None,
 ) -> dict[str, Any]:
-    """Pure scoring: run record + manifest labels -> metrics dict."""
+    """Pure scoring: run record + manifest labels -> metrics dict.
+
+    Detection P/R is refused (not silently computed) when
+    ``annotation_mode`` is ``roster_only``. Identification and caption
+    metrics still run — a roster-only corpus remains a valid description-eval
+    input. Face-bakeoff scoring (``score_face_run_record``) raises instead.
+    """
     _validate_record_kind(run_record)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
@@ -516,7 +523,13 @@ def score_run_record(
             row["distractor_taken"] = taken
         per_image.append(row)
 
-    det = detection_pr(detections)
+    mode_value = (
+        annotation_mode.value if isinstance(annotation_mode, AnnotationMode) else annotation_mode
+    )
+    if mode_value == AnnotationMode.ROSTER_ONLY:
+        det = None
+    else:
+        det = detection_pr(detections, annotation_mode=annotation_mode)
     ident = identification_pr(identifications)
 
     ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
@@ -574,12 +587,24 @@ def score_run_record(
         },
         "quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),
         "faces": {
-            "detection": {
-                **_pr_dict(det.precision, det.recall),
-                "tp": det.true_positives,
-                "fp": det.false_positives,
-                "fn": det.false_negatives,
-            },
+            "detection": (
+                {
+                    "refused": True,
+                    "invariant": "detection_refuses_roster_only",
+                    "precision": None,
+                    "recall": None,
+                    "tp": None,
+                    "fp": None,
+                    "fn": None,
+                }
+                if det is None
+                else {
+                    **_pr_dict(det.precision, det.recall),
+                    "tp": det.true_positives,
+                    "fp": det.false_positives,
+                    "fn": det.false_negatives,
+                }
+            ),
             "identification": {
                 **_pr_dict(ident.precision, ident.recall),
                 "macro_precision": ident.macro_precision,
@@ -854,6 +879,7 @@ def build_reports(
     *,
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
+    annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
 ) -> tuple[str, str]:
     """Return (json_report, markdown_report) — deterministic for identical inputs.
@@ -880,6 +906,7 @@ def build_reports(
         ignore_list=ignore_list,
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
+        annotation_mode=annotation_mode,
     )
     if redaction is not None:
         scored["redaction"] = redaction
@@ -1098,6 +1125,18 @@ def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) ->
         "label": DIRECTIONAL_LABEL,
         "reasons": sorted(reason_list),
     }
+
+
+def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
+    """Read annotation_mode from a GoldenManifest or mapping; never invent one."""
+    raw = getattr(manifest, "annotation_mode", None)
+    if raw is None and isinstance(manifest, Mapping):
+        raw = manifest.get("annotation_mode")
+    if raw is None:
+        return None
+    if isinstance(raw, AnnotationMode):
+        return raw
+    return AnnotationMode(str(raw))
 
 
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
@@ -1370,6 +1409,13 @@ def score_face_run_record(
     for an under-floor slice. 0-box corpus → all DIRECTIONAL.
     """
     _validate_face_record_kind(face_run_record)
+    mode = _annotation_mode_of(manifest)
+    if mode is AnnotationMode.ROSTER_ONLY:
+        raise ManifestError(
+            "score_face_run_record refuses roster_only manifests; unlabeled "
+            "non-roster faces would be scored as false positives",
+            invariant="detection_refuses_roster_only",
+        )
     entries, roster_cohorts, _roster = _entries_as_dicts(manifest)
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)

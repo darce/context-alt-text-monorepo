@@ -145,16 +145,19 @@ export const ScanTabContent = (): React.JSX.Element => {
     cancelScan(targets);
   };
 
-  // E21-18 S1: compact strip only while a job is actively running (progress + cancel).
-  const isJobActive = Boolean(scanRun.isScanning);
+  // E21-18 S1 / L3R-03: strip while scanning OR projecting (projection can outlive isScanning).
+  const isJobActive = Boolean(scanRun.isScanning) || status.currentPhase === 'projecting';
 
   return (
     <>
       {isJobActive ? (
-        <div className="acx-active-job-strip" data-testid="active-job-strip" role="status" aria-live="polite">
+        // L3R-01: strip is visual-only — no role="status". Full panel statusText is the
+        // single job live region (coarse statusText changes, not per-tick percent).
+        <div className="acx-active-job-strip" data-testid="active-job-strip">
           <ScanActionPanel
             variant="compact"
             scanRun={scanRun}
+            currentPhase={status.currentPhase}
             onCancelScan={handleCancelScan}
             onRetryStream={retryScanStream}
           />
@@ -170,59 +173,63 @@ export const ScanTabContent = (): React.JSX.Element => {
 
       <ScanScrollRestoration />
 
-      {/* (b) Review queue promoted to top of the control work surface */}
-      <ErrorBoundary>
-        <p
-          key={reviewLifecycleSeq}
-          className="acx-review-lifecycle-announce"
-          role="status"
-          aria-live="polite"
-        >
-          {reviewLifecycleMessage}
-        </p>
-        <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
-          {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
-            <ClusterLabelingPanel
-              key={clusterPanel.clusterId}
-              clusterId={clusterPanel.clusterId}
-              onClose={() => dispatchClusterPanel({ type: 'close' })}
-              onLabel={() => {
-                dispatchClusterPanel({ type: 'close' });
-              }}
-            />
-          ) : reviewClusterId !== null ? (
-            <ClusterReviewPanel
-              key={reviewClusterId}
-              clusterId={reviewClusterId}
-              onClose={() => dispatchClusterPanel({ type: 'close' })}
-            />
-          ) : (
-            <ReviewQueue
-              ref={reviewQueueRef}
-              index={queueIndex}
-              onIndexChange={handleIndexChange}
-              kind={queueKind}
-              onKindChange={handleKindChange}
-              band={queueBand}
-              onBandChange={handleBandChange}
-              selectedIds={selectedSuggestionIds}
-              onSelectedIdsChange={setSelectedSuggestionIds}
-              emptyStateAnchorRef={findingsDetailRef}
-              onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-              onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
-              onCardPrimaryPresenceChange={setCardPrimaryPresent}
-            />
-          )}
-        </div>
-      </ErrorBoundary>
+      {/* (b) Review queue promoted to top — named region (L3R-04 / design B.1) */}
+      <section className="acx-workbench-control-queue" aria-labelledby="acx-workbench-queue-heading">
+        <ErrorBoundary>
+          <p
+            key={reviewLifecycleSeq}
+            className="acx-review-lifecycle-announce"
+            role="status"
+            aria-live="polite"
+          >
+            {reviewLifecycleMessage}
+          </p>
+          <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+              <ClusterLabelingPanel
+                key={clusterPanel.clusterId}
+                clusterId={clusterPanel.clusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
+                onLabel={() => {
+                  dispatchClusterPanel({ type: 'close' });
+                }}
+              />
+            ) : reviewClusterId !== null ? (
+              <ClusterReviewPanel
+                key={reviewClusterId}
+                clusterId={reviewClusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
+              />
+            ) : (
+              <ReviewQueue
+                ref={reviewQueueRef}
+                index={queueIndex}
+                onIndexChange={handleIndexChange}
+                kind={queueKind}
+                onKindChange={handleKindChange}
+                band={queueBand}
+                onBandChange={handleBandChange}
+                selectedIds={selectedSuggestionIds}
+                onSelectedIdsChange={setSelectedSuggestionIds}
+                emptyStateAnchorRef={findingsDetailRef}
+                onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+                onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+                onCardPrimaryPresenceChange={setCardPrimaryPresent}
+              />
+            )}
+          </div>
+        </ErrorBoundary>
+      </section>
 
-      {/* (c) Findings demoted below the queue as summary/triage */}
-      <ErrorBoundary>
-        <WorkbenchFindingsPanel
-          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-          onTargetFindings={handleTargetFindings}
-        />
-      </ErrorBoundary>
+      {/* (c) Findings demoted below the queue — named region (L3R-04 / design B.1) */}
+      <section className="acx-workbench-control-findings" aria-labelledby="acx-workbench-findings-heading">
+        <ErrorBoundary>
+          <WorkbenchFindingsPanel
+            onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+            onTargetFindings={handleTargetFindings}
+          />
+        </ErrorBoundary>
+      </section>
 
       {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
 
@@ -231,13 +238,21 @@ export const ScanTabContent = (): React.JSX.Element => {
         <h3 id="acx-workbench-scan-heading" className="acx-workbench-control-scan__title">
           {__('Scan', 'alt-context')}
         </h3>
-        <ScanActionPanel scanRun={scanRun} onCancelScan={handleCancelScan} onRetryStream={retryScanStream} />
-        <JobTimeline
-          scanProgress={status.scanProgress}
-          clusterProgress={status.clusterProgress}
-          phase={status.currentPhase}
-          projectionSyncState={status.projectionSyncState}
+        {/* L3R-02: while strip owns progress/cancel/timeline, demoted panel keeps unique detail only. */}
+        <ScanActionPanel
+          scanRun={scanRun}
+          onCancelScan={handleCancelScan}
+          onRetryStream={retryScanStream}
+          suppressPrimaryChrome={isJobActive}
         />
+        {!isJobActive ? (
+          <JobTimeline
+            scanProgress={status.scanProgress}
+            clusterProgress={status.clusterProgress}
+            phase={status.currentPhase}
+            projectionSyncState={status.projectionSyncState}
+          />
+        ) : null}
       </section>
     </>
   );

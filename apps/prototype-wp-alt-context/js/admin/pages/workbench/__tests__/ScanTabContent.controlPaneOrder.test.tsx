@@ -10,6 +10,8 @@ import { ScanTabContent } from '../ScanTabContent';
  * (b) review queue first
  * (c) findings demoted
  * (d) full scan panel + timeline last
+ *
+ * L3R-01/02 pins: strip is not a live region; only one progressbar while strip owns chrome.
  */
 
 vi.mock('@wordpress/i18n', () => ({
@@ -39,8 +41,19 @@ vi.mock('../../../hooks/useWorkbenchFilters', () => ({
 }));
 
 vi.mock('../Panels', () => ({
-  ScanActionPanel: ({ variant }: { variant?: string }) => (
-    <div data-testid={variant === 'compact' ? 'scan-action-panel-compact' : 'scan-action-panel'} />
+  ScanActionPanel: ({
+    variant,
+    suppressPrimaryChrome,
+  }: {
+    variant?: string;
+    suppressPrimaryChrome?: boolean;
+  }) => (
+    <div data-testid={variant === 'compact' ? 'scan-action-panel-compact' : 'scan-action-panel'}>
+      {/* Compact always owns a progressbar; default suppresses it while strip is mounted (L3R-02). */}
+      {(variant === 'compact' || !suppressPrimaryChrome) && (
+        <div role="progressbar" aria-label="Scan progress" data-testid={variant === 'compact' ? 'progress-compact' : 'progress-full'} />
+      )}
+    </div>
   ),
   isClusteringActive: () => false,
 }));
@@ -55,9 +68,17 @@ vi.mock('../identity-clusters', () => ({
   ClusterLabelingPanel: () => <div data-testid="label-panel" />,
   ClusterReviewPanel: () => <div data-testid="review-panel" />,
   ReviewQueue: React.forwardRef<unknown, Record<string, unknown>>(function ReviewQueueStub() {
-    return <div data-testid="review-queue" />;
+    return (
+      <div data-testid="review-queue">
+        <h3 id="acx-workbench-queue-heading">Review Suggestions</h3>
+      </div>
+    );
   }),
-  WorkbenchFindingsPanel: () => <div data-testid="findings-panel" />,
+  WorkbenchFindingsPanel: () => (
+    <div data-testid="findings-panel">
+      <h3 id="acx-workbench-findings-heading">Recognition findings</h3>
+    </div>
+  ),
 }));
 
 vi.mock('../identity-clusters/useAriaAnnounce', () => ({
@@ -116,7 +137,13 @@ describe('ScanTabContent — E21-18 S1 control-pane reorder', () => {
     const { container } = render(<ScanTabContent />);
     const order = testIdOrder(container);
 
-    expect(order).toEqual(['review-queue', 'findings-panel', 'scan-action-panel', 'job-timeline']);
+    expect(order).toEqual([
+      'review-queue',
+      'findings-panel',
+      'scan-action-panel',
+      'progress-full',
+      'job-timeline',
+    ]);
     expect(screen.queryByTestId('active-job-strip')).toBeNull();
     expect(screen.queryByTestId('scan-action-panel-compact')).toBeNull();
   });
@@ -135,7 +162,6 @@ describe('ScanTabContent — E21-18 S1 control-pane reorder', () => {
     expect(order.indexOf('active-job-strip')).toBe(0);
     expect(order.indexOf('review-queue')).toBeLessThan(order.indexOf('findings-panel'));
     expect(order.indexOf('findings-panel')).toBeLessThan(order.indexOf('scan-action-panel'));
-    expect(order.indexOf('scan-action-panel')).toBeLessThan(order.indexOf('job-timeline'));
 
     pipelineState.isScanning = false;
     pipelineState.currentPhase = 'idle';
@@ -151,5 +177,58 @@ describe('ScanTabContent — E21-18 S1 control-pane reorder', () => {
     expect(scanSection?.querySelector('[data-testid="scan-action-panel"]')).toBeTruthy();
     expect(scanSection?.querySelector('[data-testid="job-timeline"]')).toBeTruthy();
     expect(scanSection?.querySelector('#acx-workbench-scan-heading')?.textContent).toBe('Scan');
+  });
+
+  it('L3R-01: active-job strip container is not a polite live region', () => {
+    pipelineState.isScanning = true;
+    pipelineState.currentPhase = 'scanning';
+    render(<ScanTabContent />);
+
+    const strip = screen.getByTestId('active-job-strip');
+    expect(strip.getAttribute('role')).not.toBe('status');
+    expect(strip.getAttribute('aria-live')).toBeNull();
+  });
+
+  it('L3R-02: while strip is mounted, only one progressbar and no second JobTimeline', () => {
+    pipelineState.isScanning = true;
+    pipelineState.currentPhase = 'scanning';
+    render(<ScanTabContent />);
+
+    const progressbars = screen.getAllByRole('progressbar', { name: 'Scan progress' });
+    expect(progressbars).toHaveLength(1);
+    expect(screen.getByTestId('progress-compact')).toBeTruthy();
+    expect(screen.queryByTestId('progress-full')).toBeNull();
+    expect(screen.getByTestId('job-timeline-compact')).toBeTruthy();
+    expect(screen.queryByTestId('job-timeline')).toBeNull();
+  });
+
+  it('L3R-03: strip stays mounted during projecting after isScanning ends', () => {
+    pipelineState.isScanning = false;
+    pipelineState.currentPhase = 'projecting';
+    render(<ScanTabContent />);
+
+    expect(screen.getByTestId('active-job-strip')).toBeTruthy();
+    expect(screen.getByTestId('scan-action-panel-compact')).toBeTruthy();
+    expect(screen.queryByTestId('job-timeline')).toBeNull();
+  });
+
+  it('L3R-04: queue and findings are named regions via aria-labelledby', () => {
+    const { container } = render(<ScanTabContent />);
+
+    const queueSection = container.querySelector(
+      'section.acx-workbench-control-queue[aria-labelledby="acx-workbench-queue-heading"]',
+    );
+    const findingsSection = container.querySelector(
+      'section.acx-workbench-control-findings[aria-labelledby="acx-workbench-findings-heading"]',
+    );
+    const scanSection = container.querySelector(
+      'section.acx-workbench-control-scan[aria-labelledby="acx-workbench-scan-heading"]',
+    );
+
+    expect(queueSection).toBeTruthy();
+    expect(findingsSection).toBeTruthy();
+    expect(scanSection).toBeTruthy();
+    expect(queueSection?.querySelector('#acx-workbench-queue-heading')).toBeTruthy();
+    expect(findingsSection?.querySelector('#acx-workbench-findings-heading')).toBeTruthy();
   });
 });

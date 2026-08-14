@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
@@ -145,6 +146,23 @@ const RouteStateProbe = (): React.JSX.Element => {
   return <output aria-label="route-state">{searchParams.toString()}</output>;
 };
 
+const createTestQueryClient = (): QueryClient =>
+  new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+const renderWithProviders = (
+  ui: React.ReactElement,
+  initialEntries: string[] = ['/'],
+): ReturnType<typeof render> => {
+  const queryClient = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+};
+
 describe('RosterPage projection-aware workspace shell', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
@@ -185,11 +203,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(
@@ -209,11 +223,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />);
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
@@ -230,11 +240,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />);
 
     // E21-9 Slice 5a: single person-first surface — no tab switch; default workspace stays mounted.
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
@@ -274,11 +280,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />);
 
     const workspace = screen.getByRole('region', { name: /Person workspace: Alice/i });
     expect(workspace).toBeInTheDocument();
@@ -312,11 +314,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     const singletonQueue = screen.getByRole('region', { name: 'Singleton proposals queue' });
     const hardExamplesQueue = screen.getByRole('region', { name: 'Hard examples queue' });
@@ -351,11 +349,12 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
+    renderWithProviders(
+      <>
         <RouteStateProbe />
         <RosterPage />
-      </MemoryRouter>,
+      </>,
+      ['/?person=person-uuid-1'],
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Open singleton proposals queue' }));
@@ -369,7 +368,7 @@ describe('RosterPage projection-aware workspace shell', () => {
   it('[PAG-M4-S4] disables queued actions when the person identifier is unavailable', () => {
     const onOpenQueue = vi.fn();
 
-    render(
+    renderWithProviders(
       <PersonWorkspacePanel
         entry={projectionEntry({
           person_uuid: '',
@@ -430,11 +429,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
     const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster 1' });
@@ -465,7 +460,7 @@ describe('RosterPage projection-aware workspace shell', () => {
   });
 
   it('[PAG-M5-S5] keeps evidence useful when only fallback similarity fields are available', () => {
-    render(
+    renderWithProviders(
       <PersonWorkspacePanel
         entry={projectionEntry({
           clusters: [
@@ -502,13 +497,13 @@ describe('RosterPage projection-aware workspace shell', () => {
       />,
     );
 
-    expect(screen.getByText('97% similarity')).toBeInTheDocument();
-    expect(screen.getByText('89% similarity')).toBeInTheDocument();
+    expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('likely match').length).toBeGreaterThan(0);
     expect(screen.getByText('Similarity pending next projection refresh.')).toBeInTheDocument();
   });
 
   it('[PAG-M5-S5] renders threshold metadata when projected score thresholds are present', () => {
-    render(
+    renderWithProviders(
       <PersonWorkspacePanel
         entry={projectionEntry({
           clusters: [
@@ -531,8 +526,8 @@ describe('RosterPage projection-aware workspace shell', () => {
       />,
     );
 
-    expect(screen.getByText('91% similarity')).toBeInTheDocument();
-    expect(screen.getByText('Threshold 85.0%')).toBeInTheDocument();
+    expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Above this cluster’s current threshold').length).toBeGreaterThan(0);
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {
@@ -545,11 +540,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     expect(screen.getByText('Roster projection is refreshing. Retry once the refresh completes.')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /Person workspace/i })).not.toBeInTheDocument();
@@ -565,11 +556,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     expect(
       screen.getByText('Roster projection is stale. Person workspace will resume after the next refresh.'),
@@ -587,11 +574,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     expect(
       screen.getByText(
@@ -619,11 +602,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-1']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
     expect(
       screen.getByText(
@@ -643,11 +622,7 @@ describe('RosterPage projection-aware workspace shell', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?person=person-uuid-missing']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderWithProviders(<RosterPage />, ['/?person=person-uuid-missing']);
 
     expect(
       screen.getByText(

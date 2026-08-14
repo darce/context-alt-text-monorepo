@@ -142,6 +142,26 @@ describe('ScanActionPanel', () => {
     render(<ScanActionPanel scanRun={{ ...baseScanRun, progress }} onCancelScan={vi.fn()} />);
     expect(screen.getByRole('progressbar', { name: 'Clustering progress' })).toBeTruthy();
   });
+
+  it('renders compact variant as a single-row strip with progress and cancel', async () => {
+    const onCancelScan = vi.fn();
+    const progress: JobProgress = { completed: 42, total: 100, phase: 'clustering' };
+    const { container } = render(
+      <ScanActionPanel
+        variant="compact"
+        scanRun={{ ...baseScanRun, isScanning: true, progress }}
+        onCancelScan={onCancelScan}
+      />,
+    );
+
+    expect(container.querySelector('[data-variant="compact"]')).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    expect(screen.getByText(/Scanning…/)).toBeTruthy();
+    expect(screen.getByText(/42%/)).toBeTruthy();
+    expect(screen.getByText(/phase: Clustering/i)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancelScan).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------

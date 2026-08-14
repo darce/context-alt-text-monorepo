@@ -145,23 +145,32 @@ export const ScanTabContent = (): React.JSX.Element => {
     cancelScan(targets);
   };
 
+  // E21-18 S1: compact strip only while a job is actively running (progress + cancel).
+  const isJobActive = Boolean(scanRun.isScanning);
+
   return (
     <>
-      <ScanActionPanel scanRun={scanRun} onCancelScan={handleCancelScan} onRetryStream={retryScanStream} />
-      <JobTimeline
-        scanProgress={status.scanProgress}
-        clusterProgress={status.clusterProgress}
-        phase={status.currentPhase}
-        projectionSyncState={status.projectionSyncState}
-      />
-      <ErrorBoundary>
-        <WorkbenchFindingsPanel
-          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-          onTargetFindings={handleTargetFindings}
-        />
-      </ErrorBoundary>
+      {isJobActive ? (
+        <div className="acx-active-job-strip" data-testid="active-job-strip" role="status" aria-live="polite">
+          <ScanActionPanel
+            variant="compact"
+            scanRun={scanRun}
+            onCancelScan={handleCancelScan}
+            onRetryStream={retryScanStream}
+          />
+          <JobTimeline
+            compact
+            scanProgress={status.scanProgress}
+            clusterProgress={status.clusterProgress}
+            phase={status.currentPhase}
+            projectionSyncState={status.projectionSyncState}
+          />
+        </div>
+      ) : null}
+
       <ScanScrollRestoration />
-      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
+
+      {/* (b) Review queue promoted to top of the control work surface */}
       <ErrorBoundary>
         <p
           key={reviewLifecycleSeq}
@@ -206,6 +215,30 @@ export const ScanTabContent = (): React.JSX.Element => {
           )}
         </div>
       </ErrorBoundary>
+
+      {/* (c) Findings demoted below the queue as summary/triage */}
+      <ErrorBoundary>
+        <WorkbenchFindingsPanel
+          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+          onTargetFindings={handleTargetFindings}
+        />
+      </ErrorBoundary>
+
+      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
+
+      {/* (d) Scan CTA + full timeline demoted to bottom; reachable from zero state (rg-003) */}
+      <section className="acx-workbench-control-scan" aria-labelledby="acx-workbench-scan-heading">
+        <h3 id="acx-workbench-scan-heading" className="acx-workbench-control-scan__title">
+          {__('Scan', 'alt-context')}
+        </h3>
+        <ScanActionPanel scanRun={scanRun} onCancelScan={handleCancelScan} onRetryStream={retryScanStream} />
+        <JobTimeline
+          scanProgress={status.scanProgress}
+          clusterProgress={status.clusterProgress}
+          phase={status.currentPhase}
+          projectionSyncState={status.projectionSyncState}
+        />
+      </section>
     </>
   );
 };

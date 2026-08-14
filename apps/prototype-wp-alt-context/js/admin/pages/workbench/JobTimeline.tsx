@@ -12,6 +12,8 @@ export interface JobTimelineProps {
   clusterProgress: JobProgress | null;
   phase: PipelinePhase;
   projectionSyncState?: ProjectionSyncState;
+  /** Dense horizontal layout for the active-job strip (E21-18 S1). */
+  compact?: boolean;
 }
 
 type MilestoneStatus = 'completed' | 'active' | 'pending' | 'failed';
@@ -207,6 +209,7 @@ export const JobTimeline = ({
   clusterProgress,
   phase,
   projectionSyncState = 'idle',
+  compact = false,
 }: JobTimelineProps): React.JSX.Element | null => {
   const milestones = buildMilestones(scanProgress, clusterProgress, phase, projectionSyncState);
 
@@ -214,13 +217,15 @@ export const JobTimeline = ({
     return null;
   }
 
+  const listClass = compact ? 'acx-job-timeline acx-job-timeline--compact' : 'acx-job-timeline';
+
   return (
-    <ol className="acx-job-timeline" aria-label={__('Job progress milestones', 'alt-context')}>
+    <ol className={listClass} aria-label={__('Job progress milestones', 'alt-context')} data-compact={compact || undefined}>
       {milestones.map((milestone) => (
         <li key={milestone.id} className={`acx-job-timeline__item acx-job-timeline__item--${milestone.status}`}>
           <MilestoneIcon status={milestone.status} />
           <span className="acx-job-timeline__label">{milestone.label}</span>
-          {milestone.detail ? <span className="acx-job-timeline__detail">{milestone.detail}</span> : null}
+          {!compact && milestone.detail ? <span className="acx-job-timeline__detail">{milestone.detail}</span> : null}
         </li>
       ))}
     </ol>

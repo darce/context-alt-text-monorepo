@@ -10,13 +10,22 @@ export { mediaEditUrl, rosterUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
+type ScanActionPanelVariant = 'default' | 'compact';
+
 interface ScanActionPanelProps {
   scanRun: ScanRunViewModel;
   onCancelScan?: () => void;
   onRetryStream?: () => void;
+  /** Compact single-row strip for the active-job chrome (E21-18 S1). */
+  variant?: ScanActionPanelVariant;
 }
 
-export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanActionPanelProps): React.JSX.Element => {
+export const ScanActionPanel = ({
+  scanRun,
+  onCancelScan,
+  onRetryStream,
+  variant = 'default',
+}: ScanActionPanelProps): React.JSX.Element => {
   const {
     isScanning,
     isCancelling,
@@ -37,6 +46,45 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
   const progressPresentation = progress?.phase
     ? JOB_PHASE_PRESENTATION[progress.phase]
     : JOB_PHASE_PRESENTATION.detecting;
+
+  if (variant === 'compact') {
+    // Strip keeps progress/phase/cancel only — full panel retains backend job messages
+    // so operators still see a single source for statusText (no duplicate live regions).
+    const pct =
+      progress && progress.total > 0
+        ? Math.min(100, Math.round((progress.completed / progress.total) * 100))
+        : null;
+    const phaseLabel = progress?.phase ? formatJobPhase(progress.phase) : null;
+    const summaryParts = [
+      __('Scanning…', 'alt-context'),
+      pct !== null ? `${pct}%` : null,
+      phaseLabel ? sprintf(__('phase: %s', 'alt-context'), phaseLabel) : null,
+    ].filter(Boolean);
+
+    return (
+      <div className="acx-apply-panel acx-apply-panel--compact" data-variant="compact">
+        <p className="acx-apply-panel__status acx-apply-panel__status--compact">{summaryParts.join(' · ')}</p>
+        {progress && progress.total > 0 && (
+          <progress
+            className="acx-apply-panel__progress acx-apply-panel__progress--compact"
+            value={Math.min(progress.completed, progress.total)}
+            max={progress.total}
+            aria-label={progressPresentation.progressAriaLabel}
+          />
+        )}
+        {onCancelScan && (
+          <button
+            type="button"
+            className="acx-link-button"
+            onClick={onCancelScan}
+            disabled={Boolean(isCancelling) || !isScanning}
+          >
+            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel', 'alt-context')}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="acx-apply-panel">

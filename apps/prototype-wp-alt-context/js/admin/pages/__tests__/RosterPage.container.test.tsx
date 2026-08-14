@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
@@ -357,7 +358,23 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates from the cluster drawer into the selected person workspace', async () => {
+  it('navigates from the cluster drawer into the assigned person workspace', async () => {
+    const assignedCluster = makeCluster({ person_uuid: 'person-uuid-alex' });
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({ clusters: [assignedCluster] }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: assignedCluster,
+        isLoading: false,
+        isError: false,
+      }),
+    );
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -381,17 +398,20 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       }),
     );
 
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
     render(
-      <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
-        <RosterPage />
-      </MemoryRouter>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+          <RosterPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await userEvent.click(screen.getByRole('option', { name: 'Alex Carter' }));
-    await userEvent.click(screen.getByRole('button', { name: /Open person workspace/i }));
+    await userEvent.click(screen.getByRole('link', { name: /Open person review/i }));
 
     expect(screen.getByRole('region', { name: /Person workspace: Alex Carter/i })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();

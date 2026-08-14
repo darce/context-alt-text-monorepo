@@ -38,6 +38,7 @@ class ClustersReadRepositoryTest extends TestCase
         $query = $wpdb->queries[0];
         $this->assertStringContainsString('FROM `wp_acx_clusters` c', $query);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $query);
+        $this->assertStringContainsString('p.person_uuid', $query);
         $this->assertStringContainsString('ORDER BY c.updated_at DESC', $query);
     }
 
@@ -53,6 +54,7 @@ class ClustersReadRepositoryTest extends TestCase
 
         $this->assertIsArray($row);
         $this->assertSame('cluster-find', $row['cluster_uuid']);
+        $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString("WHERE c.cluster_uuid = 'cluster-find'", $wpdb->queries[0]);
     }
 }

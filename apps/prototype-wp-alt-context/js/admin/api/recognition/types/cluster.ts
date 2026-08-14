@@ -15,6 +15,8 @@ export interface ClusterSummary {
   sample_identities: ClusterIdentity[];
   confidence_score?: number;
   created_at?: string;
+  /** Bound person from wp_acx_clusters.person_id → persons.person_uuid. Null when unresolved. */
+  person_uuid?: string | null;
 }
 
 export interface ClusterListResponse {

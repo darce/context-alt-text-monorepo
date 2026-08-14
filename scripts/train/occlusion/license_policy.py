@@ -144,7 +144,12 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
              mid-token exception + unknown rem (F15-5:
              ``xyoloxsextra`` / ``myyoloxsextra`` →
              ``yolox_unknown_residual``; ``ayoloxs`` / ``xyoloxs``
-             stay admit).
+             stay admit). R18-01: a deny/NC *stem* glued through
+             1–3 junk + exception spelling (``fastsamxyoloxextra`` /
+             ``arcfacexyoloxextra``) is owned by that stem — the
+             skip is only for an exact folded deny/NC prefix so
+             F14-6 / F15-2 stay sole-path (``arcfaceyoloxextra`` /
+             ``yoloyoloxextra``).
        **B14-1 / F12-1 steal** is the same mechanism: when the residual
        came from unbounded compact prefix (walker cannot re-queue it)
        and has any deny hit — exact identity included (``yoloxyolo`` →
@@ -1553,20 +1558,25 @@ def _invalid_identity_reason_clause(text: str) -> str:
     )
 
 
-# F15-10: ``pp_`` + ``yolo*`` may merge when it is the component head
-# or is preceded by a known Paddle vendor segment.
+# F15-10 / R18-05: ``pp_`` + ``yolo*`` may merge when it is the
+# component head or is preceded by a known Paddle vendor segment.
+# ``paddledet`` / ``ppdet`` are official PaddleDetection shorthands
+# (R18-05); ``paddle`` / ``paddledetection`` / ``baidu`` are the
+# F15-10 vendor surface (R18-10 pins the set).
 _PADDLE_VENDOR_SEGMENTS: frozenset[str] = frozenset(
     {
         "paddlepaddle",
         "paddle",
         "paddledetection",
+        "paddledet",
+        "ppdet",
         "baidu",
     }
 )
 
 
 def _strip_trailing_registry_tag(text: str) -> str:
-    """Strip one ``:latest`` / dotted multi-group version from the last path component.
+    """Strip trailing ``:latest`` / dotted multi-group versions on the last path component.
 
     Applied before punct fold so ``yolox:latest`` becomes ``yolox`` rather
     than ``yolox_latest``. Does not match official size tags (``:s``).
@@ -1577,15 +1587,25 @@ def _strip_trailing_registry_tag(text: str) -> str:
     ``:0.3.0`` / ``:v2.1``) strip. A bare single-number tag (``:v8`` /
     ``:8`` / ``:v2``) is left for the fold so it fail-closes like the
     compact twin (``yoloxv8`` → ``yolox_unknown_residual``).
+
+    R18-12: stacked tags (``:latest:latest``) are stripped until none
+    remain. Leftover empty identity is fail-closed; leftover
+    ``yolox:latest:latest`` still admits as ``yolox``.
     """
     if not text or not _STRIP_REGISTRY_TRAILING_TAG or _REGISTRY_TRAILING_TAG_RE is None:
         return text
     parts = text.split("/")
     last = parts[-1]
     stripped = _REGISTRY_TRAILING_TAG_RE.sub("", last, count=1)
-    if stripped == last:
-        return text
-    parts[-1] = stripped
+    # R18-12: strip stacked tags (``:latest:latest``) until the last
+    # component no longer ends in a registry tag. A leftover empty
+    # identity is fail-closed by the empty-canonical gate; a leftover
+    # real family (``yolox:latest:latest`` → ``yolox``) keeps its
+    # documented verdict.
+    while stripped != last:
+        last = stripped
+        stripped = _REGISTRY_TRAILING_TAG_RE.sub("", last, count=1)
+    parts[-1] = last
     return "/".join(parts)
 
 
@@ -1605,9 +1625,9 @@ def _merge_pp_yolo_segments(text: str) -> str:
         i = 0
         while i < len(segs):
             nxt = segs[i + 1] if i + 1 < len(segs) else ""
-            vendor_ok = i == 0 or (
-                i > 0 and merged and merged[-1] in _PADDLE_VENDOR_SEGMENTS
-            )
+            # R18-14: ``i > 0`` was tautological in the right branch and
+            # ``merged`` is non-empty after any prior iteration.
+            vendor_ok = i == 0 or merged[-1] in _PADDLE_VENDOR_SEGMENTS
             is_nas = (
                 nxt == "yolo"
                 and i + 2 < len(segs)
@@ -4070,7 +4090,20 @@ def _exception_seed_match_for_residual(
 
 
 def _is_legitimate_exception_compact_spelling(token: str) -> bool:
-    """True when ``token`` is exact exception (a) or compact (c) + real tag."""
+    """True when ``token`` is exact exception (a), compact (c) + real tag,
+    or an allowlisted compact-glue spelling (``ppyoloeplus``).
+
+    R18-06: ``_EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST`` (``ppyolo`` /
+    ``eplus``) is part of the official compact identity; without it
+    ``yoloppyoloeplus`` landed as dishonest ``yolop_unknown_residual``.
+    """
+    if not token:
+        return False
+    compact = _compact_canonical(token)
+    if compact:
+        for _sc, _sk, spelling in _iter_exception_compact_spellings():
+            if compact == spelling or token == spelling:
+                return True
     matched = _best_family_seed_match(
         token, PACKAGE_EXCEPTION_ALLOWLIST, for_deny=False
     )
@@ -4083,6 +4116,11 @@ def _is_legitimate_exception_compact_spelling(token: str) -> bool:
     if shape == "c":
         rem = _compact_canonical(token)[len(seed_k) :]
         return _is_legitimate_exception_compact_rem(rem, seed_c)
+    rem = compact[len(seed_k) :] if compact and seed_k else ""
+    if rem and rem in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(
+        seed_c, frozenset()
+    ):
+        return True
     return False
 
 
@@ -4286,6 +4324,48 @@ def _residual_progressive_reconst_deny(
     return _glue_parts(non_tags)
 
 
+def _ppyolo_residual_is_deci_nas(residual: str) -> bool:
+    """True when a ppyolo rem is Deci YOLO-NAS, not an English nas* word.
+
+    R18-04: ``rk.startswith("nas")`` attributed ``naso`` / ``nashville``
+    / ``nasal`` as Deci. Accept exact ``nas`` or ``nas`` + a known
+    yolo_nas compact variant (``nasl`` / ``nasposel``). A leading
+    ppyolo compact tag is peeled so ``enas`` (``ppyoloenas``) counts.
+    """
+    if not residual:
+        return False
+    rk = _compact_canonical(residual)
+    if not rk:
+        return False
+    tags = sorted(
+        _EXCEPTION_FAMILY_COMPACT_TAGS.get("ppyolo", frozenset()),
+        key=len,
+        reverse=True,
+    )
+    peeled = rk
+    for tag in tags:
+        if tag and peeled.startswith(tag) and len(peeled) > len(tag):
+            rest = peeled[len(tag) :]
+            if rest.startswith("nas"):
+                peeled = rest
+                break
+    if not peeled.startswith("nas"):
+        return False
+    if peeled == "nas":
+        return True
+    compact_id = "yolo" + peeled
+    for seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
+            continue
+        if not (
+            seed_c.startswith("yolo_nas") or seed_c.startswith("yolonas")
+        ):
+            continue
+        if compact_id == seed_k or compact_id == _compact_canonical(seed_c):
+            return True
+    return False
+
+
 def _classify_exception_residual(
     seed_c: str,
     seed_k: str,
@@ -4332,12 +4412,13 @@ def _classify_exception_residual(
         if all(_is_legitimate_residual_segment(p, seed_c) for p in parts):
             return _RESIDUAL_LEGITIMATE, None
 
-    # F15-10b: ppyolo + nas residual is Deci YOLO-NAS (NC), not a
-    # generic ppyolo unknown residual. ``pp_yolo_nas`` / compact
-    # ``ppyolonas`` must carry the Deci note.
+    # F15-10b / R18-04: ppyolo + nas residual is Deci YOLO-NAS (NC),
+    # not a generic ppyolo unknown residual. Exact ``nas`` / known
+    # yolo_nas variant tails only — ``naso`` / ``nashville`` / ``nasal``
+    # are not Deci. ``ppyoloenas`` peels the compact ``e`` tag so rem
+    # ``nas`` still carries the Deci note.
     if seed_c == "ppyolo" and _PPYOLO_NAS_RESIDUAL_NC_ENABLED:
-        rk = _compact_canonical(residual)
-        if rk == "nas" or rk.startswith("nas"):
+        if _ppyolo_residual_is_deci_nas(residual):
             nas = PACKAGE_DENYLIST.get("yolo_nas") or PACKAGE_DENYLIST.get(
                 "yolonas"
             )
@@ -4565,9 +4646,12 @@ _DENY_HEAD_LONG_REM_ENABLED: bool = True
 _DENY_HEAD_LONG_VARIANT_REMS: frozenset[str] = frozenset(
     {"tiny", "small", "large", "nano", "base"}
 )
-# F15-5: unknown non-tag rem after a mid-token exception spelling
-# fail-closes as ``<family>_unknown_residual`` (``xyoloxsextra``).
-# TEST-15: False restores the deny/NC-rem-only mid scanner.
+# F15-5 / R18-01: unknown non-tag rem after a mid-token exception
+# spelling fail-closes as ``<family>_unknown_residual``
+# (``xyoloxsextra``). A deny/NC stem in the prefix that is not an
+# exact folded identity (``fastsamx`` / ``arcfacex``) owns the full
+# token even when rem is empty (``fastsamxyolox``). TEST-15: False
+# restores the deny/NC-rem-only mid scanner (gadgets admit again).
 _MID_EXCEPTION_UNKNOWN_REM_ENABLED: bool = True
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
@@ -4605,6 +4689,9 @@ def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
         # exact known seed (yoloyolo / yolobuffalol). Do NOT take
         # deny-prefix leftovers (ultralyticsplus) — that would let the
         # 4-char yolo head outrank a longer honest AGPL seed.
+        # R18-13: ``yolobuffalo_l`` lands ``yolo`` because this 4-char
+        # head outranks the compact NC rem; the test pin documents that
+        # ranking rather than silently retargeting the F15-1 NC witness.
         if _is_legitimate_exception_compact_spelling(rem):
             return True
         rem_k = _compact_canonical(rem)
@@ -4621,7 +4708,8 @@ def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
 def _deny_head_is_exception_spelling_glue(token: str) -> bool:
     """True when compact token is deny-head + exact exception spelling.
 
-    F15-10a: ``yoloppyoloe`` is ``yolo`` + ``ppyoloe``, not
+    F15-10a / R18-06: ``yoloppyoloe`` is ``yolo`` + ``ppyoloe`` and
+    ``yoloppyoloeplus`` is ``yolo`` + ``ppyoloeplus``, not
     ``yolop`` + unknown residual.
     """
     if not token:
@@ -4638,6 +4726,31 @@ def _deny_head_is_exception_spelling_glue(token: str) -> bool:
     return False
 
 
+def _mid_exception_prefix_deny_owner(
+    prefix: str,
+) -> PackageDenylistEntry | None:
+    """Deny/NC entry that owns a non-exact mid-exception prefix (R18-01).
+
+    Exact folded (a)/(b) identities (``arcface`` / ``yolo``) are *not*
+    returned here — those stay on F14-6 / F15-2 so their red-proofs
+    remain sole-path. Deny-(c) debris (``fastsamx``) and a contained
+    long seed inside the prefix (``fastsam`` in ``fastsamx``) prove the
+    full token is owned by that stem.
+    """
+    if not prefix:
+        return None
+    # R18-01 gadgets are ``{seed}{1-3 alnum}{exception}{debris}``.
+    # A punctuation-bearing prefix (``insightface~``) is the F14-1
+    # fold's sole-path witness — do not treat ``~`` as junk infix.
+    prefix_k = _compact_canonical(prefix)
+    if not prefix_k or not prefix_k.isalnum():
+        return None
+    contained = _contained_long_deny_seed_hit(prefix)
+    if contained is not None:
+        return contained
+    return _deny_folded_ab_hit(prefix)
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -4648,6 +4761,12 @@ def _compact_mid_exception_deny_adjacency(
     tokens are owned by the suffix walk (``my_yoloxyolo`` already
     denies). ``yolodummy`` has no exception seed and stays admitted.
     Single load-bearing helper (TEST-15).
+
+    R18-01: the F15-5 skip is only for an *exact* folded deny/NC
+    prefix. A prefix-only deny-(c) hit (``fastsamx``) does not own
+    the full token and must not launder ``fastsamxyoloxextra`` /
+    ``fastsamxyolox``. Empty rem after a deny-stem + junk prefix is
+    the same ownership (``fastsamxyolox`` / ``fastsamxyoloxs``).
     """
     if not token or "_" in token:
         return None
@@ -4666,6 +4785,7 @@ def _compact_mid_exception_deny_adjacency(
                 start = idx + 1
                 continue
             rem = compact[idx + len(spelling) :]
+            prefix = compact[:idx]
             if rem:
                 deny = _deny_folded_ab_hit(rem)
                 if deny is None:
@@ -4679,32 +4799,45 @@ def _compact_mid_exception_deny_adjacency(
                     deny = _classify_exception_plus_residual(rem)
                 if deny is None:
                     deny = _deny_prefix_plus_residual_hit(rem)
-                # F15-5: unknown non-tag rem after a mid-token exception
-                # spelling uses the same fail-closed landing as offset-0
-                # steal (``xyoloxsextra`` → yolox_unknown_residual).
-                # Only when the prefix is junk (not itself a deny/NC
-                # head) so F14-6 / F15-2 red-proofs stay sole-path
+                # F15-5 / R18-01: unknown non-tag rem after a mid-token
+                # exception spelling uses the same fail-closed landing
+                # as offset-0 steal (``xyoloxsextra`` →
+                # yolox_unknown_residual). Skip only when the prefix
+                # is an exact folded deny/NC identity so F14-6 /
+                # F15-2 red-proofs stay sole-path
                 # (``arcfaceyoloxextra`` / ``yoloyoloxextra``).
+                # Deny-(c) debris prefixes (``fastsamx``) are not
+                # ownership of the full token — return the stem.
                 if deny is None and _MID_EXCEPTION_UNKNOWN_REM_ENABLED:
-                    prefix = compact[:idx]
-                    prefix_is_deny = bool(prefix) and (
-                        _deny_folded_ab_hit(prefix) is not None
-                        or _contained_long_deny_seed_hit(prefix) is not None
-                        or _best_family_hit(
-                            prefix, PACKAGE_DENYLIST, for_deny=True
-                        )
-                        is not None
-                    )
-                    if not prefix_is_deny:
-                        outcome, entry = _classify_exception_residual(
-                            _seed_c, _seed_k, rem, compact_glue=True
-                        )
-                        if outcome != _RESIDUAL_LEGITIMATE:
-                            deny = entry or _unknown_exception_residual_entry(
-                                _seed_c, rem
+                    if prefix and not _deny_has_folded_ab_claim(prefix):
+                        owned = _mid_exception_prefix_deny_owner(prefix)
+                        if owned is not None:
+                            deny = owned
+                        else:
+                            outcome, entry = _classify_exception_residual(
+                                _seed_c, _seed_k, rem, compact_glue=True
                             )
+                            if outcome != _RESIDUAL_LEGITIMATE:
+                                deny = (
+                                    entry
+                                    or _unknown_exception_residual_entry(
+                                        _seed_c, rem
+                                    )
+                                )
                 if deny is not None:
                     return deny
+            elif (
+                _MID_EXCEPTION_UNKNOWN_REM_ENABLED
+                and prefix
+                and not _deny_has_folded_ab_claim(prefix)
+            ):
+                # Empty rem: ``{prefix}{exception}``. Junk-only
+                # prefixes (``ayoloxs`` / ``xyoloxs``) stay admit.
+                # A deny/NC stem in the prefix owns the token
+                # (``fastsamxyolox`` / ``fastsamxyoloxs``).
+                owned = _mid_exception_prefix_deny_owner(prefix)
+                if owned is not None:
+                    return owned
             start = idx + 1
     return None
 
@@ -4782,7 +4915,7 @@ def _compact_mid_nc_occurrence(
             if idx > 0 and idx + len(seed_k) < len(compact):
                 if len(seed_k) > best_len:
                     best_len = len(seed_k)
-                    best = entry  # type: ignore[assignment]
+                    best = entry
             start = idx + 1
     return best
 
@@ -5659,8 +5792,9 @@ def _floor_package_identity_denylist(
                 return _fail(
                     RejectionReason.INVALID_ROW,
                     detail=(
-                        f"{raw_key}={text!r} is empty after NFKC/Cf "
-                        "normalisation; format-only characters are fail-closed"
+                        f"{raw_key}={text!r} canonicalises to an empty "
+                        "identity; nonblank input with no identity token "
+                        "is fail-closed"
                     ),
                     category=category,
                 )
@@ -6049,8 +6183,8 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"model_id={text!r} is empty after NFKC/Cf normalisation; "
-                "format-only characters are fail-closed"
+                f"model_id={text!r} canonicalises to an empty identity; "
+                "nonblank input with no identity token is fail-closed"
             ),
             category=PolicyCategory.MODEL_INGEST,
         )
@@ -6149,8 +6283,8 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"package_name={text!r} is empty after NFKC/Cf normalisation; "
-                "format-only characters are fail-closed"
+                f"package_name={text!r} canonicalises to an empty identity; "
+                "nonblank input with no identity token is fail-closed"
             ),
             category=PolicyCategory.TOOLING,
         )

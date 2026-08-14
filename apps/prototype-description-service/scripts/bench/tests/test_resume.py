@@ -72,6 +72,29 @@ def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:
     assert 2 in posted_ids
 
 
+def test_completed_with_errors_is_not_ok(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out", pair, manifest)
+    client = FakeClient()
+    client.wait_job = lambda job_id: {"status": "completed_with_errors", "id": job_id}  # type: ignore[method-assign]
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=client,
+    )
+    store = ItemOutcomeStore(out / "legs" / "acx-dev-insightface" / "items.jsonl")
+    analyze = [r for r in store.read_all() if r.get("phase") == "analyze"]
+    assert analyze
+    assert analyze[-1]["outcome"] == "failed"
+    assert analyze[-1]["error_code"] == "analyze_completed_with_errors"
+    assert analyze[-1]["terminal_ingest_outcome"] == "success"
+
+
 def test_failed_item_is_reattempted(tmp_path: Path) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])

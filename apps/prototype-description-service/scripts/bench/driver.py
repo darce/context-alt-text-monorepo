@@ -136,12 +136,13 @@ def run_cluster_phase(
         analyze_outcomes = list(store.latest_analyze_by_media().values())
     decision = evaluate_cluster_gate(analyze_outcomes, item_max_attempts=item_max_attempts)
     if not decision.admits:
-        outcome = {
-            "status": "failed",
-            "phase": "failed",
-            "error_code": "cluster_gate_refused",
-        }
-        (leg / "leg_outcome.json").write_text(json.dumps(outcome, indent=2), encoding="utf-8")
+        if decision.reason == "cluster_gate_refused":
+            outcome = {
+                "status": "failed",
+                "phase": "failed",
+                "error_code": "cluster_gate_refused",
+            }
+            (leg / "leg_outcome.json").write_text(json.dumps(outcome, indent=2), encoding="utf-8")
         return decision
     payload = client.clustering_job(tenant_id, mode="sync")
     (leg / "cluster_job.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -210,13 +211,33 @@ def run_leg(
                     }
                 )
                 job_id = client.analyze([(entry.media_id, Path(entry.path).name, data)])
-                client.wait_job(job_id)
+                job = client.wait_job(job_id)
+                if _analyze_job_failed(job):
+                    store.append(
+                        {
+                            "manifest_media_id": entry.media_id,
+                            "manifest_path": entry.path,
+                            "content_sha256": entry.sha256,
+                            "stack_media_id": entry.media_id,
+                            "image_width": width,
+                            "image_height": height,
+                            "phase": "analyze",
+                            "outcome": "failed",
+                            "error_code": "analyze_completed_with_errors",
+                            "attempt": attempt,
+                            "terminal_ingest_outcome": "success",
+                        }
+                    )
+                    terminal = attempt >= pair.item_max_attempts
+                    outcomes.append(AnalyzeOutcome(entry.media_id, "failed", attempt, terminal))
+                    continue
+                stack_media_id = _stack_media_id_from_job(job, entry.media_id)
                 store.append(
                     {
                         "manifest_media_id": entry.media_id,
                         "manifest_path": entry.path,
                         "content_sha256": entry.sha256,
-                        "stack_media_id": entry.media_id,
+                        "stack_media_id": stack_media_id,
                         "image_width": width,
                         "image_height": height,
                         "phase": "analyze",
@@ -290,6 +311,7 @@ def run_pair(
     out_dir: Path | str,
     clients: dict[str, Any] | None = None,
     skip_preflight: bool = True,
+    preflight_transports: dict[str, Any] | None = None,
 ) -> Path:
     # Load without images_dir first so floor/superset fail before any media I/O.
     manifest = load_bench_manifest(manifest_path, None)
@@ -304,8 +326,16 @@ def run_pair(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},
         )
+    if not skip_preflight:
+        from scripts.bench.preflight import preflight_pair
+
+        keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
+        preflight_pair(pair, transports=preflight_transports, api_keys=keys)
     root = init_run_dir(out_dir, pair, manifest_path)
+    if pair.baseline_manifest_path:
+        _stamp_run_field(root, "baseline_superset_checked", True)
     deadline = time.monotonic() + pair.wall_clock_timeout_sec
+    incomplete: list[str] = []
     for endpoint in pair.stacks:
         client = (clients or {}).get(endpoint.stack_id)
         run_leg(
@@ -316,6 +346,14 @@ def run_pair(
             run_dir=root,
             client=client,
             deadline=deadline,
+        )
+        if not _leg_complete(root, endpoint.stack_id):
+            incomplete.append(endpoint.stack_id)
+    if incomplete:
+        _set_phase(root, "incomplete")
+        raise BenchError(
+            "run_incomplete",
+            f"leg(s) not exported: {incomplete}; not marking run done",
         )
     _set_phase(root, "done")
     return root
@@ -340,7 +378,7 @@ def read_status(run_dir: Path | str) -> dict[str, Any]:
             by_phase[phase][outcome] = by_phase[phase].get(outcome, 0) + 1
         cluster = (leg_dir / "cluster_job.json").is_file()
         exported = (leg_dir / "exports" / "media_identities.json").is_file()
-        failed = (leg_dir / "leg_outcome.json").is_file()
+        failed = _terminal_leg_refusal(leg_dir / "leg_outcome.json")
         if failed:
             phase_est = "failed"
         elif exported:
@@ -360,6 +398,51 @@ def read_status(run_dir: Path | str) -> dict[str, Any]:
             "exports": exported,
         }
     return {"run": run_doc, "legs": legs}
+
+
+def _analyze_job_failed(job: Any) -> bool:
+    if not isinstance(job, dict):
+        return False
+    status = str(job.get("status", "")).lower()
+    from recognition.domain.job import JobStatus
+
+    return status == JobStatus.COMPLETED_WITH_ERRORS.value
+
+
+def _stack_media_id_from_job(job: Any, fallback: int) -> int:
+    if not isinstance(job, dict):
+        return fallback
+    for key in ("media_id", "stack_media_id"):
+        value = job.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return fallback
+
+
+def _leg_complete(run_dir: Path, stack_id: str) -> bool:
+    leg = run_dir / "legs" / stack_id
+    if _terminal_leg_refusal(leg / "leg_outcome.json"):
+        return False
+    exports = leg / "exports"
+    needed = ("media_identities.json", "clusters.json", "cluster_members.json")
+    return _cluster_status_ok(leg / "cluster_job.json") and all((exports / name).is_file() for name in needed)
+
+
+def _terminal_leg_refusal(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return doc.get("error_code") == "cluster_gate_refused"
+
+
+def _stamp_run_field(run_dir: Path, key: str, value: Any) -> None:
+    path = run_dir / "run.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc[key] = value
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
 def _cluster_status_ok(path: Path) -> bool:

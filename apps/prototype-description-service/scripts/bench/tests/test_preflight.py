@@ -194,6 +194,70 @@ def test_load_missing_opencv_major_is_unattested(tmp_path: Path) -> None:
     assert getattr(exc.value, "code", "") == "opencv_major_unattested"
 
 
+def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:
+    from scripts.bench.driver import run_pair
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    with pytest.raises(PreflightError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=tmp_path / "out",
+            clients={
+                "acx-dev-insightface": FakeClient(),
+                "acx-dev-fir": FakeClient(),
+            },
+            skip_preflight=False,
+            preflight_transports={
+                "acx-dev-insightface": _transport(500, _health("insightface")),
+                "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
+            },
+        )
+    assert exc.value.code == "preflight_endpoint_missing"
+    assert not list((tmp_path / "out").rglob("items.jsonl"))
+
+
+def test_preflight_out_does_not_stamp_config_as_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.bench import cross_stack_bench
+
+    pair_path = write_pair(tmp_path / "pair.yaml")
+    out = tmp_path / "preflight-out"
+    monkeypatch.setattr(cross_stack_bench, "preflight_pair", lambda *a, **k: {})
+    rc = cross_stack_bench.main(["preflight", "--config", str(pair_path), "--out", str(out)])
+    assert rc == 0
+    assert not (out / "manifest.json").exists()
+    assert not (out / "manifest.sha").exists()
+
+
+def test_preflight_http_500_is_endpoint_missing() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(500, _health("insightface")),
+            api_key="k",
+        )
+    assert exc.value.code == "preflight_endpoint_missing"
+
+
+def test_preflight_non_json_500_is_endpoint_missing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ready":
+            return httpx.Response(500, content=b"<html>nope</html>")
+        return httpx.Response(200, json=_health("insightface"))
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=httpx.MockTransport(handler),
+            api_key="k",
+        )
+    assert exc.value.code == "preflight_endpoint_missing"
+
+
 def test_bench_package_imports_no_cv2() -> None:
     bench_root = Path(__file__).resolve().parents[1]
     for py_path in bench_root.rglob("*.py"):

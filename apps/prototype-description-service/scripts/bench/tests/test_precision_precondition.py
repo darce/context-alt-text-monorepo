@@ -35,7 +35,6 @@ def test_red_discordant_half_width_above_floor() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": True,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
     }
     tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
@@ -122,7 +121,6 @@ def test_assign_tier_missing_half_width_is_fail_closed() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": False,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
     }
     tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
@@ -141,7 +139,6 @@ def test_assign_tier_primary_emits_confirmatory() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": False,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
         "bootstrap_status": "ok",
     }
@@ -161,7 +158,6 @@ def test_assign_tier_holm_secondary_emits_confirmatory() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": True,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
         "bootstrap_status": "ok",
     }
@@ -181,7 +177,6 @@ def test_assign_tier_primary_name_does_not_bypass_flag() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": False,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
     }
     tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
@@ -259,6 +254,14 @@ def test_bootstrap_p_uses_B_not_n_used() -> None:
     )
     assert p_over_n_used != p_expected
     assert p_unadjusted != p_expected
+    # Hand-computed oracle for a singleton resample of image 0 (FIR-8 R4-12).
+    # a[0] recall = tp/(tp+fn) = 1/(1+0) = 1; b[0] = 0/(0+1) = 0; Δ = 1.
+    # Production _resample_delta is the SUT, not the oracle.
+    assert a[0].tp == 1 and a[0].fn == 0
+    assert b[0].tp == 0 and b[0].fn == 1
+    hand_delta = (1 / 1) - (0 / 1)
+    assert hand_delta == 1.0
+    assert _resample_delta(a, b, [0], "micro_recall") == hand_delta
 
 
 def test_assign_tier_partial_bootstrap_demotes_primary() -> None:
@@ -272,7 +275,6 @@ def test_assign_tier_partial_bootstrap_demotes_primary() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": False,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
         "bootstrap_status": "partial",
     }
@@ -292,7 +294,6 @@ def test_assign_tier_partial_bootstrap_demotes_holm_secondary() -> None:
         "head_to_head_delta": 0.10,
         "holm_significant": True,
         "exhaustiveness_ok": True,
-        "cluster_ok": True,
         "count_only": False,
         "bootstrap_status": "bootstrap_series_mismatch",
     }
@@ -310,3 +311,74 @@ def test_empty_series_raises() -> None:
         assert exc.code == "bootstrap_empty_series"
     else:
         raise AssertionError("empty series must fail closed")
+
+
+def test_assign_tier_missing_bootstrap_status_is_fail_closed() -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+    }
+    try:
+        assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    except BenchError as exc:
+        assert exc.code == "bootstrap_status"
+    else:
+        raise AssertionError("missing bootstrap_status must not default to ok")
+
+
+def test_assign_tier_partial_nonsignificant_secondary_reasons_status() -> None:
+    ctx = {
+        "named": True,
+        "primary": False,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "count_only": False,
+        "bootstrap_status": "partial",
+    }
+    tier, reason = assign_tier("identification_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "bootstrap_status"
+
+
+def test_padded_ci_uses_B_draw_space_not_survivors() -> None:
+    """Exact ci_lower/ci_upper on mixed defined/undefined (FIR-8 R4-02)."""
+    from scripts.bench.score_report import ImageCounts
+
+    a = [
+        ImageCounts(1, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+    ]
+    b = [
+        ImageCounts(0, 0, 1),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+    ]
+    B = 20
+    seed = 7
+    interval = bootstrap_paired_delta(a, b, seed=seed, metric="micro_recall", B=B)
+    assert interval.bootstrap_status == "partial"
+    # Padded B-draw space (seed=7, B=20): 17 defined Δ=1.0 + 3 zeros.
+    # Linear 2.5th/97.5th of [0]*3 + [1]*17: lower=0.0, upper=1.0.
+    # Survivor-only percentiles of [1]*17 would be 1.0/1.0.
+    assert interval.n_used == 17
+    assert interval.ci_lower == 0.0
+    assert interval.ci_upper == 1.0
+    assert (interval.ci_lower, interval.ci_upper) != (1.0, 1.0)

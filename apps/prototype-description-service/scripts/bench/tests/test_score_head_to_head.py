@@ -166,6 +166,7 @@ def test_secondary_holm_uses_real_bootstrap_p(tmp_path: Path) -> None:
         assert cell["p_value"] <= cell["holm_threshold"]
         assert "holm_rank" in cell
         assert cell.get("holm_status") != "not_computed"
+        assert cell["tier"] == "CONFIRMATORY"
 
 
 def test_detection_excludes_boxless_from_precision(tmp_path: Path) -> None:
@@ -252,11 +253,11 @@ def test_score_path_passes_holm_family_size(tmp_path: Path, monkeypatch) -> None
 def test_mixed_recognition_enabled_shortens_identification_series(tmp_path: Path, monkeypatch) -> None:
     from scripts.bench import score_report as score_mod
 
-    lengths: list[int] = []
+    pairs: list[tuple[str | None, int]] = []
     orig = score_mod.bootstrap_paired_delta
 
     def spy(a, b, *args, **kwargs):
-        lengths.append(len(a))
+        pairs.append((kwargs.get("cell"), len(a)))
         return orig(a, b, *args, **kwargs)
 
     monkeypatch.setattr(score_mod, "bootstrap_paired_delta", spy)
@@ -272,8 +273,11 @@ def test_mixed_recognition_enabled_shortens_identification_series(tmp_path: Path
     _write_leg(run_dir, A_STACK, ids, mids)
     _write_leg(run_dir, B_STACK, ids, mids)
     score_head_to_head(run_dir)
-    assert 6 in lengths
-    assert 5 in lengths
+    by_cell = {name: length for name, length in pairs}
+    assert by_cell[PRIMARY] == 6
+    assert by_cell[SECONDARY_PREC] == 6
+    assert by_cell["identification_recall@frame_e2e/label_map_primary"] == 5
+    assert by_cell["identification_precision@frame_e2e/label_map_primary"] == 5
     det = _cells(run_dir, PRIMARY)
     assert det
     for cell in det:
@@ -302,6 +306,8 @@ def test_holm_family_uses_declared_secondary_size(tmp_path: Path) -> None:
     assert id_cells
     for cell in id_cells:
         assert cell.get("holm_status") == "not_computed"
+        assert cell.get("holm_p_value") == 1.0
+        assert cell.get("holm_significant") is False
         assert cell.get("tier") != "CONFIRMATORY"
 
 
@@ -401,6 +407,77 @@ def test_join_hole_raises_instead_of_zero_pad(tmp_path: Path, monkeypatch) -> No
         assert exc.code == "join_row_missing"
     else:
         raise AssertionError("missing metric row must fail closed")
+
+
+def test_partial_bootstrap_score_path_demotes_would_be_confirmatory(tmp_path: Path) -> None:
+    """Real partial bootstrap on a Holm-significant secondary (FIR-8 R4-01, R4-04).
+
+    3 exhaustive hit/miss images plus 1 zero-pred image. Detection precision
+    is Holm-significant with ci_half_width=0, so the cell would be CONFIRMATORY
+    if bootstrap_status were fail-open or the ctx stamp were dropped.
+    """
+    from scripts.bench.score_report import BOOTSTRAP_RESAMPLES
+
+    mids = [1, 2, 3, 4]
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+    ]
+    run_dir = _init(tmp_path, mids, entries)
+    _write_leg(run_dir, A_STACK, [_pred(i) for i in (1, 2, 3)], mids)
+    _write_leg(run_dir, B_STACK, [_pred(i, miss=True) for i in (1, 2, 3)], mids)
+    score_head_to_head(run_dir)
+    frames = json.loads((run_dir / "score" / "frames.json").read_text())
+    assert frames["preflight_present"] is True
+    prec = _cells(run_dir, SECONDARY_PREC)
+    assert prec
+    for cell in prec:
+        assert cell["holm_significant"] is True
+        assert cell["bootstrap_status"] == "partial"
+        assert cell["bootstrap_n_used"] < BOOTSTRAP_RESAMPLES
+        assert cell["bootstrap_n_used"] > 0
+        assert cell["tier"] == "DIRECTIONAL"
+        assert cell["reason"] == "bootstrap_status"
+        assert "ci_lower" in cell and cell["ci_lower"] is None
+        assert "ci_upper" in cell and cell["ci_upper"] is None
+        assert "ci_half_width" in cell and cell["ci_half_width"] is None
+
+
+def test_score_refuses_invalid_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    (run_dir / "legs" / A_STACK / "preflight.json").write_text("{}", encoding="utf-8")
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_invalid"
+    else:
+        raise AssertionError("empty-object preflight.json must refuse")
+
+
+def test_score_refuses_unparseable_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    (run_dir / "legs" / B_STACK / "preflight.json").write_text("{not-json", encoding="utf-8")
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_invalid"
+    else:
+        raise AssertionError("malformed preflight.json must refuse")
 
 
 def test_identification_boxless_corpus_is_directional(tmp_path: Path) -> None:

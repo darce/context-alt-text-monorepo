@@ -32,6 +32,22 @@ LABEL_MAP_OPTIMISTIC = "label_map_optimistic"
 
 HOLM_NOT_COMPUTED = "not_computed"
 
+# Persist contract for legs/<stack_id>/preflight.json (PROV-01). Score refuses
+# a file that is missing, unreadable, or lacks these keys.
+PROV01_PREFLIGHT_KEYS = (
+    "stack_id",
+    "base_url",
+    "expected_profile",
+    "expected_pgvector_dim",
+    "resolved_profile",
+    "resolved_pgvector_dim",
+    "opencv_major",
+    "opencv_major_source",
+    "checked_at",
+    "ready_excerpt",
+    "health_detailed_excerpt",
+)
+
 
 class CrossbenchTier(StrEnum):
     CONFIRMATORY = "CONFIRMATORY"
@@ -120,12 +136,14 @@ def bootstrap_paired_delta(
     occasion_full_size: dict[str, int] | None = None,
     accepted_mask: list[bool] | None = None,
     B: int = BOOTSTRAP_RESAMPLES,
+    cell: str | None = None,
 ) -> BootstrapInterval:
     if len(a) != len(b):
         raise BenchError("config_invalid", "paired series must be the same length")
     n = len(a)
     if n == 0:
         raise BenchError("bootstrap_empty_series", "paired series is empty")
+    del cell  # call-site label so spies can bind (cell, length) pairs
     if accepted_mask is not None and len(accepted_mask) != n:
         raise BenchError("config_invalid", "accepted_mask must match series length")
     eligible = [i for i in range(n) if accepted_mask is None or accepted_mask[i]]
@@ -279,14 +297,20 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
         return CrossbenchTier.DIRECTIONAL, None
     if ctx.get("native_frame") or "frame_fir5_native" in str(cell):
         return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
-    if ctx.get("primary"):
-        if str(ctx.get("bootstrap_status", "ok")) != "ok":
+    confirmatory_eligible = bool(ctx.get("primary") or ctx.get("holm_significant", False))
+    if confirmatory_eligible:
+        if "bootstrap_status" not in ctx:
+            raise BenchError(
+                "bootstrap_status",
+                "named confirmatory-eligible cell missing bootstrap_status",
+            )
+        if str(ctx["bootstrap_status"]) != "ok":
             return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
         return CrossbenchTier.CONFIRMATORY, None
-    if ctx.get("holm_significant", False):
-        if str(ctx.get("bootstrap_status", "ok")) != "ok":
-            return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
-        return CrossbenchTier.CONFIRMATORY, None
+    # Named non-significant secondaries: a partial/errored bootstrap is the
+    # more specific refusal. "holm" is only the reason when status is ok.
+    if "bootstrap_status" in ctx and str(ctx["bootstrap_status"]) != "ok":
+        return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
     return CrossbenchTier.DIRECTIONAL, "holm"
 
 
@@ -604,22 +628,49 @@ def _cell_id(metric: str, frame_key: str, label_key: str) -> str:
     return f"{metric}@{frame}/{label}"
 
 
+def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
+    missing = [
+        stack_id for stack_id in stacks if not (root / "legs" / stack_id / "preflight.json").is_file()
+    ]
+    if missing:
+        raise BenchError(
+            "preflight_missing",
+            "preflight.json missing for "
+            + ", ".join(missing)
+            + "; score refuses a run-dir without PROV-01",
+        )
+    for stack_id in stacks:
+        path = root / "legs" / stack_id / "preflight.json"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BenchError(
+                "preflight_invalid",
+                f"{stack_id} preflight.json is not valid JSON",
+            ) from exc
+        if not isinstance(doc, dict):
+            raise BenchError(
+                "preflight_invalid",
+                f"{stack_id} preflight.json must be a JSON object",
+            )
+        absent = [key for key in PROV01_PREFLIGHT_KEYS if key not in doc]
+        if absent:
+            raise BenchError(
+                "preflight_invalid",
+                f"{stack_id} preflight.json missing PROV-01 keys: " + ", ".join(absent),
+            )
+    return True
+
+
 def score_head_to_head(run_dir: Path | str) -> Path:
     root = Path(run_dir)
-    (root / "score").mkdir(parents=True, exist_ok=True)
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
     stacks = sorted(p.name for p in (root / "legs").iterdir() if p.is_dir())
-    missing_preflight = [
-        stack_id for stack_id in stacks if not (root / "legs" / stack_id / "preflight.json").is_file()
-    ]
-    if missing_preflight:
-        raise BenchError(
-            "preflight_missing",
-            f"preflight.json missing for {missing_preflight}; score refuses a run-dir without PROV-01",
-        )
+    preflight_present = _require_prov01_preflights(root, stacks)
     for stack_id in stacks:
         require_cluster_success(root, stack_id)
+    (root / "score").mkdir(parents=True, exist_ok=True)
 
     accepted = compute_accepted_set(root)
     write_accepted_set(root, accepted)
@@ -822,6 +873,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     series_b,
                     seed=pair.bootstrap_seed,
                     metric=boot_metric,
+                    cell=cell_name,
                 )
             except BenchError as exc:
                 bootstrap_errors[cell_name] = exc
@@ -873,10 +925,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         cell["tier"] = tier.value
         cell["reason"] = reason
         if interval is not None:
-            cell["ci_level"] = interval.ci_level
-            cell["ci_lower"] = interval.ci_lower
-            cell["ci_upper"] = interval.ci_upper
-            cell["ci_half_width"] = interval.ci_half_width
             cell["bootstrap_resamples"] = interval.bootstrap_resamples
             cell["bootstrap_seed"] = interval.bootstrap_seed
             cell["resampling_unit"] = interval.resampling_unit
@@ -884,6 +932,18 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             cell["partial_occasions"] = interval.partial_occasions
             cell["bootstrap_status"] = interval.bootstrap_status
             cell["bootstrap_n_used"] = interval.n_used
+            # Partial/errored bootstrap: do not publish a zero-imputed collapsed
+            # interval as if it were a real CI. p still uses the padded space.
+            if interval.bootstrap_status == "ok":
+                cell["ci_level"] = interval.ci_level
+                cell["ci_lower"] = interval.ci_lower
+                cell["ci_upper"] = interval.ci_upper
+                cell["ci_half_width"] = interval.ci_half_width
+            else:
+                cell["ci_level"] = interval.ci_level
+                cell["ci_lower"] = None
+                cell["ci_upper"] = None
+                cell["ci_half_width"] = None
         else:
             cell["ci_level"] = None
             cell["ci_lower"] = None
@@ -897,11 +957,15 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                 cell["bootstrap_error"] = str(err)
             elif name in named:
                 cell["bootstrap_status"] = "not_computed"
-        if holm_info and name not in holm_missing:
+        if holm_info is not None:
             cell["holm_p_value"] = holm_info["p_value"]
-            cell.update({k: holm_info[k] for k in ("holm_rank", "holm_threshold", "holm_significant")})
+            if name not in holm_missing:
+                cell.update({k: holm_info[k] for k in ("holm_rank", "holm_threshold", "holm_significant")})
+            else:
+                cell["holm_significant"] = False
+                cell["holm_status"] = HOLM_NOT_COMPUTED
         elif name in pair.secondary_endpoints:
-            cell["holm_significant"] = None
+            cell["holm_significant"] = False
             cell["holm_status"] = HOLM_NOT_COMPUTED
 
     frames = {
@@ -922,7 +986,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         "ci_level": CI_LEVEL,
         "resampling_unit": "image",
         "pr_cells_emitted": True,
-        "preflight_present": True,
+        "preflight_present": preflight_present,
     }
     frames_path = root / "score" / "frames.json"
     frames_path.write_text(json.dumps(frames, indent=2), encoding="utf-8")

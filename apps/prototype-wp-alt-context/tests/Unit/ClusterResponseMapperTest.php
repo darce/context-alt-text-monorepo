@@ -558,4 +558,57 @@ class ClusterResponseMapperTest extends TestCase
 
         $this->assertSame('33333333-3333-3333-3333-333333333333', $payload['person_uuid']);
     }
+
+    public function testMapClusterListNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'label' => 'Empty',
+                    'identity_count' => 2,
+                    'person_uuid' => '',
+                ],
+                [
+                    'cluster_uuid' => 'cluster-whitespace',
+                    'label' => 'Whitespace',
+                    'identity_count' => 2,
+                    'person_uuid' => '   ',
+                ],
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $payload[0]);
+        $this->assertNull($payload[0]['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $payload[1]);
+        $this->assertNull($payload[1]['person_uuid']);
+    }
+
+    public function testMapClusterDetailNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $empty = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-empty-detail',
+                'label' => 'Empty',
+                'identity_count' => 2,
+                'person_uuid' => '',
+            ],
+            []
+        );
+        $whitespace = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-whitespace-detail',
+                'label' => 'Whitespace',
+                'identity_count' => 2,
+                'person_uuid' => " \t ",
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $empty);
+        $this->assertNull($empty['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $whitespace);
+        $this->assertNull($whitespace['person_uuid']);
+    }
 }

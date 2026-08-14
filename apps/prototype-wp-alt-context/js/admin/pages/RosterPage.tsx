@@ -270,7 +270,7 @@ export const RosterPage = (): React.JSX.Element => {
       </div>
 
       <ClusterDrawerPanel
-        cluster={selectedCluster}
+        cluster={selectedCluster === null ? null : (clusterDetailQuery.data ?? selectedCluster)}
         identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={

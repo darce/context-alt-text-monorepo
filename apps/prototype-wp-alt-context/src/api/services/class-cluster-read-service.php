@@ -85,6 +85,11 @@ class ClusterReadService {
 			}
 		}
 
+		/*
+		 * WHY: Remote recognition payloads have no person binding. person_uuid
+		 * is intentionally absent (honest null per rg-015). Do not fabricate a
+		 * fallback — FE renders Unresolved until the local projection path is used.
+		 */
 		$query = array(
 			'tenant_id' => $tenant_id,
 			'limit'     => $limit,

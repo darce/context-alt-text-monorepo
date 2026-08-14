@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from scripts.eval_harness import bakeoff
+from scripts.eval_harness import build_bakeoff_report
 from scripts.eval_harness.bakeoff_candidates import (
     BakeoffCandidateRegistry,
     BakeoffTier,
@@ -15,12 +17,14 @@ from scripts.eval_harness.bakeoff_candidates import (
     CandidateRole,
     ServingRecipe,
     ServingStack,
+    load_bakeoff_candidates,
 )
 from scripts.eval_harness.bakeoff_runner import (
     NotCompetingError,
     UnknownCandidateError,
     UnsupportedStackError,
     VramBudgetError,
+    _report_argv,
     build_plans,
     emit_shell,
     main,
@@ -299,3 +303,150 @@ def test_cli_default_on_sealed_registry_plans_llama_cpp_only(
         assert "--host" in row["serve_argv"]
         assert "--port" in row["serve_argv"]
         assert "--no-think" not in row["serve_argv"]
+
+
+def test_run_argv_round_trips_through_bakeoff_parser() -> None:
+    registry = load_bakeoff_candidates()
+    plans = build_plans(registry, **_PLAN_KW)
+    parser = bakeoff.build_parser()
+    for plan in plans:
+        assert plan.run_argv[:3] == ("python", "-m", "scripts.eval_harness.bakeoff")
+        parsed = parser.parse_args(list(plan.run_argv[3:]))
+        assert parsed.endpoint == _PLAN_KW["endpoint"]
+        assert parsed.model_id == plan.model_id
+        assert parsed.out == plan.out_path
+
+
+def test_report_argv_round_trips_through_report_parser() -> None:
+    plans = build_plans(_sample_registry(), **_PLAN_KW)
+    incumbents = {
+        "florence-anchor": "/records/florence-anchor.json",
+        "qwen-anchor": "/records/qwen-anchor.json",
+    }
+    argv = _report_argv(plans, incumbents)
+    assert argv[:3] == ["python", "-m", "scripts.eval_harness.build_bakeoff_report"]
+    parsed = build_bakeoff_report.build_parser().parse_args(argv[3:])
+    assert parsed.manifest == _PLAN_KW["manifest"]
+    assert parsed.limit == 646
+    assert parsed.run == [
+        f"{plan.candidate_id}={plan.out_path}" for plan in plans
+    ] + [
+        "florence-anchor=/records/florence-anchor.json",
+        "qwen-anchor=/records/qwen-anchor.json",
+    ]
+
+
+def test_report_run_paths_are_plan_outs_or_supplied_incumbents() -> None:
+    plans = build_plans(_sample_registry(), **_PLAN_KW)
+    incumbents = {"florence-anchor": "/records/florence-anchor.json"}
+    argv = _report_argv(plans, incumbents)
+    allowed = {plan.out_path for plan in plans} | set(incumbents.values())
+    for plan in plans:
+        assert plan.out_path == plan.run_argv[plan.run_argv.index("--out") + 1]
+    parsed = build_bakeoff_report.build_parser().parse_args(argv[3:])
+    for spec in parsed.run:
+        path = spec.split("=", 1)[1]
+        assert path in allowed
+
+
+def test_run_argv_round_trip_rejects_limit_zero() -> None:
+    plan = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)[0]
+    mutated = list(plan.run_argv[3:]) + ["--limit", "0"]
+    with pytest.raises(SystemExit):
+        bakeoff.build_parser().parse_args(mutated)
+
+
+def test_cli_emits_skip_notes_for_unsupported_stacks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--json"]) == 0
+    err = capsys.readouterr().err
+    registry = load_bakeoff_candidates()
+    non_llama = [
+        entry
+        for entry in registry.entries
+        if entry.recipe.stack is not ServingStack.LLAMA_CPP
+    ]
+    assert non_llama
+    for entry in non_llama:
+        assert entry.id in err
+        assert f"skip {entry.id} ({entry.recipe.stack.value})" in err
+    assert "skipped 8 of 13 candidates (stack not supported by this planner)" in err
+
+
+def test_cli_does_not_invent_incumbent_paths(tmp_path) -> None:
+    script_path = tmp_path / "plan.sh"
+    assert main(["--emit-shell", str(script_path)]) == 0
+    text = script_path.read_text(encoding="utf-8")
+    assert "run-bakeoff-florence-2-base-ft.json" not in text
+    assert "run-bakeoff-qwen3-vl-30b-a3b.json" not in text
+    assert "florence-2-base-ft=" not in text
+    assert "qwen3-vl-30b-a3b=" not in text
+
+
+def test_cli_incumbent_run_uses_supplied_path_only(tmp_path) -> None:
+    script_path = tmp_path / "plan.sh"
+    assert (
+        main(
+            [
+                "--emit-shell",
+                str(script_path),
+                "--incumbent-run",
+                "florence-2-base-ft=/records/florence.json",
+            ]
+        )
+        == 0
+    )
+    text = script_path.read_text(encoding="utf-8")
+    assert "/records/florence.json" in text
+    assert "[ -f /records/florence.json ]" in text
+    assert "run-bakeoff-qwen3-vl-30b-a3b.json" not in text
+    assert "qwen3-vl-30b-a3b=" not in text
+
+
+def test_cli_incumbent_run_rejects_non_incumbent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--incumbent-run", "minicpm-v-45=out/x.json"]) == 2
+    err = capsys.readouterr().err
+    assert "minicpm-v-45" in err
+    assert "incumbent" in err
+
+
+def test_emit_shell_tracks_failures_and_probes_liveness() -> None:
+    plans = build_plans(_sample_registry(), **_PLAN_KW)
+    script = emit_shell(plans, incumbent_runs={})
+    assert "_fail=0" in script
+    assert "_total=$((_total + 1))" in script
+    assert 'kill -0 "$_serve_pid" 2>/dev/null || break' in script
+    assert 'if [ "${_total}" -gt 0 ] && [ "${_fail}" -eq "${_total}" ]; then' in script
+    assert "exit 1" in script
+
+
+def test_emit_shell_download_hint_includes_artifacts() -> None:
+    plans = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)
+    script = emit_shell(plans, incumbent_runs={})
+    assert "--include model.gguf" in script
+    assert "--include mmproj.gguf" in script
+    assert "--limit 646" in script
+
+
+def test_mmproj_gb_from_recipe_not_placeholder() -> None:
+    registry = _registry(
+        [_entry("gemma-like", artifact_gb=7.2, recipe=_recipe(mmproj_gb=0.18))]
+    )
+    plan = build_plans(registry, **_PLAN_KW)[0]
+    assert plan.total_gb == pytest.approx(7.38)
+
+
+def test_mmproj_gb_falls_back_to_estimate() -> None:
+    plan = build_plans(_registry([_entry("alpha", artifact_gb=6.0)]), **_PLAN_KW)[0]
+    assert plan.total_gb == pytest.approx(7.0)
+
+
+def test_sealed_llama_cpp_mmproj_gb_from_notes() -> None:
+    registry = load_bakeoff_candidates()
+    plans = {plan.candidate_id: plan for plan in build_plans(registry, **_PLAN_KW)}
+    assert plans["kimi-vl-a3b"].total_gb == pytest.approx(11.5 + 0.91)
+    assert plans["gemma-4-12b"].total_gb == pytest.approx(7.2 + 0.18)
+    assert plans["minicpm-v-45"].total_gb == pytest.approx(7.0)

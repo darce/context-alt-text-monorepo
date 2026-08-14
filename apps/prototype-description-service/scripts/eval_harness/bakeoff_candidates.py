@@ -88,6 +88,7 @@ class ServingRecipe(BaseModel):
     extra_flags: list[str] = Field(default_factory=list)
     gguf: str | None = None
     mmproj: str | None = None
+    mmproj_gb: float | None = None
 
     @model_validator(mode="after")
     def _llama_cpp_needs_artifacts(self) -> ServingRecipe:

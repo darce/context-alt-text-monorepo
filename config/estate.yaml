@@ -1,0 +1,406 @@
+# WorkBay Estate policy — this repository's instance of the estate schema.
+# Committed to git. Contains no secrets, OCIDs, estate ids, API keys, or
+# credential material (WEB-16, PG-09). Operator fills env-var *names* only.
+#
+# STATUS: no loader consumes this file yet. Safety controls below are asserted
+# policy for the forthcoming supervisor package; they are not live until a
+# loader validates this file against the load contract and the package is
+# deployed. Do not assume mutations are gated in production today.
+#
+# Loader contract (rg-008, CARD-07, PROV-08) — every case below refuses to
+# start, exits non-zero, and mutates nothing:
+#   - file absent or unreadable
+#   - file present but malformed (not valid YAML / not a mapping)
+#   - any required key missing
+#   - any unknown key (typos in safety fields must not silently disable them);
+#     a class parameter written as a sibling of enabled: instead of inside
+#     params: is an unknown key
+#   - any key of the wrong type (string where integer required, list where map
+#     required) — error names the key and both types
+#   - any value outside its domain: negative TTL or count, percent outside
+#     0-100, tier name not declared in tiers:, enum value not in the declared
+#     set, or free_disk_floor_pct <= free_disk_trigger_pct
+#   - observation mode/started_on pair mismatch in either direction
+#   - duplicate overrides targeting the same resource (not last-wins)
+# Required keys have no silent defaults. Never degrade to a permissive default.
+#
+# All reclaim and lifecycle actions are idempotent: safe to re-run on the same
+# target (RES-19, FLOW-05, API-02). A second pass after success is a no-op.
+#
+# Destructive axis: refuse-to-act under uncertainty. Exit-status axis: fail
+# loud (non-zero exit; systemd marks unit failed; timer keeps schedule; next
+# pass re-evaluates from scratch). One class failing must not halt the others
+# (rg-007).
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# Control plane — gates before any destructive path (BOOT-06, CARD-04)
+# ---------------------------------------------------------------------------
+control:
+  # Estate-wide mutation gate. Required key. Values: disabled | enabled.
+  # Safe value: disabled. disabled means no mutating action may run, ever,
+  # for any class. Emergency stop: set control.mutations: disabled.
+  # enabled is necessary but never sufficient: each action class carries its
+  # own enabled:, and control.observation.mode must also permit the action.
+  mutations: disabled
+
+  # Report-only observation window (relative; not an absolute calendar date).
+  # report_only: plan and log intended actions; mutate nothing.
+  # live: mutate only when mutations: enabled AND the class enabled: true.
+  # Past max_duration_days from started_on without an explicit mode: live
+  # promotion, mutate paths refuse to run (AIPX-06, CARD-15).
+  observation:
+    # Values: null | report_only | live. Safe value: null (window not started).
+    # mode and started_on are set together: a non-null mode with a null
+    # started_on is a load error, because the window would have no clock and
+    # max_duration_days could never elapse (A1 acceptance criterion 8).
+    # The operator starts the window by setting BOTH in one edit.
+    mode: null
+    # Relative window length. Judgement: 7 days — long enough for several
+    # idle/reclaim cycles on a greenfield build with no dual-actuator hazard
+    # (nothing is running today to dual-run against), short enough that the
+    # window cannot silently become permanent policy.
+    max_duration_days: 7
+    # ISO date (YYYY-MM-DD). Set by the operator in the same edit that sets
+    # mode. null is valid ONLY while mode is null. Loader rejects the pair
+    # (mode != null, started_on == null) and the pair (mode == null,
+    # started_on != null).
+    started_on: null
+
+# ---------------------------------------------------------------------------
+# Inventory — enumeration bounds for one supervisor pass (rg-008)
+# ---------------------------------------------------------------------------
+inventory:
+  # Max resources one inventory/lifecycle pass considers. Required; no silent
+  # default. Hitting the cap is fail loud: non-zero exit, no silent truncation
+  # (CARD-07).
+  max_items: 64
+
+# ---------------------------------------------------------------------------
+# Tier vocabulary — tag-enforced meaning (CARD-12)
+# T0 refusal guarantee is the stop principal's IAM policy at the provider,
+# bound to a tag condition that excludes tier T0. The allow_stop /
+# allow_terminate fields here are defence in depth only; they must never be
+# mistaken for the guarantee (SEC-04, CARD-10). A policy-file edit cannot
+# grant the principal authority the provider withholds.
+# ---------------------------------------------------------------------------
+tiers:
+  T0:
+    # Durable always-on hosts (control plane, production services).
+    description: durable
+    allow_stop: false
+    allow_terminate: false
+    # scale_to_zero tag is ignored on T0; selector hard-refuses (defence in depth).
+    allow_scale_to_zero: false
+    # null = idle TTL not applicable; never selected for lifecycle stop.
+    idle_ttl_seconds: null
+
+  T1:
+    # Working capacity; may stop under policy; terminate never automated.
+    description: working
+    allow_stop: true
+    allow_terminate: false
+    allow_scale_to_zero: true
+    # Idle TTL before a stoppable instance is a stop candidate (seconds).
+    idle_ttl_seconds: 300
+
+  T2:
+    # Ephemeral burst capacity (GPU, disposable workers).
+    description: ephemeral
+    allow_stop: true
+    allow_terminate: false
+    allow_scale_to_zero: true
+    idle_ttl_seconds: 300
+
+# Instance with no tier tag: most protective posture, not least.
+# Treated as T0 for all lifecycle and reclaim decisions.
+untagged_instance_posture: T0
+
+# Tag keys the selector reads. Never instance names or OCIDs (rg-009).
+tags:
+  tier_key: workbay_tier
+  # Expected values: T0 | T1 | T2. Other values → treat as untagged (T0).
+  scale_to_zero_key: scale_to_zero
+  # Exact string match; only "true" enables scale-to-zero selection.
+  scale_to_zero_value: "true"
+
+# ---------------------------------------------------------------------------
+# What is never automated — operator-only, even when control.mutations: enabled
+# ---------------------------------------------------------------------------
+never_automate:
+  - terminate
+  - boot_volume_delete
+  - any_mutation_on_t0
+  - any_mutation_on_untagged
+  - delete_sandbox_with_commits_beyond_base
+  - delete_unmarked_directory
+
+# ---------------------------------------------------------------------------
+# Instance lifecycle — off-box supervisor; decision ported from reaper.py
+# (build, not migrate: no lifecycle actuator is running anywhere today)
+# ---------------------------------------------------------------------------
+lifecycle:
+  # Re-sample load after this delay before acting (matches --fence-delay-seconds).
+  fence_delay_seconds: 2
+  # Missing/unreadable load snapshot → treat as busy; never stop blind.
+  # Refuse-to-act under uncertainty.
+  fail_safe_on_unreadable_load: busy
+
+  stop:
+    # Per-class gate. Requires control.mutations: enabled AND
+    # control.observation.mode: live AND this enabled: true. Safe value: false.
+    enabled: false
+    # Only instances with scale_to_zero match AND tier.allow_stop AND not T0.
+
+  terminate:
+    # Must remain false for the host timer principal. Operator laptop only.
+    # Even if set true here, timer deployment must lack the OCI verb.
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Slot ledger — scarce unit is AD service-limit slots, not dollars
+# STOPPED instances consume slots the same as RUNNING. Stop does not free a
+# slot; only terminate does, and terminate is forbidden to the scheduled
+# principal (C-7, RES-09).
+# ---------------------------------------------------------------------------
+slots:
+  # Service limit name observed for A10 GPUs. Informational for the ledger.
+  resource_name: gpu-a10-count
+
+  # Lease held by the supervisor over ONE reservation record for the whole
+  # launch window: acquired before the provider launch call, released only by
+  # an observed terminal outcome. Required; no silent default.
+  #
+  # Expiry does NOT free the reservation. On expiry the record moves to
+  # `uncertain`, which is cleared only by reconciliation against the provider
+  # count — never by the timer, never automatically. An expired lease is not
+  # re-acquirable while its reservation is uncertain (DATA-18, DATA-19,
+  # RES-01). This is the lost-update the ledger exists to prevent.
+  #
+  # PROVISIONAL VALUE. No launch latency has been measured on this estate yet.
+  # Before live mode this must be re-derived as p99 observed launch time plus
+  # margin, and the measurement recorded. Do not treat 600 as validated.
+  reservation_lease_ttl_seconds: 600
+
+  # Free slots (region-wide sum of available) that must remain after any
+  # lifecycle act. Predicate: refuse the act when
+  #   free_slots_after_act < free_floor
+  free_floor: 1
+
+  # Free-slot level that raises an operator blocker — not an automated action.
+  # Predicate: free_slots_now <= free_trigger.
+  # No permitted scheduled action frees a slot (stop holds the slot; terminate
+  # is never_automate for the timer principal), so the blocker is the only
+  # response: log it, exit non-zero for that unit, do not stop or terminate to
+  # relieve pressure (RES-09, C-7).
+  # Set above free_floor so the blocker warns before exhaustion rather than at
+  # it. At the 2026-08-04 census (2 free region-wide) this threshold is
+  # asserted — that is the intended signal, not a misconfiguration.
+  free_trigger: 2
+
+  # Launch / create paths refuse to proceed when the launch would drop free
+  # slots below this. Predicate, evaluated BEFORE the provider call:
+  #   refuse when (free_slots_before_launch - 1) < launch_min_free
+  # Stated as an explicit pre-check because pre- and post-check readings differ
+  # by exactly one slot — the entire margin at two free slots region-wide.
+  launch_min_free: 1
+
+  # Reconciliation — the only path that clears an `uncertain` reservation.
+  reconcile:
+    # Principal: the same read+stop timer principal (read-only for this path).
+    # Cadence: every supervisor pass, before planning.
+    # Clearing predicate: a reservation is released only when the provider's
+    # authoritative free-slot count for that AD is observed and no instance
+    # matching the reservation exists. On disagreement the provider count wins.
+    # Drift (ledger rows with no provider counterpart, or vice versa) is logged
+    # and raises an operator blocker; it is never silently repaired.
+    every_pass: true
+    provider_count_is_authoritative: true
+
+# ---------------------------------------------------------------------------
+# Reclaimers — steady-state timer, not dispatch-hook (RES-07)
+# "Reaper-sweep" is reserved for legacy dispatch-triggered paths only; new
+# work uses reclaimer. A broken class leaves garbage rather than delete live
+# work: refuse-to-act under uncertainty (CARD-07). Per-class enabled: so
+# enabling is staged; control.mutations: enabled is necessary but never
+# sufficient for any class.
+#
+# Disk hysteresis: free_disk_floor_gb must exceed free_disk_trigger_gb by a
+# stated margin so a pass that meets the floor also clears the trigger.
+# Loader must reject a config where reaching the floor would leave the
+# trigger still asserted (RES-07).
+# ---------------------------------------------------------------------------
+reclaim:
+  # Two independent trigger paths. Steady-state runs unconditionally; pressure
+  # escalation only adds urgency. A reclaimer gated ONLY on free disk never
+  # runs on a host with headroom — acx-backend measured ~107 GB free on
+  # 2026-08-04 — which would make every reclaim proof unsatisfiable.
+  #
+  # 1. Steady state (RES-07): every timer firing, every enabled class runs its
+  #    age/count gate regardless of free disk. This is the normal path and the
+  #    one slice proofs assert against.
+  steady_state_always_runs: true
+
+  # 2. Pressure escalation, expressed as a fraction of the volume so it does
+  #    not go stale when the disk is resized (COST-12). Below trigger_pct the
+  #    reclaimer additionally lowers per-class TTLs to their configured floors.
+  #    Hysteresis: floor_pct must exceed trigger_pct so a pass that reaches the
+  #    floor also clears the trigger; the loader rejects floor_pct <=
+  #    trigger_pct.
+  free_disk_trigger_pct: 15
+  free_disk_floor_pct: 20
+
+  # Enumeration budget. A single global cap consumed in declaration order lets
+  # one high-volume class exhaust it every pass and starve the trailing classes
+  # forever (RES-01, PERF-07). Budget is therefore per class, with the global
+  # value as a hard ceiling on the sum.
+  max_targets_per_class_per_pass: 50
+  max_targets_per_pass: 200
+  # Classes are visited in a rotating order, starting at
+  # (pass_number mod class_count), so no class is structurally last.
+  class_visit_order: rotating
+  # Hitting either cap is fail loud: non-zero exit, no silent truncation
+  # (CARD-07). One class hitting its cap must not halt the others (rg-007).
+  enumeration_cap_is_error: true
+
+  classes:
+    # --- Marker-bearing lane sandboxes (created by the upstream lane script) ---
+    marker_lane_sandboxes:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # Directory name under the lane principal home; matches AGENT_ROOT default.
+        agent_root: grok-sandbox
+        marker_name: .workbay-lane-sandbox
+      # Matches SANDBOX_TTL_SEC upstream default (48 h).
+        ttl_seconds: 172800
+      # Evidence gate: commits beyond synthetic base → skip, never delete.
+        require_no_commits_beyond_base: true
+      # Age-gated class; no count ceiling (MLDATA-15 applies to identity stores).
+        keep_count: null
+
+    # --- Unmarked directories under the same root ---
+    # Reaches the ~8.8 GB of lane residue no existing reaper-sweep can see
+    # (written by an older copy of the lane script running on the T0 host
+    # under the lane-execution account; not by this repo's script). Host and
+    # account names live in the operator runbook, not in committed policy.
+    # Refuse-to-act under uncertainty: a lane sandbox may be the only copy of
+    # work that died before harvest. Never delete under uncertainty.
+    unmarked_lane_sandboxes:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # report_only: log and exit. marker_backfill: write marker only when the
+      # directory is proven base-commit-only; then the marker TTL reclaimer may act.
+      # Values: report_only | marker_backfill. Delete is not a value.
+        action: report_only
+        never_delete: true
+      # Cap on backfill writes per pass when action=marker_backfill.
+        max_backfill_per_pass: 50
+
+    # --- Container images — count-based retention, not size ---
+    # Every build lands two tags: 40-hex git SHA and rollback-<image-id> alias.
+    # Dropping only rollback-* frees zero bytes while the SHA tag pins the
+    # image; class must drop the companion SHA tag too (rg-015).
+    # docker system df overstates reclaimable space; size-based policy is wrong.
+    # MLDATA-15: retention has a maximum. RES-07: steady-state reclaimer.
+    container_images:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+        tag_pattern: "rollback-*"
+      # Also drop the companion 40-hex git SHA tag that pins the same image.
+        drop_companion_sha_tag: true
+      # Never reclaim these tags even if they match other selectors.
+        protected_tags:
+          - dev
+          - latest
+          - staging
+      # Skip any image referenced by a running container.
+        skip_images_referenced_by_running_containers: true
+      # Keep this many newest rollback generations; OPS-1 suggested value is 5.
+        keep_count: 5
+      # Forbidden: reclaim by advertised reclaimable bytes.
+        size_based: false
+
+    # --- Scratch clones (temp working trees outside lane sandboxes) ---
+    scratch_clones:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+        # Age gate. Refuse-to-act when a candidate is not under one of
+        # allowed_roots, is a symlink, or is not owned by the expected
+        # account. The bound is configured, not merely asserted
+        # (SEC-01, SEC-16).
+        allowed_roots:
+          - /tmp/estate-scratch
+          - /var/tmp/estate-scratch
+        ttl_seconds: 86400
+        max_targets_per_pass: 50
+
+    # --- Docker build cache ---
+    docker_build_cache:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # prune unused build cache older than this age.
+        older_than_seconds: 604800
+
+    # --- journald ---
+    journal:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # vacuum to this max disk use (journalctl --vacuum-size).
+        # 512 M matches the value OPS-1 records for this host; do not diverge
+        # without stating why here and in OPS-1.
+        vacuum_size_mb: 512
+
+    # --- apt package cache ---
+    apt_cache:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # apt-get clean / autoclean equivalents; no package remove.
+        clean_only: true
+
+    # --- uv package cache ---
+    uv_cache:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # Max age for cached wheels/source; refuse-to-act if uv not installed.
+        ttl_seconds: 1209600
+
+    # --- grok / agent logs (lane and operator accounts) ---
+    grok_logs:
+      enabled: false
+      # Class parameters (A1 schema: reclaim.classes.<name>.params, map).
+      params:
+      # Age-gated log files under known agent log roots only.
+        ttl_seconds: 604800
+      # Retention maximum for identity-adjacent log streams (MLDATA-15).
+        keep_count: 20
+
+# ---------------------------------------------------------------------------
+# Credentials — indirection only; values live outside this file
+# ---------------------------------------------------------------------------
+credentials:
+  # Environment variable *names* the supervisor reads. File is committed.
+  oci_config_env: OCI_CLI_CONFIG_FILE
+  oci_profile_env: OCI_CLI_PROFILE
+  # Timer principal: read + instance stop only. Terminate principal is a
+  # separate operator path, not shared with the lane-execution account (CARD-10).
+
+# ---------------------------------------------------------------------------
+# Per-resource overrides — ONLY place a specific display name may appear
+# Generic sections above must not hardcode instance names (rg-009).
+# Unknown keys → load error. Duplicate match targets → load error, not
+# last-wins (PROV-08, C-4).
+# ---------------------------------------------------------------------------
+overrides: []
+# Example (disabled — copy into the list only when needed):
+# - match_display_name: REPLACE_WITH_DISPLAY_NAME
+#   force_tier: T0
+#   note: "forces T0 refusal regardless of free-form tags (defence in depth)"

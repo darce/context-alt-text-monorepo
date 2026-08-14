@@ -132,7 +132,6 @@ export const TopClusterCard = ({
   };
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
-  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
   const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
@@ -195,22 +194,18 @@ export const TopClusterCard = ({
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : (
-                    <span
-                      className="acx-top-cluster-card__thumb-image acx-top-cluster-card__thumb-image--unavailable"
-                      role="img"
-                      aria-label={unavailableImageLabel}
-                    >
-                      <span className="acx-top-cluster-card__thumb-fallback-label">
-                        {__('No image', 'alt-context')}
-                      </span>
-                    </span>
+                    <Avatar
+                      sizePx={cellSize}
+                      shape="square"
+                      className="acx-top-cluster-card__thumb-image"
+                    />
                   )}
                 </div>
               );
             })}
           </div>
         ) : (
-          <span className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--placeholder" />
+          <Avatar sizePx={gridSizePx} shape="square" className="acx-top-cluster-card__thumb" />
         )}
       </div>
 

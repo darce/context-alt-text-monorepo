@@ -157,7 +157,7 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar size="lg" className="acx-suggestion-card__thumb" />
           )}
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
@@ -178,7 +178,7 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar size="lg" className="acx-suggestion-card__thumb" />
           )}
           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
         </div>

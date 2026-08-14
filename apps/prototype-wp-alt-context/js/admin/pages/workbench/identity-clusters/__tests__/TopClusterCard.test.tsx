@@ -42,7 +42,7 @@ const FACE_THUMB_URL = 'https://example.test/wp-content/uploads/recognition/face
 const MEDIA_URL = 'https://example.test/wp-content/uploads/2026/01/group-photo.jpg';
 const BBOX: BoundingBox = { x: 12, y: 24, width: 80, height: 96 };
 
-const PLACEHOLDER_LABEL = 'Representative image unavailable';
+const MISSING_LABEL = 'No image';
 const FACE_ALT = 'Face to label';
 
 const buildRepresentative = (
@@ -74,11 +74,28 @@ const buildCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabele
 });
 
 describe('TopClusterCard', () => {
-  it('renders an explicit unavailable-image fallback when the representative has no usable image data', () => {
-    render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
+  it('renders Avatar data-missing when the representative has no usable image data', () => {
+    const { container } = render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
 
-    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveAccessibleName(MISSING_LABEL);
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
+    expect(container.querySelector('.acx-top-cluster-card__thumb-image--unavailable')).toBeNull();
+  });
+
+  it('renders Avatar data-missing when the cluster has no representatives', () => {
+    const { container } = render(
+      <TopClusterCard
+        cluster={buildCluster({ representatives: [], suggested_label: null })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const missing = screen.getByRole('img', { name: MISSING_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveAccessibleName(MISSING_LABEL);
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
   // E21-14 regression: the reported symptom was avatars rendering as empty
@@ -98,8 +115,8 @@ describe('TopClusterCard', () => {
     expect(image).toHaveAttribute('src', FACE_THUMB_URL);
     expect(image).toHaveClass('acx-avatar__image');
     expect(container.querySelector('.acx-avatar')).toBeInTheDocument();
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
-    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_LABEL)).not.toBeInTheDocument();
   });
 
   it('renders an avatar for a plain (non face-thumbs) thumb URL when no crop data is present', () => {
@@ -117,7 +134,7 @@ describe('TopClusterCard', () => {
     const image = screen.getByAltText(FACE_ALT);
     expect(image).toHaveAttribute('src', plainThumbUrl);
     expect(image).toHaveClass('acx-avatar__image');
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
   });
 
   it('renders a cropped FaceThumbnail when the representative carries media_url + bbox', () => {
@@ -135,8 +152,8 @@ describe('TopClusterCard', () => {
     expect(image).toHaveAttribute('src', MEDIA_URL);
     expect(image.closest('.acx-face-thumbnail')).toBeInTheDocument();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
-    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_LABEL)).not.toBeInTheDocument();
   });
 
   // The reported DOM showed "5 faces in cluster" next to a placeholder thumb —
@@ -165,7 +182,7 @@ describe('TopClusterCard', () => {
     for (const face of renderedFaces) {
       expect(face).toHaveAttribute('src', expect.stringContaining('https://example.test/'));
     }
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
@@ -266,8 +283,9 @@ describe('TopClusterCard', () => {
     );
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
   it('prompts Is this <label>? and confirms a human suggested_label', async () => {

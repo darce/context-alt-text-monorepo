@@ -31,6 +31,10 @@ trait MapsResponseFields {
 	/**
 	 * Resolve thumbnail URL from thumb_path or WordPress attachment fallback.
 	 *
+	 * Face-thumbs blob URLs stay first-choice (STOR-07). Callers must also emit
+	 * resolve_media_url() as attachment_url and extract_bbox_pixels() so clients
+	 * can crop the durable WP attachment after scan-time blobs are deleted.
+	 *
 	 * @param array<string,mixed> $member_row
 	 */
 	private function resolve_thumb_url( array $member_row, int $media_id ): ?string {
@@ -39,11 +43,9 @@ trait MapsResponseFields {
 			return $blob_backed_url;
 		}
 
-		if ( $media_id > 0 ) {
-			$attachment_url = wp_get_attachment_url( $media_id );
-			if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
-				return $attachment_url;
-			}
+		$attachment_url = $this->resolve_media_url( $media_id );
+		if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
+			return $attachment_url;
 		}
 
 		return $blob_backed_url;
@@ -84,31 +86,37 @@ trait MapsResponseFields {
 	}
 
 	/**
-	 * Extract bbox_pixels from bbox JSON.
+	 * Extract bbox pixels from bbox JSON.
+	 *
+	 * Unknown / undecodable source is null — never a fabricated zero box (rg-015).
 	 *
 	 * @param mixed $bbox_json
-	 * @return array<string,int>
+	 * @return array{x:int,y:int,width:int,height:int}|null
 	 */
-	private function extract_bbox_pixels( mixed $bbox_json ): array {
+	private function extract_bbox_pixels( mixed $bbox_json ): ?array {
 		if ( ! is_string( $bbox_json ) || '' === trim( $bbox_json ) ) {
-			return array( 'x' => 0, 'y' => 0, 'width' => 0, 'height' => 0 );
+			return null;
 		}
 
 		$decoded = json_decode( $bbox_json, true );
 		if ( ! is_array( $decoded ) ) {
-			return array( 'x' => 0, 'y' => 0, 'width' => 0, 'height' => 0 );
+			return null;
 		}
 
 		$pixels = $decoded['pixels'] ?? $decoded;
 		if ( ! is_array( $pixels ) ) {
-			return array( 'x' => 0, 'y' => 0, 'width' => 0, 'height' => 0 );
+			return null;
+		}
+
+		if ( ! isset( $pixels['x'], $pixels['y'], $pixels['width'], $pixels['height'] ) ) {
+			return null;
 		}
 
 		return array(
-			'x' => absint( $pixels['x'] ?? 0 ),
-			'y' => absint( $pixels['y'] ?? 0 ),
-			'width' => absint( $pixels['width'] ?? 0 ),
-			'height' => absint( $pixels['height'] ?? 0 ),
+			'x' => absint( $pixels['x'] ),
+			'y' => absint( $pixels['y'] ),
+			'width' => absint( $pixels['width'] ),
+			'height' => absint( $pixels['height'] ),
 		);
 	}
 

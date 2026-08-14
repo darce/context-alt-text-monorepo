@@ -179,6 +179,7 @@ class ClusterResponseMapper {
 			'clustering_pending' => false,
 			'bbox' => $bbox,
 			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
+			'attachment_url' => $this->resolve_media_url( $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
 			'is_pinned' => $this->normalize_boolean_value( $member_row['is_pinned'] ?? false ),
 		);
@@ -201,6 +202,7 @@ class ClusterResponseMapper {
 			'id' => $member_identity_id,
 			'media_id' => $media_id,
 			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
+			'attachment_url' => $this->resolve_media_url( $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
 			'bbox' => $this->extract_bbox_pixels( $member_row['bbox_json'] ?? null ),
 			'is_pinned' => $is_pinned,

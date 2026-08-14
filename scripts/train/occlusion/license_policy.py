@@ -59,6 +59,24 @@ suffix coverage, so the inner walk was redundant for deny and is
 removed. ``_FAMILY_GENERALIZED_SUFFIX_ENABLED`` is deleted (verdict-dead:
 flipping it alone changed zero path-split pins).
 
+**Canonical fold** (FIR-7 F14-1 / F14-2 / F14-3): ``canonical()``
+NFKC-normalises, strips Cf/format characters, then fail-closes on any
+C0/C1 control (``yolo\\x00v8`` → ``invalid_row`` — never silently
+strip). Every remaining non-alphanumeric ASCII character except ``/``
+folds to ``_`` (total class rule; the F13-1 ``+=:@|#`` enumeration is
+gone). Backslash is normalised to slash first so it keeps path-component
+split. ``_`` runs collapse; edges strip. Before fold, one trailing
+registry tag ``:latest`` / ``:v0.3.0`` is stripped from the last path
+component (``yolox:latest`` / ``megvii/yolox:latest`` / ``yolox:v0.3.0``
+admit as the bare family; ``yolo:latest`` strips then denies ``yolo``;
+``yolox:s`` is not a registry tag and folds to ``yolox_s``). After fold,
+a leading ``pp`` segment immediately followed by a ``yolo*`` segment
+merges to ``ppyolo*`` (``PP-YOLOE+`` / ``PaddlePaddle/PP-YOLOE+`` →
+``ppyoloe`` admit; ``pp_yolo`` → ``ppyolo`` admits; ``pp_yolov8`` →
+``ppyolov8`` unknown residual denies). ``ppyoloe+`` / ``yolox_s+trt``
+admit; ``yolox~yolo`` / ``yolox+yolo`` deny; non-NFKC dashes stay
+``invalid_row``.
+
 **Component-split-first** (FIR-7-A6-02): when the canonical form contains
 ``/``, family matching runs **only** on the individual slash components —
 never on the joined full token. Testing the joined form first let bare
@@ -137,6 +155,7 @@ separator-only tags (any length) reflecting real checkpoints —
 + ``8xb8``/``8x8`` (Detectron2 / MMDetection schedule / ``R_50`` spelling
 / dataset tag); ``yolop``: v2/v3; ``ppyolo``: e/v2 +
 s/m/l/x/t/plus/tiny/large/small/sod/crn/r50vd/r18vd/r101vd/mbv3/dcn/300e/80e/1x/2x/365e/650e/coco
++ auxhead/relu/320/416/640/distill/voc/30e/60e/objects365
 (PaddleDetection catalog). YOLOS single-letter size twins (``yolosx`` /
 ``yolosn`` / …) are NOT real hustvl sizes → deny; ``yoloxs`` stays
 admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
@@ -214,12 +233,15 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      non-member residuals (export-shaped rest under a base seed); it
      must never veto a member. Closes compact heads of underscore-
      bearing seeds (``yolonasl_trt`` / ``buffalol2_trt`` / ``yolonas_int8``).
-  3. when an exception-family component is present (structural **or**
-     unbounded compact prefix — F12-3), promote a package-floor
+  3. when an exception-family component is present (structural,
+     unbounded compact prefix — F12-3 — **or** mid-token compact
+     occurrence — F14-4), promote a package-floor
      ``nc_model_derived`` hit so residual NC compounds
-     (``yolox_s_buffalo_l`` / ``yoloxinsightface`` / ``yoloxyolo_nas``)
-     reject on the derived door too. BR-28 door-precision
-     (``myarcface`` / ``not-insightface``) stays floor-only.
+     (``yolox_s_buffalo_l`` / ``yoloxinsightface`` / ``yoloxyolo_nas`` /
+     ``xyoloxinsightface``) reject on the derived door too. BR-28
+     door-precision (``myarcface`` / ``not-insightface``) and bare
+     junk+NC without an exception segment (``aabuffalo_l`` /
+     ``aainsightface``) stay floor-only.
   4. **Multi-axis door promotion** (FIR-7-A10-01 / B11-02): doors consider
      **all** floor hits in a compound, not just the ranked winner. If any
      suffix/component hits an AGPL/``denylisted_package`` entry, reject
@@ -4580,12 +4602,11 @@ def _exception_illegitimate_deny_steal(
     :func:`_classify_exception_residual` runs. ``yoloxultralytics`` /
     ``yoloxsultralytics`` are owned here, not by rule (e).
 
-    Classification via :func:`_classify_exception_residual`:
+    Classification via :func:`_classify_exception_residual`
+    (the pre-classifier paragraph above owns F12-1 steal):
 
       * legitimate tag residual (shape-aware) → ``None`` (admit / strip);
       * defer (residual-alone deny seed re-queueable by walker) → ``None``;
-      * B14-1 / F12-1 non-requeueable compact residual with any deny hit
-        (exact identity included) → residual's own deny entry;
       * deny-reconstituting → the matched deny entry (honest lineage);
       * unknown residual → fail-closed entry with honest unknown-residual
         note (never fabricates an Ultralytics attribution).

@@ -11303,6 +11303,120 @@ class TestF14FourCharHeadExceptionRem:
         assert policy._package_denylist_hit("yoloxyolo") is not None
 
 
+class TestF14SuffixTolerantGlue:
+    """F14-6 / R16-G1-7 / R16-CDX-3: exception/deny rem + residual.
+
+    Head glue / F13-2 endswith / mid-adjacency required the rem to be an
+    exact known spelling. One alnum suffix defeated all three. When the
+    rem is exception-spelling (or deny-seed) + residual, classify that
+    residual fail-closed instead of requiring exact membership.
+    """
+
+    NC_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("arcfaceyoloxextra", "arcface"),
+        ("arcfaceyoloxinsight", "arcface"),
+        ("insightfaceyoloxextra", "insightface"),
+        ("arcfaceyoloxcoco", "arcface"),
+    )
+    AGPL_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolov8yoloxextra", "yolov8"),
+        ("xyoloxyoloextra", "yolo"),
+        ("yolov8yoloxcoco", "yolov8"),
+    )
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "ayoloxs",
+        "xyoloxs",
+        "myyoloxs",
+    )
+    ALREADY_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("arcfaceyoloxx", "arcface"),
+    )
+    CATALOG_ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyoloe_s",
+        "yolox_s_8xb8-300e_coco",
+        "yolox_pt_trt",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", NC_WITNESSES)
+    def test_nc_head_exception_plus_residual_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (F14-6 suffix-tolerant)"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        pattern = _door_nc_pattern_id(result.detail)
+        entry = _door_entry_package_id(result.detail)
+        assert pattern == expected_pkg or entry == expected_pkg, (
+            f"{token!r}: door must name {expected_pkg!r}; "
+            f"got pattern={pattern!r} entry={entry!r} detail={result.detail!r}"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES)
+    def test_agpl_head_or_mid_plus_residual_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (F14-6 suffix-tolerant)"
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_junk_plus_legit_compact_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token,expected_pkg", ALREADY_DENY)
+    def test_exact_exception_rem_still_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    @pytest.mark.parametrize("token", CATALOG_ADMIT)
+    def test_catalog_admits_unaffected(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"catalog {token!r} must stay PASS"
+        )
+
+    def test_red_proof_suffix_tolerant_glue_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore exact-membership rem (no suffix tolerance).
+
+        Neuter: ``_SUFFIX_TOLERANT_GLUE_ENABLED`` → ``False``.
+        ``arcfaceyoloxextra`` / ``yolov8yoloxextra`` / ``xyoloxyoloextra``
+        admit; exact ``arcfaceyoloxx`` and B13-5 ``insightfaceyoloxextra``
+        stay denied.
+        """
+        exact_only = (
+            [t for t, _ in self.NC_WITNESSES if t != "insightfaceyoloxextra"]
+            + [t for t, _ in self.AGPL_WITNESSES]
+        )
+        for token in exact_only:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_SUFFIX_TOLERANT_GLUE_ENABLED", False)
+        for token in exact_only:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with exact rem only, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("arcfaceyoloxx") is not None
+        assert policy._package_denylist_hit("insightfaceyoloxextra") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
+        assert policy._package_denylist_hit("yolodummy") is None
+
+
 class TestF13NcDoorPromotionTrailingException:
     """F13-2 / R15-L-1: exception after the NC head must reach doors.
 

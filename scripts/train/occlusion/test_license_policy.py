@@ -13246,6 +13246,47 @@ class TestF17UnderscoreNcSeedGluedException:
         ("buffalo_lxyolox:latest", "buffalo_l"),
         ("buffalo_scabcyolox:v0.3.0", "buffalo_sc"),
     )
+    # R20-01: rem tails that fold to their own ``_`` segment. ``:v8``
+    # is the unstripped single-number twin of ``_v8`` (F15-3).
+    REM_TAILS: ClassVar[tuple[str, ...]] = (
+        "_v8",
+        ":v8",
+        "_tiny",
+        "_extra",
+        "_onnx",
+    )
+    # One glued row per rem-tail axis (seed/junk/spelling still vary).
+    REM_TAIL_GLUED: ClassVar[tuple[tuple[str, str, str, str], ...]] = (
+        ("buffalo_l", "x", "yolox", "_v8"),
+        ("buffalo_l2", "v9", "yoloxs", ":v8"),
+        ("buffalo_pt", "abc", "yolop", "_tiny"),
+        ("buffalo_s", "abcd", "yolos", "_extra"),
+        ("buffalo_sc", "x", "yolof", "_onnx"),
+        ("buffalo_trt", "v9", "ppyoloe", "_v8"),
+        ("antelope_v2", "abc", "yolox", ":v8"),
+    )
+    # Separator-twin: junk glued to seed, exception in its own segment.
+    REM_TAIL_TWIN: ClassVar[tuple[tuple[str, str, str, str], ...]] = (
+        ("buffalo_l", "x", "yolox", "_tiny"),
+        ("buffalo_l2", "v9", "yoloxs", "_v8"),
+        ("buffalo_pt", "abc", "yolop", ":v8"),
+        ("buffalo_s", "abcd", "yolos", "_onnx"),
+        ("buffalo_sc", "x", "yolof", "_extra"),
+        ("buffalo_trt", "v9", "ppyoloe", "_tiny"),
+        ("antelope_v2", "abc", "yolox", "_onnx"),
+    )
+    # Oracle-listed R20-01 admits at F17 HEAD, plus the compact twin
+    # ``:v8`` form the consolidator also reproduced.
+    LISTED_REM_TAIL: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("buffalo_lxyolox_v8", "buffalo_l", "nc"),
+        ("buffalo_lxyolox:v8", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_tiny", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_extra", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_onnx", "buffalo_l", "nc"),
+        ("buffalo_lx_yolox_tiny", "buffalo_l", "nc"),
+        ("fastsamxyolox:v8", "fastsam", "agpl"),
+        ("buffalolxyolox:v8", "buffalo_l", "nc"),
+    )
     # Current oracle attributions — verdicts AND package_id must hold.
     A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
         ("buffalo_lyolox", "buffalo_l", "nc"),
@@ -13336,6 +13377,94 @@ class TestF17UnderscoreNcSeedGluedException:
                     self._assert_nc_seed_deny(f"{seed}{junk}{spelling}", seed)
                     seen += 1
         assert seen == 168
+
+    @pytest.mark.parametrize("seed,junk,spelling,tail", REM_TAIL_GLUED)
+    def test_rem_tail_glued_axes_deny(
+        self, seed: str, junk: str, spelling: str, tail: str
+    ) -> None:
+        """R20-01: each rem-tail axis on a glued {seed}{junk}{spelling}."""
+        self._assert_nc_seed_deny(f"{seed}{junk}{spelling}{tail}", seed)
+
+    @pytest.mark.parametrize("seed,junk,spelling,tail", REM_TAIL_TWIN)
+    def test_rem_tail_separator_twin_axes_deny(
+        self, seed: str, junk: str, spelling: str, tail: str
+    ) -> None:
+        """R20-01: each rem-tail axis on {seed}{junk}_{spelling}{tail}.
+
+        Floor attribution is the underscore NC seed. Door may be NC
+        (legit size/export rem) or AGPL unknown-residual (``_v8`` /
+        ``_extra``) — AGPL-first promotion is unchanged.
+        """
+        token = f"{seed}{junk}_{spelling}{tail}"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (R20-01 twin rem tail)"
+        assert hit.package_id == seed, (
+            f"{token!r}: expected stem {seed!r}, got {hit.package_id!r}"
+        )
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+
+    @pytest.mark.parametrize("token,expected_pkg,axis", LISTED_REM_TAIL)
+    def test_listed_rem_tail_gadgets_deny(
+        self, token: str, expected_pkg: str, axis: str
+    ) -> None:
+        """R20-01: consolidator-reproduced rem-tail admits now deny."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (R20-01 rem tail)"
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        if axis == "nc":
+            assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        else:
+            assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_full_rem_tail_cross_product_sweep_denies(self) -> None:
+        """R20-01: {7 seeds}×{junk}×{spelling}×{rem tails} glued and twin."""
+        seen = 0
+        for seed in self.SEEDS:
+            for junk in self.JUNK:
+                for spelling in self.SPELLINGS:
+                    for tail in self.REM_TAILS:
+                        glued = f"{seed}{junk}{spelling}{tail}"
+                        twin = f"{seed}{junk}_{spelling}{tail}"
+                        for token in (glued, twin):
+                            hit = policy._package_denylist_hit(token)
+                            assert hit is not None, (
+                                f"{token!r} must DENY (R20-01 rem-tail sweep)"
+                            )
+                            assert hit.package_id == seed, (
+                                f"{token!r}: expected stem {seed!r}, "
+                                f"got {hit.package_id!r}"
+                            )
+                            assert (
+                                hit.reason
+                                is policy.RejectionReason.NC_MODEL_DERIVED
+                            ), (
+                                f"{token!r}: expected nc_model_derived, "
+                                f"got {hit.reason}"
+                            )
+                            seen += 1
+        # 7 × 4 × 6 × 5 tails × 2 forms
+        assert seen == 1680
+
+    def test_glued_rem_stays_unknown_residual(self) -> None:
+        """R20-01 must not retarget A.3 glued rem to the underscore seed."""
+        for token, expected_pkg in (
+            ("buffalo_lxyoloxextra", "yolox_unknown_residual"),
+            ("buffalo_lxyoloxlatest", "yolox_unknown_residual"),
+        ):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None
+            assert hit.package_id == expected_pkg, (
+                f"{token!r}: glued rem must stay {expected_pkg!r}, "
+                f"got {hit.package_id!r}"
+            )
 
     def test_a3_must_stay_deny_fence(self) -> None:
         """Non-classify A.3 neighbours. extra/latest live on the classify pin."""
@@ -13431,6 +13560,40 @@ class TestF17UnderscoreNcSeedGluedException:
         assert policy._package_denylist_hit("buffalo_lyolox") is not None
         assert policy._package_denylist_hit("ayoloxs") is None
         assert policy._package_denylist_hit("yolop_yolox") is None
+
+    def test_red_proof_separate_rem_owner_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop rem-path owner → R20-01 rem-tail gadgets admit.
+
+        Empty-rem R19-01 gadgets and A.3 glued rem stay on their own
+        arms.
+        """
+        gadgets = [
+            "buffalo_lxyolox_v8",
+            "buffalo_lxyolox:v8",
+            "buffalo_lxyolox_tiny",
+            "buffalo_lxyolox_extra",
+            "buffalo_lxyolox_onnx",
+            "buffalo_lx_yolox_tiny",
+            "fastsamxyolox:v8",
+        ]
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED", False
+        )
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without separate-rem owner, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("buffalo_lxyolox") is not None
+        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert extra is not None
+        assert extra.package_id == "yolox_unknown_residual"
+        assert policy._package_denylist_hit("ayoloxs") is None
 
 
 class TestF17StackedExceptionStemAttribution:

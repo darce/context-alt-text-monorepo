@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2325  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2350  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1868,8 +1868,33 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_a4_must_stay_admit_fence',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_four_plus_suffix_junk_without_exception_is_floor_miss',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_full_cross_product_sweep_denies',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_full_rem_tail_cross_product_sweep_denies',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_glued_rem_stays_unknown_residual',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lx_yolox_tiny-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox:v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_extra-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_onnx-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_tiny-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalolxyolox:v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[fastsamxyolox:v8-fastsam-agpl]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_mid_exception_unknown_rem_neuter_underscore',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_separate_rem_owner_neuter',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_underscore_glued_owner_neuter',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[antelope_v2-abc-yolox-:v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_l-x-yolox-_v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_l2-v9-yoloxs-:v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_pt-abc-yolop-_tiny]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_s-abcd-yolos-_extra]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_sc-x-yolof-_onnx]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[buffalo_trt-v9-ppyoloe-_v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[antelope_v2-abc-yolox-_onnx]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_l-x-yolox-_tiny]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_l2-v9-yoloxs-_v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_pt-abc-yolop-:v8]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_s-abcd-yolos-_onnx]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_sc-x-yolof-_extra]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_separator_twin_axes_deny[buffalo_trt-v9-ppyoloe-_tiny]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[antelope_v2-abc-yolox]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_l-x-yolox]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_l2-v9-yoloxs]',
@@ -3753,6 +3778,13 @@ MUTATIONS: list[Mutation] = [
             "test_a3_must_stay_deny_fence",
             "test_fastsam_stacked_exception_names_stem",
             "test_junk_prefix_stacked_exception_stays_yolo",
+            # Wave F18 R20-01: rem-tail owner pins die when hit misses.
+            "test_rem_tail_glued_axes_deny",
+            "test_rem_tail_separator_twin_axes_deny",
+            "test_listed_rem_tail_gadgets_deny",
+            "test_full_rem_tail_cross_product_sweep_denies",
+            "test_glued_rem_stays_unknown_residual",
+            "test_red_proof_separate_rem_owner_neuter",
         ),
     ),
     Mutation(

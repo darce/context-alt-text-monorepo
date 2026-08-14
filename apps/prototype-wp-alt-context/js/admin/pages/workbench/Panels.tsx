@@ -20,10 +20,14 @@ const SCAN_REGION_DESCRIPTION = __(
   'alt-context',
 );
 
+/** Per-tick patterns that must stay visual-only when progressPhase is absent (L3R-01 / L3V-03). */
+const TICKING_STATUS_TEXT = /\d+\s*\/\s*\d+|\d+\s*s\b/;
+
 /**
  * Coarse AT announcement for the job live region (L3R-01 residual).
  * Prefer progress phase labels (stable across SSE ticks). Fall back to statusText
- * only when it has no N/M count pattern — per-tick "Processed N/M" stays visual-only.
+ * only when it has no N/M count or countdown pattern — per-tick "Processed N/M"
+ * and "starting in Ns" stay visual-only (L3V-03).
  */
 export const buildCoarseJobAnnouncement = ({
   jobId,
@@ -41,8 +45,8 @@ export const buildCoarseJobAnnouncement = ({
   if (progressPhase) {
     return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, formatSyncJobPhase(progressPhase));
   }
-  // No phase: announce non-count status only (terminal words, "Starting scan…", etc.).
-  if (statusText && !/\d+\s*\/\s*\d+/.test(statusText)) {
+  // No phase: announce stable status only (terminal words, "Starting scan…", etc.).
+  if (statusText && !TICKING_STATUS_TEXT.test(statusText)) {
     return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, statusText);
   }
   return null;

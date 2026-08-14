@@ -239,7 +239,7 @@ describe('WorkbenchFindingsPanel', () => {
     );
 
     const { container, rerender } = render(
-      <WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />,
+      <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />,
     );
 
     const loadingHeading = container.querySelector('#acx-workbench-findings-heading');
@@ -253,7 +253,7 @@ describe('WorkbenchFindingsPanel', () => {
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
     );
-    rerender(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
     expect(container.querySelector('#acx-workbench-findings-heading')).toBeTruthy();
 
     vi.mocked(useWorkbenchFindings).mockReturnValue(
@@ -262,7 +262,7 @@ describe('WorkbenchFindingsPanel', () => {
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE },
       }),
     );
-    rerender(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
     expect(container.querySelector('#acx-workbench-findings-heading')).toBeTruthy();
   });
 

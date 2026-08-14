@@ -94,6 +94,7 @@ const makeQueues = (overrides: Partial<WorkbenchFindingsQueues> = {}): Workbench
   topUnlabeledClusters: [],
   // Mirrors the hook fallback: server total defaults to the fetched page length.
   topUnlabeledTotal: overrides.topUnlabeledClusters?.length ?? 0,
+  topUnlabeledTruncated: false,
   ...overrides,
 });
 
@@ -1222,6 +1223,7 @@ describe('useWorkbenchFindings', () => {
     // Would fail against old code that used topUnlabeledClusters.length (page size).
     expect(result.current.counts.unlabeledClusters).toBe(42);
     expect(result.current.counts.total).toBe(42);
+    expect(result.current.topUnlabeledTruncated).toBe(true);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'page-head' });
   });
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
@@ -201,7 +202,7 @@ export const MergeSuggestionCard = ({
               onOpen={onOpenOriginal}
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar size="md" className="acx-suggestion-card__thumb" />
           )}
           <span className="acx-suggestion-card__face-label">
             {clusterALabel}
@@ -218,7 +219,7 @@ export const MergeSuggestionCard = ({
               onOpen={onOpenOriginal}
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar size="md" className="acx-suggestion-card__thumb" />
           )}
           <span className="acx-suggestion-card__face-label">
             {clusterBLabel}

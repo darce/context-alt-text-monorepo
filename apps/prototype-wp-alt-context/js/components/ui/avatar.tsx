@@ -3,13 +3,28 @@
  *
  * Use for pre-cropped thumbnail URLs (e.g. representative_thumb_path).
  * For face bounding-box crops from full images, use FaceThumbnail instead.
+ *
+ * Four-state contract (B.4): loading / real / data-missing / error.
+ * Missing is expected and quiet; error is a real fault. Do not collapse them.
  */
 
 import * as React from 'react';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
+import { AlertTriangle, ImageOff } from 'lucide-react';
 import { __ } from '@wordpress/i18n';
 
 export type AvatarSize = 'sm' | 'md' | 'lg';
+
+export const AVATAR_STATES = {
+  loading: 'loading',
+  real: 'real',
+  dataMissing: 'data-missing',
+  error: 'error',
+} as const;
+
+export type AvatarState = (typeof AVATAR_STATES)[keyof typeof AVATAR_STATES];
+
+type ImageLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 const sizeMap: Record<AvatarSize, number> = {
   sm: 32,
@@ -18,8 +33,8 @@ const sizeMap: Record<AvatarSize, number> = {
 };
 
 export interface AvatarProps {
-  /** Pre-cropped thumbnail URL */
-  src: string;
+  /** Pre-cropped thumbnail URL. Omit or pass empty for the data-missing branch. */
+  src?: string;
   /** Accessible alt text */
   alt?: string;
   /** Size variant */
@@ -32,6 +47,23 @@ export interface AvatarProps {
   className?: string;
 }
 
+function hasAvatarSrc(src: string | undefined): src is string {
+  return typeof src === 'string' && src.trim() !== '';
+}
+
+function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingStatus): AvatarState {
+  if (!hasAvatarSrc(src)) {
+    return AVATAR_STATES.dataMissing;
+  }
+  if (loadStatus === 'loaded') {
+    return AVATAR_STATES.real;
+  }
+  if (loadStatus === 'error') {
+    return AVATAR_STATES.error;
+  }
+  return AVATAR_STATES.loading;
+}
+
 export const Avatar = ({
   src,
   alt = __('Face thumbnail', 'alt-context'),
@@ -41,17 +73,51 @@ export const Avatar = ({
   className = '',
 }: AvatarProps): React.JSX.Element => {
   const displaySize = sizePx ?? sizeMap[size];
+  const iconSize = Math.max(12, Math.round(displaySize * 0.35));
+  const [loadStatus, setLoadStatus] = React.useState<ImageLoadingStatus>('idle');
+  const previousSrc = React.useRef(src);
+  if (previousSrc.current !== src) {
+    previousSrc.current = src;
+    setLoadStatus('idle');
+  }
+  const state = resolveAvatarState(src, loadStatus);
   const baseClass = 'acx-avatar';
   const classes = [baseClass, `${baseClass}--${size}`, shape === 'square' ? `${baseClass}--square` : '', className]
     .filter(Boolean)
     .join(' ');
+  const rootStyle = { width: displaySize, height: displaySize };
+
+  if (state === AVATAR_STATES.dataMissing) {
+    return (
+      <span
+        className={classes}
+        data-avatar-state={AVATAR_STATES.dataMissing}
+        role="img"
+        aria-label={__('No image', 'alt-context')}
+        style={rootStyle}
+      >
+        <ImageOff className={`${baseClass}__missing-icon`} size={iconSize} aria-hidden="true" />
+        <span className={`${baseClass}__missing-label`}>{__('No image', 'alt-context')}</span>
+      </span>
+    );
+  }
 
   return (
-    <AvatarPrimitive.Root className={classes} style={{ width: displaySize, height: displaySize }}>
-      <AvatarPrimitive.Image className={`${baseClass}__image`} src={src} alt={alt} />
-      <AvatarPrimitive.Fallback className={`${baseClass}__fallback`} delayMs={300}>
-        <span className="screen-reader-text">{__('Image unavailable', 'alt-context')}</span>
-      </AvatarPrimitive.Fallback>
+    <AvatarPrimitive.Root className={classes} data-avatar-state={state} style={rootStyle}>
+      <AvatarPrimitive.Image
+        className={`${baseClass}__image`}
+        src={src}
+        alt={alt}
+        onLoadingStatusChange={setLoadStatus}
+      />
+      {state === AVATAR_STATES.loading ? <span className={`${baseClass}__skeleton`} aria-hidden="true" /> : null}
+      {state === AVATAR_STATES.error ? (
+        <span className={`${baseClass}__error`}>
+          <AlertTriangle className={`${baseClass}__warning-icon`} size={iconSize} aria-hidden="true" />
+          <ImageOff className={`${baseClass}__broken-icon`} size={iconSize} aria-hidden="true" />
+          <span className="screen-reader-text">{__('Image failed to load', 'alt-context')}</span>
+        </span>
+      ) : null}
     </AvatarPrimitive.Root>
   );
 };

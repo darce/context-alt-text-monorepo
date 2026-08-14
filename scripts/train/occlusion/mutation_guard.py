@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2350  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2351  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1878,6 +1878,7 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_v8-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalolxyolox:v8-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[fastsamxyolox:v8-fastsam-agpl]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_punct_led_remainder_is_not_glued_owner',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_mid_exception_unknown_rem_neuter_underscore',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_separate_rem_owner_neuter',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_underscore_glued_owner_neuter',

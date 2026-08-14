@@ -13561,6 +13561,25 @@ class TestF17UnderscoreNcSeedGluedException:
         assert policy._package_denylist_hit("ayoloxs") is None
         assert policy._package_denylist_hit("yolop_yolox") is None
 
+    def test_punct_led_remainder_is_not_glued_owner(self) -> None:
+        """R20-04: ``rest[0].isalnum()`` — punct after the seed is not glue.
+
+        Direct helper pin so dropping the boundary check reds here, not
+        only via the incidental F14 fold red-proof.
+        """
+        assert (
+            policy._underscore_preserving_glued_seed_owner("buffalo_l~yolox")
+            is None
+        )
+        assert (
+            policy._underscore_preserving_glued_seed_owner("buffalo_l_xyolox")
+            is None
+        )
+        owned = policy._underscore_preserving_glued_seed_owner(
+            "buffalo_lxyolox"
+        )
+        assert owned is not None and owned.package_id == "buffalo_l"
+
     def test_red_proof_separate_rem_owner_neuter(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

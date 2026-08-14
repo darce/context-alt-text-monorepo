@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from scripts.bench.driver import init_run_dir, read_status, run_pair
+from scripts.bench.driver import read_status, run_pair
 from scripts.bench.preflight import preflight_pair
 from scripts.bench.stack_pair import BenchError, load_stack_pair
 
@@ -55,7 +55,8 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
     keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
     out_dir = Path(args.out) / "legs" if args.out else None
     if args.out:
-        init_run_dir(args.out, pair, args.config)
+        Path(args.out).mkdir(parents=True, exist_ok=True)
+        # Preflight must not stamp the stack-pair config bytes as the corpus manifest.
     preflight_pair(pair, out_dir=out_dir, api_keys=keys)
     print("preflight ok")
     return 0
@@ -69,6 +70,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         manifest_path=args.manifest,
         images_dir=images_dir,
         out_dir=args.out,
+        skip_preflight=False,
     )
     print(f"run complete: {args.out}")
     return 0

@@ -139,6 +139,7 @@ def run_cluster_phase(
         store = ItemOutcomeStore(leg / "items.jsonl")
         analyze_outcomes = list(store.latest_analyze_by_media().values())
     decision = evaluate_cluster_gate(analyze_outcomes, item_max_attempts=item_max_attempts)
+    latch = leg / "leg_outcome.json"
     if not decision.admits:
         if decision.reason == "cluster_gate_refused":
             outcome = {
@@ -146,9 +147,12 @@ def run_cluster_phase(
                 "phase": "failed",
                 "error_code": "cluster_gate_refused",
             }
-            (leg / "leg_outcome.json").write_text(json.dumps(outcome, indent=2), encoding="utf-8")
+            latch.write_text(json.dumps(outcome, indent=2), encoding="utf-8")
+        elif latch.is_file():
+            # Retryable refusal: do not leave a stale terminal latch in the
+            # window where item_max_attempts was raised after a prior refuse.
+            latch.unlink()
         return decision
-    latch = leg / "leg_outcome.json"
     if latch.is_file():
         latch.unlink()
     payload = client.clustering_job(tenant_id, mode="sync")
@@ -213,7 +217,7 @@ def run_leg(
                             "manifest_media_id": entry.media_id,
                             "manifest_path": entry.path,
                             "content_sha256": entry.sha256,
-                            "stack_media_id": entry.media_id,
+                            "stack_media_id": None,
                             "image_width": width,
                             "image_height": height,
                             "phase": "ingest",
@@ -231,7 +235,7 @@ def run_leg(
                             "manifest_media_id": entry.media_id,
                             "manifest_path": entry.path,
                             "content_sha256": entry.sha256,
-                            "stack_media_id": entry.media_id,
+                            "stack_media_id": None,
                             "image_width": width,
                             "image_height": height,
                             "phase": "analyze",

@@ -498,6 +498,7 @@ def _golden_entry(path: str, tags: list[SliceTag] | None = None) -> GoldenEntry:
         easy_wrong=[],
         policy={"recognition_enabled": True},
         tags=list(tags or []),
+        provenance={"source": "operator", "license": "mock_entity"},
     )
 
 

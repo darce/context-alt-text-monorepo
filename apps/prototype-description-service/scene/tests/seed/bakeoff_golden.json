@@ -46,7 +46,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -80,7 +85,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -125,7 +135,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -168,7 +183,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -202,7 +222,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -222,7 +247,12 @@
         "recognition_enabled": false
       },
       "expected_attachments": [],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -253,7 +283,12 @@
           "review_reason": "unconfirmed_identity"
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -285,7 +320,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -352,7 +392,12 @@
           "review_reason": null
         }
       ],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -367,7 +412,12 @@
         "recognition_enabled": true
       },
       "expected_attachments": [],
-      "base_caption": ""
+      "base_caption": "",
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic mock_images fixture"
+      }
     }
   ]
 }

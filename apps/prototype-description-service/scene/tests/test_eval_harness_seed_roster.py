@@ -182,6 +182,7 @@ def _scene_fixture(tmp_path):
                 "must_right": ["Alice Example"],
                 "easy_wrong": ["Bob Example"],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "operator", "license": "mock_entity"},
             }
         )
     manifest = {"manifest_version": 2, "roster": ["Alice Example", "Bob Example"], "entries": entries}
@@ -223,6 +224,7 @@ def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-0
             "must_right": [],
             "easy_wrong": ["Bob Example"],
             "policy": {"recognition_enabled": True},
+            "provenance": {"source": "operator", "license": "mock_entity"},
         }
     )
     with open(manifest_path, "w") as handle:
@@ -307,6 +309,7 @@ def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
             "must_right": ["Alice Example"],
             "easy_wrong": ["Bob Example"],
             "policy": {"recognition_enabled": True},
+            "provenance": {"source": "operator", "license": "mock_entity"},
         }
     )
     with open(manifest_path, "w") as handle:

@@ -182,9 +182,12 @@ class AttestationRecord(BaseModel):
     @field_validator("attested_by")
     @classmethod
     def _attested_by_named(cls, value: str) -> str:
-        if not value.strip():
+        stripped = value.strip()
+        # Reject empty-after-format/space (ZWSP, NBSP, etc.): strip() alone
+        # keeps Cf characters, so also require a word character.
+        if not stripped or not re.search(r"\w", stripped, flags=re.UNICODE):
             raise ValueError("attested_by is required (testimony needs a named attester)")
-        return value
+        return stripped
 
     @field_validator("attested_at")
     @classmethod
@@ -408,8 +411,15 @@ def emit_remediated_manifest(
         attested = load_and_validate_attestation(attestation, draft)
     elif isinstance(attestation, list):
         attested = validate_attestation_pass(attestation, draft)
+    elif isinstance(attestation, AttestationPass):
+        # Never trust a pre-built pass: re-bind against the supplied draft
+        # (sha256 per media_id, completeness, memory cap).
+        attested = validate_attestation_pass(list(attestation.records), draft)
     else:
-        attested = attestation
+        raise RemediationError(
+            f"attestation must be a Path, record list, or AttestationPass; "
+            f"got {type(attestation).__name__}"
+        )
 
     survivors: list[GoldenEntry] = []
     dropped: list[GateDrop] = []
@@ -421,15 +431,8 @@ def emit_remediated_manifest(
         if entry.media_id in FIXED_CELEB_DROP_IDS:
             dropped.append(_drop(entry, FIXED_CELEB_DROP_RATIONALE))
             continue
-        # Plan table already kept the three camera-roll rows; retag wins
-        # even if a later attestation would have dropped them.
-        if entry.media_id in FIXED_RETAG_IDS:
-            survivors.append(
-                entry.model_copy(
-                    update={"provenance": _survivor_provenance(entry, record)}
-                )
-            )
-            continue
+        # Attestation drop verdicts always win, including FIXED_RETAG_IDS.
+        # The plan table only supplies survivor source/license after a keep.
         if record.attestation is AttestationKind.UNKNOWN:
             dropped.append(_drop(entry, ATTESTATION_UNKNOWN_RATIONALE))
             continue

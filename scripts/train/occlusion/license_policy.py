@@ -59,26 +59,38 @@ suffix coverage, so the inner walk was redundant for deny and is
 removed. ``_FAMILY_GENERALIZED_SUFFIX_ENABLED`` is deleted (verdict-dead:
 flipping it alone changed zero path-split pins).
 
-**Canonical fold** (FIR-7 F14-1 / F14-2 / F14-3): ``canonical()``
-NFKC-normalises, strips Cf/format characters, then fail-closes on any
-C0/C1 control (``yolo\\x00v8`` → ``invalid_row`` — never silently
-strip). Every remaining non-alphanumeric ASCII character except ``/``
-folds to ``_`` (total class rule; the F13-1 ``+=:@|#`` enumeration is
-gone). Backslash is normalised to slash first so it keeps path-component
-split. ``_`` runs collapse; edges strip. Before fold, one trailing
-registry tag ``:latest`` / ``:v0.3.0`` is stripped from the last path
-component (``yolox:latest`` / ``megvii/yolox:latest`` / ``yolox:v0.3.0``
-admit as the bare family; ``yolo:latest`` strips then denies ``yolo``;
-``yolox:s`` is not a registry tag and folds to ``yolox_s``). A bare
-single-number tag (``:v8`` / ``:8`` / ``:v2``) is **not** stripped
-(F15-3) — it folds to ``_v8`` / ``_8`` / ``_v2`` and fail-closes as
-unknown residual, matching the compact twin ``yoloxv8``. After fold,
-a leading ``pp`` segment immediately followed by a ``yolo*`` segment
-merges to ``ppyolo*`` (``PP-YOLOE+`` / ``PaddlePaddle/PP-YOLOE+`` →
-``ppyoloe`` admit; ``pp_yolo`` → ``ppyolo`` admits; ``pp_yolov8`` →
-``ppyolov8`` unknown residual denies). ``ppyoloe+`` / ``yolox_s+trt``
-admit; ``yolox~yolo`` / ``yolox+yolo`` deny; non-NFKC dashes stay
-``invalid_row``.
+**Canonical fold** (FIR-7 F14-1 / F14-2 / F14-3 / F15): ``canonical()``
+NFKC-normalises, strips Cf/format characters, then folds mid-token
+ASCII whitespace (TAB/LF/CR/space) as official separators (F15-9:
+``yolox\\ts`` / ``yolox\\ns`` → ``yolox_s`` admit) before fail-closing
+on any remaining C0/C1 control (``yolo\\x00v8`` → ``invalid_row`` with
+an honest control-character detail — never silently strip, never the
+confusable-scripts text). Every remaining non-alphanumeric ASCII
+character except ``/`` folds to ``_`` (total class rule; the F13-1
+``+=:@|#`` enumeration is gone). Backslash is normalised to slash first
+so it keeps path-component split. ``_`` runs collapse; edges strip.
+Known model-file extensions (``.pt`` / ``.pdparams`` / ``.pdmodel`` /
+…) strip per slash component before fold (F15-7:
+``ppyoloe_plus_crn_s_80e_coco.pdparams`` admits). Before fold, one
+trailing registry tag ``:latest`` / ``:v0.3.0`` is stripped from the
+last path component (``yolox:latest`` / ``megvii/yolox:latest`` /
+``yolox:v0.3.0`` admit as the bare family; ``yolo:latest`` strips then
+denies ``yolo``; ``yolox:s`` is not a registry tag and folds to
+``yolox_s``). A bare single-number tag (``:v8`` / ``:8`` / ``:v2``) is
+**not** stripped (F15-3) — it folds to ``_v8`` / ``_8`` / ``_v2`` and
+fail-closes as unknown residual, matching the compact twin ``yoloxv8``.
+A nonblank identity that strips/folds to empty or slash-only
+(``:latest`` / ``/`` / ``///`` / ``/:latest``) is ``invalid_row``
+(F15-4); blank/whitespace-only input keeps the existing empty-field
+behaviour. After fold, a ``pp`` segment immediately followed by a
+``yolo*`` segment merges to ``ppyolo*`` when it is the component head
+or is preceded by a known Paddle vendor (``PP-YOLOE+`` /
+``PaddlePaddle/PP-YOLOE+`` / ``paddlepaddle_pp_yoloe`` → ``ppyoloe``
+admit; ``pp_yolo`` → ``ppyolo`` admits; ``pp_yolov8`` → ``ppyolov8``
+unknown residual denies). Deci ``pp_yolo_nas`` is not a PP-YOLO
+residual — it carries the YOLO-NAS NC note (F15-10). ``ppyoloe+`` /
+``yolox_s+trt`` admit; ``yolox~yolo`` / ``yolox+yolo`` deny; non-NFKC
+dashes stay ``invalid_row``.
 
 **Component-split-first** (FIR-7-A6-02): when the canonical form contains
 ``/``, family matching runs **only** on the individual slash components —
@@ -159,6 +171,9 @@ separator-only tags (any length) reflecting real checkpoints —
 / dataset tag); ``yolop``: v2/v3; ``ppyolo``: e/v2 +
 s/m/l/x/t/plus/tiny/large/small/sod/crn/r50vd/r18vd/r101vd/mbv3/dcn/300e/80e/1x/2x/365e/650e/coco
 + auxhead/relu/320/416/640/distill/voc/30e/60e/objects365
++ r/3x/dota (F15-8 PP-YOLOE-R rotate family; ``PP-YOLOE-R`` /
+``ppyoloe_r_crn_s_3x_dota`` admit; compact glue ``ppyoloer`` /
+``ppyolodota`` stay DENY; ``yolox_dota`` does not leak)
 (PaddleDetection catalog). YOLOS single-letter size twins (``yolosx`` /
 ``yolosn`` / …) are NOT real hustvl sizes → deny; ``yoloxs`` stays
 admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
@@ -321,9 +336,13 @@ asserted **disjoint** at import on exact folded/compact keys (fail
 loudly if not).
 
 Package-identity values that are non-empty pre-canonical but whose
-:func:`canonical` is ``None`` (confusable / non-ASCII residue) or the empty
-string (Cf-format-only: ZWSP, BOM, word-joiner) are fail-closed
-``invalid_row`` on row doors and both scalar doors (FIR-7-B4-01 / B5-04).
+:func:`canonical` is ``None`` (confusable / non-ASCII residue, or a
+real C0/C1 control such as NUL) or empty / slash-only (Cf-format-only:
+ZWSP, BOM, word-joiner; **or** a nonblank spelling that strips to
+nothing: ``:latest`` / ``/`` / ``///`` / ``/:latest`` — F15-4) are
+fail-closed ``invalid_row`` on row doors and both scalar doors
+(FIR-7-B4-01 / B5-04 / F15-4). C0/C1 details name a control character;
+confusable-script residue keeps the non-ASCII note (F15-9).
 """
 
 from __future__ import annotations
@@ -1449,6 +1468,8 @@ _MODEL_FILE_EXTENSIONS: tuple[str, ...] = (
     ".pb",
     ".tflite",
     ".params",
+    ".pdparams",
+    ".pdmodel",
 )
 
 
@@ -1478,6 +1499,68 @@ def _has_c0_c1_control(text: str) -> bool:
     return any(unicodedata.category(ch) == "Cc" for ch in text)
 
 
+# F15-9: fold mid-token TAB/LF/CR/space as official separators before
+# the C0 fail-close. TEST-15: False restores TAB → invalid_row.
+_ASCII_WHITESPACE_AS_SEPARATOR_ENABLED: bool = True
+_ASCII_WHITESPACE_SEPARATORS: frozenset[str] = frozenset(" \t\n\r")
+
+
+def _fold_ascii_whitespace_separators(text: str) -> str:
+    """Replace ASCII whitespace with ``_`` so TAB/LF/CR fold like space."""
+    if not text or not _ASCII_WHITESPACE_AS_SEPARATOR_ENABLED:
+        return text
+    return "".join(
+        "_" if ch in _ASCII_WHITESPACE_SEPARATORS else ch for ch in text
+    )
+
+
+def _precanonical_has_control(text: str) -> bool:
+    """True when a real C0/C1 control survives NFKC/Cf + whitespace fold."""
+    t = unicodedata.normalize("NFKC", str(text))
+    t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
+    t = _fold_ascii_whitespace_separators(t)
+    return _has_c0_c1_control(t)
+
+
+# F15-4: nonblank pre-canonical identities whose canonical is empty or
+# slash-only fail invalid_row. TEST-15: False restores the door admit.
+_EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED: bool = True
+
+
+def _canonical_lacks_identity(c: str | None) -> bool:
+    """True when canonical is empty or every slash component is empty."""
+    if c is None:
+        return False
+    if not c:
+        return True
+    return not any(part for part in c.split("/") if part)
+
+
+def _invalid_identity_reason_clause(text: str) -> str:
+    """Honest invalid_row clause for canonical-None identities (F15-9)."""
+    if _precanonical_has_control(text):
+        return (
+            "contains a C0/C1 control character; "
+            "control characters are fail-closed"
+        )
+    return (
+        "contains non-ASCII residue after "
+        "NFKC/Cf normalisation; confusable scripts are fail-closed"
+    )
+
+
+# F15-10: ``pp_`` + ``yolo*`` may merge when it is the component head
+# or is preceded by a known Paddle vendor segment.
+_PADDLE_VENDOR_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "paddlepaddle",
+        "paddle",
+        "paddledetection",
+        "baidu",
+    }
+)
+
+
 def _strip_trailing_registry_tag(text: str) -> str:
     """Strip one ``:latest`` / dotted multi-group version from the last path component.
 
@@ -1503,21 +1586,41 @@ def _strip_trailing_registry_tag(text: str) -> str:
 
 
 def _merge_pp_yolo_segments(text: str) -> str:
-    """Merge leading ``pp`` + ``yolo*`` segments per slash component (F14-3).
+    """Merge ``pp`` + ``yolo*`` segments per slash component (F14-3 / F15-10).
 
     ``PP-YOLOE+`` folds to ``pp_yoloe``; this merge yields ``ppyoloe``.
-    ``pp_yolo`` → ``ppyolo`` (official PP-YOLO). ``pp_yolov8`` →
-    ``ppyolov8`` (unknown residual, fail-closed). ``pp`` / ``pp_x`` are
-    unchanged. Not a generic segment-merge.
+    F15-10: do not merge Deci ``yolo_nas``. Also merge ``pp`` + ``yolo*``
+    when preceded by a known Paddle vendor segment.
     """
     if not text or not _PP_YOLO_SEGMENT_MERGE_ENABLED:
         return text
     out: list[str] = []
     for comp in text.split("/"):
         segs = [s for s in comp.split("_") if s]
-        if len(segs) >= 2 and segs[0] == "pp" and segs[1].startswith("yolo"):
-            segs = [segs[0] + segs[1], *segs[2:]]
-        out.append("_".join(segs))
+        merged: list[str] = []
+        i = 0
+        while i < len(segs):
+            nxt = segs[i + 1] if i + 1 < len(segs) else ""
+            vendor_ok = i == 0 or (
+                i > 0 and merged and merged[-1] in _PADDLE_VENDOR_SEGMENTS
+            )
+            is_nas = (
+                nxt == "yolo"
+                and i + 2 < len(segs)
+                and segs[i + 2] == "nas"
+            )
+            if (
+                segs[i] == "pp"
+                and nxt.startswith("yolo")
+                and vendor_ok
+                and not is_nas
+            ):
+                merged.append(segs[i] + nxt)
+                i += 2
+                continue
+            merged.append(segs[i])
+            i += 1
+        out.append("_".join(merged))
     return "/".join(out)
 
 
@@ -1538,29 +1641,37 @@ def _fold_ascii_non_alnum(text: str) -> str:
 
 
 def canonical(value: str) -> str | None:
-    """NFKC → strip Cf → fail-closed C0/C1 → casefold → fold punct → collapse.
+    """NFKC → strip Cf → fold ASCII ws → fail-closed C0/C1 → fold punct.
 
-    After NFKC and Cf/format stripping, any C0/C1 control (including NUL)
-    fails closed (``None`` / ``invalid_row``) — never admit, never silently
-    strip. Remaining non-alphanumeric ASCII folds to ``_`` except ``/``
-    (path separator). Backslash is normalised to slash first so it keeps
-    component-split behaviour. ``_`` runs collapse; leading/trailing ``_``
-    strip; a token that folds to empty is ``""`` (callers treat as
-    ``invalid_row`` on row/scalar floors). Non-ASCII residue that survives
-    NFKC (U+2010, en/em-dash) still returns ``None``. Fullwidth forms
-    NFKC-map to ASCII first and then fold.
+    After NFKC and Cf/format stripping, mid-token ASCII whitespace
+    (TAB/LF/CR/space) folds as official separators (F15-9) so
+    ``yolox\\ts`` becomes ``yolox_s``. Any remaining C0/C1 control
+    (including NUL) fails closed (``None`` / ``invalid_row``) — never
+    admit, never silently strip. Remaining non-alphanumeric ASCII folds
+    to ``_`` except ``/`` (path separator). Backslash is normalised to
+    slash first so it keeps component-split behaviour. ``_`` runs
+    collapse; leading/trailing ``_`` strip; a token that folds to empty
+    is ``""`` (callers treat as ``invalid_row`` on row/scalar floors,
+    including slash-only ``/`` / ``///`` — F15-4). Non-ASCII residue
+    that survives NFKC (U+2010, en/em-dash) still returns ``None``.
+    Fullwidth forms NFKC-map to ASCII first and then fold.
 
     When ``_ASCII_PUNCT_FOLD_TOTAL`` is False the F13-1 enumeration
     ``_UNOFFICIAL_SEPARATOR_CHARS`` plus official ``[-_.\\s]`` is used
     instead (TEST-15). A single trailing registry tag
     (``:latest`` / ``:v0.3.0``) is stripped from the last path component
-    before fold (F14-2). After fold, a leading ``pp`` segment followed by
-    a ``yolo*`` segment merges to ``ppyolo*`` (F14-3).
+    before fold (F14-2). After fold, a ``pp`` segment followed by a
+    ``yolo*`` segment merges to ``ppyolo*`` when it is the component
+    head or is preceded by a known Paddle vendor (F14-3 / F15-10).
     """
     if value is None:
         return None
     text = unicodedata.normalize("NFKC", str(value))
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    # F15-9: TAB/LF/CR/space fold as official separators before C0
+    # fail-close so ``yolox\\ts`` becomes ``yolox_s``. Remaining C0
+    # (NUL, …) still fail closed.
+    text = _fold_ascii_whitespace_separators(text)
     # F14-1: C0/C1 controls fail closed — never strip, never admit.
     if _has_c0_c1_control(text):
         return None
@@ -3649,6 +3760,9 @@ _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
 #   * dataset: coco / voc / objects365
 #   * F14-7 PaddleDetection catalog: auxhead / relu / 320 / 416 / 640 /
 #     distill / 30e / 60e (native Paddle debris — ``ppyolo_voc`` admits)
+#   * F15-8 PP-YOLOE-R rotate family: r / 3x / dota (``PP-YOLOE-R`` /
+#     ``ppyoloe_r_crn_s_3x_dota``; compact ``ppyoloer`` / ``ppyolodota``
+#     stay DENY; ``yolox_dota`` does not leak)
 # These are structural training-config tags for this family, not a
 # global schedule shield. A residual containing a deny stem still denies.
 # YOLOF (F12-5 / F12b-1 / F13-4) reuses the same schedule/dataset debris
@@ -3722,6 +3836,10 @@ _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
             "30e",
             "60e",
             "objects365",
+            # F15-8 / R17-G2-3: PP-YOLOE-R rotate family.
+            "r",
+            "3x",
+            "dota",
         }
     ),
 }
@@ -4210,6 +4328,18 @@ def _classify_exception_residual(
         if all(_is_legitimate_residual_segment(p, seed_c) for p in parts):
             return _RESIDUAL_LEGITIMATE, None
 
+    # F15-10b: ppyolo + nas residual is Deci YOLO-NAS (NC), not a
+    # generic ppyolo unknown residual. ``pp_yolo_nas`` / compact
+    # ``ppyolonas`` must carry the Deci note.
+    if seed_c == "ppyolo" and _PPYOLO_NAS_RESIDUAL_NC_ENABLED:
+        rk = _compact_canonical(residual)
+        if rk == "nas" or rk.startswith("nas"):
+            nas = PACKAGE_DENYLIST.get("yolo_nas") or PACKAGE_DENYLIST.get(
+                "yolonas"
+            )
+            if nas is not None:
+                return _RESIDUAL_DENY_RECONST, nas
+
     # Defer residual-alone deny seeds to residual re-scan (honest attribution).
     if _residual_structurally_defer(residual):
         return _RESIDUAL_DEFER, None
@@ -4431,6 +4561,13 @@ _DENY_HEAD_LONG_REM_ENABLED: bool = True
 _DENY_HEAD_LONG_VARIANT_REMS: frozenset[str] = frozenset(
     {"tiny", "small", "large", "nano", "base"}
 )
+# F15-5: unknown non-tag rem after a mid-token exception spelling
+# fail-closes as ``<family>_unknown_residual`` (``xyoloxsextra``).
+# TEST-15: False restores the deny/NC-rem-only mid scanner.
+_MID_EXCEPTION_UNKNOWN_REM_ENABLED: bool = True
+# F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
+# restores generic ppyolo unknown residual for ``pp_yolo_nas``.
+_PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
 
 
 def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
@@ -4477,6 +4614,26 @@ def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
     return _rem_is_known_family_or_seed(rem)
 
 
+def _deny_head_is_exception_spelling_glue(token: str) -> bool:
+    """True when compact token is deny-head + exact exception spelling.
+
+    F15-10a: ``yoloppyoloe`` is ``yolo`` + ``ppyoloe``, not
+    ``yolop`` + unknown residual.
+    """
+    if not token:
+        return False
+    compact = _compact_canonical(token)
+    if not compact:
+        return False
+    for _seed_c, seed_k, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if not seed_k or not compact.startswith(seed_k):
+            continue
+        rem = compact[len(seed_k) :]
+        if rem and _is_legitimate_exception_compact_spelling(rem):
+            return True
+    return False
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -4518,6 +4675,30 @@ def _compact_mid_exception_deny_adjacency(
                     deny = _classify_exception_plus_residual(rem)
                 if deny is None:
                     deny = _deny_prefix_plus_residual_hit(rem)
+                # F15-5: unknown non-tag rem after a mid-token exception
+                # spelling uses the same fail-closed landing as offset-0
+                # steal (``xyoloxsextra`` → yolox_unknown_residual).
+                # Only when the prefix is junk (not itself a deny/NC
+                # head) so F14-6 / F15-2 red-proofs stay sole-path
+                # (``arcfaceyoloxextra`` / ``yoloyoloxextra``).
+                if deny is None and _MID_EXCEPTION_UNKNOWN_REM_ENABLED:
+                    prefix = compact[:idx]
+                    prefix_is_deny = bool(prefix) and (
+                        _deny_folded_ab_hit(prefix) is not None
+                        or _contained_long_deny_seed_hit(prefix) is not None
+                        or _best_family_hit(
+                            prefix, PACKAGE_DENYLIST, for_deny=True
+                        )
+                        is not None
+                    )
+                    if not prefix_is_deny:
+                        outcome, entry = _classify_exception_residual(
+                            _seed_c, _seed_k, rem, compact_glue=True
+                        )
+                        if outcome != _RESIDUAL_LEGITIMATE:
+                            deny = entry or _unknown_exception_residual_entry(
+                                _seed_c, rem
+                            )
                 if deny is not None:
                     return deny
             start = idx + 1
@@ -4901,7 +5082,16 @@ def _uniform_component_scan(
             abc_deny = _deny_folded_ab_hit(suffix)
             if abc_deny is not None:
                 ab_claim = _deny_has_folded_ab_claim(suffix)
-                if ab_claim or not _token_has_exception_seed_claim(suffix):
+                # F15-10a: deny-head + exact exception spelling
+                # (``yoloppyoloe`` = yolo + ppyoloe) is a structural
+                # yolo reading and must not be carved out by a shorter
+                # exception prefix claim (yolop + pyoloe).
+                spelling_glue = _deny_head_is_exception_spelling_glue(suffix)
+                if (
+                    ab_claim
+                    or spelling_glue
+                    or not _token_has_exception_seed_claim(suffix)
+                ):
                     if reasons is None or abc_deny.reason in reasons:
                         return abc_deny
                     # Other-axis elevated deny under reasons filter: do not
@@ -5023,8 +5213,9 @@ def _package_denylist_hit(
     ``yoloxultralytics`` / ``checkpoints_yolo_seg`` deny; ``yolodummy`` /
     ``myyolo`` / pure exception-family tokens (``yolox``, ``yolos``,
     ``yolop_yolox``, ``megvii_yolox``, ``ppyolov2``) do not. Empty / None
-    canonical → no denylist hit (doors treat empty/None as ``invalid_row``
-    separately — FIR-7-B4-01 / B5-04).
+    / slash-only canonical → no denylist hit (doors treat empty/None/
+    slash-only as ``invalid_row`` separately — FIR-7-B4-01 / B5-04 /
+    F15-4).
 
     ``reasons`` (FIR-7-A10-01): when set, only return hits whose reason is
     in the set — lets door promotion collect AGPL-axis hits even when a
@@ -5452,12 +5643,15 @@ def _floor_package_identity_denylist(
                 return _fail(
                     RejectionReason.INVALID_ROW,
                     detail=(
-                        f"{raw_key}={text!r} contains non-ASCII residue after "
-                        "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                        f"{raw_key}={text!r} "
+                        f"{_invalid_identity_reason_clause(text)}"
                     ),
                     category=category,
                 )
-            if folded == "":
+            if folded == "" or (
+                _EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED
+                and _canonical_lacks_identity(folded)
+            ):
                 return _fail(
                     RejectionReason.INVALID_ROW,
                     detail=(
@@ -5506,8 +5700,17 @@ def audit_derived_from_model(derived_from_model: str | None) -> LicenseAuditResu
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"derived_from_model={text!r} contains non-ASCII residue after "
-                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                f"derived_from_model={text!r} "
+                f"{_invalid_identity_reason_clause(text)}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    if _EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED and _canonical_lacks_identity(c):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"derived_from_model={text!r} canonicalises to an empty "
+                "identity; nonblank input with no identity token is fail-closed"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
@@ -5773,8 +5976,16 @@ def audit_source(source: str | None) -> LicenseAuditResult:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"source {text!r} contains non-ASCII residue after "
-                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                f"source {text!r} {_invalid_identity_reason_clause(text)}"
+            ),
+            category=PolicyCategory.TRAINING_DATA,
+        )
+    if _EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED and _canonical_lacks_identity(c):
+        return _fail(
+            RejectionReason.INVALID_ROW,
+            detail=(
+                f"source {text!r} canonicalises to an empty identity; "
+                "nonblank input with no identity token is fail-closed"
             ),
             category=PolicyCategory.TRAINING_DATA,
         )
@@ -5823,12 +6034,14 @@ def audit_model_ingest(model_id: str) -> LicenseAuditResult:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"model_id={text!r} contains non-ASCII residue after "
-                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                f"model_id={text!r} {_invalid_identity_reason_clause(text)}"
             ),
             category=PolicyCategory.MODEL_INGEST,
         )
-    if folded == "":
+    if folded == "" or (
+        _EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED
+        and _canonical_lacks_identity(folded)
+    ):
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
@@ -5921,12 +6134,14 @@ def audit_tooling_dependency(package_name: str) -> LicenseAuditResult:
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(
-                f"package_name={text!r} contains non-ASCII residue after "
-                "NFKC/Cf normalisation; confusable scripts are fail-closed"
+                f"package_name={text!r} {_invalid_identity_reason_clause(text)}"
             ),
             category=PolicyCategory.TOOLING,
         )
-    if folded == "":
+    if folded == "" or (
+        _EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED
+        and _canonical_lacks_identity(folded)
+    ):
         return _fail(
             RejectionReason.INVALID_ROW,
             detail=(

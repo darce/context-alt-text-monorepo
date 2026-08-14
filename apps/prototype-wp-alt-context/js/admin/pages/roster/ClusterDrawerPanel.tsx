@@ -543,8 +543,18 @@ export const ClusterDrawerPanel = ({
               <a
                 className="acx-button acx-cluster-drawer__workspace-btn"
                 href={toRosterPerson(assignedPersonUuid)}
-                onClick={() => {
-                  onOpenPersonWorkspace(assignedPersonUuid);
+                onClick={(event) => {
+                  if (
+                    event.button === 0 &&
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    !event.altKey
+                  ) {
+                    event.preventDefault();
+                    onOpenPersonWorkspace(assignedPersonUuid);
+                    return;
+                  }
                 }}
               >
                 {__('Open person review', 'alt-context')}

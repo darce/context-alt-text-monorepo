@@ -1,10 +1,9 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ClusterIdentity, ClusterSummary } from '../../../api/recognition';
-import { toRosterPerson } from '../../../navigation/appLinks';
 import { ClusterDrawerPanel } from '../ClusterDrawerPanel';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -68,12 +67,107 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
+    expect(screen.getByText('Assigned cluster')).toBeInTheDocument();
     const reviewLink = screen.getByRole('link', { name: 'Open person review' });
-    expect(reviewLink).toHaveAttribute('href', toRosterPerson(personUuid));
+    expect(reviewLink).toHaveAttribute('href', `#/roster?person=${personUuid}`);
     expect(screen.queryByRole('button', { name: 'Open person workspace' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
 
     await user.click(reviewLink);
     expect(onOpenPersonWorkspace).toHaveBeenCalledWith(personUuid);
+  });
+
+  it('plain left-click prevents native hash navigation and opens the workspace', () => {
+    const onOpenPersonWorkspace = vi.fn();
+    const personUuid = 'person-uuid-assigned';
+
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={makeCluster({ person_uuid: personUuid, identity_count: 4 })}
+        onOpenPersonWorkspace={onOpenPersonWorkspace}
+      />,
+    );
+
+    const reviewLink = screen.getByRole('link', { name: 'Open person review' });
+    const event = createEvent.click(reviewLink);
+    fireEvent(reviewLink, event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onOpenPersonWorkspace).toHaveBeenCalledWith(personUuid);
+  });
+
+  it('modifier-clicks keep the href path and do not mutate the current tab', () => {
+    const onOpenPersonWorkspace = vi.fn();
+    const personUuid = 'person-uuid-assigned';
+
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={makeCluster({ person_uuid: personUuid, identity_count: 4 })}
+        onOpenPersonWorkspace={onOpenPersonWorkspace}
+      />,
+    );
+
+    const reviewLink = screen.getByRole('link', { name: 'Open person review' });
+    fireEvent.click(reviewLink, { metaKey: true });
+    fireEvent.click(reviewLink, { ctrlKey: true });
+    fireEvent.click(reviewLink, { shiftKey: true });
+    fireEvent.click(reviewLink, { altKey: true });
+
+    expect(onOpenPersonWorkspace).not.toHaveBeenCalled();
+    expect(reviewLink).toHaveAttribute('href', `#/roster?person=${personUuid}`);
+  });
+
+  it.each(['', ' '])('person_uuid %j is Unresolved with no person review link', (personUuid) => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={makeCluster({ person_uuid: personUuid, identity_count: 3, label: null })}
+        onOpenPersonWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open person review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
+  });
+
+  it('assigned cluster with identity_count 1 is Assigned, not a singleton proposal', () => {
+    const personUuid = 'person-uuid-singleton-assigned';
+
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={makeCluster({ person_uuid: personUuid, identity_count: 1 })}
+        onOpenPersonWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Assigned cluster')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open person review' })).toHaveAttribute(
+      'href',
+      `#/roster?person=${personUuid}`,
+    );
+    expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
+  });
+
+  it('identity_count 0 stale projection is Unresolved, not a singleton proposal', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={makeCluster({ person_uuid: null, identity_count: 0, label: null })}
+        onOpenPersonWorkspace={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('This face group is a proposal, not a curated person. Review it before assigning.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open person review' })).not.toBeInTheDocument();
   });
 
   it('unresolved cluster: review mode without inventing a person link', () => {

@@ -321,4 +321,48 @@ describe('ClusterDrawerPanel', () => {
 
     expect(onOpenPersonWorkspace).toHaveBeenCalledWith('person-uuid-alex');
   });
+
+  it('unresolved cluster with a selected roster entry does not invent a person review link', async () => {
+    render(
+      <ClusterDrawerPanel
+        cluster={makeCluster({ person_uuid: null, identity_count: 3, label: null })}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={vi.fn()}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            person_uuid: 'person-uuid-alex',
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
+
+    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open person review/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
+  });
 });

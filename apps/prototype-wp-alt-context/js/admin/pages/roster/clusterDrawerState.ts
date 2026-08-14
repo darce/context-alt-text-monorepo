@@ -26,7 +26,7 @@ export const getClusterDrawerState = (cluster: {
   if (getClusterPersonUuid(cluster) !== null) {
     return CLUSTER_DRAWER_STATES.ASSIGNED;
   }
-  if (cluster.identity_count <= 1) {
+  if (cluster.identity_count === 1) {
     return CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL;
   }
   return CLUSTER_DRAWER_STATES.UNRESOLVED;

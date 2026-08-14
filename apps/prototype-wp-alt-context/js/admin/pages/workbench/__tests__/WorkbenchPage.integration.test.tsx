@@ -702,7 +702,7 @@ describe('WorkbenchPage (integration-lite)', () => {
           is_auto_label: false,
           identity_count: 5,
           user_confirmed: false,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,

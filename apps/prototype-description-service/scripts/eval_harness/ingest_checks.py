@@ -38,7 +38,8 @@ class ScrapeSignatureFamily(StrEnum):
 
 
 # Camera-roll prefixes excluded *before* family matching (plan census procedure).
-_CAMERA_ROLL_PREFIX = re.compile(r"^(?:IMG|DSC|PXL|Screen[- ]?Shot)", re.IGNORECASE)
+# Case-sensitive to match the plan census procedure (IMG|DSC|PXL|Screen[- ]?Shot).
+_CAMERA_ROLL_PREFIX = re.compile(r"^(?:IMG|DSC|PXL|Screen[- ]?Shot)")
 
 # Stem-matched families A–D. Compiled once; order is the check order.
 _FAMILY_A = re.compile(r"\d{6,}_\d{5,}[^/]*_(n|o)(-\d+)?$")

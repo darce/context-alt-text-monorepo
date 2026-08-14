@@ -2454,7 +2454,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByText('2 clusters need face data resync')).toBeInTheDocument();
+    expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });

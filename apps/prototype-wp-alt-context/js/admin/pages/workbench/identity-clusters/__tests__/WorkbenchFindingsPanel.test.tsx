@@ -1107,7 +1107,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByRole('img', { name: 'Preview image unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
     expect(screen.getByText('No image')).toBeInTheDocument();
     expect(avatarSpy).not.toHaveBeenCalled();
     expect(container.querySelector('img[src=""]')).toBeNull();

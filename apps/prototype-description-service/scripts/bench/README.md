@@ -35,6 +35,7 @@ uv run python -m scripts.bench.cross_stack_bench score --run-dir ../../benchmark
 | `bootstrap_status` | cell stamp; `!= ok` on the primary or a Holm secondary demotes CONFIRMATORY |
 | `export_envelope_invalid` | export is not a bare JSON array (object envelopes are rejected) |
 | `preflight_missing` | score-time: a leg has no `preflight.json` |
+| `preflight_invalid` | score-time: `preflight.json` is unreadable or missing PROV-01 keys |
 | `leg_outcome_unreadable` | `leg_outcome.json` exists but is torn / not JSON |
 
 See the plan's [stable error codes table](../../../../docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md#stable-error-codes-normative) and the runbook §4 failure modes.

@@ -1241,7 +1241,7 @@ Single-lane work. No multi-agent lane split required.
 - [x] The head-to-head gate number is explicitly **withheld** until a production corpus passes FIR-8's own exhaustiveness assertion (`face_count == len(face_boxes)` on detection-scoring entries); a box-less production run ships as a **DIRECTIONAL** orchestration dry run (reason `detection_exhaustiveness_unasserted`) and says so in the artifact. FIR-11 Slice 2 may later supply a larger boxed corpus but is not required for any FIR-8 code path.
 - [x] Superset / partial-intersection blocker enforced.
 - [x] Resume does not reprocess terminal-success items; bounded retry on failures.
-- [x] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) / PROV-01 (`preflight.json`) discipline and insightface license banner.
+- [x] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) and insightface license banner; `score` refuses a run-dir whose legs lack `preflight.json` (PROV-01).
 - [x] Runbook forbids commercial exposure of the insightface stack and points teardown at FIR23-STACK.
 - [x] v5 in-service vehicle explicitly superseded (decision #2951; history at `bc97ff4b`).
 - [x] Single package root `apps/prototype-description-service/scripts/bench/` documented and used by tests.

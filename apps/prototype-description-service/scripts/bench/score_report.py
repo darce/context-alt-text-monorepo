@@ -614,6 +614,14 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     manifest = _load_manifest_from_run(root)
     pair = _load_pair(root)
     stacks = sorted(p.name for p in (root / "legs").iterdir() if p.is_dir())
+    missing_preflight = [
+        stack_id for stack_id in stacks if not (root / "legs" / stack_id / "preflight.json").is_file()
+    ]
+    if missing_preflight:
+        raise BenchError(
+            "preflight_missing",
+            f"preflight.json missing for {missing_preflight}; score refuses a run-dir without PROV-01",
+        )
     for stack_id in stacks:
         require_cluster_success(root, stack_id)
 
@@ -919,6 +927,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         "ci_level": CI_LEVEL,
         "resampling_unit": "image",
         "pr_cells_emitted": True,
+        "preflight_present": True,
     }
     frames_path = root / "score" / "frames.json"
     frames_path.write_text(json.dumps(frames, indent=2), encoding="utf-8")

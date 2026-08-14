@@ -283,6 +283,32 @@ class FakeClient:
         return dict(self.members)
 
 
+def write_stub_preflight(run_dir: Path, stack_id: str) -> Path:
+    dest = Path(run_dir) / "legs" / stack_id / "preflight.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    insight = "insight" in stack_id
+    dest.write_text(
+        json.dumps(
+            {
+                "stack_id": stack_id,
+                "base_url": "https://dev.api.altcontext.com" if insight else "https://fir.api.altcontext.com",
+                "expected_profile": "insightface" if insight else "face_pipeline",
+                "expected_pgvector_dim": 512 if insight else 128,
+                "resolved_profile": "insightface" if insight else "face_pipeline",
+                "resolved_pgvector_dim": 512 if insight else 128,
+                "opencv_major": 5,
+                "opencv_major_source": "operator_attested",
+                "checked_at": "2026-07-29T00:00:00Z",
+                "ready_excerpt": {},
+                "health_detailed_excerpt": {},
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return dest
+
+
 @pytest.fixture
 def pair_yaml(tmp_path: Path) -> Path:
     return write_pair_yaml(tmp_path / "stack-pair.yaml")

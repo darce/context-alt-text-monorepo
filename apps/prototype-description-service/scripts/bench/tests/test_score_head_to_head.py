@@ -8,7 +8,7 @@ from pathlib import Path
 from scripts.bench.driver import init_run_dir
 from scripts.bench.score_report import score_head_to_head
 from scripts.bench.stack_pair import load_stack_pair
-from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair
+from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair, write_stub_preflight
 
 PRIMARY = "detection_recall@frame_e2e/label_map_primary"
 SECONDARY_PREC = "detection_precision@frame_e2e/label_map_primary"
@@ -69,6 +69,7 @@ def _write_leg(run_dir: Path, stack_id: str, identities: list[dict], media_ids: 
         json.dumps([{"cluster_id": "c1", "members": [{"media_id": r["media_id"]} for r in identities]}]),
         encoding="utf-8",
     )
+    write_stub_preflight(run_dir, stack_id)
 
 
 def _init(tmp_path: Path, media_ids: list[int], entries: list[dict], *, floor: float = 0.5) -> Path:
@@ -82,6 +83,26 @@ def _init(tmp_path: Path, media_ids: list[int], entries: list[dict], *, floor: f
 def _cells(run_dir: Path, name: str) -> list[dict]:
     frames = json.loads((run_dir / "score" / "frames.json").read_text())
     return [c for c in frames["cells"] if c.get("cell") == name]
+
+
+def test_score_requires_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    for stack_id in (A_STACK, B_STACK):
+        (run_dir / "legs" / stack_id / "preflight.json").unlink()
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_missing"
+    else:
+        raise AssertionError("score must refuse a run-dir without preflight.json")
 
 
 def test_unnamed_cell_has_null_ci_not_fabricated_zero(tmp_path: Path) -> None:

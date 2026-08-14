@@ -339,7 +339,9 @@ export const IdentityClusterItem = ({
             {showInlinePrompt && (
               <InlineSuggestionPrompt
                 match={inlineSuggestionMatch}
-                onConfirm={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
+                onConfirm={(clusterId, label, suggestionId) =>
+                  void handleConfirmSuggestion(clusterId, label, suggestionId)
+                }
                 onReject={startEditing}
                 isPending={mutations.isPending}
               />
@@ -354,7 +356,9 @@ export const IdentityClusterItem = ({
             isPending={mutations.isPending || saveStatus !== 'idle'}
             onSave={(labelOverride) => void handleSave(labelOverride)}
             onPersonSelect={handlePersonSelect}
-            onConfirmSuggestion={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
+            onConfirmSuggestion={(clusterId, label, suggestionId) =>
+              void handleConfirmSuggestion(clusterId, label, suggestionId)
+            }
             onCancel={handleCancel}
             onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}
             saveLabel={saveLabel}

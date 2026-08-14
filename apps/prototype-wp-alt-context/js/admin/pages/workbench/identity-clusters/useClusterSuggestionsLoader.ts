@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import {
@@ -18,10 +18,13 @@ import {
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
 import {
+  IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
   identityBatchIdsKey,
   isHumanLabeledTarget,
   projectIdentityWindow,
+  readIdentityBatchUpdatedAt,
+  readIdentityFromBatchCache,
   type ProjectedSuggestion,
 } from './suggestionProjection';
 import type { ClusterLabelMatch } from './useClusterMatchAction';
@@ -66,6 +69,7 @@ export const useClusterSuggestionsLoader = ({
   labelInput = '',
   debounceMs = DEFAULT_DEBOUNCE_MS,
 }: ClusterSuggestionsLoaderOptions): ClusterSuggestionsLoaderResult => {
+  const queryClient = useQueryClient();
   const [debouncedLabel, setDebouncedLabel] = React.useState(labelInput);
   const debouncedValue = debounceMs <= 0 ? labelInput : debouncedLabel;
 
@@ -78,6 +82,8 @@ export const useClusterSuggestionsLoader = ({
     return () => window.clearTimeout(timer);
   }, [labelInput, debounceMs, enabled]);
 
+  // BR-10: single-id key is canonical for the dropdown; seed/read from multi-id batch
+  // cache so inline batch + loader share one stale window instead of dual entries.
   const { data: identityBatch, isLoading: suggestionsLoading } = useQuery<IdentityBatchSuggestionsResponse>({
     queryKey: queryKeys.suggestions.projection.identityBatch(
       identityBatchIdsKey(identityId !== undefined ? [identityId] : []),
@@ -90,7 +96,9 @@ export const useClusterSuggestionsLoader = ({
       return fetchIdentitiesSuggestions([identityId], PROJECTION_TOP_K);
     },
     enabled: Boolean(identityId && enabled),
-    staleTime: 30000,
+    staleTime: IDENTITY_BATCH_STALE_MS,
+    initialData: () => (identityId ? readIdentityFromBatchCache(queryClient, identityId) : undefined),
+    initialDataUpdatedAt: () => (identityId ? readIdentityBatchUpdatedAt(queryClient, identityId) : undefined),
   });
 
   const identityProjection = React.useMemo((): ProjectedSuggestion[] | undefined => {

@@ -14,8 +14,18 @@ import { useClusterSaveAction } from './useClusterSaveAction';
 
 interface ClusterSaveMutations {
   isPending: boolean;
-  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
-  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  merge: (
+    targetClusterId: string,
+    targetLabel?: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
+  assignToCluster: (
+    identityId: string,
+    targetClusterId: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
   createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
 }

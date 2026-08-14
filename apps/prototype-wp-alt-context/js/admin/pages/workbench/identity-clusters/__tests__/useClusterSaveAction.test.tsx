@@ -277,7 +277,12 @@ describe('useClusterSaveAction casing grid (B6)', () => {
       await result.current.handleSave();
     });
 
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(mutations.rename).not.toHaveBeenCalled();
     expect(cancelEditing).not.toHaveBeenCalled();
   });
@@ -302,10 +307,46 @@ describe('useClusterSaveAction casing grid (B6)', () => {
     });
 
     // Different cluster with case-variant label → merge (exact post-bail lets it through)
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(mutations.rename).not.toHaveBeenCalled();
     expect(cancelEditing).not.toHaveBeenCalled();
     expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('4b. free-typed suggested label threads suggestionId into merge (L1V-01 → acceptSuggestion)', async () => {
+    // Free-type path: findClusterByLabel (options resolver) returns suggestionId; merge must
+    // receive the 4th arg so mutationFn can call acceptSuggestion. Predicted first failure:
+    // merge(..., undefined) when resolveClusterMatchFromOptions drops suggestion_id.
+    const findClusterByLabel = vi.fn().mockResolvedValue({
+      id: 'cluster-alice',
+      label: 'Alice',
+      identityCount: 4,
+      suggestionId: 'sug-free-type-1',
+    });
+    const { result, mutations } = renderSaveAction({
+      clusterLabel: 'Old',
+      labelInput: 'Alice',
+      members: [member({ cluster_label: 'Old' })],
+      findClusterByLabel,
+    });
+
+    await act(async () => {
+      await result.current.handleSave();
+    });
+
+    expect(findClusterByLabel).toHaveBeenCalledWith('Alice', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'cluster-alice',
+      'Alice',
+      expect.any(AbortSignal),
+      'sug-free-type-1',
+    );
+    expect(mutations.rename).not.toHaveBeenCalled();
   });
 
   it('5. handlePersonSelect case-only bob→Bob renames (exact dirty check on person path)', () => {

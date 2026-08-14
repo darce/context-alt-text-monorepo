@@ -127,6 +127,16 @@ def assert_floor_fits_corpus(accepted_set_floor: float | int, n_entries: int) ->
 
 
 def pin_media_hosts(host: str, addresses: set[str]) -> set[str]:
+    """First-wins per-host address-set pin for the process lifetime.
+
+    Key is ``host.lower()`` only — trailing-dot and IDN forms are distinct
+    keys. The cached value is the full address set from the first successful
+    resolve (a multi-A answer pins every member); later resolves for the
+    same key are ignored. HTTP fetch then selects ``sorted(pinned)[0]``.
+    There is no production caller of ``reset_media_host_pins``; pins persist
+    across run-dirs until process exit. Public-unicast checks and required
+    sha256 still refuse a private rebind on the pinned set.
+    """
     key = host.lower()
     existing = _PINNED_HOSTS.get(key)
     if existing is None:
@@ -136,6 +146,7 @@ def pin_media_hosts(host: str, addresses: set[str]) -> set[str]:
 
 
 def reset_media_host_pins() -> None:
+    """Test-only: clear the process pin cache. Unused on the production path."""
     _PINNED_HOSTS.clear()
 
 

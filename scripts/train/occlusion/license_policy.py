@@ -4670,6 +4670,11 @@ _MID_EXCEPTION_UNKNOWN_REM_ENABLED: bool = True
 # is itself a legitimate exception spelling (``fastsamxyoloxsyolox``
 # → fastsam, not fabricated yolo). TEST-15 sole-path.
 _MID_EXCEPTION_STEM_OVER_EXC_REM_ENABLED: bool = True
+# R20-01: empty-rem underscore ownership also runs when rem lives in
+# its own ``_`` / folded-tag segment (``buffalo_lxyolox_v8`` /
+# ``buffalo_lxyolox:v8``). TEST-15: False restores the rem-path
+# has_sep skip so rem-bearing tails admit again.
+_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED: bool = True
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
 _PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
@@ -4802,6 +4807,25 @@ def _underscore_preserving_glued_seed_owner(
     return best
 
 
+def _mid_exception_rem_is_trailing_segment(
+    token: str, rem: str
+) -> bool:
+    """True when compact rem is exactly the last ``_``-separated segment.
+
+    R20-01: ``buffalo_lxyolox_v8`` / ``buffalo_lxyolox:v8`` (``:v8``
+    folds to ``_v8``) carry rem in their own trailing segment. Glued
+    rem (``buffalo_lxyoloxextra``) does not — last segment is
+    ``lxyoloxextra``, not ``extra`` (A.3). Mid-chain rem
+    (``yolop_yolop_…``) also misses so the deep-chain pin stays O(n).
+    """
+    if not rem or not token:
+        return False
+    sep = token.rfind("_")
+    if sep < 0:
+        return False
+    return token[sep + 1 :] == rem
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -4828,13 +4852,16 @@ def _compact_mid_exception_deny_adjacency(
     folded seed (``buffalo_l``) against the underscore-preserving
     token makes ownership visible; compact (c) on ``yolop`` would
     false-deny ``yolop_yolox``. Junk length is unbounded
-    (``buffalo_labcdyolox``). The non-empty rem arm still skips
+    (``buffalo_labcdyolox``). Glued non-empty rem still skips
     underscore tokens so ``buffalo_lxyoloxextra`` stays F15-5
-    unknown-residual (A.3 attribution fence). Separator-aligned
-    deny forms (``my_yoloxyolo`` / ``buffalo_l_xyolox``) still hit
-    earlier via (b) / suffix walk. Prefix ownership on the compact
-    (no-``_``) path is compact-(a) / contained-long / elevated (c)
-    only — the folded (b) ``seed_`` arm of
+    unknown-residual (A.3 attribution fence). R20-01: rem that
+    lives in its own ``_`` / folded-tag segment
+    (``buffalo_lxyolox_v8`` / ``:v8``) is peeled first so the
+    same empty-rem owner sees ``buffalo_lxyolox``. Separator-
+    aligned deny forms (``my_yoloxyolo`` / ``buffalo_l_xyolox``)
+    still hit earlier via (b) / suffix walk. Prefix ownership on
+    the compact (no-``_``) path is compact-(a) / contained-long /
+    elevated (c) only — the folded (b) ``seed_`` arm of
     ``_deny_has_folded_ab_claim`` cannot fire on a compact slice
     (R19-05).
     """
@@ -4858,10 +4885,33 @@ def _compact_mid_exception_deny_adjacency(
             rem = compact[idx + len(spelling) :]
             prefix = compact[:idx]
             if rem:
+                # R20-01: rem in its own trailing ``_`` / folded-tag
+                # segment is not glued debris. Peel it and apply the
+                # empty-rem owner so ``buffalo_lxyolox_v8`` names
+                # ``buffalo_l``. Compact tokens that only gained ``_``
+                # from the rem tail (``fastsamxyolox:v8``) use the
+                # prefix owner, but not when rem is a legitimate
+                # family/export tag — ``yolov8yolox_s`` stays on
+                # head-known-rem glue (F13 red-proof sole-path).
+                if (
+                    has_sep
+                    and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED
+                    and _mid_exception_rem_is_trailing_segment(token, rem)
+                ):
+                    peeled = token[: token.rfind("_")].rstrip("_")
+                    owned = None
+                    if "_" in peeled:
+                        owned = _underscore_preserving_glued_seed_owner(
+                            peeled
+                        )
+                    elif not _is_legitimate_residual_segment(rem, _seed_c):
+                        owned = _mid_exception_prefix_deny_owner(prefix)
+                    if owned is not None:
+                        return owned
                 # R19-01: rem-path on underscore tokens would compact-
                 # join the dropped head into the prefix and retarget
                 # ``buffalo_lxyoloxextra`` from yolox_unknown_residual
-                # to buffalo_l (A.3). Leave non-empty rem to the
+                # to buffalo_l (A.3). Leave glued non-empty rem to the
                 # last-segment suffix, which still sees prefix ``lx``.
                 if has_sep:
                     start = idx + 1

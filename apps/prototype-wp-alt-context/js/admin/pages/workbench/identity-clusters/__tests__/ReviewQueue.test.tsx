@@ -2459,6 +2459,31 @@ describe('ReviewQueue', () => {
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });
 
+  // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
+  // Omitting data.refetchName() leaves this call count at the initial 1.
+  it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.ENDPOINT_ERROR,
+    });
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(fetchPendingNameSuggestions).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(fetchPendingNameSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchPendingSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchPendingMergeSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

@@ -756,9 +756,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     };
 
     const retrySuggestionQueries = (): void => {
+      // REV2-08: name suggestions feed counts.names and the review queue.
       void Promise.all([
         data.refetchAssignment(),
         data.refetchMerge(),
+        data.refetchName(),
         data.refetchTopUnlabeled(),
       ]).catch(() => undefined);
     };

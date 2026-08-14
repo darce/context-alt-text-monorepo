@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
@@ -30,6 +31,9 @@ const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 /** URL key for directory text search — same short `s` convention as workbench. */
 const SEARCH_PARAM = 's';
+
+/** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
+export const SEARCH_STATUS_DEBOUNCE_MS = 300;
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -189,8 +193,10 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           trimmedSearch,
         )
       : null;
+  // Filter/table stay live; only the status-region string is delayed [ROSTER-W-03].
+  const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
 
-  const statusLines = [activeFilterStatus, searchStatus].filter((line): line is string => line !== null);
+  const statusLines = [activeFilterStatus, announcedSearchStatus].filter((line): line is string => line !== null);
 
   const emptySearchMessage = hasActiveSearch
     ? hasCategoricalFilter

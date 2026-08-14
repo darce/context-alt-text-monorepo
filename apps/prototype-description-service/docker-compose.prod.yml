@@ -1,7 +1,13 @@
-# Production compose stack for OCI VM deployment.
-# Managed by systemd unit acx-backend.service on the VM.
-# Usage: docker compose -f docker-compose.prod.yml up -d
+# Reference production topology (parity-gated with docker-compose.env.yml).
 #
+# Deploy path used by scripts/deploy/recognition-service.sh is NOT this file:
+#   prod    → -f docker-compose.env.yml -f docker-compose.admin.yml
+#   dev|stg → -f docker-compose.env.yml
+# Keep runtime semantics identical to env.yml (ACX_IMAGE_REPO, /data/cache:ro,
+# HF modules tmpfs, RECOGNITION_BLOB_ROOT + acx_blobs) so a future consumer
+# cannot pick a divergent blob/cache topology.
+#
+# Usage (manual / legacy only): docker compose -f docker-compose.prod.yml up -d
 # Requires a .env file in the project directory (same dir as this file).
 # On the VM: ln -s /opt/acx-backend/secrets/.env /opt/acx-backend/.env
 # Locally:   copy .env.prod.example to .env and fill in values.
@@ -26,7 +32,8 @@ services:
       retries: 10
 
   api:
-    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    # Repo via ACX_IMAGE_REPO (default recognition); tag stays :latest (prod semantics).
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
     restart: unless-stopped
     depends_on:
       postgres:
@@ -35,21 +42,47 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
     volumes:
-      - /opt/acx-backend/data/models:/data/cache
+      # :ro for recognition + VLM (see docker-compose.env.yml contract comment).
+      # InsightFace models are pre-seeded; Florence RW would be an RCE surface.
+      - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     expose:
       - "8000"
 
   worker:
-    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     env_file: .env
+    environment:
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
     volumes:
-      - /opt/acx-backend/data/models:/data/cache
+      - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     command: ["python", "-m", "recognition.worker.scan_worker"]
+
+  # One-shot ownership repair for stacks that created acx_blobs while the image
+  # still ran as root. Docker never re-chowns an existing named volume, so
+  # image-time `chown acx:acx /var/lib/acx-blobs` only helps fresh volumes —
+  # USER acx then hits EACCES on every multipart upload. Run once after upgrade:
+  #   docker compose -f docker-compose.prod.yml --profile repair run --rm fix-blob-ownership
+  # Not started by default (profiles: [repair]); safe to re-run (idempotent chown).
+  # scripts/deploy/recognition-service.sh runs this on every restart for env.yml stacks.
+  fix-blob-ownership:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
+    user: "0:0"
+    volumes:
+      - acx_blobs:/var/lib/acx-blobs
+    entrypoint: ["chown", "-R", "acx:acx", "/var/lib/acx-blobs"]
+    profiles: ["repair"]
 
   caddy:
     image: caddy:2-alpine
@@ -65,5 +98,6 @@ services:
       - caddy_config:/config
 
 volumes:
+  acx_blobs:
   caddy_data:
   caddy_config:

@@ -2961,6 +2961,11 @@ def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
         "        if residual_deny is None:\n"
         "            residual_deny = _contained_long_deny_seed_hit(residual)\n"
+        "        # F13-6 / R15-G1-5: recurse steal on the residual so a\n"
+        "        # multi-stack compact (yoloxyoloxyolo) names the inner deny\n"
+        "        # seed (yolo) instead of landing on unknown residual.\n"
+        "        if residual_deny is None and residual != token:\n"
+        "            residual_deny = _exception_illegitimate_deny_steal(residual)\n"
         "        if residual_deny is not None:\n"
         "            return residual_deny"
     )
@@ -2970,6 +2975,11 @@ def _m26_b141_unbounded_defer_steal_skip(src: str) -> str:
         "        residual_deny = _deny_folded_ab_hit(residual)\n"
         "        if residual_deny is None:\n"
         "            residual_deny = _contained_long_deny_seed_hit(residual)\n"
+        "        # F13-6 / R15-G1-5: recurse steal on the residual so a\n"
+        "        # multi-stack compact (yoloxyoloxyolo) names the inner deny\n"
+        "        # seed (yolo) instead of landing on unknown residual.\n"
+        "        if residual_deny is None and residual != token:\n"
+        "            residual_deny = _exception_illegitimate_deny_steal(residual)\n"
         "        if residual_deny is not None:\n"
         "            pass  # mutated: do not return residual deny"
     )
@@ -3370,6 +3380,7 @@ MUTATIONS: list[Mutation] = [
             "test_unofficial_sep_unknown_residual_denies",
             "test_unofficial_sep_nc_denies_on_doors",
             "test_red_proof_unofficial_separator_charset_neuter",
+            "test_myarcface_stays_floor_only_door_pass",
             "test_trailing_exception_nc_denies_on_doors",
             "test_red_proof_non_prefix_exception_helper",
             "test_br28_floor_only_precision_preserved",
@@ -3577,6 +3588,8 @@ MUTATIONS: list[Mutation] = [
             # Wave F13: unknown-residual / catalog-drop / eplus-drop
             # pins die when classify is forced legitimate.
             "test_unofficial_sep_unknown_residual_denies",
+            "test_red_proof_unofficial_separator_charset_neuter",
+            "test_red_proof_total_ascii_punct_fold_neuter",
             "test_compact_glue_of_new_tags_stays_deny",
             "test_cross_family_tags_stay_deny",
             "test_red_proof_ppyolo_tiny_tag_drop",
@@ -3671,6 +3684,8 @@ MUTATIONS: list[Mutation] = [
             # Wave F13: unknown-residual deny pins + catalog/eplus
             # red-proofs whose fail-closed landing is unknown-default.
             "test_unofficial_sep_unknown_residual_denies",
+            "test_red_proof_unofficial_separator_charset_neuter",
+            "test_red_proof_total_ascii_punct_fold_neuter",
             "test_compact_glue_of_new_tags_stays_deny",
             "test_cross_family_tags_stay_deny",
             "test_red_proof_ppyolo_tiny_tag_drop",

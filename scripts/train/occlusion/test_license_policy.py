@@ -12050,4 +12050,3 @@ class TestF13StealRankingAndMultiStack:
             "red-proof: without residual recurse, yoloxyoloxyolo must "
             f"land unknown; got {hit2.package_id!r}"
         )
-

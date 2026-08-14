@@ -1200,7 +1200,7 @@ Single-lane work. No multi-agent lane split required.
 - [x] Wall-clock + job-poll budgets enforced in CLI
 - [x] Named-stack allowlist guard before writes
 - [x] Unit tests: preflight, superset, resume, consumption-table, public-unicast, cluster-gate, **rg-015 (`test_export_map_rg015.py`)** — each observed red first
-- [ ] Handoff decision for S1 with verification commands
+- [x] Handoff decision for S1 with verification commands
 
 ### Checklist for Slice 2: Export + score
 
@@ -1216,7 +1216,7 @@ Single-lane work. No multi-agent lane split required.
 - [x] Detection exhaustiveness gated by `require_detection_exhaustiveness` on `load_bench_manifest`; `v2_boxed_detection.json` loaded with the flag `True`; no module under `scripts/bench/` derives a face count by subtracting `len(present_identities)` from `face_count` (`report.py:454-461` retains the legacy form and is out of scope)
 - [x] Report under `benchmarks/results/crossbench-*/` with preflight provenance (incl. `opencv_major` + its source), cascade honesty, license banner, tier labels, and the exhaustiveness eligibility ceiling
 - [x] Mocked E2E + dual-frame (partial miss + whole-image zero-export) + localization + `test_precision_precondition` + exhaustiveness + attrition tests green (cluster gate and rg-015 are S1); harness edit proofs green via `uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py` from `apps/prototype-description-service`
-- [ ] Handoff decision for S2
+- [x] Handoff decision for S2
 
 ### Checklist for Slice 3: Runbook + teardown
 
@@ -1225,7 +1225,7 @@ Single-lane work. No multi-agent lane split required.
 - [x] Teardown cites FIR23-STACK reset only
 - [x] Failure routing table (stack gap → FIR23-STACK; CLI → FIR-8; embedding diagnostic → optional upstream)
 - [x] Commands match CLI help ([rg-006]); package root / import path documented
-- [ ] Handoff decision for S3 / task close path prepared
+- [x] Handoff decision for S3 / task close path prepared
 
 ## Review Readiness
 
@@ -1233,7 +1233,7 @@ Single-lane work. No multi-agent lane split required.
 - [x] Boundary adapters do not invent pagination/provenance metadata ([rg-015]).
 - [x] Preflight field claims match `register_health_probes` + `health.py` (no invented top-level dim fields).
 - [x] Live run path blocked in docs until FIR23-STACK delivers `acx-dev-fir` (not silently mocked as success).
-- [ ] Handoff decisions record verification + dependency status.
+- [x] Handoff decisions record verification + dependency status.
 - [x] Review findings recorded in MCP only (never pasted into this plan).
 
 ## Stretch Goals
@@ -1244,7 +1244,7 @@ Single-lane work. No multi-agent lane split required.
 
 ## Success Criteria
 
-- [ ] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff (two offline-harness files are in scope and enumerated; see [Target Outcome](#target-outcome) item 6).
+- [x] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff (two offline-harness files are in scope and enumerated; see [Target Outcome](#target-outcome) item 6).
 - [x] S1 and S2 are implementable and green against **today's** v2 harness — no FIR-8 step calls a symbol FIR-11 has not yet created; detection fixture is `v2_boxed_detection.json` (`manifest_version: 2`); no alternate manifest schema, no `load_legacy_manifest`.
 - [x] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the codes in the [stable error codes table](#stable-error-codes-normative).
 - [x] Cluster phase runs per leg; export gated on success.

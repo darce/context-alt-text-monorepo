@@ -72,11 +72,16 @@ def _assert_no_synthesised_envelope(payload: object, name: str) -> None:
                 assert invented_inner == [], f"{name} value synthesised {invented_inner}"
 
 
-def test_empty_data_does_not_fall_through_to_next_key() -> None:
+def test_object_envelope_is_rejected() -> None:
     from scripts.bench.export_map import _unwrap_rows
+    from scripts.bench.stack_pair import BenchError
 
-    rows = _unwrap_rows({"data": []}, keys=("data", "clusters"), what="clusters")
-    assert rows == []
+    with pytest.raises(BenchError) as exc:
+        _unwrap_rows({"data": []}, keys=("data",), what="media_identities")
+    assert exc.value.code == "export_envelope_invalid"
+    with pytest.raises(BenchError) as exc:
+        _unwrap_rows({"clusters": [{"id": 1}]}, keys=("clusters",), what="clusters")
+    assert exc.value.code == "export_envelope_invalid"
 
 
 def test_ambiguous_or_unknown_envelope_is_error() -> None:
@@ -89,3 +94,5 @@ def test_ambiguous_or_unknown_envelope_is_error() -> None:
     with pytest.raises(BenchError) as exc:
         _unwrap_rows({"data": [], "clusters": []}, keys=("data", "clusters"), what="clusters")
     assert exc.value.code == "export_envelope_invalid"
+    rows = _unwrap_rows([{"id": 1}], keys=("data",), what="media_identities")
+    assert rows == [{"id": 1}]

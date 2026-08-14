@@ -173,3 +173,66 @@ def test_zero_export_stays_in_both_detection_denominators() -> None:
     assert native.false_negatives >= 1
     assert e2e.false_negatives >= 1
     _ = SAMPLING_FRAME_CROSSBENCH_NATIVE, SAMPLING_FRAME_E2E
+
+
+def test_native_predictions_restricted_to_matched_faces() -> None:
+    """Unmatched-face mapper names must not enter predicted_native."""
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q", "Bob Z"],
+        entries=[
+            GoldenEntry(
+                path="split.jpg",
+                sha256="e" * 64,
+                media_id=1,
+                face_count=2,
+                present_identities=["Alice Q", "Bob Z"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[
+                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                ],
+            )
+        ],
+    )
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "i1",
+                "media_id": 10,
+                "cluster_id": "c1",
+                "cluster_label": "Alice Q",
+                "is_auto_label": False,
+                "bbox": {"x": 200, "y": 200, "width": 200, "height": 200},
+            },
+            {
+                "identity_id": "i2",
+                "media_id": 10,
+                "cluster_id": "c2",
+                "cluster_label": "Bob Z",
+                "is_auto_label": False,
+                "bbox": {"x": 0, "y": 0, "width": 10, "height": 10},
+            },
+        ],
+        "clusters": [
+            {"id": "c1", "label": "Alice Q", "is_auto_label": False},
+            {"id": "c2", "label": "Bob Z", "is_auto_label": False},
+        ],
+        "cluster_members": [],
+    }
+    join = {1: {"stack_media_id": 10, "image_width": 1000, "image_height": 1000}}
+    _det_e, id_e = to_face_metric_inputs(export, manifest, join, "primary", frame="e2e")
+    _det_n, id_n = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    e2e = identification_pr(id_e)
+    native = identification_pr(id_n)
+    assert set(id_e[0].predicted) == {"Alice Q", "Bob Z"}
+    assert id_n[0].predicted == ["Alice Q"]
+    assert id_n[0].labeled == ["Alice Q"]
+    assert e2e.precision == 1.0
+    assert native.precision == 1.0
+    assert native.false_positives == 0
+    assert e2e.true_positives == 2
+    assert native.true_positives == 1

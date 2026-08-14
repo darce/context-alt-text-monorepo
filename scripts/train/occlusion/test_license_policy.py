@@ -12990,8 +12990,9 @@ class TestF16NasResidualAttribution:
     compact, so it stays ``ppyolo_unknown_residual``.
     """
 
-    DECI: ClassVar[tuple[str, ...]] = (
-        "pp_yolo_nas",
+    # R20-05: ``pp_yolo_nas`` is compact-path Deci, not classify-owned
+    # (M23-insensitive). Keep it off the M23-victim parametrized node.
+    DECI_CLASSIFY: ClassVar[tuple[str, ...]] = (
         "pp_yolo_nas_l",
         "ppyoloenas",
         "pp_yolo_nass",
@@ -13003,8 +13004,9 @@ class TestF16NasResidualAttribution:
         "pp_yolo_nasls",
     )
 
-    @pytest.mark.parametrize("token", DECI)
+    @pytest.mark.parametrize("token", DECI_CLASSIFY)
     def test_known_nas_residual_is_deci_nc(self, token: str) -> None:
+        """Classify-owned Deci rows — M23 victim (R20-05 split)."""
         hit = policy._package_denylist_hit(token)
         assert hit is not None
         assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
@@ -13017,6 +13019,21 @@ class TestF16NasResidualAttribution:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
         assert "deci" in result.detail.casefold() or "yolo_nas" in result.detail
+
+    def test_exact_pp_yolo_nas_is_deci_via_compact(self) -> None:
+        """R20-05: ``pp_yolo_nas`` is compact-path Deci, not classify-owned.
+
+        M23-insensitive — denial does not go through residual
+        classification. Keep it off the M23 victim node.
+        """
+        token = "pp_yolo_nas"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == "yolo_nas"
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     @pytest.mark.parametrize("token", NOT_DECI)
     def test_english_nas_prefix_is_not_deci(self, token: str) -> None:

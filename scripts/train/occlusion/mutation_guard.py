@@ -1821,7 +1821,7 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_nashville]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_nasls]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_naso]',
-    'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nas]',
+    'test_license_policy.py::TestF16NasResidualAttribution::test_exact_pp_yolo_nas_is_deci_via_compact',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nas_l]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nass]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[ppyoloenas]',
@@ -3766,6 +3766,7 @@ MUTATIONS: list[Mutation] = [
             "test_elevated_and_exact_prefix_controls_hold",
             "test_classify_owned_unknown_rem_controls_hold",
             "test_known_nas_residual_is_deci_nc",
+            "test_exact_pp_yolo_nas_is_deci_via_compact",
             "test_english_nas_prefix_is_not_deci",
             "test_non_vendor_pp_yoloe_still_denies",
             "test_yoloppyoloeplus_is_yolo_plus_exception_spelling",
@@ -4018,6 +4019,7 @@ MUTATIONS: list[Mutation] = [
             # the gadget red-proof still dies here via classify-owned
             # siblings (yoloxsextra / yoloyoloxextra). R19-10 lists
             # only the classify-owned split, not the elevated/(c) rows.
+            # R20-05: pp_yolo_nas lives on the compact-path pin, not here.
             "test_known_nas_residual_is_deci_nc",
             "test_english_nas_prefix_is_not_deci",
             "test_classify_owned_unknown_rem_controls_hold",

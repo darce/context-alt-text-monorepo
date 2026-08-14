@@ -21,9 +21,9 @@ from scripts.eval_harness.manifest import (
 
 
 _MOCK_PROVENANCE = {
-    "source": "operator",
-    "license": "mock_entity",
-    "note": "synthetic mock fixture",
+    "source": "fixture",
+    "license": "fixture",
+    "note": "vendored eval-corpus fixture",
 }
 
 
@@ -415,8 +415,8 @@ def test_legacy_entry_defaults_additive_fields(tmp_path):
     assert e.difficulty is None and e.domain is None
     assert e.reference_facts == [] and e.spatial_facts == []
     # provenance is required (FIR-11 Slice 1); remaining Golden-100 fields still default.
-    assert e.provenance.source.value == "operator"
-    assert e.provenance.license.value == "mock_entity"
+    assert e.provenance.source.value == "fixture"
+    assert e.provenance.license.value == "fixture"
     # FIR-5 S1 / DATA-03: scalar domain + no tags/demographic_cohort still loads.
     assert e.tags == [] and e.demographic_cohort is None
     assert manifest.roster_cohorts == {}
@@ -463,6 +463,18 @@ def test_spatial_binary_relation_requires_reference(tmp_path):
     data["entries"][0]["spatial_facts"] = [{"subject": "Alice Example", "relation": "left_of"}]
     with pytest.raises(ManifestError):
         load_manifest(_write_manifest(tmp_path, data))
+
+
+def test_seed_corpus_uses_fixture_provenance():
+    """Vendored seed pixels are fixture/fixture, not operator/mock_entity (PROV-01)."""
+    seed_dir = os.path.join(os.path.dirname(__file__), "seed")
+    for name in ("golden.json", "bakeoff_golden.json"):
+        manifest = load_manifest(os.path.join(seed_dir, name))
+        assert manifest.entries, f"{name} must not be empty"
+        for entry in manifest.entries:
+            assert entry.provenance.source.value == "fixture", entry.path
+            assert entry.provenance.license.value == "fixture", entry.path
+            assert entry.provenance.note == "vendored eval-corpus fixture", entry.path
 
 
 def test_golden38_subset_pin():

@@ -33,7 +33,7 @@ def _manifest(n: int) -> GoldenManifest:
                 must_right=[],
                 easy_wrong=[],
                 policy={"recognition_enabled": True},
-                provenance={"source": "operator", "license": "mock_entity"},
+                provenance={"source": "fixture", "license": "fixture"},
             )
             for i in range(1, n + 1)
         ],
@@ -391,7 +391,7 @@ def test_fetch_resolves_nfd_image_path(tmp_path):  # S6-03 / S7-01
                 must_right=[],
                 easy_wrong=[],
                 policy={"recognition_enabled": True},
-                provenance={"source": "operator", "license": "mock_entity"},
+                provenance={"source": "fixture", "license": "fixture"},
             )
         ],
     )
@@ -423,7 +423,7 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
-            "provenance": {"source": "operator", "license": "mock_entity"},
+            "provenance": {"source": "fixture", "license": "fixture"},
         }
     ]
     manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries}))

@@ -258,7 +258,7 @@ def test_two_pass_malformed_pass1_json_is_typed_per_item_failure_and_run_continu
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "provenance": {"source": "operator", "license": "mock_entity"},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
     manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": [], "entries": entries})
@@ -611,7 +611,7 @@ def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "provenance": {"source": "operator", "license": "mock_entity"},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
     return GoldenManifest.model_validate({"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries})
@@ -925,7 +925,7 @@ def test_v3_malformed_or_incomplete_weave_json_is_typed_per_item_failure_and_run
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "provenance": {"source": "operator", "license": "mock_entity"},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
     manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": [], "entries": entries})

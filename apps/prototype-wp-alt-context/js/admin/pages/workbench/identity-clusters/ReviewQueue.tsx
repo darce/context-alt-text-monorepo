@@ -583,7 +583,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
         } else if (findings.zeroEvidenceClusterCount > 0) {
           // REV1-02 / B.3: S2-gated zeros leave the queue empty while work exists.
-          setLiveMessage(gatedClusterCopy(findings.zeroEvidenceClusterCount));
+          setLiveMessage(
+            gatedClusterCopy(findings.zeroEvidenceClusterCount, findings.topUnlabeledTruncated),
+          );
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }
@@ -600,6 +602,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       findings.zeroEvidenceClusterCount,
+      findings.topUnlabeledTruncated,
       focusPrimaryInCard,
       length,
       safeIndex,
@@ -1222,7 +1225,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : findings.zeroEvidenceClusterCount > 0 ? (
                 <p className="acx-review-queue__empty" data-testid="acx-review-queue-repair">
-                  {gatedClusterCopy(findings.zeroEvidenceClusterCount)}
+                  {gatedClusterCopy(
+                    findings.zeroEvidenceClusterCount,
+                    findings.topUnlabeledTruncated,
+                  )}
                 </p>
               ) : (
                 <p className="acx-review-queue__empty">

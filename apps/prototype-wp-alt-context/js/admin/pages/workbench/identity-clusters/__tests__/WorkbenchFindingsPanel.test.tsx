@@ -113,6 +113,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
   zeroEvidenceClusterCount: 0,
+  topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
   isError: false,
@@ -841,6 +842,7 @@ describe('WorkbenchFindingsPanel', () => {
         nameTotal: 0,
         topUnlabeledClusters: [],
         topUnlabeledTotal: 0,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -900,6 +902,7 @@ describe('WorkbenchFindingsPanel', () => {
           },
         ],
         topUnlabeledTotal: 1,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -957,6 +960,7 @@ describe('WorkbenchFindingsPanel', () => {
           },
         ],
         topUnlabeledTotal: 1,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1234,6 +1238,7 @@ describe('WorkbenchFindingsPanel', () => {
           },
         ],
         topUnlabeledTotal: 3,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1294,5 +1299,26 @@ describe('WorkbenchFindingsPanel', () => {
     expect(described).not.toBeNull();
     expect(described).toHaveTextContent('2 groups missing face data');
     expect(resync.getAttribute('aria-describedby')).toBe(described?.id);
+  });
+
+  // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is
+  // the whole backlog. Dropping the qualifier (or ignoring topUnlabeledTruncated)
+  // leaves this looking like the unqualified S2 copy.
+  it('REV2-04: truncated top-unlabeled page qualifies the gated-cluster count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 42, total: 42 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        topUnlabeledTruncated: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.getByText('42 unlabeled groups')).toBeInTheDocument();
   });
 });

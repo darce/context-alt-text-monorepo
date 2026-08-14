@@ -103,6 +103,8 @@ export interface WorkbenchFindingsQueues {
   nameTotal: number;
   topUnlabeledClusters: TopUnlabeledCluster[];
   topUnlabeledTotal: number;
+  /** Server envelope: the loaded top-unlabeled page is not the full backlog. */
+  topUnlabeledTruncated: boolean;
 }
 
 export interface WorkbenchFindingsSourceState {
@@ -130,6 +132,11 @@ export interface WorkbenchFindingsViewModel {
    * this loaded-page count (E21-20-REV1-01).
    */
   zeroEvidenceClusterCount: number;
+  /**
+   * True when the top-unlabeled envelope reports truncated. Repair copy must
+   * qualify the page-local zero count (E21-20-REV2-04).
+   */
+  topUnlabeledTruncated: boolean;
   hasFindings: boolean;
   isLoading: boolean;
   isError: boolean;
@@ -389,6 +396,7 @@ export const buildWorkbenchFindings = (
     counts,
     previews: collectPreviews(queues, evidenceClusters),
     zeroEvidenceClusterCount,
+    topUnlabeledTruncated: queues.topUnlabeledTruncated,
     hasFindings: counts.total > 0,
     isLoading: state.isLoading,
     isError,
@@ -423,6 +431,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     nameDataSource,
     topUnlabeledClusters,
     topUnlabeledTotal,
+    topUnlabeledTruncated,
     topUnlabeledDataSource,
     reviewItems,
   } = useSuggestionReviewQueries();
@@ -465,6 +474,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       nameTotal,
       topUnlabeledClusters,
       topUnlabeledTotal: resolvedTopUnlabeledTotal,
+      topUnlabeledTruncated,
     },
     {
       assignmentDataSource,

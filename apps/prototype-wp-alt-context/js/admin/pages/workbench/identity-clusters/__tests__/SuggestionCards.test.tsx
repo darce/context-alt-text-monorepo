@@ -1,3 +1,4 @@
+import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +12,26 @@ vi.mock('@wordpress/i18n', () => ({
     return template.replace(/%(\d+\$)?[sd]/g, () => String(args[idx++] ?? ''));
   },
 }));
+
+// Radix Avatar's Image gates on Image.onload, which never fires in JSDOM.
+vi.mock('@radix-ui/react-avatar', async () => {
+  const ReactMod = await import('react');
+  return {
+    Root: ReactMod.forwardRef(function MockRoot({ children, ...props }: Record<string, unknown>, ref: unknown) {
+      return ReactMod.createElement(
+        'span',
+        { ...props, ref } as React.HTMLAttributes<HTMLSpanElement>,
+        children as React.ReactNode,
+      );
+    }),
+    Image: ReactMod.forwardRef(function MockImage(props: Record<string, unknown>, ref: unknown) {
+      return ReactMod.createElement('img', { ...props, ref } as React.ImgHTMLAttributes<HTMLImageElement>);
+    }),
+    Fallback: ReactMod.forwardRef(function MockFallback() {
+      return null;
+    }),
+  };
+});
 
 const baseSuggestion: ReviewSuggestion = {
   suggestionId: 'sugg-1',
@@ -90,5 +111,45 @@ describe('SuggestionCard BR-41 group accname', () => {
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName('Face suggestion');
     expect(screen.queryByText(/Face suggestion \d+ of \d+/)).toBeNull();
+  });
+});
+
+describe('SuggestionCard L4R-01 Avatar alt + L4R-02 assertTruthyLabel', () => {
+  it('L4R-01: Avatar representative branch img alt equals person displayLabel', () => {
+    // Predicted first failure: alt is generic "Cluster representative" (pre-displayLabel change).
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          label: 'Jordan Lee',
+          enrichment: {
+            representativeThumbUrl: 'https://example.com/rep-thumb.jpg',
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const repImg = screen.getByAltText('Jordan Lee');
+    expect(repImg).toHaveAttribute('src', 'https://example.com/rep-thumb.jpg');
+    expect(screen.queryByAltText('Cluster representative')).toBeNull();
+  });
+
+  it('L4R-02: assertTruthyLabel throws for whitespace-only label', () => {
+    // Predicted first failure: whitespace-only label accepted (length>0 without trim).
+    expect(() =>
+      render(
+        <SuggestionCard
+          suggestion={{ ...baseSuggestion, label: ' ' }}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          isPending={false}
+          lowConfidenceThreshold={0.5}
+        />,
+      ),
+    ).toThrow('SuggestionCard requires a truthy suggestion.label');
   });
 });

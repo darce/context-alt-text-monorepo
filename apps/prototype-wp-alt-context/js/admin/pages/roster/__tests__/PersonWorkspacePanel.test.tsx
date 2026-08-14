@@ -1,10 +1,28 @@
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
 
 import type { RosterEntry } from '../../../api/rosterApi';
 import { PersonWorkspacePanel } from '../PersonWorkspacePanel';
+
+const Providers = ({ children }: { children: React.ReactNode }): React.JSX.Element => {
+  const [queryClient] = React.useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      }),
+  );
+  return (
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </MemoryRouter>
+  );
+};
+
+const renderPanel = (ui: React.ReactElement) => render(ui, { wrapper: Providers });
 
 const CLUSTER_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
@@ -53,7 +71,7 @@ const baseEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
 
 describe('PersonWorkspacePanel evidence images', () => {
   it('renders FaceThumbnail for croppable instances, not a raw 96px img', () => {
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
     const clusterRegion = screen.getByRole('region', { name: 'Cluster 1' });
     const instanceImg = within(clusterRegion).getByRole('img', {
@@ -65,12 +83,9 @@ describe('PersonWorkspacePanel evidence images', () => {
 
   it('opens FaceLightbox when a croppable thumbnail button is clicked', async () => {
     const user = userEvent.setup();
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    const openButton = screen.getByRole('button', {
-      name: 'Instance 101 for Cluster 1',
-    });
-    await user.click(openButton);
+    await user.click(screen.getByRole('button', { name: 'Open original media' }));
 
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
   });
@@ -106,9 +121,9 @@ describe('PersonWorkspacePanel evidence images', () => {
       ],
     });
 
-    const { rerender } = render(<PersonWorkspacePanel entry={personA} onOpenQueue={vi.fn()} />);
+    const { rerender } = renderPanel(<PersonWorkspacePanel entry={personA} onOpenQueue={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    await user.click(screen.getByRole('button', { name: 'Open original media' }));
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
 
     rerender(<PersonWorkspacePanel entry={personB} onOpenQueue={vi.fn()} />);
@@ -147,9 +162,9 @@ describe('PersonWorkspacePanel evidence images', () => {
       ],
     });
 
-    const { rerender } = render(<PersonWorkspacePanel entry={entryId1} onOpenQueue={vi.fn()} />);
+    const { rerender } = renderPanel(<PersonWorkspacePanel entry={entryId1} onOpenQueue={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    await user.click(screen.getByRole('button', { name: 'Open original media' }));
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
 
     rerender(<PersonWorkspacePanel entry={entryId2} onOpenQueue={vi.fn()} />);
@@ -188,9 +203,9 @@ describe('PersonWorkspacePanel evidence images', () => {
       ],
     });
 
-    const { rerender } = render(<PersonWorkspacePanel entry={personA} onOpenQueue={vi.fn()} />);
+    const { rerender } = renderPanel(<PersonWorkspacePanel entry={personA} onOpenQueue={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    await user.click(screen.getByRole('button', { name: 'Open original media' }));
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
 
     rerender(<PersonWorkspacePanel entry={personB} onOpenQueue={vi.fn()} />);
@@ -230,9 +245,9 @@ describe('PersonWorkspacePanel evidence images', () => {
       ],
     });
 
-    const { rerender } = render(<PersonWorkspacePanel entry={entryAbsentUuid} onOpenQueue={vi.fn()} />);
+    const { rerender } = renderPanel(<PersonWorkspacePanel entry={entryAbsentUuid} onOpenQueue={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' }));
+    await user.click(screen.getByRole('button', { name: 'Open original media' }));
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
 
     rerender(<PersonWorkspacePanel entry={entryUuidEqualsPriorId} onOpenQueue={vi.fn()} />);
@@ -242,9 +257,9 @@ describe('PersonWorkspacePanel evidence images', () => {
 
   it('closes lightbox via dialog close affordance and allows reopen', async () => {
     const user = userEvent.setup();
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    const openButton = screen.getByRole('button', { name: 'Instance 101 for Cluster 1' });
+    const openButton = screen.getByRole('button', { name: 'Open original media' });
     await user.click(openButton);
     expect(screen.getByRole('dialog', { name: 'Original media with face highlight' })).toBeInTheDocument();
 
@@ -256,14 +271,14 @@ describe('PersonWorkspacePanel evidence images', () => {
   });
 
   it('shows visible No image fallback for missing media_url', () => {
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
     expect(screen.getByText('No image')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Instance 102 for Cluster 1' })).toHaveTextContent('No image');
   });
 
   it('falls back to raw lazy img for invalid-but-truthy bbox', () => {
-    render(
+    renderPanel(
       <PersonWorkspacePanel
         entry={baseEntry({
           clusters: [
@@ -292,11 +307,11 @@ describe('PersonWorkspacePanel evidence images', () => {
     expect(image).toHaveAttribute('loading', 'lazy');
     expect(image).toHaveAttribute('src', 'https://example.com/zero-bbox.jpg');
     expect(image.closest('.acx-face-thumbnail')).toBeNull();
-    expect(image.closest('button')).toBeNull();
+    expect(image.closest('[role="option"]')).not.toBeNull();
   });
 
   it('passes loading=lazy on FaceThumbnail croppable branch and raw-img fallback', () => {
-    render(
+    renderPanel(
       <PersonWorkspacePanel
         entry={baseEntry({
           clusters: [
@@ -342,21 +357,21 @@ describe('PersonWorkspacePanel evidence images', () => {
   });
 
   it('keeps thumbnail button accessible name when FaceThumbnail errors', async () => {
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    const openButton = screen.getByRole('button', { name: 'Instance 101 for Cluster 1' });
+    const openButton = screen.getByRole('option', { name: 'Instance 101 for Cluster 1' });
     const img = within(openButton).getByRole('img');
     fireEvent.error(img);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
       expect(within(openButton).getByRole('img', { name: 'Face image unavailable' })).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: 'Face image unavailable' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Face image unavailable' })).not.toBeInTheDocument();
   });
 
   it('shows Cluster 1 and Media captions without visible uuids', () => {
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
     expect(screen.getByRole('heading', { level: 5, name: 'Cluster 1' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Cluster 1' })).toBeInTheDocument();
@@ -366,7 +381,7 @@ describe('PersonWorkspacePanel evidence images', () => {
   });
 
   it('uses ordinal cluster alts and never exposes fixture uuid in accessible names', () => {
-    render(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
     expect(screen.getByRole('img', { name: 'Representative face for Cluster 1' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
@@ -380,7 +395,7 @@ describe('PersonWorkspacePanel evidence images', () => {
   it('renders distinct ordinal accessible names for multi-cluster evidence', () => {
     const clusterA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const clusterB = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffff';
-    render(
+    renderPanel(
       <PersonWorkspacePanel
         entry={baseEntry({
           cluster_count: 2,

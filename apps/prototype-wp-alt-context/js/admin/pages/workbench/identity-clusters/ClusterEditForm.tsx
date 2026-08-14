@@ -72,8 +72,8 @@ interface ClusterEditFormProps {
    * When provided, person-row confirm uses this instead of onSave.
    */
   onPersonSelect?: (label: string) => void;
-  /** Called when a suggestion is confirmed */
-  onConfirmSuggestion?: (clusterId: string, label: string) => void;
+  /** Called when a suggestion is confirmed (optional suggestionId resolves the pending row by id) */
+  onConfirmSuggestion?: (clusterId: string, label: string, suggestionId?: string) => void;
   /** Called when cancel button is clicked */
   onCancel: () => void;
   /** Called when a suggested match is rejected */
@@ -155,7 +155,12 @@ export const ClusterEditForm = ({
       // Namespaced cluster: values only (no bare-id fallback — FIX-10).
       const clusterId = unwrapClusterOptionId(String(option.value));
       if (onConfirmSuggestion && clusterId) {
-        onConfirmSuggestion(clusterId, option.label);
+        // BR-16 / L1R-01: thread suggestion_id so confirm resolves the pending row by id.
+        const suggestionId =
+          typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
+            ? option.suggestion_id
+            : undefined;
+        onConfirmSuggestion(clusterId, option.label, suggestionId);
       } else {
         onSave(option.label);
       }

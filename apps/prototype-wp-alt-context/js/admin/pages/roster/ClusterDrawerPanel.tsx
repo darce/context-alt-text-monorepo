@@ -5,11 +5,17 @@ import type { ClusterIdentity, ClusterSummary } from '../../api/recognition';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { MediaMap } from './hooks/useClusterMediaMap';
 import { mediaEditUrl } from '../../utils/adminUrls';
+import { toRosterPerson } from '../../navigation/appLinks';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import {
+  CLUSTER_DRAWER_STATES,
+  getClusterDrawerState,
+  getClusterPersonUuid,
+} from './clusterDrawerState';
 
 const RESERVED_LABEL_MESSAGE = __(
   'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
@@ -262,18 +268,14 @@ export const ClusterDrawerPanel = ({
     [closePicker, onReassignFace],
   );
 
-  const selectedEntry = React.useMemo(
-    () => rosterEntries.find((entry) => entry.id.toString() === selectedEntryId) ?? null,
-    [rosterEntries, selectedEntryId],
-  );
-
   if (!cluster) {
     return null;
   }
 
   const isCreatingEntry = selectedEntryId === 'create';
   const canCommit = (isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== '');
-  const selectedPersonUuid = selectedEntry?.person_uuid ?? null;
+  const assignedPersonUuid = getClusterPersonUuid(cluster);
+  const drawerState = getClusterDrawerState(cluster);
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
   const hasReassignTargets = reassignTargets.length > 0;
@@ -311,7 +313,13 @@ export const ClusterDrawerPanel = ({
       <aside className="acx-cluster-drawer" aria-live="polite" ref={drawerRef} onKeyDown={handleDrawerKeyDown}>
         <header className="acx-cluster-drawer__header">
           <div className="acx-cluster-drawer__title-group">
-            <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
+            <span className="acx-cluster-drawer__eyebrow">
+              {drawerState === CLUSTER_DRAWER_STATES.ASSIGNED
+                ? __('Assigned cluster', 'alt-context')
+                : drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL
+                  ? __('Singleton proposal', 'alt-context')
+                  : __('Unresolved cluster', 'alt-context')}
+            </span>
             <h3 className="acx-cluster-drawer__title">
               {cluster.label?.trim() ? cluster.label : __('Unnamed cluster', 'alt-context')}
             </h3>
@@ -485,6 +493,12 @@ export const ClusterDrawerPanel = ({
           </button>
         </div>
 
+        {drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL ? (
+          <p className="acx-cluster-drawer__state">
+            {__('This face group is a proposal, not a curated person. Review it before assigning.', 'alt-context')}
+          </p>
+        ) : null}
+
         <div className="acx-cluster-drawer__assignment">
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
             {__('Assign to Identity', 'alt-context')}
@@ -525,18 +539,27 @@ export const ClusterDrawerPanel = ({
                 </>
               )}
             </button>
-            <button
-              type="button"
-              className="acx-button acx-cluster-drawer__workspace-btn"
-              onClick={() => {
-                if (selectedPersonUuid) {
-                  onOpenPersonWorkspace(selectedPersonUuid);
-                }
-              }}
-              disabled={!selectedPersonUuid}
-            >
-              {__('Open person workspace', 'alt-context')}
-            </button>
+            {assignedPersonUuid ? (
+              <a
+                className="acx-button acx-cluster-drawer__workspace-btn"
+                href={toRosterPerson(assignedPersonUuid)}
+                onClick={(event) => {
+                  if (
+                    event.button === 0 &&
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    !event.altKey
+                  ) {
+                    event.preventDefault();
+                    onOpenPersonWorkspace(assignedPersonUuid);
+                    return;
+                  }
+                }}
+              >
+                {__('Open person review', 'alt-context')}
+              </a>
+            ) : null}
           </div>
         </div>
       </aside>

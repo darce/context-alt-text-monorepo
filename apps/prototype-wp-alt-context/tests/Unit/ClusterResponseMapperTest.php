@@ -497,4 +497,118 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertNull($payload[0]['label']);
         $this->assertTrue($payload[0]['is_auto_label']);
     }
+
+    public function testMapClusterListPassesThroughPersonUuidFromPersonsJoin(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-bound',
+                'label' => 'Alice',
+                'identity_count' => 2,
+                'person_uuid' => '11111111-1111-1111-1111-111111111111',
+            ],
+            [
+                'cluster_uuid' => 'cluster-unresolved',
+                'label' => '',
+                'identity_count' => 3,
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, []);
+
+        $this->assertSame('11111111-1111-1111-1111-111111111111', $payload[0]['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $payload[1]);
+        $this->assertNull($payload[1]['person_uuid']);
+    }
+
+    public function testMapClusterListDoesNotInventTopologyFields(): void
+    {
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-plain',
+                    'label' => 'Bob',
+                    'identity_count' => 2,
+                    'person_uuid' => '22222222-2222-2222-2222-222222222222',
+                    'merged_into_cluster_id' => 'should-not-pass',
+                    'superseded_by' => 'should-not-pass',
+                    'status' => 'merged',
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame('22222222-2222-2222-2222-222222222222', $payload[0]['person_uuid']);
+        $this->assertArrayNotHasKey('merged_into_cluster_id', $payload[0]);
+        $this->assertArrayNotHasKey('superseded_by', $payload[0]);
+        $this->assertArrayNotHasKey('status', $payload[0]);
+    }
+
+    public function testMapClusterDetailPassesThroughPersonUuid(): void
+    {
+        $payload = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail',
+                'label' => 'Dana',
+                'identity_count' => 4,
+                'person_uuid' => '33333333-3333-3333-3333-333333333333',
+            ],
+            []
+        );
+
+        $this->assertSame('33333333-3333-3333-3333-333333333333', $payload['person_uuid']);
+    }
+
+    public function testMapClusterListNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'label' => 'Empty',
+                    'identity_count' => 2,
+                    'person_uuid' => '',
+                ],
+                [
+                    'cluster_uuid' => 'cluster-whitespace',
+                    'label' => 'Whitespace',
+                    'identity_count' => 2,
+                    'person_uuid' => '   ',
+                ],
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $payload[0]);
+        $this->assertNull($payload[0]['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $payload[1]);
+        $this->assertNull($payload[1]['person_uuid']);
+    }
+
+    public function testMapClusterDetailNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $empty = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-empty-detail',
+                'label' => 'Empty',
+                'identity_count' => 2,
+                'person_uuid' => '',
+            ],
+            []
+        );
+        $whitespace = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-whitespace-detail',
+                'label' => 'Whitespace',
+                'identity_count' => 2,
+                'person_uuid' => " \t ",
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $empty);
+        $this->assertNull($empty['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $whitespace);
+        $this->assertNull($whitespace['person_uuid']);
+    }
 }

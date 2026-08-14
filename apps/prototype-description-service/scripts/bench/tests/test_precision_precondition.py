@@ -130,6 +130,46 @@ def test_assign_tier_missing_half_width_is_fail_closed() -> None:
     assert reason == "ci_half_width_above_precision_floor"
 
 
+def test_assign_tier_primary_emits_confirmatory() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.CONFIRMATORY
+    assert reason is None
+
+
+def test_assign_tier_holm_secondary_emits_confirmatory() -> None:
+    ctx = {
+        "named": True,
+        "primary": False,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": True,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+        "bootstrap_status": "ok",
+    }
+    tier, reason = assign_tier("detection_precision@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.CONFIRMATORY
+    assert reason is None
+
+
 def test_assign_tier_primary_name_does_not_bypass_flag() -> None:
     ctx = {
         "named": True,

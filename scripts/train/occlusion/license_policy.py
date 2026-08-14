@@ -1428,11 +1428,61 @@ _MODEL_FILE_EXTENSIONS: tuple[str, ...] = (
 # off is the pre-F13-1 official-only ``[-_.\\s]`` fold (F13-1 red-proof).
 _ASCII_PUNCT_FOLD_TOTAL: bool = True
 _UNOFFICIAL_SEPARATOR_CHARS: str = "+=:@|#"
+# F14-2: strip one trailing Docker/registry tag from the last path
+# component *before* punct fold. ``yolox:s`` is not a registry tag (``s``
+# is an official family size) and is owned by the fold. TEST-15: set
+# False / empty the regex to restore ``yolox:latest`` → ``yolox_latest``.
+_STRIP_REGISTRY_TRAILING_TAG: bool = True
+_REGISTRY_TRAILING_TAG_RE = re.compile(
+    r":(latest|v?[0-9]+(?:[._-][0-9]+){0,3})$"
+)
+# F14-3: after fold, merge a leading ``pp`` segment + following ``yolo*``
+# segment (``pp_yoloe`` → ``ppyoloe``). Scoped to the ppyolo family only.
+# TEST-15: set False to restore ``PP-YOLOE+`` → ``pp_yoloe`` (yolo deny).
+_PP_YOLO_SEGMENT_MERGE_ENABLED: bool = True
 
 
 def _has_c0_c1_control(text: str) -> bool:
     """True when any C0/C1 control (Unicode Cc, including NUL) remains."""
     return any(unicodedata.category(ch) == "Cc" for ch in text)
+
+
+def _strip_trailing_registry_tag(text: str) -> str:
+    """Strip one ``:latest`` / ``:v0.3.0`` tag from the last path component.
+
+    Applied before punct fold so ``yolox:latest`` becomes ``yolox`` rather
+    than ``yolox_latest``. Does not match official size tags (``:s``).
+    A deny seed plus a registry tag (``yolo:latest``) still denies after
+    the strip — the strip must never launder a deny.
+    """
+    if not text or not _STRIP_REGISTRY_TRAILING_TAG or _REGISTRY_TRAILING_TAG_RE is None:
+        return text
+    parts = text.split("/")
+    last = parts[-1]
+    stripped = _REGISTRY_TRAILING_TAG_RE.sub("", last, count=1)
+    if stripped == last:
+        return text
+    parts[-1] = stripped
+    return "/".join(parts)
+
+
+def _merge_pp_yolo_segments(text: str) -> str:
+    """Merge leading ``pp`` + ``yolo*`` segments per slash component (F14-3).
+
+    ``PP-YOLOE+`` folds to ``pp_yoloe``; this merge yields ``ppyoloe``.
+    ``pp_yolo`` → ``ppyolo`` (official PP-YOLO). ``pp_yolov8`` →
+    ``ppyolov8`` (unknown residual, fail-closed). ``pp`` / ``pp_x`` are
+    unchanged. Not a generic segment-merge.
+    """
+    if not text or not _PP_YOLO_SEGMENT_MERGE_ENABLED:
+        return text
+    out: list[str] = []
+    for comp in text.split("/"):
+        segs = [s for s in comp.split("_") if s]
+        if len(segs) >= 2 and segs[0] == "pp" and segs[1].startswith("yolo"):
+            segs = [segs[0] + segs[1], *segs[2:]]
+        out.append("_".join(segs))
+    return "/".join(out)
 
 
 def _fold_ascii_non_alnum(text: str) -> str:
@@ -1466,7 +1516,10 @@ def canonical(value: str) -> str | None:
 
     When ``_ASCII_PUNCT_FOLD_TOTAL`` is False the F13-1 enumeration
     ``_UNOFFICIAL_SEPARATOR_CHARS`` plus official ``[-_.\\s]`` is used
-    instead (TEST-15).
+    instead (TEST-15). A single trailing registry tag
+    (``:latest`` / ``:v0.3.0``) is stripped from the last path component
+    before fold (F14-2). After fold, a leading ``pp`` segment followed by
+    a ``yolo*`` segment merges to ``ppyolo*`` (F14-3).
     """
     if value is None:
         return None
@@ -1491,6 +1544,9 @@ def canonical(value: str) -> str | None:
                 break
         stripped_parts.append(p)
     text = "/".join(stripped_parts)
+    # F14-2: strip one trailing registry tag from the last component
+    # *before* punct fold so :latest / :v0.3.0 do not become unknown debris.
+    text = _strip_trailing_registry_tag(text)
     if _ASCII_PUNCT_FOLD_TOTAL:
         # F14-1: total class fold. Enumeration is structurally unwinnable
         # (every ASCII punct outside +=:@#| fail-opened under F13-1).
@@ -1505,6 +1561,8 @@ def canonical(value: str) -> str | None:
     text = re.sub(r"_+", "_", text)
     text = "/".join(seg.strip("_") for seg in text.split("/"))
     text = text.strip("_")
+    # F14-3: official PP-YOLOE+ title path (pp_yoloe → ppyoloe).
+    text = _merge_pp_yolo_segments(text)
     if any(ord(ch) > 127 for ch in text):
         return None
     return text

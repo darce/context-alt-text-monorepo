@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { JobProgress } from '../../../api/recognition/types/scan';
 import { CONFIRM_NO_JOB_ZERO_STATE } from '../confirmTabCopy';
 import type { ScanRunViewModel } from '../JobPipelineContext';
-import { ConfirmPanel, ScanActionPanel } from '../Panels';
+import { buildCoarseJobAnnouncement, ConfirmPanel, ScanActionPanel } from '../Panels';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -115,6 +115,92 @@ describe('ScanActionPanel', () => {
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText(/Job pending: working/)).toBeTruthy();
     expect(screen.getByText('Processed 4/10 images')).toBeTruthy();
+  });
+
+  it('L3R-01 residual: live region stays phase-stable while per-tick statusText updates visually', () => {
+    const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
+    const { rerender } = render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress,
+          statusText: 'Processed 1/10 images',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    const announce = screen.getByTestId('scan-status-announce');
+    expect(announce.getAttribute('role')).toBe('status');
+    expect(announce.textContent).toBe('Job job-1: Detecting');
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 1/10 images');
+
+    // Per-tick count change: visual updates, live region does not.
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress: { completed: 5, total: 10, phase: 'detecting' },
+          statusText: 'Processed 5/10 images',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 5/10 images');
+    expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Detecting');
+
+    // Phase change: live region updates.
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress: { completed: 10, total: 10, phase: 'clustering' },
+          statusText: 'Processed 10/10 identities',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Clustering');
+  });
+
+  it('buildCoarseJobAnnouncement ignores count-bearing statusText without a phase', () => {
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Processed 3/8 images',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'completed',
+        progressPhase: null,
+      }),
+    ).toBe('Job j1: completed');
+  });
+
+  it('L3R-07: stall Cancel is suppressed when suppressPrimaryChrome is set', () => {
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, stallSeconds: 31 }}
+        onCancelScan={vi.fn()}
+        onRetryStream={vi.fn()}
+        suppressPrimaryChrome
+      />,
+    );
+
+    expect(screen.getByText('Stuck - last update 31 seconds ago')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    // Primary Cancel is on the strip; stall block must not add a second "Cancel".
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
   });
 
   it('disables cancel button while cancelling', () => {

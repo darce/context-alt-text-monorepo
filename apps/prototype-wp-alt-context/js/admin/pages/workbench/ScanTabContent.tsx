@@ -151,8 +151,8 @@ export const ScanTabContent = (): React.JSX.Element => {
   return (
     <>
       {isJobActive ? (
-        // L3R-01: strip is visual-only — no role="status". Full panel statusText is the
-        // single job live region (coarse statusText changes, not per-tick percent).
+        // L3R-01: strip is visual-only — no role="status". Job announcements live on the
+        // demoted panel's phase-stable live region (buildCoarseJobAnnouncement), not statusText ticks.
         <div className="acx-active-job-strip" data-testid="active-job-strip">
           <ScanActionPanel
             variant="compact"
@@ -184,6 +184,17 @@ export const ScanTabContent = (): React.JSX.Element => {
           >
             {reviewLifecycleMessage}
           </p>
+          {/* L3R-08: ReviewQueue owns #acx-workbench-queue-heading; label/review panels do not —
+              supply a stable region heading so aria-labelledby never dangles. */}
+          {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
+              {__('Name this person', 'alt-context')}
+            </h3>
+          ) : reviewClusterId !== null ? (
+            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
+              {__('Review Cluster', 'alt-context')}
+            </h3>
+          ) : null}
           <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
             {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
               <ClusterLabelingPanel

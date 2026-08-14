@@ -18,6 +18,10 @@ import {
   projectIdentityLegFromPending,
   projectIdentityWindow,
   projectReviewQueue,
+  readIdentityBatchCacheEntry,
+  readIdentityBatchUpdatedAt,
+  readIdentityFromBatchCache,
+  seedIdentityBatchSingles,
   type ProjectedSuggestion,
 } from '../suggestionProjection';
 import { buildClusterMatch, buildPendingRow, suggestionProjectionMatrix } from './suggestionProjection.fixtures';
@@ -39,8 +43,72 @@ describe('isHumanLabeledTarget', () => {
 
   it(`rejects ${AUTO_LABEL_PREFIX}-prefixed auto-labels`, () => {
     expect(isHumanLabeledTarget('cluster-1234')).toBe(false);
-    expect(isHumanLabeledTarget('cluster-auto-1')).toBe(false);
-    expect(isHumanLabeledTarget('  cluster-xyz  ')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-abcdef01')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster-ab  ')).toBe(false);
+  });
+
+  // BR-28: PHP system-label detector accepts cluster[-_] case-insensitively (hex suffixes, ≥8).
+  it('rejects case-insensitive cluster[-_] machine labels (PHP parity / hex)', () => {
+    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('CLUSTER-ABCDEF12')).toBe(false);
+    expect(isHumanLabeledTarget('  Cluster-abcdef12  ')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster_abcdef12  ')).toBe(false);
+    // Non-prefix / missing separator must still pass as human-format.
+    expect(isHumanLabeledTarget('mycluster-foo')).toBe(true);
+    expect(isHumanLabeledTarget('clusterabc')).toBe(true);
+  });
+
+  // BR-34: anchored machine shape — short forms + UUID hex stay gated; human Cluster* pass.
+  it('gates short and UUID-shaped cluster[-_][0-9a-f-]+ machine labels (BR-34)', () => {
+    expect(isHumanLabeledTarget('cluster-7')).toBe(false);
+    expect(isHumanLabeledTarget('  cluster-7')).toBe(false);
+    expect(isHumanLabeledTarget('Cluster-abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster_abcdef12')).toBe(false);
+    expect(isHumanLabeledTarget('cluster-a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBe(false);
+  });
+
+  it('passes operator-plausible human Cluster* labels that are not machine-shaped (BR-34)', () => {
+    expect(isHumanLabeledTarget('Cluster-Bomb Collective')).toBe(true);
+    expect(isHumanLabeledTarget('CLUSTER_HQ')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster_X')).toBe(true);
+    expect(isHumanLabeledTarget('Cluster Nine')).toBe(true);
+  });
+
+  // BR-37/BR-38: two-shape reject — PHP-parity long hex (any case) OR lowercase machine forms.
+  // BR-44: it.each so each matrix input reports independently (vitest aborts at first expect in a shared it).
+  it.each([
+    'cluster-xyz',
+    '  cluster-xyz  ',
+    'cluster-auto-1',
+    'cluster-g7x2',
+    'cluster_12_final',
+    'cluster-dad',
+  ])('gates non-hex lowercase machine shapes (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(false);
+  });
+
+  it.each([
+    'cluster-7',
+    'cluster-ab',
+    'cluster-1234',
+    'cluster-abcdef01',
+    'cluster-123e4567-e89b-12d3-a456-426614174000',
+    'CLUSTER-ABCDEF12',
+    'Cluster-abcdef12',
+    'cluster_ABCDEF1234',
+  ])('gates hex machine labels across lengths and case (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(false);
+  });
+
+  it.each([
+    'Cluster-Dad',
+    'Cluster-ace',
+    'Cluster-BEEF',
+    'Cluster-Cafe',
+    'Alex',
+  ])('passes hex-word human Cluster* names with uppercase letters (BR-37/BR-38): %j', (label) => {
+    expect(isHumanLabeledTarget(label)).toBe(true);
   });
 });
 
@@ -257,6 +325,7 @@ describe('matrix fixture outcomes', () => {
     const identityProjected = projectIdentityWindow(caseData.identityId, caseData.matches);
     expect(identityProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedIdentitySuggestionIds);
 
+    // BR-23: projectReviewQueue is the live assignment queryFn adapter.
     const reviewProjected = projectReviewQueue(caseData.pendingRows);
     expect(reviewProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
   });
@@ -266,10 +335,44 @@ describe('matrix fixture outcomes', () => {
     const identityProjected = projectIdentityLegFromPending(caseData.pendingRows);
     expect(identityProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedIdentitySuggestionIds);
 
+    // BR-23: live path (useSuggestionReviewQueries) calls projectReviewQueue in queryFn.
     const reviewProjected = projectReviewQueue(caseData.pendingRows);
     expect(reviewProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
     const staleRow = reviewProjected.find((p) => p.suggestionId === 'sug-stale-accepted');
     expect(staleRow?.resolution).toBe(SUGGESTION_RESOLUTION.ACCEPTED);
+  });
+});
+
+describe('projectReviewQueue is the live review-page adapter (BR-23)', () => {
+  it('adapt + human-label filter + sort matches the assignment queryFn contract', () => {
+    const rows = [
+      buildPendingRow({
+        id: 'low',
+        identity_id: 'i1',
+        suggested_cluster_id: 'c-low',
+        cluster_label: 'Low',
+        representative_similarity: 0.4,
+        created_at: '2026-06-01T00:00:00.000Z',
+      }),
+      buildPendingRow({
+        id: 'auto',
+        identity_id: 'i2',
+        suggested_cluster_id: 'c-auto',
+        cluster_label: 'cluster-abcdef12',
+        representative_similarity: 0.99,
+      }),
+      buildPendingRow({
+        id: 'high',
+        identity_id: 'i3',
+        suggested_cluster_id: 'c-high',
+        cluster_label: 'High',
+        representative_similarity: 0.9,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }),
+    ];
+    const projected = projectReviewQueue(rows);
+    expect(projected.map((p) => p.suggestionId)).toEqual(['high', 'low']);
+    expect(projected.every((p) => isHumanLabeledTarget(p.label))).toBe(true);
   });
 });
 
@@ -279,6 +382,74 @@ describe('identityBatchIdsKey', () => {
     expect(identityBatchIdsKey(['id-a', 'id-b', 'id-a'])).toBe('id-a,id-b');
     expect(identityBatchIdsKey(['id-b', 'id-a'])).toBe(identityBatchIdsKey(['id-a', 'id-b']));
     expect(identityBatchIdsKey([])).toBe('');
+  });
+});
+
+describe('seedIdentityBatchSingles (L1R-04)', () => {
+  it('does not seed [] for ids absent from response.matches', () => {
+    // Predicted first failure: id-b gets an authoritative empty single-id entry
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const matchA = buildClusterMatch({
+      suggestion_id: 'sug-a',
+      cluster_id: 'c-a',
+      label: 'Ada',
+      similarity: 0.9,
+    });
+    seedIdentityBatchSingles(
+      queryClient,
+      { matches: { 'id-a': [matchA] } },
+      ['id-a', 'id-b'],
+    );
+
+    const keyA = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-a']));
+    const keyB = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-b']));
+    expect(queryClient.getQueryData(keyA)).toEqual({ matches: { 'id-a': [matchA] } });
+    expect(queryClient.getQueryData(keyB)).toBeUndefined();
+  });
+});
+
+describe('readIdentityBatchCacheEntry (L1R-03)', () => {
+  it('returns data and dataUpdatedAt from the same first matching batch', () => {
+    // Predicted first failure of split readers: data from batch-1, updatedAt from later batch-2
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const staleMatch = buildClusterMatch({
+      suggestion_id: 'stale',
+      cluster_id: 'c-stale',
+      label: 'Stale',
+      similarity: 0.5,
+    });
+    const freshMatch = buildClusterMatch({
+      suggestion_id: 'fresh',
+      cluster_id: 'c-fresh',
+      label: 'Fresh',
+      similarity: 0.9,
+    });
+    const multiKey1 = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-x', 'id-y']));
+    const multiKey2 = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-x', 'id-z']));
+    queryClient.setQueryData(multiKey1, { matches: { 'id-x': [staleMatch], 'id-y': [] } });
+    // Force an older dataUpdatedAt on the first batch, newer on the second.
+    const state1 = queryClient.getQueryState(multiKey1);
+    if (state1) {
+      state1.dataUpdatedAt = 1_000;
+    }
+    queryClient.setQueryData(multiKey2, { matches: { 'id-x': [freshMatch], 'id-z': [] } });
+    const state2 = queryClient.getQueryState(multiKey2);
+    if (state2) {
+      state2.dataUpdatedAt = 9_000;
+    }
+
+    const entry = readIdentityBatchCacheEntry(queryClient, 'id-x');
+    expect(entry?.data.matches['id-x']?.[0]?.suggestion_id).toBe('stale');
+    expect(entry?.dataUpdatedAt).toBe(1_000);
+    // Paired helpers must agree with the single entry (not latest-across-batches).
+    expect(readIdentityFromBatchCache(queryClient, 'id-x')?.matches['id-x']?.[0]?.suggestion_id).toBe(
+      'stale',
+    );
+    expect(readIdentityBatchUpdatedAt(queryClient, 'id-x')).toBe(1_000);
   });
 });
 

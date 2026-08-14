@@ -10,7 +10,7 @@ import {
 } from '../../../api/recognition';
 import type { DataSource } from '../../../api/recognition/types';
 import { buildSuggestionReviewItems } from './suggestionReviewItems';
-import { fromPendingRow, type ProjectedSuggestion } from './suggestionProjection';
+import { projectReviewQueue, type ProjectedSuggestion } from './suggestionProjection';
 
 export const SUGGESTION_PAGE_SIZE = 25;
 const TOP_UNLABELED_LIMIT = 20;
@@ -18,6 +18,8 @@ const TOP_UNLABELED_LIMIT = 20;
 /**
  * Cached review-queue page: adapted ProjectedSuggestion rows + honest envelope dataSource.
  * Adapter lives in queryFn so optimistic filters match on suggestionId (PR-20).
+ * Live path uses projectReviewQueue (BR-23) — adapt + human-label filter + sort — so
+ * unit tests of projectReviewQueue exercise the same composition as production.
  */
 export interface SuggestionReviewPage {
   items: ProjectedSuggestion[];
@@ -33,7 +35,8 @@ export const useSuggestionReviewQueries = () => {
     queryFn: async (): Promise<SuggestionReviewPage> => {
       const response = await fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0);
       return {
-        items: response.suggestions.map(fromPendingRow),
+        // BR-23: single projection def — same adapt/filter/sort as projectReviewQueue tests.
+        items: projectReviewQueue(response.suggestions),
         dataSource: response.data_source,
       };
     },
@@ -61,6 +64,7 @@ export const useSuggestionReviewQueries = () => {
     enabled: tenantId !== '',
     staleTime: 60000,
     refetchOnMount: 'always',
+    retry: false,
   });
 
   const assignmentSuggestions = assignmentQuery.data?.items;

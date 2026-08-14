@@ -103,6 +103,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
   isLoading: false,
   isError: false,
+  isTopUnlabeledError: false,
   queueSettled: true,
   ...overrides,
 });
@@ -245,6 +246,32 @@ describe('buildWorkbenchFindings', () => {
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
   });
 
+  // UI-03: empty primary queues + top-unlabeled 500 is ERROR, not EMPTY.
+  it('UI-03: top-unlabeled error with empty queues is isError / isTopUnlabeledError, not empty', () => {
+    const model = buildWorkbenchFindings(makeQueues(), makeState({ isTopUnlabeledError: true }));
+
+    expect(model.isTopUnlabeledError).toBe(true);
+    expect(model.isError).toBe(true);
+    expect(model.hasFindings).toBe(false);
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
+  });
+
+  // UI-06: partial findings keep loading; unlabeled outage is flagged separately.
+  it('UI-06: top-unlabeled error with other findings keeps hasFindings and flags isTopUnlabeledError', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(makeSuggestion()),
+        assignmentTotal: 1,
+      }),
+      makeState({ isTopUnlabeledError: true }),
+    );
+
+    expect(model.isTopUnlabeledError).toBe(true);
+    expect(model.isError).toBe(false);
+    expect(model.hasFindings).toBe(true);
+    expect(model.counts.unlabeledClusters).toBe(0);
+  });
+
   it('reports unavailable state when the suggestion source is unavailable', () => {
     const model = buildWorkbenchFindings(
       makeQueues(),
@@ -317,6 +344,722 @@ describe('buildWorkbenchFindings', () => {
       'cluster-with-face',
     ]);
     expect(model.previews[0].thumbUrl).toBe('http://example.test/assign-thumb.jpg');
+  });
+
+  const FACE_BBOX = { x: 12, y: 24, width: 80, height: 96 };
+
+  // HAI-01: every preview source must retain its bbox so the strip can crop to a face.
+  it('threads bbox onto previews from assignment, merge, name, and cluster sources', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'assign-1',
+            identity_media_url: 'http://example.test/assign-media.jpg',
+            identity_bbox: FACE_BBOX,
+          }),
+        ),
+        assignmentTotal: 1,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-1',
+            cluster_a_representative_media_url: 'http://example.test/merge-media.jpg',
+            cluster_a_representative_bbox: FACE_BBOX,
+          }),
+        ],
+        mergeTotal: 1,
+        nameSuggestions: [
+          makeName({
+            id: 'name-1',
+            representatives: [
+              {
+                id: 'name-rep',
+                media_id: 21,
+                media_url: 'http://example.test/name-media.jpg',
+                bbox: FACE_BBOX,
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+        nameTotal: 1,
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'cluster-1',
+            representatives: [
+              {
+                id: 'cluster-rep',
+                media_id: 31,
+                media_url: 'http://example.test/cluster-media.jpg',
+                bbox: FACE_BBOX,
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    expect(model.previews).toHaveLength(4);
+    expect(model.previews.map((preview) => preview.key)).toEqual([
+      'assignment-assign-1',
+      'merge-merge-1',
+      'name-name-1',
+      'cluster-cluster-1',
+    ]);
+    for (const preview of model.previews) {
+      expect(preview.bbox).toEqual(FACE_BBOX);
+      expect(preview.mediaUrl).toBeTruthy();
+    }
+  });
+
+  it('preserves honest absence when a source carries no bbox', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({ identity_thumb_url: 'http://example.test/assign-thumb.jpg' }),
+        ),
+        assignmentTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews).toHaveLength(1);
+    expect(model.previews[0].bbox).toBeNull();
+  });
+
+  // HAI-17: duplicate captures must not consume two PREVIEW_LIMIT slots.
+  // Fixture: first PREVIEW_LIMIT (=6) rows collapse to one capture; a distinct
+  // capture appears only after that window — proves dedupe-before-slice, not
+  // slice-then-dedupe.
+  it('dedupes previews that resolve to the same capture before applying the preview limit', () => {
+    const sharedMedia = 'http://example.test/same-capture.jpg';
+    const sharedBbox = { x: 5, y: 6, width: 40, height: 50 };
+    const duplicateAssignments = Array.from({ length: 6 }, (_, index) =>
+      makeSuggestion({
+        id: `assign-dup-${index}`,
+        identity_id: `identity-dup-${index}`,
+        // Distinct cluster ids so buildSuggestionReviewItems keeps six singles
+        // (same cluster would collapse into one group before collectPreviews).
+        suggested_cluster_id: `cluster-dup-${index}`,
+        cluster_label: `Dup Label ${index}`,
+        identity_media_url: sharedMedia,
+        identity_bbox: sharedBbox,
+      }),
+    );
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(...duplicateAssignments),
+        assignmentTotal: 6,
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'cluster-late',
+            identity_count: 2,
+            representatives: [
+              {
+                id: 'rep-late',
+                media_id: 99,
+                media_url: 'http://example.test/late-distinct-capture.jpg',
+                bbox: { x: 1, y: 2, width: 10, height: 10 },
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.map((preview) => preview.key)).toEqual([
+      'assignment-assign-dup-0',
+      'cluster-cluster-late',
+    ]);
+    expect(model.previews.some((preview) => preview.key === 'cluster-cluster-late')).toBe(true);
+    expect(model.previews).toHaveLength(2);
+  });
+
+  // FIX-1 / BR-12: no upgrade pre-pass — early null-bbox keeps its slot uncropped.
+  it('keeps an early null-bbox photo when its boxed twin is past the preview cap', () => {
+    const photoX = 'http://example.test/photo-x.jpg';
+    const bboxX = { x: 5, y: 6, width: 40, height: 50 };
+    const earlyNull = makeSuggestion({
+      id: 'assign-x-null',
+      identity_id: 'identity-x',
+      suggested_cluster_id: 'cluster-x',
+      cluster_label: 'Photo X',
+      identity_media_url: photoX,
+      identity_thumb_url: 'http://example.test/x-thumb.jpg',
+      identity_bbox: null,
+    });
+    // Eight distinct fillers push the boxed twin to overall index 9 (past PREVIEW_LIMIT).
+    const fillers = Array.from({ length: 8 }, (_, index) =>
+      makeSuggestion({
+        id: `assign-filler-${index}`,
+        identity_id: `identity-filler-${index}`,
+        suggested_cluster_id: `cluster-filler-${index}`,
+        cluster_label: `Filler ${index}`,
+        identity_media_url: `http://example.test/filler-${index}.jpg`,
+        identity_bbox: { x: index, y: index, width: 20, height: 20 },
+      }),
+    );
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(earlyNull, ...fillers),
+        assignmentTotal: 9,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-x-boxed',
+            cluster_a_representative_media_url: photoX,
+            cluster_a_representative_bbox: bboxX,
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    const photoXPreview = model.previews.find((preview) => preview.mediaUrl === photoX);
+    expect(photoXPreview).toBeDefined();
+    expect(photoXPreview?.key).toBe('assignment-assign-x-null');
+    // Anti-merge: must not borrow the later boxed twin's crop (HAI-01).
+    expect(photoXPreview?.bbox).toBeNull();
+    expect(model.previews).toHaveLength(6);
+  });
+
+  // FIX-1 / HAI-01: same mediaUrl + different labels must not copy bbox onto the early row.
+  it('does not copy a later croppable bbox onto an earlier null-bbox row for the same mediaUrl', () => {
+    const sharedMedia = 'http://example.test/group-shot.jpg';
+    const bboxB = { x: 200, y: 10, width: 40, height: 50 };
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'person-a',
+            cluster_label: 'Person A',
+            identity_media_url: sharedMedia,
+            identity_thumb_url: 'http://example.test/person-a-thumb.jpg',
+            identity_bbox: null,
+          }),
+        ),
+        assignmentTotal: 1,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'person-b',
+            cluster_a_label: 'Person B',
+            cluster_a_representative_media_url: sharedMedia,
+            cluster_a_representative_bbox: bboxB,
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    const personA = model.previews.find((preview) => preview.key === 'assignment-person-a');
+    expect(personA).toBeDefined();
+    expect(personA?.label).toBe('Person A');
+    expect(personA?.bbox).toBeNull();
+  });
+
+  // FIX-3: PHP {0,0,0,0} sentinel and null are the same non-croppable capture.
+  it('collapses null-bbox and zero-extent sentinel bbox on the same mediaUrl to one preview', () => {
+    const sharedMedia = 'http://example.test/same-photo.jpg';
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'null-bbox',
+            identity_media_url: sharedMedia,
+            identity_thumb_url: 'http://example.test/null-thumb.jpg',
+            identity_bbox: null,
+          }),
+          makeSuggestion({
+            id: 'zero-bbox',
+            identity_id: 'identity-zero',
+            suggested_cluster_id: 'cluster-zero',
+            cluster_label: 'Zero Bbox',
+            identity_media_url: sharedMedia,
+            identity_thumb_url: 'http://example.test/zero-thumb.jpg',
+            identity_bbox: { x: 0, y: 0, width: 0, height: 0 },
+          }),
+        ),
+        assignmentTotal: 2,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews).toHaveLength(1);
+    expect(model.previews[0].key).toBe('assignment-null-bbox');
+    expect(model.previews[0].bbox).toBeNull();
+  });
+
+  // FIX-A / diversity-first: duplicate must not steal a slot from a distinct photograph.
+  it('gives the seventh distinct photograph a slot instead of an early same-photo duplicate', () => {
+    const photoA = 'http://example.test/photo-a.jpg';
+    const rows = [
+      makeSuggestion({
+        id: 'assign-a',
+        identity_id: 'identity-a',
+        suggested_cluster_id: 'cluster-a',
+        cluster_label: 'A',
+        identity_media_url: photoA,
+        identity_bbox: { x: 1, y: 1, width: 10, height: 10 },
+      }),
+      makeSuggestion({
+        id: 'assign-a-dup',
+        identity_id: 'identity-a-dup',
+        suggested_cluster_id: 'cluster-a-dup',
+        cluster_label: 'A dup',
+        // Distinct bbox so exact-capture key differs — diversity must still prefer photos.
+        identity_media_url: photoA,
+        identity_bbox: { x: 50, y: 50, width: 10, height: 10 },
+      }),
+      ...['b', 'c', 'd', 'e', 'f'].map((letter, index) =>
+        makeSuggestion({
+          id: `assign-${letter}`,
+          identity_id: `identity-${letter}`,
+          suggested_cluster_id: `cluster-${letter}`,
+          cluster_label: letter.toUpperCase(),
+          identity_media_url: `http://example.test/photo-${letter}.jpg`,
+          identity_bbox: { x: index + 2, y: index + 2, width: 10, height: 10 },
+        }),
+      ),
+    ];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(...rows),
+        assignmentTotal: 7,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews).toHaveLength(6);
+    expect(model.previews.map((preview) => preview.mediaUrl)).toEqual([
+      photoA,
+      'http://example.test/photo-b.jpg',
+      'http://example.test/photo-c.jpg',
+      'http://example.test/photo-d.jpg',
+      'http://example.test/photo-e.jpg',
+      'http://example.test/photo-f.jpg',
+    ]);
+    expect(model.previews.some((preview) => preview.key === 'assignment-assign-a-dup')).toBe(false);
+  });
+
+  // FIX-A / BR-15: dedicated face-thumb + boxed twin must not crowd out a distinct seventh.
+  it('prefers a distinct seventh capture over a same-photo face-thumb + boxed pair', () => {
+    const sharedMedia = 'http://example.test/shared-photo.jpg';
+    const faceThumb =
+      'http://example.test/wp-content/uploads/recognition/face-thumbs/shared.jpg';
+    const rows = [
+      makeSuggestion({
+        id: 'assign-ft',
+        identity_id: 'identity-ft',
+        suggested_cluster_id: 'cluster-ft',
+        cluster_label: 'FT',
+        identity_thumb_url: faceThumb,
+        identity_media_url: sharedMedia,
+        identity_bbox: null,
+      }),
+      makeSuggestion({
+        id: 'assign-boxed',
+        identity_id: 'identity-boxed',
+        suggested_cluster_id: 'cluster-boxed',
+        cluster_label: 'Boxed',
+        identity_media_url: sharedMedia,
+        identity_bbox: { x: 5, y: 6, width: 40, height: 50 },
+      }),
+      ...['b', 'c', 'd', 'e', 'f'].map((letter, index) =>
+        makeSuggestion({
+          id: `assign-${letter}`,
+          identity_id: `identity-${letter}`,
+          suggested_cluster_id: `cluster-${letter}`,
+          cluster_label: letter.toUpperCase(),
+          identity_media_url: `http://example.test/photo-${letter}.jpg`,
+          identity_bbox: { x: index + 2, y: index + 2, width: 10, height: 10 },
+        }),
+      ),
+    ];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(...rows),
+        assignmentTotal: 7,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews).toHaveLength(6);
+    expect(model.previews.filter((preview) => preview.mediaUrl === sharedMedia)).toHaveLength(1);
+    expect(model.previews.some((preview) => preview.mediaUrl === 'http://example.test/photo-f.jpg')).toBe(
+      true,
+    );
+    expect(model.previews.some((preview) => preview.key === 'assignment-assign-boxed')).toBe(false);
+  });
+
+  // FIX-6 / FIX-B: distinct non-null bboxes stay distinct; same-key sibling proves dedupe landed.
+  it('keeps two distinct non-null bboxes on the same mediaUrl as separate previews', () => {
+    const sharedMedia = 'http://example.test/group-shot.jpg';
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'face-a',
+            identity_media_url: sharedMedia,
+            identity_bbox: { x: 10, y: 10, width: 40, height: 50 },
+          }),
+          makeSuggestion({
+            id: 'face-a-dup',
+            identity_id: 'identity-a-dup',
+            suggested_cluster_id: 'cluster-a-dup',
+            cluster_label: 'Face A dup',
+            identity_media_url: sharedMedia,
+            identity_bbox: { x: 10, y: 10, width: 40, height: 50 },
+          }),
+        ),
+        assignmentTotal: 2,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'face-b',
+            cluster_a_representative_media_url: sharedMedia,
+            cluster_a_representative_bbox: { x: 200, y: 10, width: 40, height: 50 },
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.map((preview) => preview.key)).toEqual(['assignment-face-a', 'merge-face-b']);
+    expect(model.previews).toHaveLength(2);
+  });
+
+  // FIX-6 / FIX-B: dedicated face-thumbs key on thumb URL; same-key sibling proves dedupe landed.
+  it('keeps two dedicated face-thumb URLs distinct even when mediaUrl matches and bbox is null', () => {
+    const sharedMedia = 'http://example.test/group-shot.jpg';
+    const thumbA =
+      'http://example.test/wp-content/uploads/recognition/face-thumbs/a.jpg';
+    const thumbB =
+      'http://example.test/wp-content/uploads/recognition/face-thumbs/b.jpg';
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'face-thumb-a',
+            identity_thumb_url: thumbA,
+            identity_media_url: sharedMedia,
+          }),
+          makeSuggestion({
+            id: 'face-thumb-a-dup',
+            identity_id: 'identity-ft-a-dup',
+            suggested_cluster_id: 'cluster-ft-a-dup',
+            cluster_label: 'FT A dup',
+            identity_thumb_url: thumbA,
+            identity_media_url: sharedMedia,
+          }),
+        ),
+        assignmentTotal: 2,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'face-thumb-b',
+            cluster_a_representative_thumb_url: thumbB,
+            cluster_a_representative_media_url: sharedMedia,
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.map((preview) => preview.key)).toEqual([
+      'assignment-face-thumb-a',
+      'merge-face-thumb-b',
+    ]);
+    expect(model.previews).toHaveLength(2);
+  });
+
+  // FIX-2 / A11Y-02 / HAI-01: cluster source never reads cluster.label (top-unlabeled contract).
+  it('marks labelIsSuggested from suggested fields and clears it for confirmed labels', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        // Confirmed assignment via the normal review-item builder.
+        reviewItems: [
+          ...makeReviewItems(
+            makeSuggestion({
+              id: 'assign-confirmed',
+              cluster_label: 'Confirmed Name',
+              identity_thumb_url: 'http://example.test/assign.jpg',
+            }),
+          ),
+          // Suggested-only assignment: bypass eligibility filter so collectPreviews
+          // can be pinned when label falls through to enrichment.suggestedLabel.
+          {
+            type: 'single',
+            score: 0.5,
+            suggestion: {
+              suggestionId: 'assign-suggested',
+              identityId: 'identity-sug',
+              clusterId: 'cluster-sug',
+              label: null,
+              similarity: 0.5,
+              enrichment: {
+                suggestedLabel: 'Maybe Name',
+                identityThumbUrl: 'http://example.test/assign-sug.jpg',
+              },
+            },
+          },
+        ],
+        assignmentTotal: 2,
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-1',
+            cluster_a_label: 'Merge Label',
+            cluster_a_representative_thumb_url: 'http://example.test/merge.jpg',
+          }),
+        ],
+        mergeTotal: 1,
+        nameSuggestions: [
+          makeName({
+            id: 'name-1',
+            suggested_name: 'Suggested Person',
+            representatives: [
+              {
+                id: 'name-rep',
+                media_id: 21,
+                thumb_url: 'http://example.test/name.jpg',
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+        nameTotal: 1,
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'cluster-placeholder',
+            label: 'cluster-7',
+            is_labeled: false,
+            is_auto_label: true,
+            user_confirmed: false,
+            suggested_label: null,
+            representatives: [
+              {
+                id: 'rep-c',
+                media_id: 31,
+                thumb_url: 'http://example.test/cluster-c.jpg',
+                is_pinned: false,
+              },
+            ],
+          }),
+          makeCluster({
+            id: 'cluster-suggested',
+            label: null,
+            suggested_label: 'Cluster Maybe',
+            identity_count: 1,
+            representatives: [
+              {
+                id: 'rep-s',
+                media_id: 32,
+                thumb_url: 'http://example.test/cluster-s.jpg',
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    const byKey = Object.fromEntries(model.previews.map((preview) => [preview.key, preview]));
+    expect(byKey['assignment-assign-confirmed']).toMatchObject({
+      label: 'Confirmed Name',
+      labelIsSuggested: false,
+    });
+    expect(byKey['assignment-assign-suggested']).toMatchObject({
+      label: 'Maybe Name',
+      labelIsSuggested: true,
+    });
+    expect(byKey['merge-merge-1']).toMatchObject({
+      label: 'Merge Label',
+      labelIsSuggested: false,
+    });
+    expect(byKey['name-name-1']).toMatchObject({
+      label: 'Suggested Person',
+      labelIsSuggested: true,
+    });
+    expect(byKey['cluster-cluster-placeholder']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+    expect(byKey['cluster-cluster-suggested']).toMatchObject({
+      label: 'Cluster Maybe',
+      labelIsSuggested: true,
+    });
+  });
+
+  // FIX-1 / A11Y-02 / HAI-01: merge cluster_a_label is raw — null placeholders via isHumanLabeledTarget.
+  it('nulls merge cluster_a_label auto-placeholders including whitespace-padded prefix', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-auto',
+            cluster_a_label: 'cluster-7',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-auto.jpg',
+          }),
+          makeMerge({
+            id: 'merge-padded',
+            cluster_a_label: '  cluster-7',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-padded.jpg',
+          }),
+        ],
+        mergeTotal: 2,
+      }),
+      makeState(),
+    );
+
+    const byKey = Object.fromEntries(model.previews.map((preview) => [preview.key, preview]));
+    expect(byKey['merge-merge-auto']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+    // Discriminates isHumanLabeledTarget (trims) from isMeaningfulMergeLabel (no trim).
+    expect(byKey['merge-merge-padded']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+  });
+
+  // BR-28: findings merge preview must null case/underscore auto-labels (same predicate).
+  it('nulls merge cluster_a_label for Cluster- and cluster_ auto-labels', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-case',
+            cluster_a_label: 'Cluster-abcdef12',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-case.jpg',
+          }),
+          makeMerge({
+            id: 'merge-underscore',
+            cluster_a_label: 'cluster_abcdef12',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-underscore.jpg',
+          }),
+        ],
+        mergeTotal: 2,
+      }),
+      makeState(),
+    );
+
+    const byKey = Object.fromEntries(model.previews.map((preview) => [preview.key, preview]));
+    expect(byKey['merge-merge-case']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+    expect(byKey['merge-merge-underscore']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+  });
+
+  // BR-34: operator-plausible human Cluster* labels must survive the findings merge path.
+  it('keeps merge cluster_a_label for human CLUSTER_HQ (BR-34)', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        mergeSuggestions: [
+          makeMerge({
+            id: 'merge-hq',
+            cluster_a_label: 'CLUSTER_HQ',
+            cluster_a_representative_thumb_url: 'http://example.test/merge-hq.jpg',
+          }),
+        ],
+        mergeTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.find((preview) => preview.key === 'merge-merge-hq')).toMatchObject({
+      label: 'CLUSTER_HQ',
+      labelIsSuggested: false,
+    });
+  });
+
+  // FIX-2 / BR-26 / A11Y-02 / HAI-01: assignments provenance — upstream isHumanLabeledTarget
+  // is the single gate; findings layer must not surface auto-label rows that slip past it.
+  it('produces no assignment preview for auto cluster_* labels (upstream gate provenance)', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'assign-auto',
+            cluster_label: 'cluster-7',
+            identity_thumb_url: 'http://example.test/assign-auto.jpg',
+            identity_media_url: 'http://example.test/assign-auto-media.jpg',
+            identity_bbox: { x: 12, y: 24, width: 80, height: 96 },
+          }),
+        ),
+        assignmentTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(model.previews.filter((preview) => preview.key.startsWith('assignment-'))).toHaveLength(0);
+    // Findings-layer stand-in for rendered alt: no preview label may carry the auto-id.
+    expect(model.previews.every((preview) => !String(preview.label ?? '').includes('cluster-7'))).toBe(
+      true,
+    );
+  });
+
+  it('ignores cluster.label placeholder and only surfaces suggested_label for cluster previews', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'cluster-placeholder',
+            label: 'cluster-7',
+            is_labeled: false,
+            is_auto_label: true,
+            user_confirmed: false,
+            suggested_label: null,
+            identity_count: 3,
+            representatives: [
+              {
+                id: 'rep-ph',
+                media_id: 33,
+                thumb_url: 'http://example.test/cluster-ph.jpg',
+                is_pinned: false,
+              },
+            ],
+          }),
+          makeCluster({
+            id: 'cluster-suggested',
+            label: 'cluster-9',
+            is_labeled: false,
+            is_auto_label: true,
+            user_confirmed: false,
+            suggested_label: 'Ada Lovelace',
+            identity_count: 2,
+            representatives: [
+              {
+                id: 'rep-sug',
+                media_id: 34,
+                thumb_url: 'http://example.test/cluster-sug.jpg',
+                is_pinned: false,
+              },
+            ],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    const byKey = Object.fromEntries(model.previews.map((preview) => [preview.key, preview]));
+    expect(byKey['cluster-cluster-placeholder']).toMatchObject({
+      label: null,
+      labelIsSuggested: false,
+    });
+    expect(byKey['cluster-cluster-suggested']).toMatchObject({
+      label: 'Ada Lovelace',
+      labelIsSuggested: true,
+    });
   });
 });
 
@@ -453,6 +1196,47 @@ describe('useWorkbenchFindings', () => {
     expect(result.current.counts.unlabeledClusters).toBe(42);
     expect(result.current.counts.total).toBe(42);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'page-head' });
+  });
+
+  // UI-03 (hook path): top-unlabeled reject with empty primary queues surfaces
+  // isTopUnlabeledError + isError so the panel cannot launder into empty.
+  it('UI-03: top-unlabeled query rejection sets isTopUnlabeledError on the view model', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('acx_projection_query_failed'));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isTopUnlabeledError).toBe(true);
+    expect(result.current.isError).toBe(true);
+    expect(result.current.hasFindings).toBe(false);
+    expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
   });
 
   // REV-A-03 (isError): Locks the !hasAnyData guard — BOTH primary queries

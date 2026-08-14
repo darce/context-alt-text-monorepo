@@ -29,6 +29,7 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
+from recognition.interface_adapters.http.face_box import face_box_from_components, representative_response_from_domain
 from recognition.interface_adapters.http.routers.clusters_common import assert_tenant_match
 from recognition.interface_adapters.http.schemas.responses import (
     ClusterDeltaResponse,
@@ -39,7 +40,6 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterSnapshotMemberResponse,
     ClusterSnapshotResponse,
     FaceBoxResponse,
-    RepresentativeResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
 
@@ -53,16 +53,7 @@ router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depen
 
 
 def _face_box_from_components(bbox_x, bbox_y, bbox_width, bbox_height) -> FaceBoxResponse | None:
-    values = (bbox_x, bbox_y, bbox_width, bbox_height)
-    if any(value is None for value in values):
-        return None
-    try:
-        x, y, width, height = (int(value) for value in values)
-    except (TypeError, ValueError):
-        return None
-    if x < 0 or y < 0 or width <= 0 or height <= 0:
-        return None
-    return FaceBoxResponse(x=x, y=y, width=width, height=height)
+    return face_box_from_components(bbox_x, bbox_y, bbox_width, bbox_height)
 
 
 def _face_box_from_identity(identity) -> FaceBoxResponse | None:
@@ -401,30 +392,7 @@ async def get_top_unlabeled_clusters(
                 is_auto_label=c.is_auto_label,
                 identity_count=c.identity_count,
                 user_confirmed=c.user_confirmed,
-                representatives=[
-                    RepresentativeResponse(
-                        id=str(rep.id),
-                        media_id=rep.media_id or 0,
-                        thumb_url=(
-                            build_face_thumb_path(
-                                rep.media_url,
-                                x=rep_bbox.x,
-                                y=rep_bbox.y,
-                                width=rep_bbox.width,
-                                height=rep_bbox.height,
-                            )
-                            if rep_bbox is not None
-                            else None
-                        ),
-                        media_url=rep.media_url,
-                        bbox=rep_bbox,
-                        is_pinned=rep.is_user_selected,
-                    )
-                    for rep in (c.representatives or [])
-                    for rep_bbox in (
-                        _face_box_from_components(rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height),
-                    )
-                ],
+                representatives=[representative_response_from_domain(rep) for rep in (c.representatives or [])],
                 suggested_label=suggested_label,
                 suggested_label_source=suggested_label_source,
                 suggested_label_confidence=suggested_label_confidence,

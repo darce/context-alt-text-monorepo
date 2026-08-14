@@ -8,11 +8,13 @@ use AltContext\Api\Api;
 use AltContext\Api\MediaIdentitiesController;
 use AltContext\Api\RecognitionDataSource;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\SpySyncPullJob;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
+use WP_Error;
 use WP_REST_Request;
 
 /**
@@ -96,6 +98,63 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
         // A dead backend returns the degraded state immediately and schedules no async heal.
         $this->assertSame([], $this->scheduledBootstrapEvents());
+    }
+
+    /**
+     * E21-14-BR-03: projection SQL failure must become a typed WP_Error, not a PHP fatal.
+     */
+    public function testGetMediaIdentitiesReturnsTypedErrorOnProjectionQueryFailure(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array
+            {
+                throw new ProjectionQueryException(
+                    'Projection query failed [identity_members.list_for_media_ids]: '
+                    . "Unknown column 'm.assigned_at' in 'order clause'"
+                );
+            }
+        };
+
+        $controller = new MediaIdentitiesController($membersRepo, new NullSyncStateRepository(), new MemberResponseMapper());
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response);
+        $this->assertSame('acx_projection_query_failed', $response->get_error_code());
+        $this->assertSame(500, (int) ($response->get_error_data()['status'] ?? 0));
+        $this->assertStringNotContainsString('assigned_at', $response->get_error_message());
+        $this->assertStringContainsString('get_media_identities', $response->get_error_message());
+    }
+
+    /**
+     * E21-14-BR-03: has_projection_rows probe failure must also surface as WP_Error.
+     */
+    public function testGetMediaIdentitiesReturnsTypedErrorWhenProjectionProbeFails(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                throw new ProjectionQueryException(
+                    'Projection query failed [identity_members.has_projection_rows_for_tenant]: connection lost'
+                );
+            }
+        };
+
+        $controller = new MediaIdentitiesController($membersRepo, new NullSyncStateRepository(), new MemberResponseMapper());
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response);
+        $this->assertSame('acx_projection_query_failed', $response->get_error_code());
     }
 
     public function testMediaIdentitiesReturnsEndpointErrorWhenBackendReturns5xx(): void

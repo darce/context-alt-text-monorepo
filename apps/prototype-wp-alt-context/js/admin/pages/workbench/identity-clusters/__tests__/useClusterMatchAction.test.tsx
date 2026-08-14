@@ -105,7 +105,46 @@ describe('useClusterMatchAction merge confirm (FIX-3)', () => {
     });
 
     expect(requestConfirm).toHaveBeenCalled();
-    expect(merge).toHaveBeenCalledWith('remote-big', 'Big', expect.any(AbortSignal));
+    expect(merge).toHaveBeenCalledWith('remote-big', 'Big', expect.any(AbortSignal), undefined);
+  });
+
+  it('threads match.suggestionId into merge (BR-16 / L1R-01)', async () => {
+    // Predicted first failure: merge called without fourth suggestionId arg
+    const merge = vi.fn();
+    const { result } = renderHook(() =>
+      useClusterMatchAction({
+        members: [
+          {
+            identity_id: 'id-1',
+            representative_id: 'rep-1',
+            media_id: 1,
+            cluster_id: 'editable',
+            cluster_label: 'Src',
+            is_auto_label: false,
+            is_pinned: false,
+            bbox: { x: 0, y: 0, width: 1, height: 1 },
+            confidence: 1,
+            similarity: 1,
+            detected_at: '',
+          },
+        ],
+        editableClusterId: 'editable',
+        canSearchForMatch: false,
+        options: [{ value: namingOptionValue('cluster', 'c-small'), label: 'Small', identityCount: 2 }],
+        mutations: { merge, assignToCluster: vi.fn() },
+        requestConfirm: vi.fn().mockResolvedValue(true),
+      }),
+    );
+
+    const abortController = new AbortController();
+    await act(async () => {
+      await result.current.runMatchedAction(
+        { id: 'c-small', label: 'Small', suggestionId: 'sug-match-1' },
+        abortController,
+      );
+    });
+
+    expect(merge).toHaveBeenCalledWith('c-small', 'Small', expect.any(AbortSignal), 'sug-match-1');
   });
 
   it('small known count skips confirm', async () => {
@@ -143,6 +182,6 @@ describe('useClusterMatchAction merge confirm (FIX-3)', () => {
     });
 
     expect(requestConfirm).not.toHaveBeenCalled();
-    expect(merge).toHaveBeenCalled();
+    expect(merge).toHaveBeenCalledWith('c-small', 'Small', expect.any(AbortSignal), undefined);
   });
 });

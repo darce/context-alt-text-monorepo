@@ -12,10 +12,8 @@ import { WorkbenchProvider } from './workbench/WorkbenchContext';
 import { useWorkbenchNav } from './workbench/WorkbenchNavContext';
 import { useJobPipeline } from './workbench/JobPipelineContext';
 import { useWorkbenchMediaContext } from './workbench/WorkbenchMediaContext';
-import { useWorkbenchFindings } from './workbench/identity-clusters/useWorkbenchFindings';
 import { useReviewSurface } from './workbench/ReviewSurfaceContext';
 import { deriveReviewSurfaceActive } from './workbench/mediaFooterCtaState';
-import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { usePanesParam } from '../hooks/usePanesParam';
 import { APP_LINK_VALUES } from '../navigation/appLinks';
 
@@ -29,26 +27,12 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   const { activeSection, recognitionSource, effectiveTargetUrl, activeOverlay, setActiveOverlay } = useWorkbenchNav();
   const { scanRun, status, retryProjectionSync } = useJobPipeline();
   const { detailTruncationNotice } = useWorkbenchMediaContext().mediaQueue;
-  const { mediaExpanded, setMediaExpanded } = useWorkbenchFilters();
   const [panes, setPanes] = usePanesParam();
 
-  // Media-table accordion + review-surface footer signal rehome here with MediaSelection
-  // (WBUX-5 S1c-2): the queue setter (left control host) and the media reader (right library
-  // host) now live in sibling subtrees, bridged by ReviewSurfaceContext. Behavior preserved.
-  const findings = useWorkbenchFindings();
+  // Review-surface footer signal rehomes here with MediaSelection (WBUX-5 S1c-2): the queue
+  // setter (left control host) and the media reader (right library host) live in sibling
+  // subtrees, bridged by ReviewSurfaceContext.
   const { cardPrimaryPresent } = useReviewSurface();
-  const previousHasFindings = React.useRef(findings.hasFindings);
-
-  // Findings-arrival auto-collapse: clear media=expanded so the URL stays honest (NAV-11).
-  React.useEffect(() => {
-    if (findings.hasFindings && !previousHasFindings.current) {
-      setMediaExpanded(false);
-    }
-    previousHasFindings.current = findings.hasFindings;
-  }, [findings.hasFindings, setMediaExpanded]);
-
-  const isMediaCollapsed =
-    findings.hasFindings && !mediaExpanded && !findings.isLoading && !findings.isError && !findings.isUnavailable;
 
   // §7 media-footer CTA hierarchy (BR-83): the footer steps its CTAs down exactly when the
   // QUEUE owns the viewport's single accent primary. Collapse-aware: a collapsed control pane
@@ -118,7 +102,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
           panes={panes}
           onPanesChange={setPanes}
           control={
-            <div className="acx-workbench__panel" aria-live="polite">
+            <div className="acx-workbench__panel">
               <h2>{__('Scan Media Queue', 'alt-context')}</h2>
               <p>
                 {__(
@@ -132,11 +116,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
           library={
             <>
               {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
-              <MediaSelection
-                collapsed={isMediaCollapsed}
-                onExpand={() => setMediaExpanded(true)}
-                reviewActive={reviewSurfaceActive}
-              />
+              <MediaSelection reviewActive={reviewSurfaceActive} />
             </>
           }
         />

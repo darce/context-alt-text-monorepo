@@ -3,15 +3,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import type { JobStatusResponse } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
 import { useClusterActionMutations } from '../useClusterActionMutations';
+import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
 
 vi.mock('../../../../api/recognition', () => ({
+  acceptSuggestion: vi.fn(),
   createClusterForIdentity: vi.fn(),
   fetchScanStatus: vi.fn(),
   pinRepresentative: vi.fn(),
@@ -114,5 +117,100 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     const { result } = renderSplit();
     expect(result.current.splitGate.disabled).toBe(false);
     expect(result.current.splitGate.title).toBeUndefined();
+  });
+});
+
+describe('useClusterActionMutations assign accept-by-id (L1R-07 / BR-16)', () => {
+  const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+
+  const renderAssign = () => {
+    const onError = vi.fn();
+    const invalidateQueries = vi.fn();
+    const onRenameSuccess = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: null,
+          onError,
+          onRenameSuccess,
+          invalidateQueries,
+        }),
+      { wrapper },
+    );
+    return { result, onError, invalidateQueries, onRenameSuccess, queryClient };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+    vi.mocked(recognitionApi.acceptSuggestion).mockResolvedValue({
+      suggestion_id: 'sug-assign-1',
+      resolution: 'accepted',
+      identity_id: 'id-1',
+      cluster_id: 'target-c',
+      message: 'ok',
+    });
+    vi.mocked(recognitionApi.reassignClusterIdentity).mockResolvedValue(undefined);
+  });
+
+  it('calls acceptSuggestion with the threaded id and skips reassign (L1R-07)', async () => {
+    // Predicted first failure if accept-by-id branch is removed: reassignClusterIdentity
+    // fires instead (or neither), and acceptSuggestion is never called with the id.
+    const { result, invalidateQueries } = renderAssign();
+
+    result.current.assignToCluster('id-1', 'target-c', undefined, 'sug-assign-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sug-assign-1');
+    expect(recognitionApi.reassignClusterIdentity).not.toHaveBeenCalled();
+  });
+
+  it('uses reassignClusterIdentity when assign has no suggestionId', async () => {
+    const { result, invalidateQueries } = renderAssign();
+
+    result.current.assignToCluster('id-1', 'target-c');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.reassignClusterIdentity).toHaveBeenCalledWith(
+      { identityId: 'id-1', targetClusterId: 'target-c' },
+      undefined,
+    );
+    expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('removes accepted suggestion from pending review cache on assign success (L1V-03)', async () => {
+    // Predicted first failure: sug-assign-1 remains in review page until refetch.
+    const { result, invalidateQueries, queryClient } = renderAssign();
+    const page: SuggestionReviewPage = {
+      items: [
+        {
+          suggestionId: 'sug-assign-1',
+          identityId: 'id-1',
+          clusterId: 'target-c',
+          label: 'Target',
+          similarity: 0.9,
+        },
+        {
+          suggestionId: 'sug-keep',
+          identityId: 'id-2',
+          clusterId: 'other',
+          label: 'Other',
+          similarity: 0.8,
+        },
+      ],
+      dataSource: undefined,
+    };
+    queryClient.setQueryData(reviewPageKey, page);
+
+    result.current.assignToCluster('id-1', 'target-c', undefined, 'sug-assign-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    const next = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
+    expect(next?.items.map((item) => item.suggestionId)).toEqual(['sug-keep']);
   });
 });

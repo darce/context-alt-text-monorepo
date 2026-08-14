@@ -116,7 +116,7 @@ describe('TopClusterCard', () => {
 
     const image = screen.getByAltText(FACE_ALT);
     expect(image).toHaveAttribute('src', plainThumbUrl);
-    expect(image).toHaveClass('acx-avatar__image');
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
   });
 
@@ -266,8 +266,11 @@ describe('TopClusterCard', () => {
     );
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const image = screen.getByAltText(FACE_ALT);
+    expect(image).toHaveAttribute('src', MEDIA_URL);
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
   });
 
   it('prompts Is this <label>? and confirms a human suggested_label', async () => {

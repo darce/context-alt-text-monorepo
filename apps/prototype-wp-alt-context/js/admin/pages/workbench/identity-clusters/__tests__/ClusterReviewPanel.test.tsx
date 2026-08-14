@@ -394,7 +394,7 @@ describe('ClusterReviewPanel', () => {
       expect(fetchClusterMembersMock).toHaveBeenCalledWith(clusterId);
     });
 
-    expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveClass('acx-cluster-member-card__image');
+    expect(screen.getByRole('img', { name: 'Cluster member' }).closest('.acx-cluster-member-card__image')).toBeTruthy();
 
     const user = userEvent.setup();
     await user.click(screen.getByLabelText('Remove from cluster'));
@@ -469,7 +469,7 @@ describe('ClusterReviewPanel', () => {
       'src',
       'http://example.test/media/member-2b.jpg',
     );
-    expect(container.querySelector('.acx-cluster-member-card__image')).toBeNull();
+    expect(container.querySelector('.acx-cluster-member-card__image')).not.toBeNull();
   });
 
   // E21-16 W3: zero-extent bbox must not enter FaceThumbnail.
@@ -497,8 +497,10 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Member image unavailable' })).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const image = screen.getByRole('img', { name: 'Cluster member' });
+    expect(image).toHaveAttribute('src', 'http://example.test/media/member-zero.jpg');
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
   });
 
   it('renders FaceThumbnail for a positive-extent bbox when no dedicated thumb exists', async () => {
@@ -556,7 +558,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(screen.getByText('No image')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Member image unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
     expect(container.querySelector('.acx-placeholder:empty')).toBeNull();
   });
 

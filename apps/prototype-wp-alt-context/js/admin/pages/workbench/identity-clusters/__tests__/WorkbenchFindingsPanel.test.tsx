@@ -154,17 +154,12 @@ describe('WorkbenchFindingsPanel', () => {
     expect(previewImgs).toHaveLength(2);
     expect(previewImgs[0]).toHaveAttribute('src', 'http://example.test/face-1.jpg');
     expect(previewImgs[0]).toHaveAttribute('alt', 'Grace Hopper');
+    expect(previewImgs[0]).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(previewImgs[1]).toHaveAttribute('src', 'http://example.test/face-2.jpg');
     expect(previewImgs[1]).toHaveAttribute('alt', 'Reference image');
-    // Spy path also pins the real Avatar/FaceThumbnail renderers (not bare placeholders).
-    expect(avatarSpy).toHaveBeenCalled();
-    expect(
-      avatarSpy.mock.calls.some(
-        (call) =>
-          (call[0] as { src?: string }).src === 'http://example.test/face-1.jpg' ||
-          (call[0] as { src?: string }).src === 'http://example.test/face-2.jpg',
-      ),
-    ).toBe(true);
+    expect(previewImgs[1]).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(avatarSpy).not.toHaveBeenCalled();
+    expect(faceThumbnailSpy).not.toHaveBeenCalled();
 
     const primary = screen.getByRole('button', { name: /Review next/ });
     expect(primary).toBeEnabled();
@@ -744,13 +739,11 @@ describe('WorkbenchFindingsPanel', () => {
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
-    expect(avatarSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        src: mediaUrl,
-        sizePx: FINDINGS_PREVIEW_SIZE_PX,
-      }),
-    );
-    expect(screen.getByAltText('Reference image')).toBeInTheDocument();
+    expect(avatarSpy).not.toHaveBeenCalled();
+    const image = screen.getByAltText('Reference image');
+    expect(image.tagName).toBe('IMG');
+    expect(image).toHaveAttribute('src', mediaUrl);
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(container.querySelector('.acx-findings-panel__preview--uncropped')).toBeInTheDocument();
   });

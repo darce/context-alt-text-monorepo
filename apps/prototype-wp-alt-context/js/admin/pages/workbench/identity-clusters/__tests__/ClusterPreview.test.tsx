@@ -29,11 +29,25 @@ const buildRepresentative = (overrides: Partial<DetectedIdentity> = {}): Detecte
 });
 
 describe('ClusterPreview', () => {
-  it('renders an explicit unavailable-image fallback when representative crop data is missing', () => {
-    render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
+  it('renders an explicit unavailable-image fallback when no usable image URL exists', () => {
+    render(
+      <ClusterPreview
+        representative={buildRepresentative({ media_url: null, thumb_url: null, bbox: undefined })}
+        memberCount={1}
+      />,
+    );
 
     expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
     expect(screen.getByText('No image')).toBeInTheDocument();
+  });
+
+  it('renders an uncropped source when media_url is missing but a plain thumb_url remains [REV1-02]', () => {
+    render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
+
+    const image = screen.getByAltText('Detected identity thumbnail');
+    expect(image).toHaveAttribute('src', 'https://example.test/thumb.jpg');
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(screen.queryByLabelText('Representative image unavailable')).not.toBeInTheDocument();
   });
 
   it('does not render a pin control (UXA-07)', () => {

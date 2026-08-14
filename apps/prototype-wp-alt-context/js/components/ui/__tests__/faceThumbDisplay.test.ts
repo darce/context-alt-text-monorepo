@@ -8,6 +8,7 @@ import {
   REPRESENTATIVE_IMAGE_UNAVAILABLE,
   resolveFaceThumbCrop,
   resolveFaceThumbDisplay,
+  resolveUncroppedSource,
 } from '../faceThumbDisplay';
 
 const BBOX: BoundingBox = { x: 10, y: 20, width: 40, height: 50 };
@@ -95,5 +96,56 @@ describe('resolveFaceThumbDisplay [TEST-15]', () => {
     expect(display.mode).toBe(FACE_THUMB_MODE.avatar);
     expect(display.src).toBe(BLOB_URL);
     expect(display.isLoudError).toBe(false);
+  });
+
+  it('a non-dedicated thumbUrl with croppable media falls through to crop [REV1-01]', () => {
+    const display = resolveFaceThumbDisplay(
+      { thumbUrl: ATTACHMENT_URL, mediaUrl: ATTACHMENT_URL, bbox: BBOX },
+      { blobStatus: LOAD_STATUS.idle, cropStatus: LOAD_STATUS.idle },
+    );
+
+    expect(display.mode).toBe(FACE_THUMB_MODE.crop);
+    expect(display.state).toBe(AVATAR_STATE.loading);
+    expect(display.src).toBeNull();
+    expect(display.crop).toEqual({ mediaUrl: ATTACHMENT_URL, bbox: BBOX });
+  });
+
+  it('a nonempty mediaUrl without a croppable bbox is uncropped, not missing [REV1-02]', () => {
+    const display = resolveFaceThumbDisplay(
+      { thumbUrl: null, mediaUrl: ATTACHMENT_URL, bbox: { x: 0, y: 0, width: 0, height: 0 } },
+      { blobStatus: LOAD_STATUS.idle, cropStatus: LOAD_STATUS.idle },
+    );
+
+    expect(display.state).toBe(AVATAR_STATE.uncropped);
+    expect(display.mode).toBe(FACE_THUMB_MODE.uncropped);
+    expect(display.src).toBe(ATTACHMENT_URL);
+    expect(display.unavailableLabel).toBeNull();
+    expect(display.isLoudError).toBe(false);
+  });
+
+  it('a plain thumbUrl with no crop data is uncropped last-hop, not avatar', () => {
+    const display = resolveFaceThumbDisplay(
+      { thumbUrl: ATTACHMENT_URL },
+      { blobStatus: LOAD_STATUS.idle, cropStatus: LOAD_STATUS.idle },
+    );
+
+    expect(display.state).toBe(AVATAR_STATE.uncropped);
+    expect(display.mode).toBe(FACE_THUMB_MODE.uncropped);
+    expect(display.src).toBe(ATTACHMENT_URL);
+  });
+});
+
+describe('resolveUncroppedSource', () => {
+  it('prefers attachment_url over media_url, then a non-dedicated thumb', () => {
+    expect(
+      resolveUncroppedSource({
+        attachmentUrl: ATTACHMENT_URL,
+        mediaUrl: 'https://example.test/uploads/legacy.jpg',
+        thumbUrl: 'https://example.test/uploads/150.jpg',
+      }),
+    ).toBe(ATTACHMENT_URL);
+    expect(resolveUncroppedSource({ mediaUrl: ATTACHMENT_URL })).toBe(ATTACHMENT_URL);
+    expect(resolveUncroppedSource({ thumbUrl: ATTACHMENT_URL })).toBe(ATTACHMENT_URL);
+    expect(resolveUncroppedSource({ thumbUrl: BLOB_URL })).toBeNull();
   });
 });

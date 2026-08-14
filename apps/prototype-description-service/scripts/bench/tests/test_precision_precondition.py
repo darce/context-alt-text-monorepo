@@ -243,8 +243,10 @@ def test_bootstrap_p_uses_B_not_n_used() -> None:
     assert n_defined_neg > 0 and n_defined_pos > 0
     assert interval.n_used == n_used
     assert interval.bootstrap_status == "partial"
-    p_raw = 2.0 * min(n_le / B, n_ge / B)
-    p_expected = min(1.0, max(p_raw, 1.0 / (B + 1)))
+    # Hand-fixed (seed=7, B=80): n_le=22, n_ge=69, n_undef=1.
+    # 2 * min(22, 69) / 80 = 0.55. Do not replay the production aggregator.
+    p_expected = 0.55
+    assert n_le == 22 and n_ge == 69 and n_undef == 1
     assert interval.p_value == p_expected
     # Mutations that must not collide with p_expected:
     p_over_n_used = min(1.0, max(2.0 * min(n_le / n_used, n_ge / n_used), 1.0 / (B + 1)))
@@ -331,7 +333,7 @@ def test_assign_tier_missing_bootstrap_status_is_fail_closed() -> None:
     try:
         assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
     except BenchError as exc:
-        assert exc.code == "bootstrap_status"
+        assert exc.code == "bootstrap_status_missing"
     else:
         raise AssertionError("missing bootstrap_status must not default to ok")
 

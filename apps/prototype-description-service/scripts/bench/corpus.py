@@ -6,12 +6,13 @@ import hashlib
 import ipaddress
 import json
 import socket
+import ssl
+from http.client import HTTPSConnection
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from scripts.bench.stack_pair import BenchError
@@ -158,12 +159,17 @@ def resolve_media_bytes(
 
     url = _remote_url(entry, url_map_path)
     if url:
-        return _fetch_remote(
+        data = _fetch_remote(
             url,
             allow_private_source=allow_private_source,
             resolver=resolver,
             fetcher=fetcher,
         )
+        if entry.sha256:
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != entry.sha256:
+                raise BenchError("media_unresolvable", f"sha256 mismatch for remote {entry.path}")
+        return data
     raise BenchError("media_unresolvable", f"no local file or remote URL for {entry.path}")
 
 
@@ -187,6 +193,7 @@ def _fetch_remote(
     allow_private_source: bool,
     resolver: Resolver | None,
     fetcher: Fetcher | None,
+    hops: int = 0,
 ) -> bytes:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
@@ -203,7 +210,13 @@ def _fetch_remote(
                 raise BenchError("media_unresolvable", f"refusing non-public-unicast address {addr} for {host}")
     if fetcher is not None:
         return fetcher(url, use_addrs)
-    return _http_fetch(url)
+    return _http_fetch_pinned(
+        url,
+        use_addrs,
+        allow_private_source=allow_private_source,
+        resolver=resolver,
+        hops=hops,
+    )
 
 
 def _default_resolve(host: str) -> list[str]:
@@ -214,16 +227,69 @@ def _default_resolve(host: str) -> list[str]:
     return addrs
 
 
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _is_non_public(addr: str) -> bool:
     ip = ipaddress.ip_address(addr)
+    if ip.version == 4 and ip in _CGNAT:
+        return True
+    if ip.is_unspecified or not ip.is_global:
+        return True
     return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
 
 
-def _http_fetch(url: str) -> bytes:
-    response = httpx.get(url, timeout=30.0, follow_redirects=True)
-    if response.status_code >= 400:
-        raise BenchError("media_unresolvable", f"GET {url} returned {response.status_code}")
-    return response.content
+def _http_fetch_pinned(
+    url: str,
+    pinned_addrs: set[str],
+    *,
+    allow_private_source: bool,
+    resolver: Resolver | None,
+    hops: int,
+) -> bytes:
+    if hops > 5:
+        raise BenchError("media_unresolvable", f"too many redirects fetching {url}")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise BenchError("media_unresolvable", f"remote URL must be https: {url}")
+    target = next(iter(pinned_addrs))
+    port = parsed.port or 443
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    status, headers, body = _https_get_pinned(parsed.hostname, port, path, target)
+    if status in {301, 302, 303, 307, 308}:
+        location = headers.get("location")
+        if not location:
+            raise BenchError("media_unresolvable", f"redirect from {url} missing Location")
+        return _fetch_remote(
+            location if location.startswith("https://") else f"https://{parsed.hostname}{location}",
+            allow_private_source=allow_private_source,
+            resolver=resolver,
+            fetcher=None,
+            hops=hops + 1,
+        )
+    if status >= 400:
+        raise BenchError("media_unresolvable", f"GET {url} returned {status}")
+    return body
+
+
+def _https_get_pinned(host: str, port: int, path: str, pinned_ip: str) -> tuple[int, dict[str, str], bytes]:
+    context = ssl.create_default_context()
+    conn = HTTPSConnection(host, port=port, timeout=30.0, context=context)
+
+    def _connect() -> None:
+        sock = socket.create_connection((pinned_ip, port), 30.0)
+        conn.sock = context.wrap_socket(sock, server_hostname=host)
+
+    conn.connect = _connect  # type: ignore[method-assign]
+    conn.request("GET", path, headers={"Host": host})
+    response = conn.getresponse()
+    payload = response.read()
+    hdrs = {k.lower(): v for k, v in response.getheaders()}
+    status = response.status
+    conn.close()
+    return status, hdrs, payload
 
 
 def _validate_record_dimensions(record: dict[str, Any]) -> None:

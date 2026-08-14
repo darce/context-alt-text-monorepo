@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.bench.stack_pair import BenchError
-
-_CLUSTER_SUCCESS = frozenset({"success", "completed", "ok", "completed_with_errors"})
+from scripts.bench.status import CLUSTER_SUCCESS_STATUSES, ItemOutcome, ItemPhase
 
 
 @dataclass
@@ -27,7 +26,7 @@ def require_cluster_success(run_dir: Path | str, stack_id: str) -> dict[str, Any
         raise BenchError("cluster_gate_refused", f"cluster_job.json missing for {stack_id}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     status = str(payload.get("status", "")).lower()
-    if status not in _CLUSTER_SUCCESS:
+    if status not in CLUSTER_SUCCESS_STATUSES:
         raise BenchError("cluster_gate_refused", f"cluster job status {status!r} is not success")
     return payload
 
@@ -38,19 +37,13 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
     identities = client.media_identities(media_ids)
     clusters = client.clusters()
     members: Any
-    if isinstance(clusters, list):
-        collected: list[Any] = []
-        for cluster in clusters:
-            cid = cluster.get("id") or cluster.get("cluster_id") if isinstance(cluster, dict) else None
-            if cid is None:
-                continue
-            collected.append(client.cluster_members(str(cid)))
-        members = collected
-    elif isinstance(clusters, dict):
-        rows = clusters.get("data") or clusters.get("clusters") or []
-        members = [client.cluster_members(str(c.get("id") or c.get("cluster_id"))) for c in rows if isinstance(c, dict)]
-    else:
-        members = []
+    rows = _unwrap_rows(clusters, keys=("clusters",), what="clusters")
+    members = []
+    for cluster in rows:
+        cid = cluster.get("id") if cluster.get("id") is not None else cluster.get("cluster_id")
+        if cid is None:
+            continue
+        members.append(client.cluster_members(str(cid)))
 
     export_dir = Path(run_dir) / "legs" / stack_id / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -98,7 +91,7 @@ def _roster_stack_media_ids(run_dir: Path | str, stack_id: str) -> list[int]:
     ids: list[int] = []
     seen: set[int] = set()
     for record in store.read_all():
-        if record.get("phase") != "analyze" or record.get("outcome") != "ok":
+        if record.get("phase") != ItemPhase.ANALYZE or record.get("outcome") != ItemOutcome.OK:
             continue
         mid = record.get("stack_media_id")
         if isinstance(mid, int) and mid not in seen:
@@ -205,14 +198,29 @@ def match_detection_boxes(
     )
 
 
+def _unwrap_rows(raw: Any, *, keys: tuple[str, ...], what: str) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, dict):
+        present = [key for key in keys if key in raw]
+        if len(present) != 1:
+            raise BenchError(
+                "export_envelope_invalid",
+                f"{what} envelope must be a list or object with exactly one of {keys}; got {present}",
+            )
+        rows = raw[present[0]]
+        if not isinstance(rows, list):
+            raise BenchError("export_envelope_invalid", f"{what}.{present[0]} must be a list")
+        return [row for row in rows if isinstance(row, dict)]
+    raise BenchError("export_envelope_invalid", f"{what} must be a list or object, got {type(raw).__name__}")
+
+
 def _identities_list(export: Any) -> list[dict[str, Any]]:
     if isinstance(export, dict):
         raw = export.get("media_identities", [])
     else:
         raw = getattr(export, "media_identities", [])
-    if isinstance(raw, dict):
-        raw = raw.get("data") or raw.get("items") or []
-    return [row for row in raw if isinstance(row, dict)]
+    return _unwrap_rows(raw, keys=("data",), what="media_identities")
 
 
 def _clusters_list(export: Any) -> list[dict[str, Any]]:
@@ -220,9 +228,7 @@ def _clusters_list(export: Any) -> list[dict[str, Any]]:
         raw = export.get("clusters", [])
     else:
         raw = getattr(export, "clusters", [])
-    if isinstance(raw, dict):
-        raw = raw.get("data") or raw.get("clusters") or []
-    return [row for row in raw if isinstance(row, dict)]
+    return _unwrap_rows(raw, keys=("clusters",), what="clusters")
 
 
 def map_cluster_labels_primary(

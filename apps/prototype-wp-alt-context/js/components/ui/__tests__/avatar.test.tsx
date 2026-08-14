@@ -1,0 +1,127 @@
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { AVATAR_STATES, Avatar } from '../avatar';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
+
+// Radix Avatar.Image reports load status via onLoadingStatusChange.
+// Drive that from the src query so each state can be asserted independently.
+vi.mock('@radix-ui/react-avatar', async () => {
+  const ReactMod = await import('react');
+  return {
+    Root: ReactMod.forwardRef(function MockRoot(
+      { children, ...props }: Record<string, unknown>,
+      ref: unknown,
+    ) {
+      return ReactMod.createElement(
+        'span',
+        { ...props, ref } as React.HTMLAttributes<HTMLSpanElement>,
+        children as React.ReactNode,
+      );
+    }),
+    Image: ReactMod.forwardRef(function MockImage(
+      { onLoadingStatusChange, src, alt, ...props }: Record<string, unknown>,
+      ref: unknown,
+    ) {
+      ReactMod.useEffect(() => {
+        if (typeof onLoadingStatusChange !== 'function' || typeof src !== 'string') {
+          return;
+        }
+        const status = src.includes('status=error')
+          ? 'error'
+          : src.includes('status=loading')
+            ? 'loading'
+            : 'loaded';
+        onLoadingStatusChange(status);
+      }, [src, onLoadingStatusChange]);
+      return ReactMod.createElement('img', {
+        ...(props as React.ImgHTMLAttributes<HTMLImageElement>),
+        src,
+        alt,
+        ref,
+      } as React.ImgHTMLAttributes<HTMLImageElement>);
+    }),
+    Fallback: ReactMod.forwardRef(function MockFallback(
+      { children, ...props }: Record<string, unknown>,
+      ref: unknown,
+    ) {
+      return ReactMod.createElement(
+        'span',
+        { ...props, ref } as React.HTMLAttributes<HTMLSpanElement>,
+        children as React.ReactNode,
+      );
+    }),
+  };
+});
+
+describe('Avatar four-state contract', () => {
+  it('loading: src present and not yet loaded sets data-avatar-state=loading with aria-hidden skeleton', () => {
+    const { container } = render(
+      <Avatar src="https://example.com/thumb.jpg?status=loading" alt="Pending face" />,
+    );
+
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
+    expect(root).toHaveAttribute('data-avatar-state', 'loading');
+
+    const skeleton = container.querySelector('.acx-avatar__skeleton');
+    expect(skeleton).not.toBeNull();
+    expect(skeleton).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('real: src present and load succeeded sets data-avatar-state=real and passes alt through', () => {
+    const { container } = render(
+      <Avatar src="https://example.com/thumb.jpg?status=loaded" alt="Alex (suggested)" />,
+    );
+
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
+    expect(root).toHaveAttribute('data-avatar-state', 'real');
+
+    const image = screen.getByRole('img', { name: 'Alex (suggested)' });
+    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg?status=loaded');
+    expect(image).toHaveAttribute('alt', 'Alex (suggested)');
+  });
+
+  it('data-missing: omitted src sets data-avatar-state=data-missing with role=img and accessible name', () => {
+    const { container } = render(<Avatar />);
+
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.dataMissing);
+    expect(root).toHaveAttribute('data-avatar-state', 'data-missing');
+
+    const named = screen.getByRole('img', { name: 'No image' });
+    expect(named).toBe(root);
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(container.querySelector('.lucide-image-off')).not.toBeNull();
+  });
+
+  it('data-missing: empty src is the explicit no-src branch, not error', () => {
+    const { container } = render(<Avatar src="" alt="unused" />);
+
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(root).not.toHaveAttribute('data-avatar-state', 'error');
+    expect(screen.getByRole('img', { name: 'No image' })).toBeInTheDocument();
+    expect(screen.queryByText('Image failed to load')).not.toBeInTheDocument();
+  });
+
+  it('error: src present and load failed sets data-avatar-state=error with sr-only failure text', () => {
+    const { container } = render(
+      <Avatar src="https://example.com/thumb.jpg?status=error" alt="Broken face" />,
+    );
+
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
+    expect(root).toHaveAttribute('data-avatar-state', 'error');
+
+    expect(screen.getByText('Image failed to load')).toHaveClass('screen-reader-text');
+    expect(container.querySelector('.acx-avatar__warning-icon')).not.toBeNull();
+    expect(container.querySelector('.acx-avatar__broken-icon')).not.toBeNull();
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+  });
+});

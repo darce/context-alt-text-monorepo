@@ -11742,7 +11742,7 @@ class TestF13CatalogSeparatorTags:
     )
     CROSS_FAMILY_DENY: ClassVar[tuple[str, ...]] = (
         "yolos_8xb8",
-        "ppyolo_voc",
+        # F14-7: ppyolo_voc is native Paddle debris and now ADMITs.
     )
 
     @pytest.mark.parametrize(
@@ -11826,6 +11826,93 @@ class TestF13CatalogSeparatorTags:
         assert policy._package_denylist_hit(witness) is not None, (
             f"red-proof: without voc in yolox tags, {witness!r} must DENY"
         )
+
+
+class TestF14PaddleCatalogTags:
+    """F14-7 / R16-G2-2: remaining PaddleDetection separator-only tags.
+
+    ``auxhead`` / ``relu`` / ``320`` / ``416`` / ``640`` / ``distill`` /
+    ``voc`` / ``30e`` / ``60e`` / ``objects365`` are native Paddle
+    debris. The old ``ppyolo_voc`` cross-family-leakage deny pin was
+    wrong — voc is not a foreign tag on this family.
+    """
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyoloe_plus_crn_t_auxhead_300e_coco",
+        "ppyoloe_plus_crn_t_auxhead_relu_300e_coco",
+        "ppyoloe_plus_crn_t_auxhead_320_300e_coco",
+        "ppyolo_r50vd_dcn_voc",
+        "ppyoloe_plus_crn_s_30e_voc",
+        "ppyoloe_plus_crn_l_30e_voc",
+        "ppyoloe_plus_crn_m_80e_coco_distill",
+        "ppyoloe_plus_crn_l_80e_coco_distill",
+        "ppyoloe_plus_crn_s_60e_objects365",
+        "ppyolo_voc",
+    )
+    COMPACT_GLUE_DENY: ClassVar[tuple[str, ...]] = (
+        "ppyoloauxhead",
+        "ppyolorelu",
+        "ppyolo320",
+        "ppyolo416",
+        "ppyolo640",
+        "ppyolodistill",
+        "ppyolovoc",
+        "ppyolo30e",
+        "ppyolo60e",
+        "ppyoloobjects365",
+    )
+    CROSS_FAMILY_DENY: ClassVar[tuple[str, ...]] = (
+        "yolos_voc",
+        "yolox_auxhead",
+        "yolof_distill",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_paddle_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (F14-7 Paddle catalog tag)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token", COMPACT_GLUE_DENY)
+    def test_compact_glue_of_new_paddle_tags_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"compact glue {token!r} must DENY (separator-only tag)"
+        )
+
+    @pytest.mark.parametrize("token", CROSS_FAMILY_DENY)
+    def test_new_tags_do_not_leak_across_families(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"cross-family {token!r} must DENY (per-family inventory)"
+        )
+
+    def test_red_proof_ppyolo_auxhead_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop ``auxhead`` from the ppyolo separator-only frozenset.
+
+        Neuter: remove ``auxhead`` from
+        ``_EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS['ppyolo']``.
+        """
+        witness = "ppyoloe_plus_crn_t_auxhead_300e_coco"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["ppyolo"]
+        _retag_separator_inventory(
+            monkeypatch,
+            "ppyolo",
+            frozenset(t for t in current if t != "auxhead"),
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without auxhead in ppyolo tags, {witness!r} must DENY"
+        )
+        # Other new tags still admit; compact glue still denies.
+        assert policy._package_denylist_hit("ppyolo_voc") is None
+        assert policy._package_denylist_hit("ppyoloauxhead") is not None
 
 
 class TestF13EplusHeadPeel:

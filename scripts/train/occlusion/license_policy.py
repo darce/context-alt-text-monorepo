@@ -143,7 +143,8 @@ admitted. Compact glue of a separator-only tag stays DENY (A14-1 /
 R14-G2-4: ``yoloxtiny`` / ``ppyoloes`` / ``yolox8xb8``). Export/format
 tags from ``_NC_TRAILING_SHIELD_TAGS`` are legitimate **separator**
 residuals for all families (``yolox_trt`` admits; ``yoloxpt`` denies).
-Inventories are per-family — ``yolos_8xb8`` / ``ppyolo_voc`` deny.
+Inventories are per-family — ``yolos_8xb8`` / ``yolox_auxhead`` deny
+(``ppyolo_voc`` is native Paddle debris and admits as of F14-7).
 
 Vendor-prefix underscore forms of pure exception seeds
 (``megvii_yolox``, ``hustvl_yolos``, ``hustvl_yolop``,
@@ -3609,16 +3610,19 @@ _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST: dict[str, frozenset[str]] = {
 #   * backbone: crn (CSPResNet), r50vd / r18vd / r101vd, mbv3
 #   * neck / op: dcn (deformable conv)
 #   * schedule: 300e / 80e / 365e / 650e (epoch budgets), 1x / 2x
-#   * dataset: coco
+#   * dataset: coco / voc / objects365
+#   * F14-7 PaddleDetection catalog: auxhead / relu / 320 / 416 / 640 /
+#     distill / 30e / 60e (native Paddle debris — ``ppyolo_voc`` admits)
 # These are structural training-config tags for this family, not a
 # global schedule shield. A residual containing a deny stem still denies.
 # YOLOF (F12-5 / F12b-1 / F13-4) reuses the same schedule/dataset debris
 # policy for Detectron2 / MMDetection catalog names (``1x`` / ``3x`` /
 # ``coco`` / ``8xb8`` / ``8x8``); each family keeps its own inventory —
-# ``coco`` / ``voc`` / ``8xb8`` are not a global dataset shield.
+# ``coco`` / ``voc`` / ``8xb8`` are not a global dataset shield
+# (``yolos_voc`` / ``yolox_auxhead`` / ``yolof_distill`` stay DENY).
 # YOLOX (F13-4) adds MMDetection batch/schedule tags ``8xb8`` / ``8x8``
 # plus ``300e`` / ``coco`` / ``voc``. Compact-glue allowlist is untouched
-# (``yolox8xb8`` / ``yolofcoco`` stay DENY).
+# (``yolox8xb8`` / ``yolofcoco`` / ``ppyoloauxhead`` stay DENY).
 _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
     "yolox": frozenset(
         {
@@ -3640,7 +3644,8 @@ _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
     # trailing dataset tag (coco), and MMDetection batch tokens
     # (8xb8 / 8x8) are structural config tags. Same F12-4
     # schedule/dataset debris policy as ppyolo; lists are not shared
-    # (per-family inventory — yolos_8xb8 / ppyolo_voc stay DENY).
+    # (per-family inventory — yolos_8xb8 stays DENY; ppyolo_voc admits
+    # as of F14-7 — voc is native Paddle debris).
     "yolof": frozenset(
         {"r101", "c5", "1x", "3x", "r", "50", "101", "coco", "8xb8", "8x8"}
     ),
@@ -3670,6 +3675,17 @@ _EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS: dict[str, frozenset[str]] = {
             "365e",
             "650e",
             "coco",
+            # F14-7 / R16-G2-2: remaining PaddleDetection catalog debris.
+            "auxhead",
+            "relu",
+            "320",
+            "416",
+            "640",
+            "distill",
+            "voc",
+            "30e",
+            "60e",
+            "objects365",
         }
     ),
 }

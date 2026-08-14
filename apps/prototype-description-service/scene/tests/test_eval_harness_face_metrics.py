@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_assignment import FaceDecision
+from scripts.eval_harness.manifest import ManifestError
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
     UNLABELED_COHORT_KEY,
@@ -54,6 +55,38 @@ def test_detection_spurious_faces_on_empty_image():
     result = detection_pr(items)
     assert result.precision == 0.0
     assert result.recall is None
+
+
+def test_detection_pr_raises_against_roster_only():
+    """Negative: detection scoring against a roster_only manifest raises."""
+    items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=1)]
+    with pytest.raises(ManifestError) as exc_info:
+        detection_pr(items, annotation_mode="roster_only")
+    assert exc_info.value.invariant == "detection_refuses_roster_only"
+
+
+def test_detection_pr_exhaustive_still_counts():
+    """Positive pair: exhaustive mode still computes detection P/R."""
+    items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=2)]
+    result = detection_pr(items, annotation_mode="exhaustive")
+    assert result.true_positives == 2
+    assert result.false_positives == 0
+
+
+def test_score_face_run_record_raises_against_roster_only():
+    """Negative: face-bakeoff scoring refuses a roster_only manifest."""
+    from scripts.eval_harness.report import score_face_run_record
+
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {"manifest_sha256": "m" * 64, "head_sha": "0" * 40, "started_at": "t", "leg": "candidate"},
+        "items": [],
+    }
+    manifest = {"annotation_mode": "roster_only", "roster": [], "entries": []}
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(record, manifest)
+    assert exc_info.value.invariant == "detection_refuses_roster_only"
 
 
 # --- identification level (named assertions vs labeled identities) ---

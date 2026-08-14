@@ -34,6 +34,8 @@ from typing import Any
 
 import numpy as np
 
+from .manifest import AnnotationMode, ManifestError
+
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
 # Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
@@ -148,8 +150,24 @@ class PrResult:
         return sum(values) / len(values) if values else None
 
 
-def detection_pr(items: Sequence[ImageDetection]) -> PrResult:
-    """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN."""
+def detection_pr(
+    items: Sequence[ImageDetection],
+    *,
+    annotation_mode: AnnotationMode | str | None = None,
+) -> PrResult:
+    """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN.
+
+    Raises ``ManifestError`` (invariant ``detection_refuses_roster_only``) against
+    a ``roster_only`` manifest rather than silently reporting inflated false
+    positives on unlabeled non-roster faces.
+    """
+    mode = annotation_mode.value if isinstance(annotation_mode, AnnotationMode) else annotation_mode
+    if mode == AnnotationMode.ROSTER_ONLY:
+        raise ManifestError(
+            "detection_pr refuses roster_only manifests; unlabeled non-roster "
+            "faces would be scored as false positives",
+            invariant="detection_refuses_roster_only",
+        )
     tp = fp = fn = 0
     for item in items:
         tp += min(item.pred_faces, item.labeled_faces)

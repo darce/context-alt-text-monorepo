@@ -107,6 +107,31 @@ def test_dict_export_missing_media_identities_is_rejected() -> None:
     assert exc.value.code == "export_envelope_invalid"
 
 
+def test_dict_export_missing_clusters_is_rejected() -> None:
+    from scripts.bench.export_map import _clusters_list
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _clusters_list({"media_identities": []})
+    assert exc.value.code == "export_envelope_invalid"
+
+
+def test_object_export_is_rejected_not_getattr() -> None:
+    from scripts.bench.export_map import _clusters_list, _identities_list
+    from scripts.bench.stack_pair import BenchError
+
+    class _Obj:
+        media_identities = []
+        clusters = []
+
+    with pytest.raises(BenchError) as exc:
+        _identities_list(_Obj())
+    assert exc.value.code == "export_envelope_invalid"
+    with pytest.raises(BenchError) as exc:
+        _clusters_list(_Obj())
+    assert exc.value.code == "export_envelope_invalid"
+
+
 def test_non_dict_row_is_rejected() -> None:
     from scripts.bench.export_map import _unwrap_rows
     from scripts.bench.stack_pair import BenchError

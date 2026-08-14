@@ -220,29 +220,31 @@ def _unwrap_rows(raw: Any, *, what: str) -> list[dict[str, Any]]:
 
 
 def _identities_list(export: Any) -> list[dict[str, Any]]:
-    if isinstance(export, dict):
-        if "media_identities" not in export:
-            raise BenchError(
-                "export_envelope_invalid",
-                "dict export is missing required key media_identities",
-            )
-        raw = export["media_identities"]
-    else:
-        raw = getattr(export, "media_identities")
-    return _unwrap_rows(raw, what="media_identities")
+    if not isinstance(export, dict):
+        raise BenchError(
+            "export_envelope_invalid",
+            f"export must be a dict; got {type(export).__name__}",
+        )
+    if "media_identities" not in export:
+        raise BenchError(
+            "export_envelope_invalid",
+            "dict export is missing required key media_identities",
+        )
+    return _unwrap_rows(export["media_identities"], what="media_identities")
 
 
 def _clusters_list(export: Any) -> list[dict[str, Any]]:
-    if isinstance(export, dict):
-        if "clusters" not in export:
-            raise BenchError(
-                "export_envelope_invalid",
-                "dict export is missing required key clusters",
-            )
-        raw = export["clusters"]
-    else:
-        raw = getattr(export, "clusters")
-    return _unwrap_rows(raw, what="clusters")
+    if not isinstance(export, dict):
+        raise BenchError(
+            "export_envelope_invalid",
+            f"export must be a dict; got {type(export).__name__}",
+        )
+    if "clusters" not in export:
+        raise BenchError(
+            "export_envelope_invalid",
+            "dict export is missing required key clusters",
+        )
+    return _unwrap_rows(export["clusters"], what="clusters")
 
 
 def _primary_name_for_row(row: dict[str, Any], roster: Sequence[str]) -> str | None:

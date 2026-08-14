@@ -74,3 +74,41 @@ def test_normalized_slug_is_silent() -> None:
 def test_family_e_style_shortcode_does_not_fire() -> None:
     """Family E is dropped: a bare 15-char slug must stay silent."""
     assert warn_scrape_signature("abcdefghijklmno.jpg") is None
+
+
+def test_family_b_fourteen_digit_photo_stamp_is_silent() -> None:
+    """Boundary: 14-digit photo_YYYYMMDDHHMMSS stays silent; 15+ still fires."""
+    assert warn_scrape_signature("photo_20240101123045.jpg") is None
+    assert warn_scrape_signature("photo_202401011230451.jpg") is ScrapeSignatureFamily.B
+
+
+def test_family_c_nine_digit_highlights_is_silent() -> None:
+    """Boundary: 9-digit highlights_ is silent; 10+ still fires."""
+    assert warn_scrape_signature("highlights_123456789.jpg") is None
+    assert warn_scrape_signature("highlights_1234567890.jpg") is ScrapeSignatureFamily.C
+
+
+def test_family_d_nine_hex_vsco_is_silent() -> None:
+    """Boundary: 9-hex vsco is silent; 10+ still fires."""
+    assert warn_scrape_signature("vscoa1b2c3d4e.jpg") is None
+    assert warn_scrape_signature("vscoa1b2c3d4e5.jpg") is ScrapeSignatureFamily.D
+
+
+def test_family_a_o_suffix_fires() -> None:
+    """Family A `_o` (not just `_n`) is a real Instagram CDN stem."""
+    assert warn_scrape_signature("foo_123456_12345_o.jpg") is ScrapeSignatureFamily.A
+    assert warn_scrape_signature("foo_123456_12345_n.jpg") is ScrapeSignatureFamily.A
+
+
+def test_camera_roll_exclusion_covers_dsc_pxl_screen_shot_family_b_shapes() -> None:
+    """DSC/PXL/Screen Shot names that would fire family B stay silent."""
+    assert warn_scrape_signature("DSC_123456789012345.jpg") is None
+    assert warn_scrape_signature("PXL_123456789012345.jpg") is None
+    assert warn_scrape_signature("Screen-Shot-123456789012345.png") is None
+    assert warn_scrape_signature("Screen Shot_123456789012345.png") is None
+
+
+def test_camera_roll_exclusion_is_case_sensitive() -> None:
+    """Plan census is case-sensitive; lowercase prefixes are not camera-roll."""
+    assert warn_scrape_signature("img_123456789012345.jpg") is ScrapeSignatureFamily.B
+    assert warn_scrape_signature("IMG_123456789012345.jpg") is None

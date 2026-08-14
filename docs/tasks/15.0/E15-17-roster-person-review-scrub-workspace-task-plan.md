@@ -187,7 +187,7 @@ Changes:
 
 Proof:
 
-- Vitest covers assigned, unresolved, singleton proposal, merged, and superseded cluster drawer states.
+- Vitest covers assigned, unresolved, and singleton proposal cluster drawer states. _Merged/superseded states deferred with the scope narrowing recorded in decision 4617._
 
 ## Consolidated Checklist
 
@@ -220,9 +220,9 @@ Proof:
 
 ### Checklist for Slice 4: Cluster Evidence Migration
 
-- [ ] Assigned cluster drawer links to person review by `person_uuid`.
-- [ ] Unresolved clusters stay in unresolved review mode.
-- [ ] Merged/superseded clusters explain topology state.
+- [x] Assigned cluster drawer links to person review by `person_uuid`. _`ClusterDrawerPanel.tsx` renders `Open person review` as a real `a[href]` to `#/roster?person=<uuid>` with modifier-aware SPA navigation; `person_uuid` flows from the `wp_acx_persons` LEFT JOIN in `class-clusters-read-repository.php` through `class-cluster-response-mapper.php`; covered by `ClusterDrawerPanel.personAware.test.tsx` and `RosterPage.container.test.tsx`._
+- [x] Unresolved clusters stay in unresolved review mode. _`clusterDrawerState.ts` classifies null/empty/whitespace `person_uuid` as unresolved (0-identity stale projections included) with no invented person link; boundary fixtures in `ClusterDrawerPanel.personAware.test.tsx` and the invention-vector guard in `RosterPage.test.tsx`._
+- [ ] Merged/superseded clusters explain topology state. _Deferred: `merge_cluster` deletes source rows (greenfield delete-over-flag), so merged/superseded topology cannot be rendered without fabricating contract metadata (rg-015); scope narrowed per handoff decision 4617 to a future persist-on-merge schema task._
 
 ## Review Readiness
 

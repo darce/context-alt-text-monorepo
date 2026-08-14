@@ -4331,6 +4331,11 @@ def _ppyolo_residual_is_deci_nas(residual: str) -> bool:
     / ``nasal`` as Deci. Accept exact ``nas`` or ``nas`` + a known
     yolo_nas compact variant (``nasl`` / ``nasposel``). A leading
     ppyolo compact tag is peeled so ``enas`` (``ppyoloenas``) counts.
+
+    R19-04: trailing ``s`` is not a special case — the boundary is
+    exact compact identity. ``nass`` == compact of ``yolo_nas_s``
+    (Deci S). ``nasls`` == ``nasl`` + junk ``s`` and is not the
+    compact of any Deci seed (unknown residual).
     """
     if not residual:
         return False

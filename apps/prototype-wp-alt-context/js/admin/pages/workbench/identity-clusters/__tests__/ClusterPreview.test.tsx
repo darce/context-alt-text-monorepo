@@ -34,10 +34,11 @@ describe('ClusterPreview', () => {
   it('renders an explicit unavailable-image fallback when representative crop data is missing', () => {
     render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
 
-    expect(screen.getByLabelText(MISSING_REPRESENTATIVE_LABEL)).toHaveAccessibleName(
-      MISSING_REPRESENTATIVE_LABEL,
-    );
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAccessibleName(MISSING_REPRESENTATIVE_LABEL);
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
     expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
   });
 
   it('does not render a pin control (UXA-07)', () => {

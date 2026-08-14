@@ -6,6 +6,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { DetectedIdentity } from '../../../api/recognition';
+import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 
@@ -38,13 +39,11 @@ export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewPr
           className="acx-identity-cluster__thumb"
         />
       ) : (
-        <span
+        <Avatar
+          sizePx={40}
+          missingLabel={unavailableImageLabel}
           className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder acx-identity-cluster__thumb--unavailable"
-          role="img"
-          aria-label={unavailableImageLabel}
-        >
-          <span className="acx-identity-cluster__thumb-fallback-label">{__('No image', 'alt-context')}</span>
-        </span>
+        />
       )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
     </div>

@@ -225,6 +225,62 @@ def test_identical_legs_primary_half_width_zero_when_populated(tmp_path: Path) -
         assert cell["p_value"] == 1.0
 
 
+def test_score_path_passes_holm_family_size(tmp_path: Path, monkeypatch) -> None:
+    from scripts.bench import score_report as score_mod
+
+    seen: dict[str, object] = {}
+    orig = score_mod.holm_bonferroni
+
+    def spy(pairs, alpha=0.05, *, family_size=None):
+        seen["n_pairs"] = len(pairs)
+        seen["family_size"] = family_size
+        return orig(pairs, alpha, family_size=family_size)
+
+    monkeypatch.setattr(score_mod, "holm_bonferroni", spy)
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    score_head_to_head(run_dir)
+    assert seen["family_size"] == 3
+    assert seen["n_pairs"] == 3
+
+
+def test_mixed_recognition_enabled_shortens_identification_series(tmp_path: Path, monkeypatch) -> None:
+    from scripts.bench import score_report as score_mod
+
+    lengths: list[int] = []
+    orig = score_mod.bootstrap_paired_delta
+
+    def spy(a, b, *args, **kwargs):
+        lengths.append(len(a))
+        return orig(a, b, *args, **kwargs)
+
+    monkeypatch.setattr(score_mod, "bootstrap_paired_delta", spy)
+    mids = [1, 2, 3, 4, 5, 6]
+    entries = []
+    for i in mids:
+        entry = golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()])
+        if i == 6:
+            entry["policy"] = {"recognition_enabled": False}
+        entries.append(entry)
+    run_dir = _init(tmp_path, mids, entries)
+    ids = [_pred(i) for i in mids]
+    _write_leg(run_dir, A_STACK, ids, mids)
+    _write_leg(run_dir, B_STACK, ids, mids)
+    score_head_to_head(run_dir)
+    assert 6 in lengths
+    assert 5 in lengths
+    det = _cells(run_dir, PRIMARY)
+    assert det
+    for cell in det:
+        assert cell["true_positives"] + cell["false_negatives"] == 6
+        assert cell.get("bootstrap_status") not in {None, "bootstrap_series_mismatch"}
+
+
 def test_holm_family_uses_declared_secondary_size(tmp_path: Path) -> None:
     """Detection-only corpus must Holm-correct at m=|declared|, not m=1."""
     mids = [1, 2, 3, 4, 5, 6]

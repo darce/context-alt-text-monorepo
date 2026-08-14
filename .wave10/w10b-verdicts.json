@@ -1,0 +1,213 @@
+{
+  "lane": "w10b",
+  "base": "cbb1f476",
+  "findings": [
+    {
+      "finding_id": "R0811-G-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:84-86 — _EXTRA_VLM_RE matches --extra \"vlm\" / 'vlm' / vlm\\b (quoted + bare)",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_quoted_extra_vlm_is_detected",
+      "mutation": "line 85: replaced r\"\"\"--extra(?:=|\\s+)(?:\"vlm\"|'vlm'|vlm\\b)\"\"\" with r\"\"\"--extra(?:=|\\s+)vlm\\b\"\"\" (unquoted-only)",
+      "red_output": "FAILED ...::test_d5_quoted_extra_vlm_is_detected - AssertionError: --extra \"vlm\"\nassert False\n +  where False = has_vlm_extra('RUN uv sync --locked --extra \"vlm\"\\n')\n1 failed, 2 passed, 35 deselected"
+    },
+    {
+      "finding_id": "R0811-G-07",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:485-512 copy_from_dep_stages (every COPY --from is edge; numeric via stage_index); 565-595 stage_resolves_vlm_extra raises on cycle",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_numeric_copy_from_and_path_allowlist_and_cycle",
+      "mutation": "three conjuncts: (a) L511 path-allowlist reintroduced before deps.append; (b) L571 raise ValueError → return False; (c) L509 numeric resolve gated with `if False and …`",
+      "red_output": "(a) AssertionError: assert [] == ['builder-vlm'] at topology.py:388\n(b) Failed: DID NOT RAISE <class 'ValueError'> at topology.py:402\n(c) AssertionError: assert False = stage_resolves_vlm_extra(..., 'runtime') at topology.py:377",
+      "notes": "Proved path allowlist removal, cycle raise, and numeric index resolution separately."
+    },
+    {
+      "finding_id": "R0811-G-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:38-40 _PIP_INSTALL_RE unanchored match-anywhere; 598-623 _strip_leading_wrappers; 626-637 _fragments_to_scan for sh -c",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_pip_install_env_and_shell_wrappers",
+      "mutation": "L39 re-anchored install RE to (?:^|&&|;|\\|)… AND L604 early-return fragment.strip() (skip wrapper strip) together",
+      "red_output": "FAILED ...::test_d5_pip_install_env_and_shell_wrappers - AssertionError: RUN env FOO=1 pip install \".[bench]\"\nassert [] = unlocked_project_extra_installs(...)\nFAILED ...::test_d5_pip_var_assign_and_sh_lc_wrappers - AssertionError: RUN PIP_NO_INPUT=1 pip install \".[bench]\"\n2 failed, 36 deselected",
+      "notes": "Re-anchoring alone stays green because wrappers still strip; both halves required (wave-8 compound-gate rule)."
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:424-431 — full-line comments never open backslash continuations (append + continue unconditionally)",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_comment_line_ending_backslash_does_not_absorb_copy",
+      "mutation": "L429-430: if comment ends with \\\\ start continuation (buf += line[:-1]; continuing=True) instead of logical.append",
+      "red_output": "FAILED ...::test_d5_comment_line_ending_backslash_does_not_absorb_copy - AssertionError: comment-ending-\\\\ must not absorb COPY; joined=['# note … COPY --from=builder-vlm …']\nassert [] == ['builder-vlm']"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:153-166 _expand_from_ref; 238 ref=_expand_from_ref; 254-257 ARG defaults table",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_from_arg_expansion_walks_provenance",
+      "mutation": "L238: commented out ref = _expand_from_ref(ref, arg_defaults)",
+      "red_output": "FAILED ...::test_d5_from_arg_expansion_walks_provenance - AssertionError: {'builder-vlm': 'python:3.12-slim', 'runtime': '${BASE}'}\nassert '${BASE}' == 'builder-vlm'"
+    },
+    {
+      "finding_id": "W8-VER-02",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:65-70 _HEREDOC_OPEN_RE prefix group (?:RUN|COPY|ADD)\\b only",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_heredoc_instruction_restriction_ignores_env_label",
+      "mutation": "L66: widened prefix from (?:RUN|COPY|ADD)\\b(?:(?!<<).)*? to (?:.*?) ",
+      "red_output": "FAILED ...::test_d5_heredoc_instruction_restriction_ignores_env_label - AssertionError: ENV/LABEL/ARG << must not open heredoc; joined=['ENV MSG= LABEL note=<<EOF ; ARG FLAG=<<EOF ; COPY --from=builder-vlm …']\nassert [] == ['builder-vlm']"
+    },
+    {
+      "finding_id": "R0811-G-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:211-233 — _parse_dockerfile tracks heredoc_delim; FROM inside body is opaque",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_heredoc_from_line_is_not_stage_boundary",
+      "mutation": "L227: heredoc = None  # disable heredoc tracking in _parse_dockerfile",
+      "red_output": "FAILED ...::test_d5_heredoc_from_line_is_not_stage_boundary - AssertionError: trailing USER vanished from stage: 'RUN <<EOF\\necho FROM nowhere'\nassert 'USER root' in 'RUN <<EOF\\necho FROM nowhere'"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:246-249 — raise DockerfileParseError on duplicate stage name",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_duplicate_stage_name_raises",
+      "mutation": "L246: if name in stages and False:  # allow duplicates",
+      "red_output": "FAILED ...::test_d5_duplicate_stage_name_raises - Failed: DID NOT RAISE <class '…DockerfileParseError'>"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:531-536 has_vlm_extra skips # lines and strips trailing comments via _strip_trailing_comment",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_has_vlm_extra_joins_continuations_and_ignores_comments",
+      "mutation": "L533: do not skip comment lines; L535: active = stripped (no trailing-comment strip)",
+      "red_output": "FAILED ...::test_d5_has_vlm_extra_joins_continuations_and_ignores_comments - AssertionError: comment mentioning --extra vlm must not trip\nassert not True\n +  where True = has_vlm_extra('…# do not use --extra vlm here…')"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:138 tokens[i].upper() != \"AS\"; 93-105 quote-aware _strip_trailing_comment",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_from_as_case_and_quoted_hash_strip",
+      "mutation": "two conjuncts: (a) L138 tokens[i] != \"AS\" (case-sensitive); (b) L95 return line.split(\"#\", 1)[0].rstrip() naive strip",
+      "red_output": "(a) DockerfileParseError: unexpected tokens after FROM ref … 'FROM python:3.12-slim as builder'\n(b) AssertionError: assert None == 'runtime' (quoted # in image ref truncated)"
+    },
+    {
+      "finding_id": "R0811-G-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerfile_stage_topology.py:698-721 _TORCH_CONTAMINANT_RE / _stage_installs_torch_stack; 724-735 live default path; 737-755 mutation guard",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_guard_bites_when_runtime_pip_installs_torch",
+      "mutation": "L706: torch|transformers|… → NOTORCH|transformers|… (drop torch token from contaminant RE)",
+      "red_output": "FAILED ...::test_guard_bites_when_runtime_pip_installs_torch - AssertionError: torch pip install must be detected\nassert [] = _stage_installs_torch_stack('RUN /opt/venv/bin/pip install --no-cache-dir torch')"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-11",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerfile_stage_topology.py:97-101 copy_from_dep_stages(runtime)==['builder']; 104-117 ENV map lookup for ACX_IMAGE_VARIANT",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_each_runtime_stage_copies_its_matching_builder",
+      "mutation": "dockerfile_stages.py L511: deps.append(ref) → pass (empty deps)",
+      "red_output": "FAILED ...::test_each_runtime_stage_copies_its_matching_builder - AssertionError: assert [] == ['builder']"
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-13",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "dockerfile_stages.py:296-316 default_build_target returns order[-1] (incl. anonymous None); empty file raises; topology tests route swap via default_build_target",
+      "gate": "recognition/tests/deploy/test_dockerfile_stage_topology.py::test_d5_anonymous_final_stage_is_buildkit_default",
+      "mutation": "L316: return last named stage only (named = [n for n in order if n]; return named[-1])",
+      "red_output": "FAILED ...::test_d5_anonymous_final_stage_is_buildkit_default - AssertionError: anonymous final stage must not report a named default target\nassert 'runtime' is None"
+    },
+    {
+      "finding_id": "R0811-G-04",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_runtime_packaging.py:708-753 _vlm_cache_gate_polarity_ok shared helper; 892-907 _volume_instruction_hits / _active_transformers_cache_hits; positive + mutation tests call same helpers",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_guard_bites_when_volume_instruction_added",
+      "mutation": "L893: early return [] from _volume_instruction_hits (and separately L902 for transformers helper)",
+      "red_output": "FAILED ...::test_guard_bites_when_volume_instruction_added - AssertionError: VOLUME must be detected\nassert [] = _volume_instruction_hits('…VOLUME /data/cache\\n')\n[transformers twin] FAILED ...::test_guard_bites_when_transformers_cache_env_set - assert [] = _active_transformers_cache_hits(...)"
+    },
+    {
+      "finding_id": "R0811-G-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_runtime_packaging.py:426-440 _last_user / _runtime_ends_as_acx; 836-869 missing USER; 872-889 re-escalate USER root",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_guard_bites_when_runtime_re_escalates_to_root",
+      "mutation": "L440: return True  # presence-only, ignore last USER",
+      "red_output": "FAILED ...::test_guard_bites_when_runtime_re_escalates_to_root - AssertionError: USER acx followed by USER root must fail _runtime_ends_as_acx\nassert not True\n +  where True = _runtime_ends_as_acx('…USER acx\\n\\nUSER root…')"
+    },
+    {
+      "finding_id": "REV-r08112960-B-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_runtime_packaging.py:708-753 _vlm_cache_gate_polarity_ok requires (?<!!)= \"vlm\" and rejects = \"recognition\"; used by positive entrypoint CMD chain and M7 inversion test",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_guard_bites_when_entrypoint_variant_gate_is_inverted",
+      "mutation": "L749 and L751 both disabled (if False and …) so inverted = \"recognition\" passes polarity",
+      "red_output": "FAILED ...::test_guard_bites_when_entrypoint_variant_gate_is_inverted - AssertionError: inverted = \"recognition\" polarity must fail the shared discriminator\nassert not True\n +  where True = _vlm_cache_gate_polarity_ok('…= \"recognition\"…')\n[positive twin] mutating polarity to require recognition fails test_entrypoint_cmd_chain_modules_are_copied at L325",
+      "notes": "Both polarity conjuncts required; mutating only one left the inversion test green."
+    },
+    {
+      "finding_id": "R0811-X-04",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_runtime_packaging.py:836-869 test_guard_bites_when_runtime_missing_user_acx asserts absence fails _runtime_ends_as_acx; docstring states deferral is closed (not the invariant)",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_guard_bites_when_runtime_missing_user_acx",
+      "mutation": "L438: replaced _runtime_ends_as_acx body with `return True` (disable presence + last-user conjuncts)",
+      "red_output": "FAILED ...::test_guard_bites_when_runtime_missing_user_acx - AssertionError: runtime without USER acx must fail _runtime_ends_as_acx\nassert not True\n +  where True = _runtime_ends_as_acx('RUN useradd…\\n\\nENV ACX_IMAGE_VARIANT=recognition')\nFAILED ...::test_guard_bites_when_runtime_re_escalates_to_root (same mutation)",
+      "notes": "Stale 'violates RB-03 deferral' mutation rewritten to absence-detectable; remaining RB-03 mentions document that the deferral is closed."
+    },
+    {
+      "finding_id": "R0811-G-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerignore_weight_exclusions.py:222-279 rsync_weight_classes first-match-wins for --include/--exclude/--filter",
+      "gate": "recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_rsync_include_before_exclude_drops_class",
+      "mutation": "L268: elif False and full.startswith(\"--include=\"); L244: for match in [] (skip synthetic includes)",
+      "red_output": "FAILED ...::test_rsync_include_before_exclude_drops_class - AssertionError: leading --include='*.bin' must drop bin from the excluded set (rsync first-match)\nassert 'bin' not in {'bin', 'models--', 'onnx', 'pt', 'safetensors'}"
+    },
+    {
+      "finding_id": "REV-r08112960-B-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerignore_weight_exclusions.py:178-193 docker_weight_classes last-match-wins; ! lines set disposition False",
+      "gate": "recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_dockerignore_negation_reincludes_weight_class",
+      "mutation": "L187: negated = False  # ignore ! prefix",
+      "red_output": "FAILED ...::test_dockerignore_negation_reincludes_weight_class - AssertionError: later !**/*.bin must drop bin from excluded set\nassert 'bin' not in {'bin', 'models--', 'onnx', 'pt', 'safetensors'}"
+    },
+    {
+      "finding_id": "REV-r08112960-B-07",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerignore_weight_exclusions.py:112-118 context_shipping_rsync_commands; 131-153 rsync_excludes_from_script scopes to SERVICE_DIR→REMOTE_BUILD_DIR",
+      "gate": "recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_rsync_excludes_bound_to_context_shipping_invocation",
+      "mutation": "L116: if False and _CONTEXT_RSYNC_SRC_RE… (context_shipping always empty → whole-file fallback)",
+      "red_output": "FAILED ...::test_rsync_excludes_bound_to_context_shipping_invocation - assert set() failed; rsync_weight_classes returned full {'bin','gguf','models--','msgpack','onnx','pt','pth','safetensors'} from inert rsync"
+    },
+    {
+      "finding_id": "REV-r08112960-B-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_dockerignore_weight_exclusions.py:389-405 _probe_repo_name sources real shell; 544-571 mutates real script vlm arm; packaging cycle uses public stage_resolves_vlm_extra API",
+      "gate": "recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_image_tag_derivation_mutation_would_collide",
+      "mutation": "scripts/deploy/recognition-service.sh L263: printf '%s-vlm\\n' → '%s_vlm\\n' (exact-string twin is D-09); B-09 harness mutates vlm case arm to drop -vlm suffix in-test",
+      "red_output": "D-09 twin on same resolve path: FAILED ...::test_resolve_image_repo_name_exact_strings - assert 'acx-backend_vlm' == 'acx-backend-vlm'. B-09 collision test itself reds when vlm arm rewritten to bare IMAGE_NAME (in-test mutant).",
+      "notes": "Local Python resolve() tautology removed; real shell probe is the gate."
+    },
+    {
+      "finding_id": "R0811-V-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_vlm_cache_gate.py:423-467 resolve_image_variant bake/env; 601-650 weak hub vlm+seeded; 333-355 python -m scrubs ACX_IMAGE_VARIANT; entrypoint variant suite 779+",
+      "gate": "recognition/tests/deploy/test_vlm_cache_gate.py::test_vlm_image_weak_hub_empty_fails",
+      "mutation": "L326 deny probe: raise PermissionError → return real_write_text (A-12 twin); weak-hub baseline 5 passed; env scrub at L345 env.pop('ACX_IMAGE_VARIANT')",
+      "red_output": "A-12 unwritable path: FAILED ...::test_modules_cache_required_present_and_writable - AssertionError: assert 0 == 1 when PermissionError deny removed (writable probe wrongly green). Weak-hub + resolve_image_variant suite: 5 passed gating VLM fallback branch.",
+      "notes": "/health|/version image_variant assertions live in sibling-owned test_health_probes.py / api/main.py (w10d); lane-owned VLM gate coverage is present and mutation-proved."
+    },
+    {
+      "finding_id": "REV-r0811af90-S3-A-12",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_vlm_cache_gate.py:319-330 monkeypatch Path.write_text to raise PermissionError on .acx_modules_cache_write_probe (not chmod)",
+      "gate": "recognition/tests/deploy/test_vlm_cache_gate.py::test_modules_cache_required_present_and_writable",
+      "mutation": "L326: raise PermissionError(...) → return real_write_text(...) (deny disabled)",
+      "red_output": "FAILED ...::test_modules_cache_required_present_and_writable - AssertionError: assert 0 == 1\n +  where 0 = main([])  # unwritable case stayed EXIT_OK without PermissionError"
+    },
+    {
+      "finding_id": "R0811-D-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_compose_image_variant_parity.py:216-224 _fn_body(do_verify)+_active_call verify_running…; 375-447 behavioural ship probe on promote_gate+do_restart",
+      "gate": "recognition/tests/deploy/test_compose_image_variant_parity.py::test_deploy_script_threads_image_repo_from_resolve",
+      "mutation": "scripts/deploy/recognition-service.sh L1289: if ! verify_running_image_matches_deployed → if ! true # was verify",
+      "red_output": "FAILED ...::test_deploy_script_threads_image_repo_from_resolve - AssertionError: do_verify must invoke verify_running_image_matches_deployed\nassert False = _active_call(do_verify_body, 'verify_running_image_matches_deployed\\\\b')"
+    },
+    {
+      "finding_id": "R0811-D-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_compose_image_variant_parity.py:341-373 _probe_resolve_repo_name sources real resolve_image_repo_name; exact strings ''/runtime→acx-backend, runtime-vlm→acx-backend-vlm",
+      "gate": "recognition/tests/deploy/test_compose_image_variant_parity.py::test_resolve_image_repo_name_exact_strings",
+      "mutation": "scripts/deploy/recognition-service.sh L263: printf '%s-vlm\\n' → printf '%s_vlm\\n'",
+      "red_output": "FAILED ...::test_resolve_image_repo_name_exact_strings - AssertionError: assert 'acx-backend_vlm' == 'acx-backend-vlm'\n  - acx-backend-vlm\n  + acx-backend_vlm"
+    }
+  ],
+  "test_counts": "lane deploy suite 142 passed (topology 38 + packaging 37 + dockerignore 18 + vlm_cache 35 + compose 14)"
+}

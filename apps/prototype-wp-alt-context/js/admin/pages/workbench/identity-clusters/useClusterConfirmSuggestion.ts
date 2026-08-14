@@ -12,12 +12,21 @@ import { useClusterMatchAction } from './useClusterMatchAction';
 
 interface ClusterConfirmMutations {
   isPending: boolean;
-  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
-  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  merge: (
+    targetClusterId: string,
+    targetLabel?: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
+  assignToCluster: (
+    identityId: string,
+    targetClusterId: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
 }
 
 interface UseClusterConfirmSuggestionOptions {
-  clusterLabel: string | null;
   members: ClusterGroup['members'];
   editableClusterId: string | null;
   canEdit: boolean;
@@ -34,7 +43,6 @@ interface UseClusterConfirmSuggestionOptions {
 }
 
 export const useClusterConfirmSuggestion = ({
-  clusterLabel: _clusterLabel,
   members,
   editableClusterId,
   canEdit,
@@ -49,7 +57,6 @@ export const useClusterConfirmSuggestion = ({
   resetSaveStatus,
   saveAbortRef,
 }: UseClusterConfirmSuggestionOptions) => {
-  void _clusterLabel;
   const { runMatchedAction } = useClusterMatchAction({
     members,
     editableClusterId,
@@ -60,7 +67,7 @@ export const useClusterConfirmSuggestion = ({
   });
 
   const handleConfirmSuggestion = React.useCallback(
-    async (clusterId: string, label: string) => {
+    async (clusterId: string, label: string, suggestionId?: string) => {
       if (saveStatus !== 'idle' || mutations.isPending) {
         return;
       }
@@ -85,7 +92,10 @@ export const useClusterConfirmSuggestion = ({
           return;
         }
 
-        mutationStarted = await runMatchedAction({ id: clusterId, label }, abortController);
+        mutationStarted = await runMatchedAction(
+          { id: clusterId, label, suggestionId },
+          abortController,
+        );
       } catch (err) {
         if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
           resetSaveStatus();

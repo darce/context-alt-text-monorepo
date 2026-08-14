@@ -6,6 +6,7 @@ import { __ } from '@wordpress/i18n';
 import { useMutation } from '@tanstack/react-query';
 
 import {
+  acceptSuggestion,
   createClusterForIdentity,
   fetchScanStatus,
   pinRepresentative,
@@ -87,11 +88,18 @@ export const useClusterActionMutations = ({
       identityId,
       targetClusterId,
       signal,
+      suggestionId,
     }: {
       identityId: string;
       targetClusterId: string;
       signal?: AbortSignal;
+      suggestionId?: string;
     }) => {
+      // BR-16: confirm with a suggestion id resolves by id (accept assigns + marks accepted).
+      if (suggestionId) {
+        await acceptSuggestion(suggestionId);
+        return;
+      }
       await reassignClusterIdentity({ identityId, targetClusterId }, signal);
     },
     retry: false,
@@ -213,8 +221,12 @@ export const useClusterActionMutations = ({
 
   return {
     reassign: reassignMutation.mutate,
-    assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) =>
-      assignToClusterMutation.mutate({ identityId, targetClusterId, signal }),
+    assignToCluster: (
+      identityId: string,
+      targetClusterId: string,
+      signal?: AbortSignal,
+      suggestionId?: string,
+    ) => assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
     createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) =>
       createClusterMutation.mutate({ identityId, label, signal }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.

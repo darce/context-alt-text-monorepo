@@ -18,6 +18,10 @@ import {
   projectIdentityLegFromPending,
   projectIdentityWindow,
   projectReviewQueue,
+  readIdentityBatchCacheEntry,
+  readIdentityBatchUpdatedAt,
+  readIdentityFromBatchCache,
+  seedIdentityBatchSingles,
   type ProjectedSuggestion,
 } from '../suggestionProjection';
 import { buildClusterMatch, buildPendingRow, suggestionProjectionMatrix } from './suggestionProjection.fixtures';
@@ -378,6 +382,74 @@ describe('identityBatchIdsKey', () => {
     expect(identityBatchIdsKey(['id-a', 'id-b', 'id-a'])).toBe('id-a,id-b');
     expect(identityBatchIdsKey(['id-b', 'id-a'])).toBe(identityBatchIdsKey(['id-a', 'id-b']));
     expect(identityBatchIdsKey([])).toBe('');
+  });
+});
+
+describe('seedIdentityBatchSingles (L1R-04)', () => {
+  it('does not seed [] for ids absent from response.matches', () => {
+    // Predicted first failure: id-b gets an authoritative empty single-id entry
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const matchA = buildClusterMatch({
+      suggestion_id: 'sug-a',
+      cluster_id: 'c-a',
+      label: 'Ada',
+      similarity: 0.9,
+    });
+    seedIdentityBatchSingles(
+      queryClient,
+      { matches: { 'id-a': [matchA] } },
+      ['id-a', 'id-b'],
+    );
+
+    const keyA = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-a']));
+    const keyB = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-b']));
+    expect(queryClient.getQueryData(keyA)).toEqual({ matches: { 'id-a': [matchA] } });
+    expect(queryClient.getQueryData(keyB)).toBeUndefined();
+  });
+});
+
+describe('readIdentityBatchCacheEntry (L1R-03)', () => {
+  it('returns data and dataUpdatedAt from the same first matching batch', () => {
+    // Predicted first failure of split readers: data from batch-1, updatedAt from later batch-2
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const staleMatch = buildClusterMatch({
+      suggestion_id: 'stale',
+      cluster_id: 'c-stale',
+      label: 'Stale',
+      similarity: 0.5,
+    });
+    const freshMatch = buildClusterMatch({
+      suggestion_id: 'fresh',
+      cluster_id: 'c-fresh',
+      label: 'Fresh',
+      similarity: 0.9,
+    });
+    const multiKey1 = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-x', 'id-y']));
+    const multiKey2 = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['id-x', 'id-z']));
+    queryClient.setQueryData(multiKey1, { matches: { 'id-x': [staleMatch], 'id-y': [] } });
+    // Force an older dataUpdatedAt on the first batch, newer on the second.
+    const state1 = queryClient.getQueryState(multiKey1);
+    if (state1) {
+      state1.dataUpdatedAt = 1_000;
+    }
+    queryClient.setQueryData(multiKey2, { matches: { 'id-x': [freshMatch], 'id-z': [] } });
+    const state2 = queryClient.getQueryState(multiKey2);
+    if (state2) {
+      state2.dataUpdatedAt = 9_000;
+    }
+
+    const entry = readIdentityBatchCacheEntry(queryClient, 'id-x');
+    expect(entry?.data.matches['id-x']?.[0]?.suggestion_id).toBe('stale');
+    expect(entry?.dataUpdatedAt).toBe(1_000);
+    // Paired helpers must agree with the single entry (not latest-across-batches).
+    expect(readIdentityFromBatchCache(queryClient, 'id-x')?.matches['id-x']?.[0]?.suggestion_id).toBe(
+      'stale',
+    );
+    expect(readIdentityBatchUpdatedAt(queryClient, 'id-x')).toBe(1_000);
   });
 });
 

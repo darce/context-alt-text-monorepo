@@ -438,7 +438,7 @@
   }
 
   &__chevron {
-    font-size: 8px; // E21-4 disposition: icon/micro geometry, below type ladder
+    font-size: var(--acx-text-icon);
     color: var(--acx-gray-400);
   }
 
@@ -458,7 +458,7 @@
     font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-text-muted);
     text-transform: uppercase;
-    font-size: 9px; // E21-4 disposition: icon/micro geometry, below type ladder
+    font-size: var(--acx-text-micro);
     letter-spacing: 0.05em;
     margin-top: 8px;
     padding-bottom: 4px;

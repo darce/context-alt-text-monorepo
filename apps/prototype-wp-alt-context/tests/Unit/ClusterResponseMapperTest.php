@@ -390,6 +390,82 @@ class ClusterResponseMapperTest extends TestCase
         $parts = \parse_url($payload[0]['representatives'][0]['thumb_url']);
         $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-y/6731', $parts['path']);
         $this->assertStringNotContainsString('/uploads/6731.jpg', $payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('http://example.test/uploads/6731.jpg', $payload[0]['representatives'][0]['attachment_url']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 30,
+                'height' => 40,
+            ),
+            $payload[0]['representatives'][0]['bbox']
+        );
+    }
+
+    public function testMapClusterListEmitsAttachmentUrlAndBboxBesideFaceThumb(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'thumb_path' => '/recognition/face-thumbs/job-1/12?x=1&y=2&width=3&height=4',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $parts = \parse_url($payload[0]['sample_identities'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-1/12', $parts['path']);
+        $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['attachment_url']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload[0]['sample_identities'][0]['bbox']
+        );
+    }
+
+    public function testMapTopUnlabeledClustersEmitsNullAttachmentUrlWhenUnknown(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 1,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'thumb_path' => '/recognition/face-thumbs/job-y/99?x=1&y=2&width=30&height=40',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertNull($payload[0]['representatives'][0]['attachment_url']);
+        $this->assertNull($payload[0]['representatives'][0]['bbox']);
     }
 
     public function testMapTopUnlabeledClustersFallsBackToClusterRepresentativeMetadata(): void

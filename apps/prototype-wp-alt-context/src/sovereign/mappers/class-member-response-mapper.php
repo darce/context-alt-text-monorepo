@@ -74,6 +74,7 @@ class MemberResponseMapper {
 			'clustering_pending' => false,
 			'bbox' => $this->extract_bbox_pixels( $member_row['bbox_json'] ?? null ),
 			'thumb_url'     => $this->resolve_thumb_url( $member_row, $media_id ),
+			'attachment_url' => $this->resolve_media_url( $media_id ),
 			'media_url'     => $this->resolve_media_url( $media_id ),
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
 			'cluster_label' => $cluster_label,

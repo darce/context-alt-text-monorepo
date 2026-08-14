@@ -88,6 +88,48 @@ def test_partial_miss_e2e_vs_native() -> None:
     assert native.false_negatives < e2e.false_negatives
 
 
+def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
+    """Native ID recall is failable: a proposed box with no mapped name is an FN."""
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q"],
+        entries=[
+            GoldenEntry(
+                path="miss_label.jpg",
+                sha256="c" * 64,
+                media_id=3,
+                face_count=1,
+                present_identities=["Alice Q"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+            )
+        ],
+    )
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "i1",
+                "media_id": 30,
+                "cluster_id": "c1",
+                "cluster_label": "",
+                "is_auto_label": True,
+                "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+            }
+        ],
+        "clusters": [{"id": "c1", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = {3: {"stack_media_id": 30, "image_width": 1000, "image_height": 1000}}
+    _det, id_n = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    native = identification_pr(id_n)
+    assert native.recall is not None
+    assert native.recall < 1.0
+    assert native.false_negatives == 1
+
+
 def test_zero_export_stays_in_both_detection_denominators() -> None:
     manifest = _manifest()
     export = _export_partial_only()

@@ -30,8 +30,7 @@ SAMPLING_FRAME_E2E = "frame_e2e"
 LABEL_MAP_PRIMARY = "label_map_primary"
 LABEL_MAP_OPTIMISTIC = "label_map_optimistic"
 
-STACK_INSIGHT = "acx-dev-insightface"
-STACK_FIR = "acx-dev-fir"
+HOLM_NOT_COMPUTED = "not_computed"
 
 
 class CrossbenchTier(StrEnum):
@@ -40,12 +39,19 @@ class CrossbenchTier(StrEnum):
     DIAGNOSTIC = "DIAGNOSTIC"
 
 
+@dataclass(frozen=True)
+class ImageCounts:
+    tp: int
+    fp: int
+    fn: int
+
+
 @dataclass
 class BootstrapInterval:
-    ci_lower: float
-    ci_upper: float
-    ci_half_width: float
-    ci_level: float = CI_LEVEL
+    ci_lower: float | None
+    ci_upper: float | None
+    ci_half_width: float | None
+    ci_level: float | None = CI_LEVEL
     bootstrap_resamples: int = BOOTSTRAP_RESAMPLES
     bootstrap_seed: int = 0
     resampling_unit: str = "image"
@@ -102,8 +108,8 @@ def percentile_linear(values: list[float], q: float) -> float:
 
 
 def bootstrap_paired_delta(
-    a: list[float],
-    b: list[float],
+    a: list[Any],
+    b: list[Any],
     seed: int,
     *,
     metric: str = "mean",
@@ -115,19 +121,35 @@ def bootstrap_paired_delta(
     if len(a) != len(b):
         raise BenchError("config_invalid", "paired series must be the same length")
     n = len(a)
+    if n == 0:
+        raise BenchError("bootstrap_empty_series", "paired series is empty")
+    if accepted_mask is not None and len(accepted_mask) != n:
+        raise BenchError("config_invalid", "accepted_mask must match series length")
+    eligible = [i for i in range(n) if accepted_mask is None or accepted_mask[i]]
+    if not eligible:
+        raise BenchError("bootstrap_empty_series", "accepted_mask selected no units")
     units: list[list[int]]
     partial = 0
     resampling_unit = "image"
     if occasion_ids is None:
-        units = [[i] for i in range(n)]
+        units = [[i] for i in eligible]
     else:
+        if len(occasion_ids) != n:
+            raise BenchError("config_invalid", "occasion_ids must match series length")
         groups: dict[str, list[int]] = {}
-        for i, oid in enumerate(occasion_ids):
-            groups.setdefault(oid, []).append(i)
+        for i in eligible:
+            groups.setdefault(occasion_ids[i], []).append(i)
         full: list[list[int]] = []
         split: list[int] = []
         for oid, idxs in groups.items():
-            required = (occasion_full_size or {}).get(oid, len(idxs))
+            if occasion_full_size is None:
+                required = len(idxs)
+            elif oid not in occasion_full_size:
+                partial += 1
+                split.extend(idxs)
+                continue
+            else:
+                required = occasion_full_size[oid]
             if len(idxs) == required:
                 full.append(idxs)
             else:
@@ -140,27 +162,29 @@ def bootstrap_paired_delta(
             units = full + [[i] for i in split]
             resampling_unit = "occasion+image"
         else:
-            units = [[i] for i in range(n)]
+            units = [[i] for i in eligible]
             resampling_unit = "occasion+image" if partial else "image"
 
     rng = random.Random(seed)
     k = len(units)
+    if k == 0:
+        raise BenchError("bootstrap_empty_series", "no resampling units")
     deltas: list[float] = []
     for _ in range(B):
         picks = [units[rng.randrange(k)] for _ in range(k)]
         idxs = [i for unit in picks for i in unit]
-        if metric == "mean":
-            mean_a = sum(a[i] for i in idxs) / len(idxs)
-            mean_b = sum(b[i] for i in idxs) / len(idxs)
-            deltas.append(mean_a - mean_b)
-        else:
-            deltas.append(0.0)
+        delta = _resample_delta(a, b, idxs, metric)
+        if delta is not None:
+            deltas.append(delta)
+    if not deltas:
+        raise BenchError("bootstrap_undefined", "every resample had an undefined ratio")
     lower = percentile_linear(deltas, 2.5)
     upper = percentile_linear(deltas, 97.5)
+    n_used = len(deltas)
     n_le = sum(1 for d in deltas if d <= 0.0)
     n_ge = sum(1 for d in deltas if d >= 0.0)
-    p_raw = 2.0 * min(n_le / B, n_ge / B)
-    p_val = min(1.0, max(p_raw, 1.0 / (B + 1)))
+    p_raw = 2.0 * min(n_le / n_used, n_ge / n_used)
+    p_val = min(1.0, max(p_raw, 1.0 / (n_used + 1)))
     return BootstrapInterval(
         ci_lower=lower,
         ci_upper=upper,
@@ -171,6 +195,28 @@ def bootstrap_paired_delta(
         partial_occasions=partial,
         p_value=p_val,
     )
+
+
+def _resample_delta(a: list[Any], b: list[Any], idxs: list[int], metric: str) -> float | None:
+    if metric == "mean":
+        return (sum(a[i] for i in idxs) / len(idxs)) - (sum(b[i] for i in idxs) / len(idxs))
+    if metric in {"micro_recall", "micro_precision"}:
+        va = _micro_ratio([a[i] for i in idxs], metric)
+        vb = _micro_ratio([b[i] for i in idxs], metric)
+        if va is None or vb is None:
+            return None
+        return va - vb
+    raise BenchError("config_invalid", f"unknown bootstrap metric {metric!r}")
+
+
+def _micro_ratio(counts: list[ImageCounts], metric: str) -> float | None:
+    tp = sum(c.tp for c in counts)
+    fp = sum(c.fp for c in counts)
+    fn = sum(c.fn for c in counts)
+    denom = tp + fn if metric == "micro_recall" else tp + fp
+    if denom == 0:
+        return None
+    return tp / denom
 
 
 def holm_bonferroni(pairs: list[tuple[str, float]], alpha: float = 0.05) -> dict[str, dict[str, Any]]:
@@ -214,7 +260,7 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
     if ctx.get("optimistic") or "label_map_optimistic" in str(cell):
         return CrossbenchTier.DIRECTIONAL, None
     if ctx.get("native_frame") or "frame_fir5_native" in str(cell):
-        return CrossbenchTier.DIRECTIONAL, "secondary_frame"
+        return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
     if ctx.get("primary") or cell == "detection_recall@frame_e2e/label_map_primary":
         return CrossbenchTier.CONFIRMATORY, None
     if ctx.get("holm_significant", False):
@@ -489,6 +535,22 @@ def _pr_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def _detection_counts(item: Any) -> ImageCounts:
+    if item.matched_faces is None:
+        tp = min(item.pred_faces, item.labeled_faces)
+        return ImageCounts(tp, max(item.pred_faces - item.labeled_faces, 0), max(item.labeled_faces - item.pred_faces, 0))
+    matched = item.matched_faces
+    return ImageCounts(matched, max(item.pred_faces - matched, 0), max(item.labeled_faces - matched, 0))
+
+
+def _ident_counts(item: Any) -> ImageCounts | None:
+    if not item.recognition_enabled:
+        return None
+    predicted = set(item.predicted)
+    labeled = set(item.labeled)
+    return ImageCounts(len(predicted & labeled), len(predicted - labeled), len(labeled - predicted))
+
+
 def _cell_id(metric: str, frame_key: str, label_key: str) -> str:
     frame = SAMPLING_FRAME_E2E if frame_key == "e2e" else SAMPLING_FRAME_CROSSBENCH_NATIVE
     label = LABEL_MAP_PRIMARY if label_key == "primary" else LABEL_MAP_OPTIMISTIC
@@ -539,14 +601,16 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             raise BenchError("differential_attrition_exceeded", "one-sided attrition exceeds max_differential_attrition")
 
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
+    detection_entries = [e for e in accepted_entries if e.media_id in set(accepted.detection_scoring_set)]
     detection_ids = set(accepted.detection_scoring_set)
     exhaustiveness_ok = len(detection_ids) == len(accepted_entries)
     floor_ok = accepted.accepted_set_size >= accepted.resolved_floor_count
-
-    cells: list[dict[str, Any]] = []
     named = {pair.primary_endpoint, *pair.secondary_endpoints}
-    # Per-image detection recall scalars for bootstrap on primary population
-    per_image: dict[str, list[float]] = {s: [] for s in stacks}
+
+    path_to_mid = {e.path: e.media_id for e in manifest.entries}
+    counts_by: dict[str, dict[str, list[ImageCounts]]] = {cell: {s: [] for s in stacks} for cell in named}
+    cells: list[dict[str, Any]] = []
+
     for stack_id in stacks:
         export = load_leg_exports(root, stack_id)
         join = {
@@ -554,25 +618,49 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             for mid, info in accepted.join_by_stack.get(stack_id, {}).items()
             if mid in set(accepted.manifest_media_ids)
         }
-        # restrict manifest to accepted
-        accepted_manifest = GoldenManifest(
-            manifest_version=2,
-            roster=list(manifest.roster),
-            entries=accepted_entries,
+        accepted_manifest = (
+            GoldenManifest(
+                manifest_version=2,
+                roster=list(manifest.roster),
+                entries=accepted_entries,
+            )
+            if accepted_entries
+            else None
         )
+        detection_manifest = (
+            GoldenManifest(
+                manifest_version=2,
+                roster=list(manifest.roster),
+                entries=detection_entries,
+            )
+            if detection_entries
+            else None
+        )
+        export_payload = {
+            "media_identities": export.media_identities,
+            "clusters": export.clusters,
+            "cluster_members": export.cluster_members,
+        }
         for frame_key, frame_name in (("e2e", SAMPLING_FRAME_E2E), ("native", SAMPLING_FRAME_CROSSBENCH_NATIVE)):
             for label_key, label_name in (("primary", LABEL_MAP_PRIMARY), ("optimistic", LABEL_MAP_OPTIMISTIC)):
-                det, ident = to_face_metric_inputs(
-                    {
-                        "media_identities": export.media_identities,
-                        "clusters": export.clusters,
-                        "cluster_members": export.cluster_members,
-                    },
-                    accepted_manifest,
-                    join,
-                    label_key,
-                    frame=frame_key,  # type: ignore[arg-type]
-                )
+                ident: list[Any] = []
+                if accepted_manifest is not None:
+                    _, ident = to_face_metric_inputs(
+                        export_payload,
+                        accepted_manifest,
+                        join,
+                        label_key,
+                        frame=frame_key,  # type: ignore[arg-type]
+                    )
+                det: list[Any] = []
+                if detection_manifest is not None:
+                    det, _ = to_face_metric_inputs(
+                        export_payload,
+                        detection_manifest,
+                        join,
+                        label_key,
+                        frame=frame_key,  # type: ignore[arg-type]
+                    )
                 det_matched = detection_pr(det)
                 det_count = detection_pr(
                     [
@@ -581,32 +669,27 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     ]
                 )
                 ident_pr = identification_pr(ident)
-                if frame_key == "e2e" and label_key == "primary":
-                    for d in det:
-                        rec = 1.0 if d.labeled_faces == 0 else (d.matched_faces or 0) / d.labeled_faces
-                        per_image[stack_id].append(rec)
-                for metric, result in (
-                    ("detection_recall", det_matched),
-                    ("detection_precision", det_matched),
-                    ("identification_recall", ident_pr),
-                    ("identification_precision", ident_pr),
+                det_by_mid = {path_to_mid.get(d.image, -1): d for d in det}
+                ident_by_mid = {path_to_mid.get(row.image, -1): row for row in ident}
+                for metric, result, population in (
+                    ("detection_recall", det_matched, detection_entries),
+                    ("detection_precision", det_matched, detection_entries),
+                    ("identification_recall", ident_pr, accepted_entries),
+                    ("identification_precision", ident_pr, accepted_entries),
                 ):
                     cell = _cell_id(metric, frame_key, label_key)
-                    interval = BootstrapInterval(0.0, 0.0, 0.0, bootstrap_seed=pair.bootstrap_seed)
-                    ctx = {
-                        "named": cell in named,
-                        "primary": cell == pair.primary_endpoint,
-                        "optimistic": label_key == "optimistic",
-                        "native_frame": frame_key == "native",
-                        "floor_ok": floor_ok,
-                        "ci_half_width": 0.0,
-                        "head_to_head_delta": pair.head_to_head_delta,
-                        "holm_significant": cell == pair.primary_endpoint,
-                        "exhaustiveness_ok": exhaustiveness_ok or not metric.startswith("detection_"),
-                        "cluster_ok": True,
-                        "count_only": False,
-                    }
-                    tier, reason = assign_tier(cell, ctx)
+                    if cell in counts_by:
+                        series: list[ImageCounts] = []
+                        for entry in population:
+                            if metric.startswith("detection"):
+                                row = det_by_mid.get(entry.media_id)
+                                series.append(_detection_counts(row) if row is not None else ImageCounts(0, 0, 0))
+                            else:
+                                row = ident_by_mid.get(entry.media_id)
+                                counted = _ident_counts(row) if row is not None else ImageCounts(0, 0, 0)
+                                if counted is not None:
+                                    series.append(counted)
+                        counts_by[cell][stack_id] = series
                     cells.append(
                         {
                             "cell": cell,
@@ -614,17 +697,11 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                             "frame": frame_name,
                             "label_map": label_name,
                             "metric": metric,
-                            "tier": tier.value,
-                            "reason": reason,
                             "value": result.recall if metric.endswith("recall") else result.precision,
                             **_pr_payload(result),
-                            "ci_level": CI_LEVEL,
-                            "ci_lower": interval.ci_lower,
-                            "ci_upper": interval.ci_upper,
-                            "ci_half_width": interval.ci_half_width,
-                            "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
-                            "bootstrap_seed": pair.bootstrap_seed,
-                            "resampling_unit": "image",
+                            "_frame_key": frame_key,
+                            "_label_key": label_key,
+                            "_is_detection": metric.startswith("detection_"),
                         }
                     )
                 cells.append(
@@ -637,31 +714,74 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     }
                 )
 
-    # Head-to-head bootstrap on primary if both legs present
-    if len(stacks) == 2 and per_image[stacks[0]] and per_image[stacks[1]]:
-        interval = bootstrap_paired_delta(
-            per_image[stacks[0]],
-            per_image[stacks[1]],
-            seed=pair.bootstrap_seed,
-            metric="mean",
-        )
-        for cell in cells:
-            if cell.get("cell") == pair.primary_endpoint:
-                cell["ci_half_width"] = interval.ci_half_width
-                cell["ci_lower"] = interval.ci_lower
-                cell["ci_upper"] = interval.ci_upper
-                cell["resampling_unit"] = interval.resampling_unit
-                if interval.ci_half_width > pair.head_to_head_delta / 2:
-                    cell["tier"] = CrossbenchTier.DIRECTIONAL.value
-                    cell["reason"] = "ci_half_width_above_precision_floor"
+    intervals: dict[str, BootstrapInterval] = {}
+    if len(stacks) == 2:
+        for cell_name, by_stack in counts_by.items():
+            series_a = by_stack.get(stacks[0]) or []
+            series_b = by_stack.get(stacks[1]) or []
+            if not series_a or not series_b or len(series_a) != len(series_b):
+                continue
+            boot_metric = "micro_recall" if cell_name.startswith("identification_recall") or cell_name.startswith("detection_recall") else "micro_precision"
+            try:
+                intervals[cell_name] = bootstrap_paired_delta(
+                    series_a,
+                    series_b,
+                    seed=pair.bootstrap_seed,
+                    metric=boot_metric,
+                )
+            except BenchError:
+                continue
 
-    # Holm across secondaries using bootstrap p (same interval family; empty allowed)
-    if pair.secondary_endpoints:
-        holm = holm_bonferroni([(c, 1.0) for c in pair.secondary_endpoints])
-        for cell in cells:
-            info = holm.get(cell.get("cell", ""))
-            if info:
-                cell.update({k: info[k] for k in ("p_value", "holm_rank", "holm_threshold", "holm_significant")})
+    holm: dict[str, dict[str, Any]] = {}
+    holm_family = [(c, intervals[c].p_value) for c in pair.secondary_endpoints if c in intervals and intervals[c].p_value is not None]
+    if holm_family:
+        holm = holm_bonferroni([(c, float(p)) for c, p in holm_family])
+
+    for cell in cells:
+        if cell.get("count_only"):
+            continue
+        name = cell["cell"]
+        interval = intervals.get(name)
+        holm_info = holm.get(name)
+        half_width: float | None = interval.ci_half_width if interval is not None else None
+        ctx = {
+            "named": name in named,
+            "primary": name == pair.primary_endpoint,
+            "optimistic": cell.pop("_label_key") == "optimistic",
+            "native_frame": cell.pop("_frame_key") == "native",
+            "floor_ok": floor_ok,
+            "ci_half_width": half_width if half_width is not None else math.inf,
+            "head_to_head_delta": pair.head_to_head_delta,
+            "holm_significant": bool(holm_info["holm_significant"]) if holm_info else False,
+            "exhaustiveness_ok": exhaustiveness_ok or not cell.pop("_is_detection"),
+            "cluster_ok": True,
+            "count_only": False,
+        }
+        tier, reason = assign_tier(name, ctx)
+        cell["tier"] = tier.value
+        cell["reason"] = reason
+        if interval is not None:
+            cell["ci_level"] = interval.ci_level
+            cell["ci_lower"] = interval.ci_lower
+            cell["ci_upper"] = interval.ci_upper
+            cell["ci_half_width"] = interval.ci_half_width
+            cell["bootstrap_resamples"] = interval.bootstrap_resamples
+            cell["bootstrap_seed"] = interval.bootstrap_seed
+            cell["resampling_unit"] = interval.resampling_unit
+            cell["p_value"] = interval.p_value
+            cell["partial_occasions"] = interval.partial_occasions
+        else:
+            cell["ci_level"] = None
+            cell["ci_lower"] = None
+            cell["ci_upper"] = None
+            cell["ci_half_width"] = None
+            cell["bootstrap_resamples"] = None
+            cell["p_value"] = None
+        if holm_info:
+            cell.update({k: holm_info[k] for k in ("holm_rank", "holm_threshold", "holm_significant")})
+        elif name in pair.secondary_endpoints:
+            cell["holm_significant"] = None
+            cell["holm_status"] = HOLM_NOT_COMPUTED
 
     frames = {
         "license_banner": LICENSE_BANNER,

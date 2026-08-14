@@ -139,6 +139,7 @@ class DetectionMatchResult:
     degenerate_box_dropped: int
     pred_count: int
     gt_count: int
+    matched_gt_indices: list[int] = field(default_factory=list)
 
 
 def normalize_label(value: str) -> str:
@@ -200,6 +201,7 @@ def match_detection_boxes(
         degenerate_box_dropped=dropped,
         pred_count=len(pred_tl),
         gt_count=len(gt_tl),
+        matched_gt_indices=[p[1] for p in pairs],
     )
 
 
@@ -385,14 +387,17 @@ def to_face_metric_inputs(
         predicted = list(mapped.get(stack_mid, []))
         labeled_full = list(entry.present_identities)
         if frame == "native":
-            # Score only faces the detector proposed: drop GT names with no proposed face.
-            if not rows:
-                labeled_native: list[str] = []
-                predicted_native: list[str] = []
-            else:
-                labeled_native = [n for n in labeled_full if n in predicted]
-                # keep predicted that were mapped; unmapped omitted already
-                predicted_native = list(predicted)
+            # Per-face native rule: drop GT names whose *box* got no proposed
+            # detection (IoU match). Mapper-hit is not a detection proposal.
+            matched_idx = set(match.matched_gt_indices)
+            labeled_native: list[str] = []
+            for gi, box in enumerate(entry.face_boxes):
+                if gi not in matched_idx:
+                    continue
+                name = box.name if isinstance(box, FaceBox) else box.get("name")
+                if name and name not in labeled_native:
+                    labeled_native.append(name)
+            predicted_native = list(predicted) if rows else []
             id_rows.append(
                 ImageIdentities(
                     image=entry.path,

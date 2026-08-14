@@ -29,7 +29,8 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
     frames = json.loads((out / "score" / "frames.json").read_text())
     assert "license_banner" in frames or LICENSE_BANNER in json.dumps(frames)
     # Both legs × both frames × both label maps present.
-    cells = frames.get("cells") or frames.get("grid") or []
+    cells = frames.get("cells")
+    assert isinstance(cells, list) and cells
     encoded = json.dumps(frames)
     assert "frame_e2e" in encoded
     assert "frame_fir5_native" in encoded
@@ -38,11 +39,16 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
     assert "acx-dev-insightface" in encoded
     assert "acx-dev-fir" in encoded
     html = (out / "score" / "report.html").read_text()
-    assert "INTERNAL BENCH ONLY" in html or "license" in html.lower()
-    preflight_keys_ok = True
-    for stack in ("acx-dev-insightface", "acx-dev-fir"):
-        # preflight is optional in mocked path; provenance still required on report
-        _ = stack
-    assert "tier" in encoded.lower() or "CONFIRMATORY" in encoded or "DIRECTIONAL" in encoded
-    assert cells or "cells" in frames or "legs" in frames
-    assert report.suffix in {".html", ".json"} or report.name
+    assert "INTERNAL BENCH ONLY" in html
+    tiers = {c.get("tier") for c in cells if isinstance(c, dict) and "tier" in c}
+    assert tiers & {"CONFIRMATORY", "DIRECTIONAL", "DIAGNOSTIC"}
+    native_id = [
+        c
+        for c in cells
+        if c.get("cell") == "identification_recall@frame_fir5_native/label_map_primary"
+    ]
+    assert native_id
+    for cell in native_id:
+        assert cell.get("ci_half_width") is None
+        assert "holm_significant" not in cell or cell.get("holm_significant") in {None, False}
+    assert report.suffix == ".html"

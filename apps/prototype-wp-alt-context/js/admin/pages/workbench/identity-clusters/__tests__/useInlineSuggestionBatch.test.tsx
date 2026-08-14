@@ -3,13 +3,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import { useInlineSuggestionBatch } from '../useInlineSuggestionBatch';
-import { PROJECTION_TOP_K } from '../suggestionProjection';
+import { useClusterSuggestions } from '../useClusterSuggestions';
+import {
+  PROJECTION_TOP_K,
+  identityBatchIdsKey,
+} from '../suggestionProjection';
 import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';
 import * as recognitionApi from '../../../../api/recognition';
+import { useRosterEntries } from '../../../../hooks/useRosterHooks';
+import { createMockQuery } from '../../../../test-utils/mockHooks';
 
 vi.mock('../../../../api/recognition', () => ({
   fetchIdentitiesSuggestions: vi.fn(),
+  listRecognitionClusters: vi.fn(),
+}));
+
+vi.mock('../../../../hooks/useRosterHooks', () => ({
+  useRosterEntries: vi.fn(),
 }));
 
 const createWrapper = () => {
@@ -32,6 +44,20 @@ const match = (label: string, cluster_id = `cluster-${label}`) => ({
 describe('useInlineSuggestionBatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    vi.mocked(recognitionApi.listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+    });
   });
 
   it('issues exactly one batched call for the supplied id set with top_k=PROJECTION_TOP_K', async () => {
@@ -154,5 +180,38 @@ describe('useInlineSuggestionBatch', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.getMatch(identityId)).toBeUndefined();
+  });
+
+  it('seeds per-identity keys so dropdown loader reuses batch without second fetch (BR-10)', async () => {
+    // Predicted first failure: dual cache keys → second fetchIdentitiesSuggestions for single id
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    fetchMock.mockResolvedValue({
+      matches: {
+        a: [match('Ada', 'cluster-Ada')],
+        b: [match('Bob', 'cluster-Bob')],
+      },
+    });
+
+    const { wrapper, queryClient } = createWrapper();
+    const { result: batch } = renderHook(() => useInlineSuggestionBatch(['a', 'b']), { wrapper });
+    await waitFor(() => expect(batch.current.getMatch('a')?.label).toBe('Ada'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(['a']));
+    expect(queryClient.getQueryData(singleKey)).toEqual({
+      matches: { a: [match('Ada', 'cluster-Ada')] },
+    });
+
+    const { result: dropdown } = renderHook(
+      () => useClusterSuggestions({ identityId: 'a', enabled: true, labelInput: '', debounceMs: 0 }),
+      { wrapper },
+    );
+    await waitFor(() => expect(dropdown.current.isLoading).toBe(false));
+    await waitFor(() =>
+      expect(dropdown.current.options.some((o) => o.label === 'Ada' && o.group === 'Suggested')).toBe(true),
+    );
+
+    // Still one network call — single-id entry was seeded from the multi-id batch.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

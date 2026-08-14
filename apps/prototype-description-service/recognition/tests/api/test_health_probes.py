@@ -399,6 +399,206 @@ def test_root_health_includes_commit_sha(monkeypatch) -> None:
     assert not (forbidden_keys & body.keys())
 
 
+def test_image_variant_artifact_constant_is_canonical() -> None:
+    """rg-015 / TEST-15: production constant must be /app/.image-variant.
+
+    Monkeypatching the path in other tests must not let a wrong constant pass:
+    this asserts the real module-level path used in the image. Also pins
+    agreement with the canonical scripts.verify_vlm_cache export (sr-007).
+    """
+    from pathlib import Path
+
+    from api.main import _IMAGE_VARIANT_ARTIFACT
+    from scripts.verify_vlm_cache import IMAGE_VARIANT_ARTIFACT
+
+    assert _IMAGE_VARIANT_ARTIFACT == Path("/app/.image-variant")
+    assert _IMAGE_VARIANT_ARTIFACT == IMAGE_VARIANT_ARTIFACT
+
+
+def test_image_variant_labels_lockstep_with_bake_surfaces() -> None:
+    """sr-007: Dockerfile bakes + entrypoint case arm use ImageVariant members.
+
+    Five historical copies of the recognition|vlm labels drift silently when
+    only one is renamed. Assert every bake surface equals an ImageVariant
+    member; mutating a label off the enum must fail this gate.
+    """
+    import re
+    from pathlib import Path
+
+    from scripts.verify_vlm_cache import ImageVariant
+
+    service_root = Path(__file__).resolve().parents[3]
+    dockerfile = (service_root / "Dockerfile").read_text(encoding="utf-8")
+    entrypoint = (service_root / "scripts" / "docker-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    valid = {member.value for member in ImageVariant}
+
+    # printf 'recognition\n' > /app/.image-variant  (and vlm)
+    baked = set(
+        re.findall(
+            r"""printf\s+['"]([^'"\\]+)\\n['"]\s*>\s*/app/\.image-variant""",
+            dockerfile,
+        )
+    )
+    assert baked, "Dockerfile must printf bake labels into /app/.image-variant"
+    assert baked <= valid, (
+        f"Dockerfile bake labels {baked} must be ImageVariant members {valid}"
+    )
+    assert valid <= baked, (
+        f"every ImageVariant member must be baked somewhere; missing {valid - baked}"
+    )
+
+    # entrypoint case recognition|vlm)
+    case_m = re.search(
+        r"case\s+\"\$\{BAKED_IMAGE_VARIANT\}\"\s+in\s*\n([^\n]+)\)",
+        entrypoint,
+    )
+    assert case_m, "entrypoint must case on BAKED_IMAGE_VARIANT"
+    case_labels = {part.strip() for part in case_m.group(1).split("|") if part.strip()}
+    assert case_labels == valid, (
+        f"entrypoint case labels {case_labels} must equal ImageVariant {valid}"
+    )
+
+
+def test_health_and_version_report_baked_image_variant(tmp_path, monkeypatch) -> None:
+    """D8: /health and /version report image_variant from /app/.image-variant.
+
+    ENV alone is not build-immutable (compose env_file overrides image ENV).
+    The bake wins even when ACX_IMAGE_VARIANT is unset or matches.
+    """
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("vlm\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    health = client.get("/health")
+    assert health.status_code == 200, health.text
+    assert health.json()["image_variant"] == "vlm"
+
+    version = client.get("/version")
+    assert version.status_code == 200, version.text
+    assert version.json()["image_variant"] == "vlm"
+
+
+def test_image_variant_env_mismatch_with_bake_fails_closed(tmp_path, monkeypatch) -> None:
+    """D8: non-empty ACX_IMAGE_VARIANT that disagrees with the bake fails closed."""
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("vlm\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", "recognition")
+
+    import pytest
+
+    from api.main import create_app
+
+    with pytest.raises(RuntimeError, match="disagrees with baked"):
+        create_app()
+
+
+def test_image_variant_unreadable_bake_fails_closed(monkeypatch) -> None:
+    """OSError reading the bake must fail closed — never report recognition."""
+    import pytest
+
+    class _Unreadable:
+        def is_file(self) -> bool:
+            return True
+
+        def read_text(self, *args, **kwargs) -> str:
+            raise OSError("permission denied")
+
+        def __str__(self) -> str:
+            return "/app/.image-variant"
+
+        def __fspath__(self) -> str:
+            return "/app/.image-variant"
+
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", _Unreadable())
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import _resolve_image_variant
+
+    with pytest.raises(RuntimeError, match="cannot read baked image variant"):
+        _resolve_image_variant()
+
+
+def test_image_variant_absent_bake_falls_back_to_env_then_recognition(
+    tmp_path, monkeypatch
+) -> None:
+    """Absent artifact (local dev / unit tests): env claim, else recognition.
+
+    Does not fabricate a VLM identity when no bake and no env claim — that is
+    the only permitted fail-open path (production images always bake).
+    """
+    from scripts.verify_vlm_cache import ImageVariant
+
+    missing = tmp_path / "no-such-image-variant"
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", missing)
+
+    from api.main import _resolve_image_variant
+
+    monkeypatch.setenv("ACX_IMAGE_VARIANT", ImageVariant.VLM.value)
+    assert _resolve_image_variant() == ImageVariant.VLM.value
+
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+    assert _resolve_image_variant() == ImageVariant.RECOGNITION.value
+
+
+def test_image_variant_invalid_bake_fails_closed(tmp_path, monkeypatch) -> None:
+    """Corrupt bake values must fail closed (match entrypoint case arm)."""
+    import pytest
+
+    artifact = tmp_path / ".image-variant"
+    artifact.write_text("torch-edition\n", encoding="utf-8")
+    monkeypatch.setattr("api.main._IMAGE_VARIANT_ARTIFACT", artifact)
+    monkeypatch.delenv("ACX_IMAGE_VARIANT", raising=False)
+
+    from api.main import _resolve_image_variant
+
+    with pytest.raises(RuntimeError, match="invalid baked image variant"):
+        _resolve_image_variant()
+
+
+def test_logging_file_handler_falls_back_when_dir_unwritable(tmp_path, monkeypatch) -> None:
+    """Explicit stream-only fallback when log dir cannot be created (not bare pass)."""
+    import logging
+
+    from api import logging_config as lc
+
+    blocked = tmp_path / "nope" / "logs"
+    # Parent is a file → mkdir parents fails with OSError (not PermissionError-only).
+    blocker = tmp_path / "nope"
+    blocker.write_text("not-a-dir", encoding="utf-8")
+    monkeypatch.setenv("ACX_LOG_DIR", str(blocked))
+    # Temporarily pretend we are not under pytest so file handler is attempted.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(lc, "_is_test_environment", lambda: False)
+
+    root = logging.getLogger()
+    before_handlers = list(root.handlers)
+    try:
+        lc.configure_logging("INFO")
+        # Console handler always present; file handler must be absent.
+        file_handlers = [
+            h
+            for h in root.handlers
+            if isinstance(h, logging.handlers.WatchedFileHandler)
+        ]
+        assert file_handlers == [], (
+            "unwritable log dir must not attach WatchedFileHandler"
+        )
+        assert any(isinstance(h, logging.StreamHandler) for h in root.handlers)
+    finally:
+        root.handlers.clear()
+        for h in before_handlers:
+            root.addHandler(h)
+
+
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
     """PA-10: the model-cache check must stat the filesystem on every call
     (no caching). Unlinking the bundle between calls flips the next /ready
@@ -428,3 +628,150 @@ def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None
     assert body["status"] == HealthStatus.UNHEALTHY.value
     mc_check = next(c for c in body["checks"] if c["name"] == "model_cache")
     assert mc_check["status"] == HealthStatus.UNHEALTHY.value
+
+
+# ---------------------------------------------------------------------------
+# Lane w10d gates: compose blob parity + VLM operator-runbook contracts.
+# Kept here because this file is the lane-owned test surface for compose/
+# README findings that deploy-parity tests do not cover (RECOGNITION_BLOB_ROOT
+# on api/worker; runnable README recipes).
+# ---------------------------------------------------------------------------
+
+
+def _service_root():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[3]
+
+
+def _repo_root():
+    return _service_root().parents[1]
+
+
+def _compose_api_worker_blob_contract(compose_text: str) -> bool:
+    """api + worker must set RECOGNITION_BLOB_ROOT and mount acx_blobs.
+
+    Mirrors the env.yml production topology so a reference prod.yml cannot
+    silently fall back to /tmp/acx-recognition-blobs (R0811-H-04).
+    """
+    import re
+
+    try:
+        import yaml  # type: ignore
+    except ImportError:  # pragma: no cover - PyYAML is a service dep
+        # Fallback: structural string checks (both services + named volume).
+        if compose_text.count("RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs") < 2:
+            return False
+        if compose_text.count("acx_blobs:/var/lib/acx-blobs") < 2:
+            return False
+        if not re.search(r"^\s*acx_blobs\s*:", compose_text, re.MULTILINE):
+            return False
+        return True
+
+    data = yaml.safe_load(compose_text)
+    services = (data or {}).get("services") or {}
+    for name in ("api", "worker"):
+        svc = services.get(name) or {}
+        env = svc.get("environment") or []
+        # environment may be list of "K=V" or a mapping
+        env_blob = False
+        if isinstance(env, dict):
+            env_blob = env.get("RECOGNITION_BLOB_ROOT") == "/var/lib/acx-blobs"
+        else:
+            env_blob = any(
+                isinstance(item, str) and item.strip() == "RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs"
+                for item in env
+            )
+        if not env_blob:
+            return False
+        vols = svc.get("volumes") or []
+        if "acx_blobs:/var/lib/acx-blobs" not in vols:
+            return False
+    volumes = (data or {}).get("volumes") or {}
+    if "acx_blobs" not in volumes:
+        return False
+    return True
+
+
+def test_compose_env_and_prod_api_worker_blob_root_parity() -> None:
+    """R0811-H-04: env.yml + prod.yml share RECOGNITION_BLOB_ROOT + acx_blobs.
+
+    Deploy does not select prod.yml, but parity-gating it prevents a second
+    production topology with /tmp blob fallback under USER acx.
+    """
+    root = _service_root()
+    for name in ("docker-compose.env.yml", "docker-compose.prod.yml"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert _compose_api_worker_blob_contract(text), (
+            f"{name}: api and worker must set RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs "
+            f"and mount acx_blobs:/var/lib/acx-blobs (named volume declared)"
+        )
+
+
+def test_oci_readme_vlm_cache_gate_recipe_uses_entrypoint_override() -> None:
+    """rg-006 / R0811-V-05 / A-07: isolated gate recipe must not run full CMD.
+
+    Full image CMD hits alembic first; bare docker run without DSN never
+    reaches verify_vlm_cache. Recipe must use --entrypoint python … -m
+    scripts.verify_vlm_cache.
+    """
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    assert "--entrypoint python" in readme, (
+        "infra/oci/README.md must show --entrypoint python for the isolated "
+        "VLM cache-gate demonstration"
+    )
+    assert "-m scripts.verify_vlm_cache" in readme
+    # Forbid the historical bare-run form as the *only* recipe: if the
+    # isolation entrypoint disappears, this fails even if a full-stack
+    # docker run remains.
+    # Boot order must list alembic before the VLM gate so operators do not
+    # misread migration failures as cache-gate failures.
+    alembic_pos = readme.find("alembic -c db/alembic.ini upgrade head")
+    gate_pos = readme.find("python -m scripts.verify_vlm_cache")
+    assert alembic_pos != -1 and gate_pos != -1 and alembic_pos < gate_pos, (
+        "README boot order must list alembic before verify_vlm_cache"
+    )
+
+
+def test_oci_readme_health_identity_uses_docker_exec() -> None:
+    """R0811-V-05: host curl :8000 only works under prod admin overlay.
+
+    Prefer docker exec … localhost:8000/health so staging/dev (expose-only)
+    can still identify image_variant.
+    """
+    import re
+
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    assert "image_variant" in readme, "README health identity recipe must mention image_variant"
+    # Require a docker exec that targets /health (not postgres pg_isready).
+    health_exec = re.search(
+        r"docker exec[^\n]*/health",
+        readme,
+    )
+    assert health_exec is not None, (
+        "README must document docker exec … /health for image_variant identity "
+        "(host curl 127.0.0.1:8000 only works under prod admin overlay)"
+    )
+
+
+def test_oci_readme_documents_readonly_cache_and_build_immutable_variant() -> None:
+    """A-09 / HARM-A-09: README must match shipped :ro mount + bake identity.
+
+    Compose mounts ${ACX_MODELS_PATH}:/data/cache:ro; variant is baked into
+    /app/.image-variant (not free-form ACX_IMAGE_VARIANT selection).
+    """
+    readme = (_repo_root() / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    # Primary compose contract annotation (unique; not the docker -v form).
+    assert "compose: `${ACX_MODELS_PATH}:/data/cache:ro`" in readme, (
+        "README must document compose: `${ACX_MODELS_PATH}:/data/cache:ro`"
+    )
+    # Ad-hoc docker run recipes also mount :ro (isolated gate + full-stack).
+    assert "-v /data/cache:/data/cache:ro" in readme, (
+        "README isolated docker run recipe must use -v /data/cache:/data/cache:ro"
+    )
+    assert "-v ${ACX_MODELS_PATH}:/data/cache:ro" in readme, (
+        "README full-stack docker run recipe must use -v ${ACX_MODELS_PATH}:/data/cache:ro"
+    )
+    assert "build-immutable" in readme.lower() or "Build-immutable" in readme
+    assert "/app/.image-variant" in readme
+    assert "Do not set `ACX_IMAGE_VARIANT`" in readme or "Do not set ACX_IMAGE_VARIANT" in readme

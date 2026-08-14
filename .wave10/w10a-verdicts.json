@@ -1,0 +1,236 @@
+{
+  "lane": "w10a",
+  "base": "cbb1f476",
+  "findings": [
+    {
+      "finding_id": "ORCH-LAUNCH-01-HARM-A-04",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1257-1286 \u2014 do_verify parses image_variant from /health and compares to expected_image_variant()",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_expected_image_variant_and_verify_parse",
+      "mutation": "line 1279: replaced VARIANT MISMATCH if-condition with `if false; then`",
+      "red_output": "E   AssertionError: ==> GET https://dev.api.altcontext.com/health (attempt 1/1)\n      rc=0\n    assert ('VARIANT MISMATCH' in '\\x1b[0;32m==>\\x1b[0m GET https://dev.api.altcontext.com/health (attempt 1/1)\\n{\"commit_sha\": \"732475f9191f787c2571613...e_variant\": \"vlm\"}\\n\\x1b[0;32m==>\\x1b[0m Veri\n     +  where 0 = CompletedProcess(args=['bash', '-c', 'source \"/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/scripts/deploy/recogn...\"vlm\"}\\n\\x1b[0;32m==>\\x1b[0m Verified: dev runs 732475f9 (mat\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:778: AssertionError: ==> GET https://dev.api.altcontex\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_expected_image_variant_and_verify_parse - AssertionError: ==> GET https://dev.api.altcontext.com/health (attempt 1/1)\n  rc=0\nassert ('VARIANT MISMATCH' in '\\x1b[0;32m==>\\x1b[0m GET https://dev.api.altcontext.com/health (attempt 1/1)\\n{\"commit_sha\": \"732475f9191f787c2571613...e_variant\": \"vlm\"}\\n\\x1b[0;32m==>\\x1b[0m Verified\n +  where 0 = CompletedProcess(args=['bash', '-c', 'source \"/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/scripts/deploy/recogn...\"vlm\"}\\n\\x1b[0;32m==>\\x1b[0m Verified: dev runs 732475f9 (matches\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-HARM-A-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:613-623 \u2014 ACX_CONVERGE_RUNTIME=0 refuses when runtime_in_sync fails",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_converge_runtime_zero_refuses_drift",
+      "mutation": "line 619: replaced `if ! runtime_in_sync` with `if false`",
+      "red_output": "E   assert 0 != 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:886: assert 0 != 0\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_converge_runtime_zero_refuses_drift - assert 0 != 0\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1175-1215 \u2014 bare verify prefers remote .env ACX_IMAGE_REPO; deploy uses ACX_VERIFY_EXPECT_LOCAL=1",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_bare_verify_prefers_remote_image_repo",
+      "mutation": "line 1182: forced remote_repo=\"\" so bare verify fell back to local resolve",
+      "red_output": "E   AssertionError: !! IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest', expected repository 'iad.ocir.io/idu2kqqe2jxy/acx-backend' via local resolve (\n    assert 'via remote .env' in \"\\x1b[0;33m!!\\x1b[0m IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest'...) (deployed as iad.ocir.io/idu2kqqe2jxy/acx-bac\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1259: AssertionError: !! IMAGE MISMATCH: prod running \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_bare_verify_prefers_remote_image_repo - AssertionError: !! IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqq\nassert 'via remote .env' in \"\\x1b[0;33m!!\\x1b[0m IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest'...) (deployed as iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-04",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1200-1215 \u2014 verify_running_image_matches_deployed returns 1 (never fail/exit)",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_verify_image_mismatch_returns_not_exits",
+      "mutation": "line 1203: replaced `return 1` with `fail \"hard\"` on empty Config.Image",
+      "red_output": "E   AssertionError: !! IMAGE VERIFY: could not read running api Config.Image on dev (container missing?)\n    assert 1 == 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1136: AssertionError: !! IMAGE VERIFY: could not read \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_verify_image_mismatch_returns_not_exits - AssertionError: !! IMAGE VERIFY: could not read running api Config.Image on dev (cont\nassert 1 == 0",
+      "notes": "Also nested in do_verify retry loop; ACX_VERIFY_OPTIONAL can now catch the return."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:684-701 \u2014 ship_remote normalises missing trailing newline via sudo tail -c1 before append",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ship_remote_normalises_newline_and_uses_sudo",
+      "mutation": "line 694: short-circuited newline guard with `false && sudo test -s`",
+      "red_output": "E   AssertionError: secret line must keep trailing newline separation; got b'POSTGRES_PASSWORD=hunter2ACX_IMAGE_REPO=iad.ocir.io/idu2kqqe2jxy/acx-backend\\n'\n    assert ('POSTGRES_PASSWORD=hunter2\\n' in 'POSTGRES_PASSWORD=hunter2ACX_IMAGE_REPO=iad.ocir.io/idu2kqqe2jxy/acx-backend\\n' or False)\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1199: AssertionError: secret line must keep trailing n\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ship_remote_normalises_newline_and_uses_sudo - AssertionError: secret line must keep trailing newline separation; got b'POSTGRE\nassert ('POSTGRES_PASSWORD=hunter2\\n' in 'POSTGRES_PASSWORD=hunter2ACX_IMAGE_REPO=iad.ocir.io/idu2kqqe2jxy/acx-backend\\n' or False)"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:684-701 \u2014 ship_remote uses sudo test/grep/sed/tee for root-owned .env",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ship_remote_normalises_newline_and_uses_sudo",
+      "mutation": "ship_remote body: stripped all `sudo ` prefixes",
+      "red_output": "E   AssertionError: ship must use sudo for root-owned .env:\n    assert 'sudo' in 'ssh -l ubuntu -- acx-backend.tail1a44b8.ts.net f=\\'/opt/acx-backend/dev/.env\\'; v=\\'iad.ocir.io/idu2kqqe2jxy/acx-back...*|ACX_IMAGE_REPO=${v}|\" \"$f\";      else        printf \\'AC\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1205: AssertionError: ship must use sudo for root-owne\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ship_remote_normalises_newline_and_uses_sudo - AssertionError: ship must use sudo for root-owned .env:\nassert 'sudo' in 'ssh -l ubuntu -- acx-backend.tail1a44b8.ts.net f=\\'/opt/acx-backend/dev/.env\\'; v=\\'iad.ocir.io/idu2kqqe2jxy/acx-back...*|ACX_IMAGE_REPO=${v}|\" \"$f\";      else        printf \\'ACX_IM"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-07",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:165-173,221 \u2014 assert_safe_shell_token on ACX_BUILD_TARGET at ingestion",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_build_target_charset_refuses_metacharacters",
+      "mutation": "line 221: commented out assert_safe_shell_token ACX_BUILD_TARGET",
+      "red_output": "E   AssertionError: xx ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: a|b)\n    assert 'charset' in '\\x1b[0;31mxx\\x1b[0m acx_build_target must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: a|b)\\n'\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1059: AssertionError: xx ACX_BUILD_TARGET must be one \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_build_target_charset_refuses_metacharacters - AssertionError: xx ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, \nassert 'charset' in '\\x1b[0;31mxx\\x1b[0m acx_build_target must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: a|b)\\n'"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:704-726 + header 89-95 \u2014 clear_remote_image_repo_env + clear-image-repo subcommand; mk/deploy.mk deploy-clear-image-repo",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_mk_clear_image_repo_requires_confirm_for_prod",
+      "mutation": "line 712: neutered prod CONFIRM gate with `if false`",
+      "red_output": "E   assert 0 != 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:977: assert 0 != 0\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_mk_clear_image_repo_requires_confirm_for_prod - assert 0 != 0\nrc=1",
+      "notes": "Removal path exists; prod clear requires CONFIRM=PROMOTE (S2-A-10)."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-H-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:255-268 \u2014 resolve_image_repo_name fails closed when ACX_IMAGE_VARIANT=vlm without *vlm* target; case-fold at 127-128",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_image_variant_case_fold_and_d8_fail_closed",
+      "mutation": "line 258: replaced D8 condition with `if false`",
+      "red_output": "E   assert 0 != 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1083: assert 0 != 0\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_image_variant_case_fold_and_d8_fail_closed - assert 0 != 0",
+      "notes": "Deploy-script half gated here; bake half owned by sibling lanes (Dockerfile/entrypoint)."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r08112960-A-11",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:336-340,824,970,1068 \u2014 assert_remote_disk_headroom_for_pull on VLM pull/promote/restart/smoke",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_assert_remote_disk_headroom_vlm_calls_free_space",
+      "mutation": "line 337: replaced is_vlm headroom if with `if false`",
+      "red_output": "E   AssertionError: assert (False)\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1012: AssertionError: assert (False)\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_assert_remote_disk_headroom_vlm_calls_free_space - AssertionError: assert (False)\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r08112960-A-12",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:232-248,261-267 \u2014 assert_allowed_build_target closed set; resolve catch-all fails closed",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_build_target_enum_refuses_unknown",
+      "mutation": "lines 232-238: neutered assert_allowed_build_target to return 0 (message lost 'must be one of')",
+      "red_output": "E   AssertionError: xx ACX_BUILD_TARGET=runtime-vim is not mapped to an image repository (internal enum drift)\n    assert 'must be one of' in '\\x1b[0;31mxx\\x1b[0m ACX_BUILD_TARGET=runtime-vim is not mapped to an image repository (internal enum drift)\\n'\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1070: AssertionError: xx ACX_BUILD_TARGET=runtime-vim \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_build_target_enum_refuses_unknown - AssertionError: xx ACX_BUILD_TARGET=runtime-vim is not mapped to an image repository (inter\nassert 'must be one of' in '\\x1b[0;31mxx\\x1b[0m ACX_BUILD_TARGET=runtime-vim is not mapped to an image repository (internal enum drift)\\n'"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r08112960-C-05",
+      "verdict": "STILL_LIVE",
+      "code_lines": "scripts/deploy/recognition-service.sh:142-143,289-300 \u2014 SMOKE_TIMEOUT_VLM_DEFAULT=120 still UNMEASURED; ACX_SMOKE_TIMEOUT override + UNVALIDATED messaging present",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_vlm_smoke_timeout_default_is_image_aware",
+      "mutation": "line 143: set SMOKE_TIMEOUT_VLM_DEFAULT=24 (equal to recognition)",
+      "red_output": "E   AssertionError: vlm=24 rec=24\n    assert 24 > 24\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1308: AssertionError: vlm=24 rec=24\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_vlm_smoke_timeout_default_is_image_aware - AssertionError: vlm=24 rec=24\nassert 24 > 24",
+      "notes": "Image-aware VLM budget + ACX_SMOKE_TIMEOUT override gated. Residual process debt: 120s remains an unmeasured estimate until real arm64 VLM smoke evidence lands."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:127-128,240-249,255-260 \u2014 case-fold + variant enum + D8 fail-closed",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_image_variant_case_fold_and_d8_fail_closed",
+      "mutation": "line 128: removed tr lower-case fold for ACX_IMAGE_VARIANT",
+      "red_output": "E   AssertionError: xx ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: VLM)\n    assert 'requires ACX_BUILD_TARGET' in '\\x1b[0;31mxx\\x1b[0m ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: VLM)\\n'\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1085: AssertionError: xx ACX_IMAGE_VARIANT must be one\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_image_variant_case_fold_and_d8_fail_closed - AssertionError: xx ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got:\nassert 'requires ACX_BUILD_TARGET' in '\\x1b[0;31mxx\\x1b[0m ACX_IMAGE_VARIANT must be one of: empty, recognition, vlm (got: VLM)\\n'"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-04",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1175-1194,1040 \u2014 local resolve when EXPECT_LOCAL or selectors set; remote for bare verify",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_verify_uses_local_resolve_when_expect_local",
+      "mutation": "line 1183: changed EXPECT_LOCAL==1 check to ==never",
+      "red_output": "E   AssertionError: !! IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend:latest', expected repository 'iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm' via remote .env (de\n    assert 'via local resolve' in \"\\x1b[0;33m!!\\x1b[0m IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend:latest', ex...eployed as iad.ocir.io/idu2kqqe2jxy/acx-backe\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:835: AssertionError: !! IMAGE MISMATCH: prod running c\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_verify_uses_local_resolve_when_expect_local - AssertionError: !! IMAGE MISMATCH: prod running container image is 'iad.ocir.io/i\nassert 'via local resolve' in \"\\x1b[0;33m!!\\x1b[0m IMAGE MISMATCH: prod running container image is 'iad.ocir.io/idu2kqqe2jxy/acx-backend:latest', ex...eployed as iad.ocir.io/idu2kqqe2jxy/acx-backend-v\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1134-1148 \u2014 read_remote_image_repo prints __INVALID_REPO__ sentinel (no fail-open empty)",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_read_remote_invalid_repo_sentinel",
+      "mutation": "line 1144: replaced __INVALID_REPO__ with empty string",
+      "red_output": "E   AssertionError: out=\n    assert '__INVALID_REPO__' in (('out=\\n'))\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:861: AssertionError: out=\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_read_remote_invalid_repo_sentinel - AssertionError: out=\nassert '__INVALID_REPO__' in (('out=\\n'))\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:601-638,1026-1033 \u2014 ship once in promote_gate; restore_prior_image_repo_env on post-ship failure",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_restore_prior_image_repo_on_post_ship_failure",
+      "mutation": "line 637: removed prior-value re-ship in restore_prior_image_repo_env",
+      "red_output": "E   AssertionError: \n    assert 'acx-backend-vlm' in ''\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1353: AssertionError:\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_restore_prior_image_repo_on_post_ship_failure - AssertionError: \nassert 'acx-backend-vlm' in ''"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-07",
+      "verdict": "STILL_LIVE",
+      "code_lines": "scripts/deploy/recognition-service.sh:142,289-300 \u2014 SMOKE_TIMEOUT_DEFAULT still 24s for full entrypoint chain; ACX_SMOKE_TIMEOUT override only",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_vlm_smoke_timeout_default_is_image_aware",
+      "mutation": "line 142: SMOKE_TIMEOUT_DEFAULT=24 -> 6",
+      "red_output": "......................................                                   [100%]\n38 passed in 0.59s\n",
+      "notes": "STILL_LIVE residual: recognition default not re-derived from measured full entrypoint. Mutation of default to 6 left cross_slice suite green \u2014 nothing asserts the measured budget. Operator override ACX_SMOKE_TIMEOUT exists."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-S1-RA-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:282-300,816-818 \u2014 image-aware resolve_smoke_timeout; VLM uses SMOKE_TIMEOUT_VLM_DEFAULT",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_vlm_smoke_timeout_default_is_image_aware",
+      "mutation": "line 143: SMOKE_TIMEOUT_VLM_DEFAULT=24 (collapsed image awareness)",
+      "red_output": "E   AssertionError: vlm=24 rec=24\n    assert 24 > 24\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1308: AssertionError: vlm=24 rec=24\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_vlm_smoke_timeout_default_is_image_aware - AssertionError: vlm=24 rec=24\nassert 24 > 24"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-W4-INT-02",
+      "verdict": "NOT_A_DEFECT",
+      "code_lines": "N/A \u2014 offload harness test_cmd vs changed_files is orchestrator/process scope, not deploy-script behaviour",
+      "notes": "Outside lane file set (no offload harness files owned). Process defect for wave harness, not a recognition-service.sh/mk defect."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-11",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:127-128,307-311 \u2014 ACX_BUILD_TARGET lowercased at ingestion before refuse_remote_vlm_build *vlm* match",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_refuse_remote_vlm_case_folded_at_ingestion",
+      "mutation": "line 127: removed tr lower-case fold for ACX_BUILD_TARGET",
+      "red_output": "E   AssertionError: xx ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: runtime-VLM)\n    assert ('Remote build refuses' in '\\x1b[0;31mxx\\x1b[0m ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: runtime-VLM)\\n' or 'refuses ACX_BU\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1113: AssertionError: xx ACX_BUILD_TARGET must be one \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_refuse_remote_vlm_case_folded_at_ingestion - AssertionError: xx ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, b\nassert ('Remote build refuses' in '\\x1b[0;31mxx\\x1b[0m ACX_BUILD_TARGET must be one of: empty, runtime, runtime-vlm, builder, builder-vlm, runtime-base, uv (got: runtime-VLM)\\n' or 'refuses ACX_BUILD_"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-D-12",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:1503 \u2014 help uses sed -n '2,95p' covering ACX_* docs + Image variants block",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_help_covers_variant_and_smoke_docs",
+      "mutation": "line 1503: narrowed help window to sed -n '2,40p'",
+      "red_output": "E   AssertionError: help truncated before Image variants / rollback block\n    assert 'Image variants' in '# Recognition service deploy automation for OCI.\\n#\\n# Wraps the build -> push -> ssh restart -> verify procedure doc... Removes the colima/Docker-Desktop\\n# dependency\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1123: AssertionError: help truncated before Image vari\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_help_covers_variant_and_smoke_docs - AssertionError: help truncated before Image variants / rollback block\nassert 'Image variants' in '# Recognition service deploy automation for OCI.\\n#\\n# Wraps the build -> push -> ssh restart -> verify procedure doc... Removes the colima/Docker-Desktop\\n# dependency ent",
+      "notes": "Part (3) _TESTS_PARENT lives in sibling-owned scripts/test_acx_backend_image_contract.py \u2014 not in this lane."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:890-911 \u2014 Gate 2 tmpfs present; models_path now fail-closed if absent + unconditional :ro mount",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_boot_smoke_requires_models_path",
+      "mutation": "reverted models_path block to optional if -n (pre-fix shape)",
+      "red_output": "E   assert (None or 'smoke requires ACX_MODELS_PATH' in 'do_boot_smoke() {\\n  local env=\"$1\" image=\"$2\" remote_dir smoke_timeout poll_interval attempts\\n  remote_dir=\"$(env_t...ever came up for ${imag\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1270: assert (None or 'smoke requires ACX_MODELS_PATH'\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_boot_smoke_requires_models_path - assert (None or 'smoke requires ACX_MODELS_PATH' in 'do_boot_smoke() {\\n  local env=\"$1\" imag",
+      "notes": "Was STILL_LIVE (optional models_path). Fixed this pass: fail-closed on empty ACX_MODELS_PATH + unconditional :ro mount. Tmpfs conjunct separately gated."
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-12",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:178-191 + all ssh -l/-- calls \u2014 assert_safe_ssh_identity refuses leading dash",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ssh_identity_refuses_leading_dash",
+      "mutation": "line 183: replaced leading-dash check with `if false`",
+      "red_output": "E   AssertionError: expected refuse for OCI_USER='-evil'\n    assert 0 != 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:648: AssertionError: expected refuse for OCI_USER='-ev\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_ssh_identity_refuses_leading_dash - AssertionError: expected refuse for OCI_USER='-evil'\nassert 0 != 0\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-W8-VER-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:937-959 \u2014 repair_blob_volume_ownership probes uid 10001 before recursive chown",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_repair_skips_chown_when_root_uid_matches",
+      "mutation": "line 953: short-circuited skip with `if false && [ \"$uid\" = \"10001\" ]`",
+      "red_output": "E   AssertionError: recursive chown must be skipped when uid matches:\n    assert 'CHOWN_RAN' not in 'ssh-invoke\\.../acx-blobs\\n'\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1441: AssertionError: recursive chown must be skipped \nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_repair_skips_chown_when_root_uid_matches - AssertionError: recursive chown must be skipped when uid matches:\nassert 'CHOWN_RAN' not in 'ssh-invoke\\.../acx-blobs\\n'"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-R0811-X-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "mk/deploy.mk:41-45 \u2014 deploy-help documents ACX_BUILD_TARGET=runtime-vlm REMOTE_BUILD=0 + seed path",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_mk_documents_vlm_remote_build_zero",
+      "mutation": "mk/deploy.mk: replaced all REMOTE_BUILD=0 with REMOTE_BUILD=1",
+      "red_output": "rc=0"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-09",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/deploy/recognition-service.sh:336-340,822-824 \u2014 do_boot_smoke calls assert_remote_disk_headroom_for_pull before docker pull",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_assert_remote_disk_headroom_vlm_calls_free_space",
+      "mutation": "line 337: disabled headroom if (same as A-11 conjunct)",
+      "red_output": "E   AssertionError: assert (False)\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:1012: AssertionError: assert (False)\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_assert_remote_disk_headroom_vlm_calls_free_space - AssertionError: assert (False)\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-REV-r0811af90-S2-A-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "mk/deploy.mk:160-172 + scripts/deploy/recognition-service.sh:711-714 \u2014 CONFIRM=PROMOTE required for ENV=prod clear",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_mk_clear_image_repo_requires_confirm_for_prod",
+      "mutation": "line 712: neutered clear_remote CONFIRM check",
+      "red_output": "E   assert 0 != 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:977: assert 0 != 0\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_mk_clear_image_repo_requires_confirm_for_prod - assert 0 != 0\nrc=1"
+    },
+    {
+      "finding_id": "ORCH-LAUNCH-01-W8-VER-01",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "apps/.../test_cross_slice_contract_gates.py:384-475 \u2014 behavioural do_restart against fake ssh (order + fail-closed)",
+      "gate": "recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_restart_runs_blob_ownership_repair",
+      "mutation": "line 978: skipped repair_blob_volume_ownership call with `if false`",
+      "red_output": "E   AssertionError: expected repair invocation in log:\n    assert -1 >= 0\n/home/gate/grok-sandbox/feature-ol01-w10a-8d9d013e/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:461: AssertionError: expected repair invocation in log\nFAILED recognition/tests/deploy/test_cross_slice_contract_gates.py::test_deploy_restart_runs_blob_ownership_repair - AssertionError: expected repair invocation in log:\nassert -1 >= 0\nrc=1"
+    }
+  ],
+  "test_counts": "deploy 194 passed (recognition/tests/deploy/), cross_slice 38 passed; unit not re-run (lane scope deploy-script)"
+}

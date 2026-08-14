@@ -149,6 +149,32 @@ describe('buildWorkbenchFindings', () => {
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'top-1' });
   });
 
+  // E21-20-REV1-01 / TEST-15: page-local zeros must not be subtracted from the
+  // server-wide total. Goes red against `topUnlabeledTotal - zeroEvidenceClusterCount`.
+  it('does not subtract page-local zero-evidence clusters from the server unlabeled total', () => {
+    const loadedPage = [
+      makeCluster({ id: 'zero-a', identity_count: 0 }),
+      makeCluster({ id: 'zero-b', representatives: [] }),
+      makeCluster({ id: 'zero-c', identity_count: 0, representatives: [] }),
+      ...Array.from({ length: 17 }, (_, index) =>
+        makeCluster({ id: `reviewable-${index}`, identity_count: 4 + index }),
+      ),
+    ];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: loadedPage,
+        topUnlabeledTotal: 42,
+      }),
+      makeState(),
+    );
+
+    expect(model.zeroEvidenceClusterCount).toBe(3);
+    expect(model.counts.unlabeledClusters).toBe(42);
+    expect(model.counts.total).toBe(42);
+    expect(model.hasFindings).toBe(true);
+    expect(model.queue).toHaveLength(17);
+  });
+
   it('prioritizes the highest-score assignment suggestion as next action', () => {
     const low = makeSuggestion({ id: 'sugg-low', suggested_cluster_id: 'c-low', representative_similarity: 0.5 });
     const high = makeSuggestion({

@@ -1063,6 +1063,26 @@ describe('WorkbenchFindingsPanel', () => {
     expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
   });
 
+  // E21-20-REV1-02 / TEST-15: repair row mounted must not report data-findings-state=empty.
+  it('REV1-02: data-findings-state is repair while the zero-evidence row is mounted', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
+        zeroEvidenceClusterCount: 3,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(container.querySelector('[data-findings-state]')).toHaveAttribute(
+      'data-findings-state',
+      'repair',
+    );
+    expect(container.querySelector('[data-findings-state="empty"]')).toBeNull();
+    expect(screen.getByText('3 groups missing preview data')).toBeInTheDocument();
+  });
+
   it('S2: counts and previews exclude gated zero-evidence clusters [TEST-15]', () => {
     const model = buildWorkbenchFindings(
       {
@@ -1134,8 +1154,8 @@ describe('WorkbenchFindingsPanel', () => {
     );
 
     expect(model.zeroEvidenceClusterCount).toBe(2);
-    expect(model.counts.unlabeledClusters).toBe(1);
-    expect(model.counts.total).toBe(1);
+    expect(model.counts.unlabeledClusters).toBe(3);
+    expect(model.counts.total).toBe(3);
     expect(model.previews.map((preview) => preview.key)).toEqual(['cluster-reviewable']);
     expect(model.queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
     expect(model.hasFindings).toBe(true);
@@ -1143,8 +1163,8 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(model);
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+    expect(screen.getByText('3 unlabeled groups')).toBeInTheDocument();
     expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
-    expect(screen.queryByText('3 unlabeled groups')).not.toBeInTheDocument();
+    expect(screen.queryByText('1 unlabeled group')).not.toBeInTheDocument();
   });
 });

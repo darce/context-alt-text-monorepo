@@ -121,8 +121,11 @@ export interface WorkbenchFindingsViewModel {
   counts: WorkbenchFindingsCounts;
   previews: WorkbenchFindingPreview[];
   /**
-   * Loaded clusters gated out of the queue (identity_count === 0 or no representatives).
-   * Surfaced as one aggregate repair row — never silently dropped (RLSE-05).
+   * Loaded-page-only count of clusters gated out of the queue
+   * (identity_count === 0 or no representatives). Page-scoped repair signal —
+   * do not subtract it from counts.unlabeledClusters / total, which stay
+   * honest to the server envelope. Repair-row and queue-drain logic key off
+   * this loaded-page count (E21-20-REV1-01).
    */
   zeroEvidenceClusterCount: number;
   hasFindings: boolean;
@@ -342,7 +345,9 @@ export const buildWorkbenchFindings = (
     (cluster) => clusterEvidence(cluster) === CLUSTER_EVIDENCE.PRESENT,
   );
   const zeroEvidenceClusterCount = sortedClusters.length - evidenceClusters.length;
-  const unlabeledClusters = Math.max(0, queues.topUnlabeledTotal - zeroEvidenceClusterCount);
+  // Server envelope stays honest: page-local zeros are a repair signal, not a
+  // deduction from the unlabeled total (E21-20-REV1-01).
+  const unlabeledClusters = queues.topUnlabeledTotal;
   const counts: WorkbenchFindingsCounts = {
     assignments: queues.assignmentTotal,
     merges: queues.mergeTotal,

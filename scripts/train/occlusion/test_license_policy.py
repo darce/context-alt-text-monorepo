@@ -13218,8 +13218,11 @@ class TestF17UnderscoreNcSeedGluedException:
     ``{seed}{junk}{exception}`` because the walker handed mid-adjacency
     only the last-segment compact (``lxyolox``), whose prefix ``lx``
     looks like the pinned ``ayoloxs`` junk shape. Empty-rem ownership
-    now runs on the underscore-preserving token so contained-long sees
-    ``buffalol`` in ``buffalolx``. Junk is unbounded (4+ ``abcd``).
+    now runs :func:`policy._underscore_preserving_glued_seed_owner` on
+    the underscore-preserving token so the folded seed ``buffalo_l``
+    matches ``buffalo_lxyolox`` without compact contained-long / (c)
+    (that path falsely collapses ``yolop_yolox``). Junk is unbounded
+    (4+ ``abcd``).
     """
 
     SEEDS: ClassVar[tuple[str, ...]] = (

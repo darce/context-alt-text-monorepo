@@ -92,7 +92,6 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "bootstrap_seed": pair.bootstrap_seed,
     }
-    (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
     redacted = {
         "head_to_head_delta": pair.head_to_head_delta,
         "bootstrap_seed": pair.bootstrap_seed,
@@ -101,6 +100,7 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
         "accepted_set_floor": pair.accepted_set_floor,
         "max_differential_attrition": pair.max_differential_attrition,
         "allow_private_source": pair.allow_private_source,
+        "baseline_manifest_path": pair.baseline_manifest_path,
         "stacks": [
             {
                 "stack_id": s.stack_id,
@@ -115,15 +115,12 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
             for s in pair.stacks
         ],
     }
-    (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
     digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
     (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
     run_doc["manifest_path"] = str(Path(manifest_path))
     (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
-    redacted["baseline_manifest_path"] = pair.baseline_manifest_path
     (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
-    (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
     for stack in pair.stacks:
         (root / "legs" / stack.stack_id).mkdir(parents=True, exist_ok=True)
     return root
@@ -202,22 +199,27 @@ def run_leg(
                     url_map_path=pair.media_url_map_path,
                     allow_private_source=pair.allow_private_source,
                 )
-                width, height = decode_image_dimensions(data)
-                store.append(
-                    {
-                        "manifest_media_id": entry.media_id,
-                        "manifest_path": entry.path,
-                        "content_sha256": entry.sha256,
-                        "stack_media_id": entry.media_id,
-                        "image_width": width,
-                        "image_height": height,
-                        "phase": "ingest",
-                        "outcome": "ok",
-                        "error_code": None,
-                        "attempt": attempt,
-                        "terminal_ingest_outcome": "success",
-                    }
-                )
+                prior_ingest = store.latest(entry.media_id, "ingest")
+                if prior_ingest is not None and prior_ingest.get("outcome") == "ok":
+                    width = int(prior_ingest["image_width"])
+                    height = int(prior_ingest["image_height"])
+                else:
+                    width, height = decode_image_dimensions(data)
+                    store.append(
+                        {
+                            "manifest_media_id": entry.media_id,
+                            "manifest_path": entry.path,
+                            "content_sha256": entry.sha256,
+                            "stack_media_id": entry.media_id,
+                            "image_width": width,
+                            "image_height": height,
+                            "phase": "ingest",
+                            "outcome": "ok",
+                            "error_code": None,
+                            "attempt": attempt,
+                            "terminal_ingest_outcome": "success",
+                        }
+                    )
                 job_id = client.analyze([(entry.media_id, Path(entry.path).name, data)])
                 job = client.wait_job(job_id)
                 if _analyze_job_failed(job):

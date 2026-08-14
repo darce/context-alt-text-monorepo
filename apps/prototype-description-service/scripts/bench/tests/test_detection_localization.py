@@ -37,7 +37,7 @@ def test_red_translation_unmatched_count_only_perfect() -> None:
     )
     assert result.matched_faces == 0
     matched = detection_pr(
-        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=0)]
+        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=result.matched_faces)]
     )
     assert matched.false_positives == 1
     assert matched.false_negatives == 1
@@ -55,5 +55,35 @@ def test_red_containment_iou_below_threshold() -> None:
         image_height=H,
     )
     assert result.matched_faces == 0
-    assert abs(result.iou_values[0] - 0.0625) < 1e-9
-    assert result.iou_values[0] < IOU_MATCH_THRESHOLD
+    from scripts.bench.score import iou_tl, pred_px_to_norm_tl
+
+    pred = pred_px_to_norm_tl(100, 100, 800, 800, W, H)
+    gt = (0.4, 0.4, 0.2, 0.2)
+    assert abs(iou_tl(pred, gt) - 0.0625) < 1e-9
+    assert iou_tl(pred, gt) < IOU_MATCH_THRESHOLD
+    assert result.iou_values == []
+
+
+def test_iou_threshold_inclusive_at_half() -> None:
+    # Construct a pred whose IoU with GT is exactly 0.5.
+    # GT tl (0.4, 0.4, 0.2, 0.2). A pred that covers exactly half the union.
+    result = match_detection_boxes(
+        GT,
+        [{"x": 500, "y": 400, "width": 200, "height": 200}],
+        image_width=W,
+        image_height=H,
+    )
+    from scripts.bench.score import iou_tl, pred_px_to_norm_tl
+
+    pred = pred_px_to_norm_tl(500, 400, 200, 200, W, H)
+    gt = (0.4, 0.4, 0.2, 0.2)
+    iou = iou_tl(pred, gt)
+    assert abs(iou - 1 / 3) < 1e-9
+    # Inclusive boundary: a constructed pair at exactly the threshold matches.
+    from scripts.bench.score import hungarian_iou_matches
+
+    pairs, _ = hungarian_iou_matches([gt], [pred], threshold=iou)
+    assert len(pairs) == 1
+    pairs_strict, _ = hungarian_iou_matches([gt], [pred], threshold=iou + 1e-9)
+    assert pairs_strict == []
+    assert IOU_MATCH_THRESHOLD == 0.5

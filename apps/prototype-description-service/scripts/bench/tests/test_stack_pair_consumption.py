@@ -56,8 +56,17 @@ def test_allowed_key_control_still_loads(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("value", [1, 1.0, 1.5, -1, "ninety"])
 def test_floor_forms_rejected(tmp_path: Path, value: object) -> None:
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         _load(tmp_path, accepted_set_floor=value)
+    assert exc.value.code == "accepted_set_floor_invalid"
+
+
+def test_base_url_with_path_rejected(tmp_path: Path) -> None:
+    stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
+    stacks[0]["base_url"] = "https://dev.api.altcontext.com/v1"
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "base_url_invalid"
 
 
 @pytest.mark.parametrize("value", [0.9, 2])

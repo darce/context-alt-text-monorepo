@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from scripts.bench.score import (
+    IOU_MATCH_THRESHOLD,
+    box_area_xyxy,
+    clamp01,
+    gt_centre_to_tl,
+    hungarian_iou_matches,
+    pred_px_to_norm_tl,
+)
 from scripts.bench.stack_pair import BenchError
 from scripts.bench.status import CLUSTER_SUCCESS_STATUSES, ItemOutcome, ItemPhase
+from scripts.eval_harness.face_metrics import ImageDetection, ImageIdentities
+from scripts.eval_harness.manifest import FaceBox, GoldenEntry, GoldenManifest
 
 
 @dataclass
@@ -104,28 +117,11 @@ def _roster_stack_media_ids(run_dir: Path | str, stack_id: str) -> list[int]:
 # S2: GT mapping + localization
 # ---------------------------------------------------------------------------
 
-from collections.abc import Sequence
-from dataclasses import dataclass as _dataclass
-from typing import Literal
-import unicodedata
-import re
-
-from scripts.bench.score import (
-    IOU_MATCH_THRESHOLD,
-    box_area_xyxy,
-    clamp01,
-    gt_centre_to_tl,
-    hungarian_iou_matches,
-    pred_px_to_norm_tl,
-)
-from scripts.eval_harness.face_metrics import ImageDetection, ImageIdentities
-from scripts.eval_harness.manifest import FaceBox, GoldenEntry, GoldenManifest
-
 _PRED_KEYS = frozenset({"x", "y", "width", "height"})
 _WS = re.compile(r"\s+")
 
 
-@_dataclass
+@dataclass
 class DetectionMatchResult:
     matched_faces: int
     iou_values: list[float]
@@ -186,8 +182,8 @@ def match_detection_boxes(
             dropped += 1
             continue
         pred_tl.append(tl)
-    pairs, pairwise = hungarian_iou_matches(gt_tl, pred_tl, threshold=IOU_MATCH_THRESHOLD)
-    iou_values = [p[2] for p in pairs] if pairs else pairwise
+    pairs, _pairwise = hungarian_iou_matches(gt_tl, pred_tl, threshold=IOU_MATCH_THRESHOLD)
+    iou_values = [p[2] for p in pairs]
     return DetectionMatchResult(
         matched_faces=len(pairs),
         iou_values=iou_values,
@@ -372,8 +368,6 @@ def to_face_metric_inputs(
         if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
             raise BenchError("image_dimensions_missing", f"bad dims for media {entry.media_id}")
         rows = by_stack.get(stack_mid, [])
-        pred_boxes = [r.get("bbox") or {} for r in rows]
-        # sort predictions by identity_id for reproducibility
         rows_sorted = sorted(rows, key=lambda r: str(r.get("identity_id", "")))
         pred_boxes = [r.get("bbox") or {} for r in rows_sorted]
         match = match_detection_boxes(

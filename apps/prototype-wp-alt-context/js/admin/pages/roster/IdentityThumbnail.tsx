@@ -40,12 +40,17 @@ interface OwnedCrop {
 
 /** Face/media key for a crop so a previous person's data: URL cannot paint on a swap. */
 export const thumbnailCropOwnerId = (identity: ThumbnailIdentity): string => {
-  if (identity.identity_id != null) {
-    return identity.identity_id;
-  }
   const bbox = identity.bbox;
+  const bboxKey =
+    bbox != null ? `${bbox.x},${bbox.y},${bbox.width},${bbox.height}` : 'none';
+  if (identity.identity_id != null) {
+    // Assigned identities still need a bbox signature: an unusable-bbox frame
+    // stores the full scene under this key, and a later usable bbox on the
+    // same identity must not reuse that crop for one paint [E21-19-REV1-05].
+    return `${identity.identity_id}:${bboxKey}`;
+  }
   if (bbox != null) {
-    return `media:${identity.media_id}:${bbox.x},${bbox.y},${bbox.width},${bbox.height}`;
+    return `media:${identity.media_id}:${bboxKey}`;
   }
   return `media:${identity.media_id}`;
 };

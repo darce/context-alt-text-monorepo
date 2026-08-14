@@ -120,9 +120,13 @@ export const useClusterSuggestionsLoader = ({
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
     const roster = rosterError ? [] : rosterEntries;
+    // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+    const namedMatches = (labelMatches ?? []).filter(
+      (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
+    );
     return buildNamingOptions({
       rosterEntries: roster,
-      labelMatches: labelMatches ?? [],
+      labelMatches: namedMatches,
       filter: debouncedValue,
       excludeClusterId: editableClusterId,
     });
@@ -140,6 +144,7 @@ export const useClusterSuggestionsLoader = ({
         const match = results.clusters.find(
           (cluster) =>
             cluster.id !== editableClusterId &&
+            typeof cluster.label === 'string' &&
             cluster.label.toLowerCase() === normalizedLabel &&
             // BR-17: auto cluster-* labels are never merge/assign targets (FIX-2).
             isHumanLabeledTarget(cluster.label),

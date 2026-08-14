@@ -8,11 +8,14 @@ require_once dirname( __DIR__, 2 ) . '/api/class-blob-url-rewriter.php';
 require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-state-repository.php';
+require_once __DIR__ . '/trait-prepares-sql-queries.php';
 
 use AltContext\Api\BlobUrlRewriter;
 use AltContext\Api\Services\PersonResolutionService;
 
 class RosterEntryProjectionRepository {
+	use PreparesSqlQueries;
+
 	private SyncStateRepositoryInterface $sync_state_repository;
 
 	public function __construct( ?SyncStateRepositoryInterface $sync_state_repository = null ) {
@@ -30,13 +33,16 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_persons = $wpdb->prefix . 'acx_persons';
-		$results       = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i ORDER BY name ASC',
-				$table_persons
-			),
-			ARRAY_A
+		$sql           = $this->prepare_query(
+			'SELECT * FROM %i ORDER BY name ASC',
+			array( $table_persons )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$results = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $results ) ) {
 			return array();
@@ -230,14 +236,17 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
-		$rows           = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i WHERE person_id IN (' . \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) ) . ') ORDER BY updated_at DESC',
-				$table_clusters,
-				...$person_ids
-			),
-			ARRAY_A
+		$placeholders   = \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) );
+		$sql            = $this->prepare_query(
+			"SELECT * FROM %i WHERE person_id IN ($placeholders) ORDER BY updated_at DESC",
+			\array_merge( array( $table_clusters ), $person_ids )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();
@@ -272,14 +281,17 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_members = $wpdb->prefix . 'acx_identity_members';
-		$rows          = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i WHERE cluster_uuid IN (' . \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) ) . ') ORDER BY updated_at DESC',
-				$table_members,
-				...$cluster_uuids
-			),
-			ARRAY_A
+		$placeholders  = \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) );
+		$sql           = $this->prepare_query(
+			"SELECT * FROM %i WHERE cluster_uuid IN ($placeholders) ORDER BY updated_at DESC",
+			\array_merge( array( $table_members ), $cluster_uuids )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();
@@ -356,11 +368,9 @@ class RosterEntryProjectionRepository {
 	 * @return array<string,mixed>
 	 */
 	private function map_projected_instance_row( array $row ): array {
-		$bbox = null;
-		if ( isset( $row['bbox_json'] ) && \is_string( $row['bbox_json'] ) ) {
-			$decoded_bbox = \json_decode( $row['bbox_json'], true );
-			$bbox = \is_array( $decoded_bbox ) ? $decoded_bbox : null;
-		}
+		// Resolve media_url and bbox together so original_image pixel rects are
+		// never paired with a thumb_path face crop (coordinate-space trap).
+		$resolved = $this->resolve_projected_media( $row );
 
 		$similarity = null;
 		if ( isset( $row['similarity'] ) && '' !== \trim( (string) $row['similarity'] ) ) {
@@ -375,25 +385,46 @@ class RosterEntryProjectionRepository {
 		return array(
 			'identity_id'           => \trim( (string) ( $row['identity_uuid'] ?? '' ) ),
 			'media_id'              => isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0,
-			'media_url'             => $this->resolve_projected_media_url( $row ),
-			'bbox'                  => $bbox,
+			'media_url'             => $resolved['media_url'],
+			'bbox'                  => $resolved['bbox'],
 			'similarity'            => $similarity,
 			'similarity_threshold'  => $similarity_threshold,
 		);
 	}
 
 	/**
+	 * Resolve media_url and a matching null-preserving pixel bbox.
+	 *
+	 * Bbox is emitted only when media_url came from wp_get_attachment_url
+	 * (original full-size image, coordinate_space original_image). On the
+	 * thumb_path fallback path bbox is always null — the stored thumb is
+	 * already the best available face image and is not original_image space.
+	 *
 	 * @param array<string,mixed> $row
+	 * @return array{media_url:?string,bbox:?array{x:int,y:int,width:int,height:int}}
 	 */
-	private function resolve_projected_media_url( array $row ): ?string {
+	private function resolve_projected_media( array $row ): array {
 		$media_id = isset( $row['attachment_id'] ) ? (int) $row['attachment_id'] : 0;
 		if ( $media_id > 0 && \function_exists( 'wp_get_attachment_url' ) ) {
 			$attachment_url = \wp_get_attachment_url( $media_id );
 			if ( \is_string( $attachment_url ) && '' !== \trim( $attachment_url ) ) {
-				return $attachment_url;
+				return array(
+					'media_url' => $attachment_url,
+					'bbox'      => $this->extract_projected_bbox_pixels( $row['bbox_json'] ?? null ),
+				);
 			}
 		}
 
+		return array(
+			'media_url' => $this->resolve_thumb_path_media_url( $row ),
+			'bbox'      => null,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function resolve_thumb_path_media_url( array $row ): ?string {
 		$thumb_path = isset( $row['thumb_path'] ) ? \trim( (string) $row['thumb_path'] ) : '';
 		if ( '' === $thumb_path ) {
 			return null;
@@ -409,6 +440,50 @@ class RosterEntryProjectionRepository {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Null-preserving pixel extraction aligned with MapsResponseFields::extract_bbox_pixels.
+	 *
+	 * extract_bbox_pixels returns a zero rect for absent/undecodable input; that is
+	 * wrong for roster (0×0 crops to a blank square). This wrapper returns null
+	 * instead, then reuses the same pixels-or-decoded unwrap + absint shaping.
+	 *
+	 * @param mixed $bbox_json
+	 * @return array{x:int,y:int,width:int,height:int}|null
+	 */
+	private function extract_projected_bbox_pixels( mixed $bbox_json ): ?array {
+		if ( ! \is_string( $bbox_json ) || '' === \trim( $bbox_json ) ) {
+			return null;
+		}
+
+		$decoded = \json_decode( $bbox_json, true );
+		if ( ! \is_array( $decoded ) ) {
+			return null;
+		}
+
+		// Same fallback as MapsResponseFields::extract_bbox_pixels: pixels wrapper
+		// or legacy bare {x,y,width,height} payload.
+		$pixels = $decoded['pixels'] ?? $decoded;
+		if ( ! \is_array( $pixels ) ) {
+			return null;
+		}
+
+		$rect = array(
+			'x'      => \absint( $pixels['x'] ?? 0 ),
+			'y'      => \absint( $pixels['y'] ?? 0 ),
+			'width'  => \absint( $pixels['width'] ?? 0 ),
+			'height' => \absint( $pixels['height'] ?? 0 ),
+		);
+
+		// Zero-area is not a face. Pixels-less partial envelopes (normalized only)
+		// absint-default to {0,0,0,0}; that would reach IdentityThumbnail as a
+		// "valid" bbox and blank-square the canvas. Null → untouched-source path.
+		if ( $rect['width'] <= 0 || $rect['height'] <= 0 ) {
+			return null;
+		}
+
+		return $rect;
 	}
 
 	/**
@@ -432,7 +507,10 @@ class RosterEntryProjectionRepository {
 
 	private function resolve_projection_status( string $tenant_id, ?string $projection_refreshed_at ): string {
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
-		if ( 'failed' === $last_sync_result || 'unreachable' === $last_sync_result ) {
+		// Use SyncStateRepository::SYNC_RESULT_* vocabulary [sr-007]. 'skipped' is
+		// not in normalize_sync_result()'s allow-list and is unreachable here.
+		if ( SyncStateRepository::SYNC_RESULT_FAILED === $last_sync_result
+			|| SyncStateRepository::SYNC_RESULT_UNREACHABLE === $last_sync_result ) {
 			return 'failed';
 		}
 
@@ -441,7 +519,10 @@ class RosterEntryProjectionRepository {
 			return 'refreshing';
 		}
 
-		if ( null === $projection_refreshed_at || 'skipped' === $last_sync_result ) {
+		// HARM-BR-03: rekey / threshold write resync_required; treat as stale so
+		// RosterPage (projectionStatus !== 'current') surfaces the invalid projection.
+		if ( null === $projection_refreshed_at
+			|| SyncStateRepository::SYNC_RESULT_RESYNC_REQUIRED === $last_sync_result ) {
 			return 'stale';
 		}
 

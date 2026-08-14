@@ -34,6 +34,8 @@ export interface FaceThumbnailProps {
   shape?: 'circle' | 'square';
   /** Accessible alt text */
   alt?: string;
+  /** Optional native img loading hint; omitted when unset */
+  loading?: 'lazy' | 'eager';
   /** Additional CSS class */
   className?: string;
 }
@@ -48,7 +50,16 @@ type LoadingState = 'loading' | 'loaded' | 'error';
  */
 export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps>(
   (
-    { mediaUrl, bbox, size = 'md', sizePx, shape = 'circle', alt = __('Detected face', 'alt-context'), className = '' },
+    {
+      mediaUrl,
+      bbox,
+      size = 'md',
+      sizePx,
+      shape = 'circle',
+      alt = __('Detected face', 'alt-context'),
+      loading,
+      className = '',
+    },
     ref,
   ) => {
     const [loadState, setLoadState] = React.useState<LoadingState>('loading');
@@ -128,6 +139,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           ref={imgRef}
           src={mediaUrl}
           alt={alt}
+          loading={loading}
           onLoad={handleLoad}
           onError={handleError}
           style={{

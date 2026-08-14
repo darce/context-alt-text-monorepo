@@ -1,26 +1,26 @@
 {
   "detection": {
     "bbox_xywh": [
-      99.22891235351562,
-      55.49568176269531,
-      302.497314453125,
-      343.0172424316406
+      99.2288818359375,
+      55.495635986328125,
+      302.49737548828125,
+      343.017333984375
     ],
     "landmarks_xy": [
       [
-        179.10194396972656,
-        163.66177368164062
+        179.1019287109375,
+        163.66172790527344
       ],
       [
         312.83966064453125,
-        163.9061279296875
+        163.90609741210938
       ],
       [
-        245.4210662841797,
-        240.57662963867188
+        245.42105102539062,
+        240.5766143798828
       ],
       [
-        183.67080688476562,
+        183.6707763671875,
         307.0216979980469
       ],
       [
@@ -59,6 +59,7 @@
     "right_mouth_corner",
     "left_mouth_corner"
   ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
   "image_sha256": "281a6ce4602320edcc25be1f20897b8c971064f27fcd762e98a55274d26c21f6",
   "image_shape": [
     480,
@@ -69,6 +70,9 @@
   "model": "face_detection_yunet_2026may.onnx",
   "model_sha256": "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
   "nms_threshold": 0.3,
+  "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
+  "opencv_version": "5.0.0",
   "procedure": {
     "description": "seeded gaussian soft face (skin disc + dark eyes + nose + mouth)",
     "eye_sep": 0.095,
@@ -82,9 +86,10 @@
   "score_threshold": 0.9,
   "status": "recorded",
   "tolerances": {
-    "bbox_px": 2.0,
+    "bbox_px": 0.0005,
+    "derivation": "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0, 2026-07-29): max run-to-run and vs-golden abs were 0.0 for bbox_px, landmarks_px, and score (bit-exact). Noise floor = 0. Tolerance = 10 \u00d7 float32 ULP at coordinate scale ~300 px \u2248 10*(300*2^-23) \u2248 3.6e-4, rounded to 5e-4 px for bbox/landmarks; score = 10 \u00d7 float32 ULP at ~1.0 \u2248 1.2e-6, rounded to 1e-5. ~4000\u00d7 tighter than the prior decorative 2.0 px / 0.02; a 1.9 px landmark shift fails.",
     "landmark_nearest_px": 50.0,
-    "landmarks_px": 2.0,
-    "score": 0.02
+    "landmarks_px": 0.0005,
+    "score": 1e-05
   }
 }

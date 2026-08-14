@@ -246,13 +246,18 @@ def test_xywh_to_corner_conversion() -> None:
 
 
 def test_sface_manifest_model_id_exact() -> None:
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     manifest = fpa.sface_embedding_model_manifest()
     assert isinstance(manifest, EmbeddingModelManifest)
-    assert manifest.model_id == "opencv-sface@128d/l2/cosine"
+    space = numeric_runtime_fingerprint().space_token
+    assert manifest.model_id == f"opencv-sface+{space}@128d/l2/cosine"
     assert manifest.dimensions == 128
     assert manifest.framework == MODEL_MANIFEST["sface"].framework
     assert manifest.normalization == "l2"
     assert manifest.metric == "cosine"
+    # Space token folds OpenCV major + onnxruntime (CVUP1-LC-02 / HARM-02).
+    assert "cv" in space and "ort" in space
 
 
 def test_three_way_dim_guard_raises_on_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -921,11 +926,26 @@ async def test_breaker_name_and_executor_thread(monkeypatch: pytest.MonkeyPatch)
     assert seen_thread["name"].startswith("face_pipeline")
 
 
-def test_reset_hook_documents_process_lifetime_executor() -> None:
-    """CR-10: reset docstring states executor is intentionally not reset."""
-    doc = fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or ""
-    assert "process-lifetime" in doc.lower() or "process lifetime" in doc.lower() or "not" in doc.lower()
-    assert "executor" in doc.lower()
+def test_reset_hook_preserves_process_lifetime_executor() -> None:
+    """CR-10: reset clears runtime/breaker but must leave the process executor live.
+
+    Capture executor identity before/after reset; the same usable executor must
+    survive. Docstring is checked strictly (no tautological disjuncts).
+    """
+    fpa._ensure_face_pipeline_pool()
+    before = fpa._FACE_PIPELINE_EXECUTOR
+    assert before is not None
+    assert before.submit(lambda: "pre-reset").result(timeout=5.0) == "pre-reset"
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+
+    after = fpa._FACE_PIPELINE_EXECUTOR
+    assert after is before, "reset must not shut down or replace the process-lifetime executor"
+    assert after.submit(lambda: "post-reset").result(timeout=5.0) == "post-reset"
+
+    doc = (fpa.reset_shared_face_pipeline_runtime_for_tests.__doc__ or "").lower()
+    assert "process-lifetime" in doc or "process lifetime" in doc
+    assert "executor" in doc
 
 
 # ---------------------------------------------------------------------------
@@ -1500,7 +1520,12 @@ async def test_bytes_to_face_detection_e2e(monkeypatch: pytest.MonkeyPatch) -> N
         x1, y1, x2, y2 = face.bbox
         assert 0 <= x1 <= x2 <= w
         assert 0 <= y1 <= y2 <= h
-        assert face.model_id == "opencv-sface@128d/l2/cosine"
+        # model_id carries the numeric-runtime fingerprint (CVUP-1). Assert the
+        # stable contract only — the mutable cv/ort segment has its own
+        # discrimination tests in test_face_pipeline_provenance.py, and pinning
+        # it here just re-creates the stale literal this replaced.
+        assert face.model_id.startswith("opencv-sface+")
+        assert face.model_id.endswith("@128d/l2/cosine")
         # 5-point landmarks yield no pitch; yaw/roll are landmark proxies (FIR-4).
         assert face.pose_pitch is None
         assert face.pose_yaw is not None

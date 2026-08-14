@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/../../support/trait-runs-transactional.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once __DIR__ . '/class-person-resolution-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
+use AltContext\Support\DetectsSystemDefinedLabels;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -32,6 +35,7 @@ use function sprintf;
  * run_transactional boundary and must not nest another START TRANSACTION.
  */
 class ClusterLabelService {
+	use DetectsSystemDefinedLabels;
 	use RunsTransactional;
 
 	private ClusterMutationHostInterface $host;
@@ -61,6 +65,10 @@ class ClusterLabelService {
 
 		if ( '' === $label ) {
 			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->is_reserved_label_shape( $label ) ) {
+			return new WP_Error( 'reserved_label', 'Labels beginning with cluster- or cluster_ are reserved.', array( 'status' => 400 ) );
 		}
 
 		if ( $this->host->should_proxy_mutation_to_backend( $tenant_id ) ) {

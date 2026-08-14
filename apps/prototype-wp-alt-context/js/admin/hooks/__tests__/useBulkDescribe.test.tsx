@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useBulkDescribe } from '../useBulkDescribe';
+import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
 
@@ -107,5 +107,55 @@ describe('useBulkDescribe', () => {
     await waitFor(() => expect(result.current.cancel.isSuccess).toBe(true));
     expect(cancelBulkDescribeRunMock).toHaveBeenCalledWith('run-2');
     await waitFor(() => expect(result.current.runId).toBe('run-2'));
+  });
+
+  it('surfaces a stranded run id in the error notice without starting a progress poll (BR-143)', async () => {
+    // Membership write failed after the upstream run was accepted — 500 with
+    // code describe_run_media_ids_store_failed and data.run_id populated. The
+    // paid run is burning compute; the operator must see the id, and we must
+    // NOT pretend submit succeeded by polling ([RLSE-04]).
+    const strandedRunId = 'run-stranded-42';
+    const payload = {
+      code: 'describe_run_media_ids_store_failed',
+      message: 'Failed to store describe run media membership.',
+      data: { status: 500, run_id: strandedRunId },
+    };
+    submitBulkDescribeRunMock.mockRejectedValue(
+      new Error(`Request to /acx/v1/describe/runs failed (500): ${JSON.stringify(payload)}`),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([101, 202]);
+
+    await waitFor(() => expect(result.current.submit.isError).toBe(true));
+    // runId stays null — no progress poll, no review link as if success.
+    expect(result.current.runId).toBeNull();
+    expect(result.current.progress.isPolling).toBe(false);
+    expect(fetchBulkDescribeRunMock).not.toHaveBeenCalled();
+    // Notice carries the resolved server message AND the stranded run id.
+    expect(result.current.errorMessage).toContain('Failed to store describe run media membership.');
+    expect(result.current.errorMessage).toContain(strandedRunId);
+    expect(result.current.errorMessage).toContain('already running upstream');
+    // Never the raw HTTPError envelope.
+    expect(result.current.errorMessage).not.toContain('Request to /acx/v1/describe/runs failed');
+  });
+});
+
+describe('formatBulkDescribeErrorMessage', () => {
+  it('includes data.run_id when the membership store fails after upstream accept', () => {
+    const error = new Error(
+      'Request to /acx/v1/describe/runs failed (500): {"code":"describe_run_media_ids_store_failed","message":"Failed to store describe run media membership.","data":{"status":500,"run_id":"run-99"}}',
+    );
+    const notice = formatBulkDescribeErrorMessage(error);
+    expect(notice).toContain('run-99');
+    expect(notice).toContain('Failed to store describe run media membership.');
+    expect(notice).toContain('already running upstream');
+  });
+
+  it('falls back without inventing a run id when the payload has none', () => {
+    const error = new Error(
+      'Request to /acx/v1/describe/runs failed (500): {"code":"internal","message":"boom","data":{"status":500}}',
+    );
+    expect(formatBulkDescribeErrorMessage(error)).toBe('boom');
   });
 });

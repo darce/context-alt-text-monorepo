@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/../../sovereign/class-projection-query-exception.php';
+require_once __DIR__ . '/../../support/class-telemetry.php';
+
 use AltContext\Api\ClustersHostInterface;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -13,6 +17,7 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 use WP_REST_Response;
@@ -76,7 +81,12 @@ class ClusterProjectionSyncService {
 			return true;
 		}
 
-		if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id ) ) {
+		try {
+			if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id ) ) {
+				return false;
+			}
+		} catch ( ProjectionQueryException $exception ) {
+			Telemetry::log_line( sprintf( 'Local projection availability check failed: %s', $exception->getMessage() ) );
 			return false;
 		}
 

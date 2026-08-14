@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/../sync/class-sync-pull-result.php';
 
@@ -20,6 +21,16 @@ use function trim;
 
 class SyncStateRepository implements SyncStateRepositoryInterface {
 	use PreparesSqlQueries;
+
+	/**
+	 * Durable last_sync_result vocabulary written/read by this repository [sr-007].
+	 * Mirrored by TypeScript LAST_SYNC_RESULT in js/admin/api/recognition/types/sync.ts.
+	 * rekey / threshold paths also write RESYNC_REQUIRED via the rekey service.
+	 */
+	public const SYNC_RESULT_OK              = 'ok';
+	public const SYNC_RESULT_FAILED          = 'failed';
+	public const SYNC_RESULT_UNREACHABLE     = 'unreachable';
+	public const SYNC_RESULT_RESYNC_REQUIRED = 'resync_required';
 
 	private string $table_name;
 	private string $outbox_table_name;
@@ -155,6 +166,17 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		return $this->normalize_sync_result( $value );
 	}
 
+	/**
+	 * Persist the last sync-pull outcome for the tenant stream.
+	 *
+	 * R23-BR-23: inspect the durable write. $wpdb->query returns false on write
+	 * error and 0 when ON DUPLICATE KEY UPDATE changes no column values (identical
+	 * re-apply). Those must not collapse: false is a storage failure reported to
+	 * the caller; 0 is a legitimate no-op and must still succeed so the SPA is
+	 * not told a green re-apply failed [rg-015].
+	 *
+	 * @throws \RuntimeException When the write errors (query === false).
+	 */
 	public function set_last_sync_result( string $tenant_id, string $result ): void {
 		global $wpdb;
 
@@ -165,12 +187,12 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			throw new \RuntimeException( 'Could not persist last_sync_result: wpdb unavailable.' );
 		}
 
 		$normalized_result = $this->normalize_sync_result( $result );
 		$attempted_at      = gmdate( 'Y-m-d H:i:s' );
-		if ( SyncPullResult::OK === $normalized_result ) {
+		if ( self::SYNC_RESULT_OK === $normalized_result || SyncPullResult::OK === $normalized_result ) {
 			$sql = $this->prepare_query(
 				'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)
 				VALUES (%s, 0, %s, %s, %s)
@@ -202,9 +224,15 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 			);
 		}
 
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			throw new \RuntimeException( 'Could not prepare last_sync_result write.' );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		// false = write error. 0 = no-op re-apply (identical values). Do not collapse.
+		if ( false === $query_result ) {
+			throw new \RuntimeException( 'Could not persist last_sync_result (write error).' );
 		}
 	}
 
@@ -272,6 +300,21 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 	}
 
+	/**
+	 * Recompute and persist curation metric counters for the tenant stream.
+	 *
+	 * R23-BR-23: inspect each durable write before treating metrics as refreshed.
+	 * $wpdb->update returns false on write error and 0 when no row matched the
+	 * WHERE (or MySQL reports no column change). These are different conditions:
+	 * - false → storage write error; metrics did not land.
+	 * - 0 on a stream that pre-read as present → no-op / identical values (success).
+	 *   This repository keys updates by stream_name only (not id+status CAS);
+	 *   a true concurrent status CAS miss cannot arise here. 0 is therefore the
+	 *   legitimate re-apply path and must not be reported as failure.
+	 * - insert false → insert write error.
+	 *
+	 * @throws \RuntimeException When a durable metrics write does not land.
+	 */
 	public function refresh_curation_metrics( string $tenant_id ): void {
 		global $wpdb;
 
@@ -282,7 +325,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'get_row' ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'insert' ) ) {
-			return;
+			throw new \RuntimeException( 'Could not refresh curation metrics: wpdb unavailable.' );
 		}
 
 		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
@@ -304,17 +347,24 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		);
 
 		if ( is_array( $existing ) ) {
-			$wpdb->update(
+			$updated = $wpdb->update(
 				$this->table_name,
 				$data,
 				array( 'stream_name' => $stream_name ),
 				array( '%d', '%d', '%d', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
+			// false = write error (distinct from 0 = no-op / no column change).
+			if ( false === $updated ) {
+				throw new \RuntimeException(
+					'Could not refresh curation metrics: update write error on pending_curation_operations/failed_curation_operations/conflict_count.'
+				);
+			}
+			// 0 = identical re-apply or no column change — success for this non-CAS WHERE.
 			return;
 		}
 
-		$wpdb->insert(
+		$inserted = $wpdb->insert(
 			$this->table_name,
 			array(
 				'stream_name' => $stream_name,
@@ -329,6 +379,11 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 			),
 			array( '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
 		);
+		if ( false === $inserted ) {
+			throw new \RuntimeException(
+				'Could not refresh curation metrics: insert write error on pending_curation_operations/failed_curation_operations/conflict_count.'
+			);
+		}
 	}
 
 	public function get_pending_curation_operations( string $tenant_id ): int {
@@ -678,12 +733,35 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		return '' !== $normalized ? $normalized : null;
 	}
 
+	/**
+	 * Normalize a stored or requested last_sync_result.
+	 *
+	 * Empty / missing defaults to ok (never-synced is not a failure). Known
+	 * vocabulary is preserved, including resync_required (written by rekey).
+	 * Unknown non-empty values fail closed to failed — never invent ok [rg-015].
+	 */
 	private function normalize_sync_result( ?string $result ): string {
 		$normalized = is_string( $result ) ? trim( $result ) : '';
-		if ( in_array( $normalized, array( SyncPullResult::OK, SyncPullResult::FAILED, SyncPullResult::UNREACHABLE ), true ) ) {
+		if ( '' === $normalized ) {
+			return self::SYNC_RESULT_OK;
+		}
+
+		if ( in_array(
+			$normalized,
+			array(
+				self::SYNC_RESULT_OK,
+				self::SYNC_RESULT_FAILED,
+				self::SYNC_RESULT_UNREACHABLE,
+				self::SYNC_RESULT_RESYNC_REQUIRED,
+				SyncPullResult::OK,
+				SyncPullResult::FAILED,
+				SyncPullResult::UNREACHABLE,
+			),
+			true
+		) ) {
 			return $normalized;
 		}
 
-		return SyncPullResult::OK;
+		return self::SYNC_RESULT_FAILED;
 	}
 }

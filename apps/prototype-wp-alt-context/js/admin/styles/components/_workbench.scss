@@ -68,6 +68,129 @@
     padding-left: var(--acx-space-24);
     color: var(--acx-color-text-muted);
   }
+
+  /* WBUX-5 two-pane shell host (presentational; do not reuse &__layout) */
+  &__two-pane {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--acx-pane-gap);
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+
+    &[data-layout='stacked'] {
+      flex-direction: column;
+    }
+
+    &[data-panes='control-collapsed'] .acx-workbench__two-pane-library,
+    &[data-panes='library-collapsed'] .acx-workbench__two-pane-control {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+  }
+
+  &__two-pane-control,
+  &__two-pane-library {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-12);
+    min-width: 0;
+    min-height: var(--acx-pane-min-height);
+    padding: var(--acx-space-16);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface-alt);
+    overflow: auto;
+  }
+
+  /* Control default share is smaller; library flex-grows as dominant [LAY-01].
+   * Runtime split ratio is applied via inline flexBasis from the host (not a token). */
+  &__two-pane-control {
+    flex: 0 1 auto;
+  }
+
+  &__two-pane-library {
+    flex: 1 1 auto;
+  }
+
+  &__two-pane-control[data-collapsed='true'],
+  &__two-pane-library[data-collapsed='true'] {
+    display: none;
+  }
+
+  &__two-pane-title {
+    margin: 0;
+    font-size: var(--acx-text-lg);
+    font-weight: var(--acx-font-weight-semibold);
+    line-height: var(--acx-leading-tight);
+    color: var(--acx-color-text);
+  }
+
+  &__two-pane-slot {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  &__two-pane-zero {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--acx-space-8);
+    flex: 1 1 auto;
+    padding: var(--acx-space-16);
+    border: 1px dashed var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-panel);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__two-pane-zero-message {
+    margin: 0;
+    font-size: var(--acx-text-md);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__two-pane-splitter {
+    flex: 0 0 var(--acx-splitter-width);
+    position: relative;
+    align-self: stretch;
+    min-width: var(--acx-splitter-hit);
+    min-height: var(--acx-splitter-hit);
+    margin-inline: calc((var(--acx-splitter-hit) - var(--acx-splitter-width)) / -2);
+    border: none;
+    border-radius: var(--acx-radius-sm);
+    background-color: var(--acx-color-border);
+    cursor: col-resize;
+    touch-action: none;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      min-width: var(--acx-splitter-hit);
+      min-height: var(--acx-splitter-hit);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: 2px;
+      background-color: var(--acx-color-accent);
+    }
+
+    &[data-mode='section-toggle'] {
+      flex: 0 0 var(--acx-splitter-hit);
+      width: 100%;
+      min-height: var(--acx-splitter-hit);
+      margin-inline: 0;
+      cursor: pointer;
+    }
+
+    &[data-dragging='true'] {
+      background-color: var(--acx-color-accent);
+    }
+  }
 }
 
 .acx-sync-status {
@@ -1131,8 +1254,20 @@ button.acx-accent-primary-action {
   &__previews {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--acx-space-4);
-    margin-bottom: var(--acx-space-12);
+    // LAY-03: intra-strip gap < strip-to-neighbour (margin-bottom space-16).
+    gap: var(--acx-space-8);
+    margin-bottom: var(--acx-space-16);
+  }
+
+  &__preview {
+    // Box size is owned by FINDINGS_PREVIEW_SIZE_PX inline styles on Avatar / FaceThumbnail.
+    flex: 0 0 auto;
+  }
+
+  &__preview--uncropped {
+    // Distinguish uncropped / non-face fallbacks from real face crops (A11Y-02 companion).
+    outline: 1px dashed var(--acx-color-border);
+    outline-offset: calc(var(--acx-space-2) * -1);
   }
 
   &__empty {

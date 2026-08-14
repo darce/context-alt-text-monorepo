@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -16,10 +17,14 @@ _JPEG_SHA = hashlib.sha256(_JPEG).hexdigest()
 
 
 def _entry(*, sha256: str | None = None) -> GoldenEntry:
+    return _entry_at("remote.jpg", media_id=1, sha256=sha256)
+
+
+def _entry_at(path: str, *, media_id: int, sha256: str | None = None) -> GoldenEntry:
     return GoldenEntry(
-        path="remote.jpg",
+        path=path,
         sha256=sha256 or _JPEG_SHA,
-        media_id=1,
+        media_id=media_id,
         face_count=0,
         present_identities=[],
         must_right=[],
@@ -336,3 +341,49 @@ def test_multi_a_pin_is_deterministic(tmp_path: Path, monkeypatch: pytest.Monkey
         resolver=resolver,
     )
     assert pinned_seen == ["203.0.113.10"]
+
+
+def test_pin_cache_first_wins_when_resolver_answer_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same host twice; second resolver answer must not win (FIR-8 R4-05)."""
+    reset_media_host_pins()
+    url_map = tmp_path / "urls.json"
+    url_map.write_text(
+        json.dumps(
+            {
+                "a.jpg": "https://media.example.com/a.jpg",
+                "b.jpg": "https://media.example.com/b.jpg",
+            }
+        ),
+        encoding="utf-8",
+    )
+    pinned_seen: list[str] = []
+    n_resolve = 0
+
+    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+        pinned_seen.append(pinned_ip)
+        return 200, {}, _JPEG
+
+    def resolver(_host: str) -> list[str]:
+        nonlocal n_resolve
+        n_resolve += 1
+        if n_resolve == 1:
+            return ["203.0.113.10", "203.0.113.99"]
+        return ["203.0.113.99"]
+
+    monkeypatch.setattr("scripts.bench.corpus._https_get_pinned", fake_get)
+    resolve_media_bytes(
+        _entry_at("a.jpg", media_id=1),
+        images_dir=tmp_path / "missing",
+        url_map_path=url_map,
+        allow_private_source=True,
+        resolver=resolver,
+    )
+    resolve_media_bytes(
+        _entry_at("b.jpg", media_id=2),
+        images_dir=tmp_path / "missing",
+        url_map_path=url_map,
+        allow_private_source=True,
+        resolver=resolver,
+    )
+    assert n_resolve == 2
+    assert pinned_seen == ["203.0.113.10", "203.0.113.10"]

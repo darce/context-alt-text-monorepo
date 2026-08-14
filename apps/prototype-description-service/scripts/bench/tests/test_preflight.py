@@ -1,0 +1,214 @@
+"""Preflight fail-closed on real /ready + /health/detailed payload shapes."""
+
+from __future__ import annotations
+
+import ast
+import sys
+from pathlib import Path
+
+import httpx
+import pytest
+
+from scripts.bench.preflight import (
+    PreflightError,
+    preflight_stack,
+    write_preflight_json,
+)
+from scripts.bench.stack_pair import StackEndpoint, load_stack_pair
+from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, write_pair
+
+
+def _insightface_endpoint(**overrides: object) -> StackEndpoint:
+    payload = {**INSIGHTFACE_STACK, **overrides}
+    return StackEndpoint(
+        stack_id=payload["stack_id"],
+        role=payload["role"],
+        base_url=payload["base_url"],
+        expected_profile=payload["expected_profile"],
+        expected_pgvector_dim=payload["expected_pgvector_dim"],
+        opencv_major=payload.get("opencv_major"),
+        api_key_env=payload["api_key_env"],
+        tenant_id_env=payload["tenant_id_env"],
+    )
+
+
+def _ready(dim: int, *, status: str = "ok") -> dict:
+    return {
+        "status": "ok",
+        "timestamp": "2026-07-29T00:00:00Z",
+        "checks": [
+            {
+                "name": "database",
+                "status": status,
+                "detail": f"reachable; pgvector_dimension={dim}",
+            }
+        ],
+    }
+
+
+def _health(profile: str) -> dict:
+    return {
+        "status": "ok",
+        "timestamp": "2026-07-29T00:00:00Z",
+        "model_cache": {
+            "model_name": "buffalo_l",
+            "cache_dir": "/models",
+            "bundle_files": 2,
+            "status": "ok",
+            "detail": "cached",
+            "profile": profile,
+        },
+    }
+
+
+def _transport(ready: dict | int, health: dict | int) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ready":
+            if isinstance(ready, int):
+                return httpx.Response(ready, json={"detail": "missing"})
+            return httpx.Response(200, json=ready)
+        if request.url.path == "/health/detailed":
+            if isinstance(health, int):
+                return httpx.Response(health, json={"detail": "auth"})
+            return httpx.Response(200, json=health)
+        return httpx.Response(404, json={"detail": "no"})
+
+    return httpx.MockTransport(handler)
+
+
+def test_preflight_ok_real_shapes() -> None:
+    result = preflight_stack(
+        _insightface_endpoint(),
+        transport=_transport(_ready(512), _health("insightface")),
+        api_key="k",
+    )
+    assert result.resolved_profile == "insightface"
+    assert result.resolved_pgvector_dim == 512
+    assert result.opencv_major == 5
+    assert result.opencv_major_source == "operator_attested"
+
+
+def test_dim_drift_on_insightface_raises_profile_or_dim_drift() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(128), _health("insightface")),
+            api_key="k",
+        )
+    assert exc.value.code == "profile_or_dim_drift"
+
+
+def test_missing_pgvector_token_is_drift() -> None:
+    ready = _ready(512)
+    ready["checks"][0]["detail"] = "reachable; database ok"
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(ready, _health("insightface")),
+            api_key="k",
+        )
+    assert exc.value.code == "profile_or_dim_drift"
+
+
+def test_missing_model_cache_profile_is_drift() -> None:
+    health = _health("insightface")
+    del health["model_cache"]["profile"]
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+    assert exc.value.code == "profile_or_dim_drift"
+
+
+def test_auth_401_is_preflight_auth_failed() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), 401),
+            api_key="bad",
+        )
+    assert exc.value.code == "preflight_auth_failed"
+
+
+def test_health_404_is_preflight_endpoint_missing() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), 404),
+            api_key="k",
+        )
+    assert exc.value.code == "preflight_endpoint_missing"
+
+
+def test_fir_leg_expects_128_face_pipeline() -> None:
+    endpoint = StackEndpoint(
+        stack_id=FIR_STACK["stack_id"],
+        role=FIR_STACK["role"],
+        base_url=FIR_STACK["base_url"],
+        expected_profile="face_pipeline",
+        expected_pgvector_dim=128,
+        opencv_major=5,
+        api_key_env=FIR_STACK["api_key_env"],
+        tenant_id_env=FIR_STACK["tenant_id_env"],
+    )
+    result = preflight_stack(
+        endpoint,
+        transport=_transport(_ready(128), _health("face_pipeline")),
+        api_key="k",
+    )
+    assert result.resolved_pgvector_dim == 128
+    assert result.resolved_profile == "face_pipeline"
+
+
+def test_missing_opencv_major_raises_and_writes_no_preflight_json(tmp_path: Path) -> None:
+    dest = tmp_path / "preflight.json"
+    endpoint = _insightface_endpoint()
+    object.__setattr__(endpoint, "opencv_major", None)
+    with pytest.raises(PreflightError) as exc:
+        result = preflight_stack(
+            endpoint,
+            transport=_transport(_ready(512), _health("insightface")),
+            api_key="k",
+        )
+        write_preflight_json(dest, result)
+    assert exc.value.code == "opencv_major_unattested"
+    assert not dest.exists()
+
+
+def test_load_missing_opencv_major_is_unattested(tmp_path: Path) -> None:
+    pair = {
+        "head_to_head_delta": 0.10,
+        "bootstrap_seed": 20260729,
+        "primary_endpoint": "detection_recall@frame_e2e/label_map_primary",
+        "secondary_endpoints": [],
+        "stacks": [
+            {k: v for k, v in INSIGHTFACE_STACK.items() if k != "opencv_major"},
+            dict(FIR_STACK),
+        ],
+    }
+    path = write_pair(tmp_path / "pair.yaml", pair)
+    with pytest.raises(Exception) as exc:
+        load_stack_pair(path)
+    assert getattr(exc.value, "code", "") == "opencv_major_unattested"
+
+
+def test_bench_package_imports_no_cv2() -> None:
+    bench_root = Path(__file__).resolve().parents[1]
+    for py_path in bench_root.rglob("*.py"):
+        tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name != "cv2" and not alias.name.startswith("cv2."), py_path
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert node.module != "cv2" and not node.module.startswith("cv2."), py_path
+    imported_by_bench = [
+        name
+        for name, mod in sys.modules.items()
+        if name == "cv2" or name.startswith("cv2.")
+    ]
+    for name in imported_by_bench:
+        origin = getattr(sys.modules[name], "__file__", "") or ""
+        assert "scripts/bench" not in origin.replace("\\", "/")

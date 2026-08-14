@@ -30,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     p_st = sub.add_parser("status", help="read run-dir only; no network")
     p_st.add_argument("--run-dir", required=True)
 
+    p_score = sub.add_parser("score", help="offline score on run-dir (no credentials)")
+    p_score.add_argument("--run-dir", required=True)
+
     args = parser.parse_args(argv)
     try:
         if args.command == "preflight":
@@ -38,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_run(args)
         if args.command == "status":
             return _cmd_status(args)
+        if args.command == "score":
+            return _cmd_score(args)
     except BenchError as exc:
         print(f"{exc.code}: {exc}", file=sys.stderr)
         return 2
@@ -72,6 +77,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_status(args: argparse.Namespace) -> int:
     payload = read_status(args.run_dir)
     print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _cmd_score(args: argparse.Namespace) -> int:
+    from scripts.bench.score_report import score_head_to_head
+
+    path = score_head_to_head(args.run_dir)
+    print(f"score complete: {path}")
     return 0
 
 

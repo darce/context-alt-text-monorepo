@@ -1,0 +1,70 @@
+"""Detection exhaustiveness outcomes + no present_identities subtraction in bench/."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from scripts.bench.corpus import load_bench_manifest, non_exhaustive_ids
+from scripts.bench.score_report import CrossbenchTier, assign_tier, stranger_faces_for
+from scripts.bench.stack_pair import BenchError
+
+FIXTURE = Path(__file__).parent / "fixtures" / "v2_boxed_detection.json"
+
+
+def test_require_true_mismatch_raises() -> None:
+    with pytest.raises(BenchError) as exc:
+        load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=True)
+    assert exc.value.code == "gt_box_count_mismatch"
+
+
+def test_default_flag_loads_mismatch_as_non_exhaustive() -> None:
+    manifest = load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=False)
+    assert 3 in non_exhaustive_ids(manifest)
+    mismatch = next(e for e in manifest.entries if e.media_id == 3)
+    assert stranger_faces_for(mismatch) == 0
+
+
+def test_exhaustive_stranger_faces_from_unnamed_boxes() -> None:
+    manifest = load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=False)
+    multi = next(e for e in manifest.entries if e.media_id == 1)
+    assert stranger_faces_for(multi) == 0  # both boxes named
+    # zero-face exhaustive
+    zero = next(e for e in manifest.entries if e.media_id == 2)
+    assert zero.face_count == len(zero.face_boxes) == 0
+
+
+def test_detection_cell_directional_when_non_exhaustive_dropped() -> None:
+    tier, reason = assign_tier(
+        "detection_recall@frame_e2e/label_map_primary",
+        {
+            "named": True,
+            "primary": True,
+            "optimistic": False,
+            "native_frame": False,
+            "floor_ok": True,
+            "ci_half_width": 0.0,
+            "head_to_head_delta": 0.10,
+            "holm_significant": True,
+            "exhaustiveness_ok": False,
+            "cluster_ok": True,
+            "count_only": False,
+        },
+    )
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "detection_exhaustiveness_unasserted"
+
+
+def test_no_present_identities_subtraction_in_bench_package() -> None:
+    root = Path(__file__).resolve().parents[1]
+    offenders: list[str] = []
+    for py in root.rglob("*.py"):
+        if "tests" in py.parts:
+            continue
+        text = py.read_text(encoding="utf-8")
+        if "present_identities" in text and "len(" in text:
+            for line in text.splitlines():
+                if "len(" in line and "present_identities" in line and "-" in line:
+                    offenders.append(f"{py.name}:{line.strip()}")
+    assert offenders == []

@@ -80,6 +80,7 @@ class ImageDetection:
     image: str
     pred_faces: int
     labeled_faces: int
+    matched_faces: int | None = None
 
 
 @dataclass(frozen=True)
@@ -149,12 +150,24 @@ class PrResult:
 
 
 def detection_pr(items: Sequence[ImageDetection]) -> PrResult:
-    """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN."""
+    """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN.
+
+    When ``matched_faces`` is set, TP is the IoU-matched count (FIR-8 localization pin).
+    """
     tp = fp = fn = 0
     for item in items:
-        tp += min(item.pred_faces, item.labeled_faces)
-        fp += max(item.pred_faces - item.labeled_faces, 0)
-        fn += max(item.labeled_faces - item.pred_faces, 0)
+        if item.matched_faces is None:
+            tp += min(item.pred_faces, item.labeled_faces)
+            fp += max(item.pred_faces - item.labeled_faces, 0)
+            fn += max(item.labeled_faces - item.pred_faces, 0)
+            continue
+        matched = item.matched_faces
+        bound = min(item.pred_faces, item.labeled_faces)
+        if matched < 0 or matched > bound:
+            raise ValueError("matched_faces_out_of_bounds")
+        tp += matched
+        fp += max(item.pred_faces - matched, 0)
+        fn += max(item.labeled_faces - matched, 0)
     return PrResult(true_positives=tp, false_positives=fp, false_negatives=fn)
 
 

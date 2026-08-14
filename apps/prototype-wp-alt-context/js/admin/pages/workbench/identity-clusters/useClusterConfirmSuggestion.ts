@@ -12,12 +12,21 @@ import { useClusterMatchAction } from './useClusterMatchAction';
 
 interface ClusterConfirmMutations {
   isPending: boolean;
-  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
-  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  merge: (
+    targetClusterId: string,
+    targetLabel?: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
+  assignToCluster: (
+    identityId: string,
+    targetClusterId: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
 }
 
 interface UseClusterConfirmSuggestionOptions {
-  clusterLabel: string | null;
   members: ClusterGroup['members'];
   editableClusterId: string | null;
   canEdit: boolean;
@@ -34,7 +43,6 @@ interface UseClusterConfirmSuggestionOptions {
 }
 
 export const useClusterConfirmSuggestion = ({
-  clusterLabel,
   members,
   editableClusterId,
   canEdit,
@@ -59,7 +67,7 @@ export const useClusterConfirmSuggestion = ({
   });
 
   const handleConfirmSuggestion = React.useCallback(
-    async (clusterId: string, label: string) => {
+    async (clusterId: string, label: string, suggestionId?: string) => {
       if (saveStatus !== 'idle' || mutations.isPending) {
         return;
       }
@@ -76,15 +84,18 @@ export const useClusterConfirmSuggestion = ({
       let mutationStarted = false;
 
       try {
-        const currentLabel = clusterLabel ?? '';
-        // Exact no-op (B6 / PR-09): case-only confirm ("bob"→"Bob") must apply.
-        if (label === currentLabel) {
+        // Exact no-op (BR-42): same target cluster id — not same label. Same-label
+        // different-target (e.g. Bob→other-bob) must still merge/assign.
+        if (clusterId === editableClusterId) {
           cancelEditing();
           resetSaveStatus();
           return;
         }
 
-        mutationStarted = await runMatchedAction({ id: clusterId, label }, abortController);
+        mutationStarted = await runMatchedAction(
+          { id: clusterId, label, suggestionId },
+          abortController,
+        );
       } catch (err) {
         if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
           resetSaveStatus();
@@ -104,7 +115,7 @@ export const useClusterConfirmSuggestion = ({
       cancelEditing,
       canEdit,
       canSearchForMatch,
-      clusterLabel,
+      editableClusterId,
       mutations,
       queueSaveStatus,
       resetSaveStatus,

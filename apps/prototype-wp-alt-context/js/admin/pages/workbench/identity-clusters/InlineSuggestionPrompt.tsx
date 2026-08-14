@@ -16,8 +16,8 @@ import type { ProjectedSuggestion } from './suggestionProjection';
 interface InlineSuggestionPromptProps {
   /** Top server-ranked suggestion for this identity, or undefined when none applies */
   match: ProjectedSuggestion | undefined;
-  /** Called when user confirms the suggestion */
-  onConfirm: (clusterId: string, label: string) => void;
+  /** Called when user confirms the suggestion (suggestionId resolves the pending row by id) */
+  onConfirm: (clusterId: string, label: string, suggestionId?: string) => void;
   /** Called when user rejects the suggestion */
   onReject: () => void;
   /** Whether a mutation is in progress */
@@ -58,7 +58,7 @@ export const InlineSuggestionPrompt = ({
         <button
           type="button"
           className="button button-primary button-small acx-inline-suggestion__yes"
-          onClick={() => onConfirm(match.clusterId, label)}
+          onClick={() => onConfirm(match.clusterId, label, match.suggestionId)}
           disabled={isPending}
         >
           {__('Yes', 'alt-context')}

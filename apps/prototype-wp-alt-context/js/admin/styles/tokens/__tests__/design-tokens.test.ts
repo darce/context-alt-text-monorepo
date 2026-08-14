@@ -17,6 +17,8 @@ const REQUIRED_RADIUS_TOKENS = [
 ] as const;
 
 const REQUIRED_TEXT_TOKENS = [
+  '--acx-text-icon',
+  '--acx-text-micro',
   '--acx-text-2xs',
   '--acx-text-xs',
   '--acx-text-sm',

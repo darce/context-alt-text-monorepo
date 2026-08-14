@@ -11,6 +11,7 @@ const match: ProjectedSuggestion = {
   label: 'Ada Lovelace',
   similarity: 0.92,
   identityCount: 3,
+  suggestionId: 'sug-ada-1',
 };
 
 afterEach(() => cleanup());
@@ -49,13 +50,14 @@ describe('InlineSuggestionPrompt (presentational)', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('fires onConfirm with the match clusterId and label on Yes', async () => {
+  it('fires onConfirm with the match clusterId, label, and suggestionId on Yes (BR-16)', async () => {
+    // Predicted first failure: third arg undefined when match.suggestionId is dropped
     const onConfirm = vi.fn();
     const user = userEvent.setup();
     render(<InlineSuggestionPrompt match={match} onConfirm={onConfirm} onReject={vi.fn()} isPending={false} />);
 
     await user.click(screen.getByRole('button', { name: 'Yes' }));
-    expect(onConfirm).toHaveBeenCalledWith('cluster-ada', 'Ada Lovelace');
+    expect(onConfirm).toHaveBeenCalledWith('cluster-ada', 'Ada Lovelace', 'sug-ada-1');
   });
 
   it('fires onReject on No', async () => {

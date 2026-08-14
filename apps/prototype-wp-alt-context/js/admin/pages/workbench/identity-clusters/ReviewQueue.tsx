@@ -56,6 +56,7 @@ import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from '
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
 import {
+  BULK_COMMIT_PHASE,
   useBulkReviewCommit,
   type BulkCommitItem,
 } from './useBulkReviewCommit';
@@ -63,8 +64,11 @@ import { useMergeSurvivors } from './MergeSurvivorContext';
 import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
+  COMMIT_HOLD_PHASE,
   HOLD_COMMITTING_STATUS_COPY,
   HOLD_STATUS_COPY,
+  PERSON_COMMIT_PHASE,
+  type CommitHoldPhase,
   type PersonCommitRequest,
   type PersonCommitResult,
   type PersonCommitState,
@@ -641,7 +645,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Bulk active: flush/wait sequence first, then any single hold, then navigate.
         if (bulk.isBulkActive) {
           void bulk.awaitBulkIdleOrFlush().then(() => {
-            if (data.hold.phase === 'holding') {
+            if (data.hold.phase === COMMIT_HOLD_PHASE.HOLDING) {
               void data.flushHeld().then(afterSingleFlush);
               return;
             }
@@ -651,7 +655,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
 
         // Original single-hold fast path (BR-16) — sync check, no bulk await.
-        if (data.hold.phase !== 'holding') {
+        if (data.hold.phase !== COMMIT_HOLD_PHASE.HOLDING) {
           navigate();
           return;
         }
@@ -698,7 +702,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const personCommitSurfacedOnCard =
       data.personCommit.clusterId != null && data.personCommit.clusterId === currentClusterId;
     const showQueuePersonCommitFallback =
-      (data.personCommit.phase === 'failed' || data.personCommit.phase === 'succeeded') &&
+      (data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED || data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED) &&
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
@@ -782,7 +786,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const personCommitSucceededOnCurrentCard =
       currentItem !== null &&
       isPersonCommitPrimaryKind(currentItem.kind) &&
-      data.personCommit.phase === 'succeeded' &&
+      data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED &&
       (data.personCommit.clusterId === null ||
         data.personCommit.clusterId === currentClusterId);
 
@@ -866,7 +870,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           />
         ) : null}
         <header className="acx-review-queue__header">
-          <h3 className="acx-review-queue__title">{__('Review Suggestions', 'alt-context')}</h3>
+          <h3 id="acx-workbench-queue-heading" className="acx-review-queue__title">
+            {__('Review Suggestions', 'alt-context')}
+          </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
               {length}
@@ -1052,7 +1058,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         ) : null}
 
-        {bulk.bulk.phase === 'holding' || bulk.bulk.phase === 'committing' ? (
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING || bulk.bulk.phase === BULK_COMMIT_PHASE.COMMITTING ? (
           <div
             className="acx-review-queue__hold acx-review-queue__bulk-hold"
             role="status"
@@ -1069,7 +1075,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             onPointerLeave={() => bulk.setBulkHoldPaused(false)}
           >
             <span className="acx-review-queue__hold-message">{bulk.bulkHoldAnnounce}</span>
-            {bulk.bulk.phase === 'holding' ? (
+            {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING ? (
               <button
                 type="button"
                 className="button acx-review-queue__undo"
@@ -1081,7 +1087,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         ) : null}
 
-        {bulk.bulk.phase === 'partial_failed' && bulk.bulk.partialFailure ? (
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED && bulk.bulk.partialFailure ? (
           <div
             className="acx-review-queue__failure acx-review-queue__bulk-failure"
             role="alert"
@@ -1110,7 +1116,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           {liveMessage}
         </div>
 
-        {showQueuePersonCommitFallback && data.personCommit.phase === 'failed' ? (
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED ? (
           <div
             className="acx-review-queue__person-commit-fallback acx-person-commit__failure"
             role="alert"
@@ -1131,7 +1137,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             </button>
           </div>
         ) : null}
-        {showQueuePersonCommitFallback && data.personCommit.phase === 'succeeded' ? (
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED ? (
           <div
             className="acx-review-queue__person-commit-fallback acx-person-commit--success"
             role="status"
@@ -1425,14 +1431,14 @@ export const CommitHoldRegion = ({
   onPausedChange,
   retryPending = false,
 }: {
-  phase: 'holding' | 'committing' | 'failed';
+  phase: Exclude<CommitHoldPhase, typeof COMMIT_HOLD_PHASE.IDLE>;
   errorMessage: string | null;
   onUndo: () => void;
   onRetry: () => void;
   onPausedChange: (paused: boolean) => void;
   retryPending?: boolean;
 }): React.JSX.Element => {
-  if (phase === 'failed') {
+  if (phase === COMMIT_HOLD_PHASE.FAILED) {
     return (
       <div className="acx-review-queue__failure" role="alert">
         <p className="acx-review-queue__failure-message">
@@ -1451,7 +1457,7 @@ export const CommitHoldRegion = ({
   }
 
   const holdMessage =
-    phase === 'committing' ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
+    phase === COMMIT_HOLD_PHASE.COMMITTING ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
 
   return (
     <div
@@ -1469,7 +1475,7 @@ export const CommitHoldRegion = ({
       onPointerLeave={() => onPausedChange(false)}
     >
       <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
-      {phase === 'holding' ? (
+      {phase === COMMIT_HOLD_PHASE.HOLDING ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}
         </button>
@@ -1538,12 +1544,18 @@ const CurrentCard = ({
     if (!holdMatchesCard(hold, kinds, suggestionId)) {
       return null;
     }
-    if (hold.phase === 'idle') {
+    if (hold.phase === COMMIT_HOLD_PHASE.IDLE) {
       return null;
     }
     return (
       <CommitHoldRegion
-        phase={hold.phase === 'failed' ? 'failed' : hold.phase === 'committing' ? 'committing' : 'holding'}
+        phase={
+          hold.phase === COMMIT_HOLD_PHASE.FAILED
+            ? COMMIT_HOLD_PHASE.FAILED
+            : hold.phase === COMMIT_HOLD_PHASE.COMMITTING
+              ? COMMIT_HOLD_PHASE.COMMITTING
+              : COMMIT_HOLD_PHASE.HOLDING
+        }
         errorMessage={hold.errorMessage}
         onUndo={undoHold}
         onRetry={() => {
@@ -1573,7 +1585,7 @@ const CurrentCard = ({
     const phaseForCard =
       personCommit.clusterId === null || personCommit.clusterId === clusterId
         ? personCommit.phase
-        : 'idle';
+        : PERSON_COMMIT_PHASE.IDLE;
     const errorForCard =
       personCommit.clusterId === clusterId ? personCommit.errorMessage : null;
     const isPrimary = isPersonCommitPrimaryKind(kind);
@@ -1590,7 +1602,7 @@ const CurrentCard = ({
         // BR-25: disable on schedule (personCommitPending), not only phase==='committing'.
         // BR-48: disable while bulk hold/sequence is active (ordering via awaitBulk).
         disabled={
-          personCommit.phase === 'committing' || personCommitPending || isBulkActive
+          personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
         }
         suggestedCreateName={options?.suggestedCreateName}
         onCommit={(request) => {
@@ -1727,7 +1739,7 @@ const CurrentCard = ({
       const afterAccept = hold.kind === 'acceptName' || hold.kind === null;
       // BR-29 belt: disable accept/reject while person-commit succeeded for this cluster.
       const namePersonCommitDone =
-        personCommit.phase === 'succeeded' && personCommit.clusterId === item.clusterId;
+        personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
       return (

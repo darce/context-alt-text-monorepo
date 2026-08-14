@@ -102,7 +102,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
           panes={panes}
           onPanesChange={setPanes}
           control={
-            <div className="acx-workbench__panel" aria-live="polite">
+            <div className="acx-workbench__panel">
               <h2>{__('Scan Media Queue', 'alt-context')}</h2>
               <p>
                 {__(

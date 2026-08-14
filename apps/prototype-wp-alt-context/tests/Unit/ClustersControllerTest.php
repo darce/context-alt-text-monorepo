@@ -1536,6 +1536,24 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(500, IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT);
     }
 
+    /**
+     * E21-14-R3-COORDINATOR-02 / sr-007: list-card preview fetch (ClusterFacade
+     * + ClusterReadService load_members_by_cluster) and the mapper preview_limit
+     * must share one domain constant so truncation semantics cannot desync.
+     */
+    public function testPreviewIdentitiesPerClusterIsCanonicalDomainConstant(): void
+    {
+        $this->assertSame(4, IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER);
+
+        $serviceReflection = new \ReflectionClass(\AltContext\Api\Services\ClusterReadService::class);
+        $servicePreview = $serviceReflection->getReflectionConstant('PREVIEW_IDENTITIES_PER_CLUSTER');
+        $this->assertNotFalse($servicePreview);
+        $this->assertSame(
+            IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER,
+            $servicePreview->getValue()
+        );
+    }
+
     public function testGetClusterMembersProxyForwardsLimitAndOffset(): void
     {
         $controller = new ClustersController(

@@ -228,6 +228,78 @@ def test_holm_family_uses_declared_secondary_size(tmp_path: Path) -> None:
         assert cell.get("tier") != "CONFIRMATORY"
 
 
+def test_primary_score_path_emits_confirmatory(tmp_path: Path) -> None:
+    mids = [1, 2, 3, 4, 5, 6]
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+    ]
+    run_dir = _init(tmp_path, mids, entries)
+    _write_leg(run_dir, A_STACK, [_pred(i) for i in mids], mids)
+    _write_leg(run_dir, B_STACK, [_pred(i, miss=True) for i in mids], mids)
+    score_head_to_head(run_dir)
+    primary = _cells(run_dir, PRIMARY)
+    assert primary
+    for cell in primary:
+        assert cell["tier"] == "CONFIRMATORY"
+        assert cell["ci_half_width"] == 0.0
+        assert cell.get("bootstrap_status") == "ok"
+
+
+def test_holm_p_couples_to_cell_with_distinct_magnitudes(tmp_path: Path) -> None:
+    """Distinct per-secondary p so a family permutation cannot preserve coupling."""
+    mids = [1, 2, 3, 4, 5, 6]
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
+    ]
+    run_dir = _init(tmp_path, mids, entries)
+    a_ids = [_pred(i) for i in mids]
+    b_ids: list[dict] = []
+    for i in mids:
+        labeled = i == 6
+        b_ids.append(
+            {
+                **_pred(i, label="Alice Q" if labeled else ""),
+                "is_auto_label": not labeled,
+            }
+        )
+        if i <= 3:
+            b_ids.append(
+                {
+                    **_pred(i, label="", miss=True),
+                    "identity_id": f"extra-{i}",
+                    "is_auto_label": True,
+                }
+            )
+        if i == 1:
+            b_ids.append(
+                {
+                    **_pred(i, label="Bob Z", miss=True),
+                    "identity_id": f"bob-{i}",
+                    "is_auto_label": False,
+                }
+            )
+    _write_leg(run_dir, A_STACK, a_ids, mids)
+    _write_leg(run_dir, B_STACK, b_ids, mids)
+    score_head_to_head(run_dir)
+    secondaries = [
+        "detection_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_primary",
+        "identification_precision@frame_e2e/label_map_primary",
+    ]
+    by_name: dict[str, dict] = {}
+    for name in secondaries:
+        cells = _cells(run_dir, name)
+        assert cells
+        cell = cells[0]
+        assert cell["holm_p_value"] == cell["p_value"]
+        by_name[name] = cell
+    p_values = [by_name[n]["p_value"] for n in secondaries]
+    assert len(set(p_values)) == 3
+    ranked = sorted(secondaries, key=lambda n: (by_name[n]["p_value"], n))
+    for rank, name in enumerate(ranked, start=1):
+        assert by_name[name]["holm_rank"] == rank
+
+
 def test_join_hole_raises_instead_of_zero_pad(tmp_path: Path, monkeypatch) -> None:
     entries = [
         golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)

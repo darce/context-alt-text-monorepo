@@ -13135,3 +13135,250 @@ class TestF16StealHonestyPin:
         assert policy._package_denylist_hit("fastsam") is not None
         assert policy._package_denylist_hit("yoloxfastsam") is not None
         assert policy._package_denylist_hit("yolox") is None
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F17 — R19 findings
+# ---------------------------------------------------------------------------
+
+
+class TestF17UnderscoreNcSeedGluedException:
+    """R19-01 / R19-12: underscore NC seed + glued junk + exception spelling.
+
+    Official underscore NC seeds with compact ≤ 10 and an unowned head
+    (``buffalo_l`` / ``buffalo_l2`` / ``buffalo_pt`` / ``buffalo_s`` /
+    ``buffalo_sc`` / ``buffalo_trt`` / ``antelope_v2``) admitted
+    ``{seed}{junk}{exception}`` because the walker handed mid-adjacency
+    only the last-segment compact (``lxyolox``), whose prefix ``lx``
+    looks like the pinned ``ayoloxs`` junk shape. Empty-rem ownership
+    now runs on the underscore-preserving token so contained-long sees
+    ``buffalol`` in ``buffalolx``. Junk is unbounded (4+ ``abcd``).
+    """
+
+    SEEDS: ClassVar[tuple[str, ...]] = (
+        "buffalo_l",
+        "buffalo_l2",
+        "buffalo_pt",
+        "buffalo_s",
+        "buffalo_sc",
+        "buffalo_trt",
+        "antelope_v2",
+    )
+    JUNK: ClassVar[tuple[str, ...]] = ("x", "v9", "abc", "abcd")
+    SPELLINGS: ClassVar[tuple[str, ...]] = (
+        "yolox",
+        "yoloxs",
+        "yolop",
+        "yolos",
+        "yolof",
+        "ppyoloe",
+    )
+    # One row per seed; junk lengths 1/2/3/4+ and all six spellings
+    # appear. The sweep below covers the full 7×4×6 cross-product.
+    REPRESENTATIVE: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("buffalo_l", "x", "yolox"),
+        ("buffalo_l2", "v9", "yoloxs"),
+        ("buffalo_pt", "abc", "yolop"),
+        ("buffalo_s", "abcd", "yolos"),
+        ("buffalo_sc", "x", "yolof"),
+        ("buffalo_trt", "v9", "ppyoloe"),
+        ("antelope_v2", "abc", "yolox"),
+    )
+    VARIANTS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("buffalo_lx_yolox", "buffalo_l"),
+        ("buffalo_sx_yoloxs", "buffalo_s"),
+        ("antelope_v2x_yolox", "antelope_v2"),
+        ("Buffalo_LXYoloX", "buffalo_l"),
+        ("BUFFALO_TRTXYOLOX", "buffalo_trt"),
+        ("buffalo-lxyolox", "buffalo_l"),
+        ("buffalo_lxyolox_s", "buffalo_l"),
+        ("antelope_v2xyolox_s", "antelope_v2"),
+        ("buffalo_lxyolox:latest", "buffalo_l"),
+        ("buffalo_scabcyolox:v0.3.0", "buffalo_sc"),
+    )
+    # Current oracle attributions — verdicts AND package_id must hold.
+    A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("buffalo_lyolox", "buffalo_l", "nc"),
+        ("buffalolxyolox", "buffalo_l", "nc"),
+        ("buffalo_lxyoloxextra", "yolox_unknown_residual", "agpl"),
+        ("buffalo_lxyoloxlatest", "yolox_unknown_residual", "agpl"),
+        ("buffalo_l_xyolox", "buffalo_l", "nc"),
+        ("buffalo_l~xyolox", "buffalo_l", "nc"),
+        ("buffalo_l.xyolox", "buffalo_l", "nc"),
+        ("buffalo_l/xyolox", "buffalo_l", "nc"),
+        ("buffalo_lx/yolox", "buffalo_l", "nc"),
+        ("buffalo_fp16xyolox", "buffalo_fp16", "nc"),
+        ("buffalo_int8xyolox", "buffalo_int8", "nc"),
+        ("buffalo_onnxxyolox", "buffalo_onnx", "nc"),
+        ("scrfd_10gxyolox", "scrfd", "nc"),
+        ("scrfd_2_5gxyolox", "scrfd", "nc"),
+        ("yolo_nasxyolox", "yolo", "agpl"),
+        ("yolo_worldxyolox", "yolo", "agpl"),
+        ("ultralytics_yoloxyolox", "ultralytics", "agpl"),
+        ("vec2face_g1xyolox", "vec2face", "nc"),
+        ("retinaface_r50xyolox", "retinaface", "nc"),
+        ("retinaface_mnet025xyolox", "retinaface", "nc"),
+        ("arcface_r100xyolox", "arcface", "nc"),
+        ("insightface_buffalo_lxyolox", "insightface", "nc"),
+    )
+    A4_STILL_ADMIT: ClassVar[tuple[str, ...]] = (
+        "ayoloxs",
+        "xyoloxs",
+        "megviiyolox",
+        "megvii_yolox",
+        "yolodummy",
+        "myyolo",
+        "buffalo_lx",
+        "antelope_v2x",
+        "buffalo_fp16x",
+        "aabuffalo_l",
+    )
+    # R19-12: ≥4-char suffix junk on these NC seeds is *not* floor-listed.
+    # 1–3-char suffix junk stays on (c) (``buffalo_lx``); junk-*prefix*
+    # twins stay on F15-1 (``aabuffalo_l``). Door-pass without an
+    # exception witness is the documented asymmetry — do not widen
+    # floor listing to name-continuations (``buffalo_lakes``).
+    FLOOR_MISS_SUFFIX_JUNK: ClassVar[tuple[str, ...]] = (
+        "buffalo_lxxxx",
+        "buffalo_labcd",
+        "buffalolabcd",
+        "antelope_v2abcd",
+    )
+
+    def _assert_nc_seed_deny(self, token: str, expected_pkg: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (R19-01 underscore NC seed + exception)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected stem {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {hit.reason}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        # Membership often fires before floor-promotion detail; either
+        # extractor must name the underscore NC seed.
+        door_id = _door_nc_pattern_id(result.detail) or _door_entry_package_id(
+            result.detail
+        )
+        assert door_id == expected_pkg, (
+            f"{token!r}: door must name {expected_pkg!r}, got {door_id!r} "
+            f"({result.detail!r})"
+        )
+
+    @pytest.mark.parametrize("seed,junk,spelling", REPRESENTATIVE)
+    def test_representative_seed_junk_spelling_denies(
+        self, seed: str, junk: str, spelling: str
+    ) -> None:
+        self._assert_nc_seed_deny(f"{seed}{junk}{spelling}", seed)
+
+    @pytest.mark.parametrize("token,expected_pkg", VARIANTS)
+    def test_variant_shapes_deny(self, token: str, expected_pkg: str) -> None:
+        self._assert_nc_seed_deny(token, expected_pkg)
+
+    def test_full_cross_product_sweep_denies(self) -> None:
+        """All 168 core gadgets {seed}{junk}{spelling} deny as the NC seed."""
+        seen = 0
+        for seed in self.SEEDS:
+            for junk in self.JUNK:
+                for spelling in self.SPELLINGS:
+                    self._assert_nc_seed_deny(f"{seed}{junk}{spelling}", seed)
+                    seen += 1
+        assert seen == 168
+
+    def test_a3_must_stay_deny_fence(self) -> None:
+        for token, expected_pkg, axis in self.A3_STILL_DENY:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} A.3 must stay DENY"
+            assert hit.package_id == expected_pkg, (
+                f"{token!r}: A.3 expected {expected_pkg!r}, got {hit.package_id!r}"
+            )
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            if axis == "nc":
+                assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+                assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            else:
+                assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+                assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_a4_must_stay_admit_fence(self) -> None:
+        for token in self.A4_STILL_ADMIT:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"{token!r} A.4 must stay ADMIT"
+            )
+
+    def test_four_plus_suffix_junk_without_exception_is_floor_miss(
+        self,
+    ) -> None:
+        """R19-12: ≥4-char suffix junk is not floor-listed (no exception).
+
+        Door-pass matches the sanctioned ``buffalo_lx`` asymmetry.
+        1–3-char suffix junk remains (c)-listed; prefix-junk twins
+        remain F15-1-listed.
+        """
+        for token in self.FLOOR_MISS_SUFFIX_JUNK:
+            assert policy._package_denylist_hit(token) is None, (
+                f"{token!r} must stay floor-miss (R19-12 intended)"
+            )
+            assert policy.audit_derived_from_model(token).ok is True
+        # Contrast: 1–3 (c) and F15-1 prefix-junk stay listed.
+        lx = policy._package_denylist_hit("buffalo_lx")
+        assert lx is not None and lx.package_id == "buffalo_l"
+        assert policy.audit_derived_from_model("buffalo_lx").ok is True
+        pref = policy._package_denylist_hit("aabuffalo_l")
+        assert pref is not None and pref.package_id == "buffalo_l"
+        assert policy.audit_derived_from_model("aabuffalo_l").ok is True
+
+    def test_red_proof_mid_exception_unknown_rem_neuter_underscore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter empty-rem ownership → R19-01 gadgets admit."""
+        gadgets = [
+            f"{seed}{junk}{spelling}"
+            for seed, junk, spelling in self.REPRESENTATIVE
+        ]
+        gadgets.append("buffalo_lx_yolox")
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_MID_EXCEPTION_UNKNOWN_REM_ENABLED", False)
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without mid empty-rem, {token!r} must admit"
+            )
+        # A.3 neighbours owned by other mechanisms stay deny.
+        # Compact twin ``buffalolxyolox`` shares this empty-rem arm and
+        # admits under the same neuter — do not claim it stays deny.
+        assert policy._package_denylist_hit("buffalo_lyolox") is not None
+        assert policy._package_denylist_hit("buffalo_l_xyolox") is not None
+        # A.4 stays admit; door-pass seed+junk stays admit.
+        assert policy._package_denylist_hit("ayoloxs") is None
+        assert policy.audit_derived_from_model("buffalo_lx").ok is True
+
+    def test_red_proof_underscore_glued_owner_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop the folded-seed owner → R19-01 gadgets admit.
+
+        Compact R18-01 siblings stay on ``_mid_exception_prefix_deny_owner``.
+        """
+        token = "buffalo_lxyolox"
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_underscore_preserving_glued_seed_owner", lambda _t: None
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: without underscore glued owner, "
+            f"{token!r} must admit"
+        )
+        assert policy._package_denylist_hit("buffalo_labcdyolox") is None
+        assert policy._package_denylist_hit("buffalo_lx_yolox") is None
+        assert policy._package_denylist_hit("fastsamxyolox") is not None
+        assert policy._package_denylist_hit("buffalo_lyolox") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
+        assert policy._package_denylist_hit("yolop_yolox") is None

@@ -4751,15 +4751,48 @@ def _mid_exception_prefix_deny_owner(
     return _deny_folded_ab_hit(prefix)
 
 
+def _underscore_preserving_glued_seed_owner(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """Longest underscore-preserving deny/NC seed glued onto ``token``.
+
+    R19-01: ``buffalo_lxyolox`` starts with ``buffalo_l`` and continues
+    with alnum (not a ``seed_`` (b) boundary). Compact contained-long
+    on the joined form would also fire, but that same compact prefix
+    owner falsely attributes exception compounds (``yolop_yolox`` →
+    yolo via (c) on compact ``yolop``). Matching the folded
+    underscore seed against the underscore-preserving token makes
+    ownership visible without collapsing exception-family compounds.
+
+    Longest ``seed_c`` wins so ``buffalo_scxyolox`` names ``buffalo_sc``
+    not ``buffalo_s``. Junk after the seed is unbounded.
+    """
+    if not token or "_" not in token:
+        return None
+    best: PackageDenylistEntry | None = None
+    best_len = -1
+    for seed_c, _seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if "_" not in seed_c:
+            continue
+        if not token.startswith(seed_c) or len(token) <= len(seed_c):
+            continue
+        rest = token[len(seed_c) :]
+        if not rest or not rest[0].isalnum():
+            continue
+        if len(seed_c) > best_len:
+            best_len = len(seed_c)
+            best = entry
+    return best
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
     """F13-3 / R15-L-3: exception seed at compact offset > 0 + deny rem.
 
     Closes junk-prefix defeat of F12-1 (``xyoloxyolo`` / ``myyoloxyolo``
-    / ``abcyoloxyolo``). Offset 0 is owned by F12-1 steal. Separator
-    tokens are owned by the suffix walk (``my_yoloxyolo`` already
-    denies). ``yolodummy`` has no exception seed and stays admitted.
+    / ``abcyoloxyolo``). Offset 0 is owned by F12-1 steal.
+    ``yolodummy`` has no exception seed and stays admitted.
     Single load-bearing helper (TEST-15).
 
     R18-01: the F15-5 skip is only for an *exact* folded deny/NC
@@ -4767,9 +4800,30 @@ def _compact_mid_exception_deny_adjacency(
     the full token and must not launder ``fastsamxyoloxextra`` /
     ``fastsamxyolox``. Empty rem after a deny-stem + junk prefix is
     the same ownership (``fastsamxyolox`` / ``fastsamxyoloxs``).
+
+    R19-01: the empty-rem ownership arm also runs on underscore-
+    preserving tokens, but via
+    :func:`_underscore_preserving_glued_seed_owner` — not compact
+    contained-long / (c) on the joined prefix. The walker used to
+    bail on ``_`` so ``buffalo_lxyolox`` was scanned only as
+    last-segment ``lxyolox``, whose prefix ``lx`` looks like
+    anonymous junk (the pinned ``ayoloxs`` shape). Matching the
+    folded seed (``buffalo_l``) against the underscore-preserving
+    token makes ownership visible; compact (c) on ``yolop`` would
+    false-deny ``yolop_yolox``. Junk length is unbounded
+    (``buffalo_labcdyolox``). The non-empty rem arm still skips
+    underscore tokens so ``buffalo_lxyoloxextra`` stays F15-5
+    unknown-residual (A.3 attribution fence). Separator-aligned
+    deny forms (``my_yoloxyolo`` / ``buffalo_l_xyolox``) still hit
+    earlier via (b) / suffix walk. Prefix ownership on the compact
+    (no-``_``) path is compact-(a) / contained-long / elevated (c)
+    only — the folded (b) ``seed_`` arm of
+    ``_deny_has_folded_ab_claim`` cannot fire on a compact slice
+    (R19-05).
     """
-    if not token or "_" in token:
+    if not token:
         return None
+    has_sep = "_" in token
     compact = _compact_canonical(token)
     if not compact:
         return None
@@ -4787,6 +4841,14 @@ def _compact_mid_exception_deny_adjacency(
             rem = compact[idx + len(spelling) :]
             prefix = compact[:idx]
             if rem:
+                # R19-01: rem-path on underscore tokens would compact-
+                # join the dropped head into the prefix and retarget
+                # ``buffalo_lxyoloxextra`` from yolox_unknown_residual
+                # to buffalo_l (A.3). Leave non-empty rem to the
+                # last-segment suffix, which still sees prefix ``lx``.
+                if has_sep:
+                    start = idx + 1
+                    continue
                 deny = _deny_folded_ab_hit(rem)
                 if deny is None:
                     deny = _contained_long_deny_seed_hit(rem)
@@ -4835,7 +4897,13 @@ def _compact_mid_exception_deny_adjacency(
                 # prefixes (``ayoloxs`` / ``xyoloxs``) stay admit.
                 # A deny/NC stem in the prefix owns the token
                 # (``fastsamxyolox`` / ``fastsamxyoloxs``).
-                owned = _mid_exception_prefix_deny_owner(prefix)
+                # Underscore tokens use the folded-seed owner so
+                # ``buffalo_lxyolox`` names ``buffalo_l`` without
+                # collapsing ``yolop_yolox`` to fabricated yolo.
+                if has_sep:
+                    owned = _underscore_preserving_glued_seed_owner(token)
+                else:
+                    owned = _mid_exception_prefix_deny_owner(prefix)
                 if owned is not None:
                     return owned
             start = idx + 1

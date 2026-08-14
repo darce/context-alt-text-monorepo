@@ -410,6 +410,19 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
     expect(screen.queryByText(/No people match/)).not.toBeInTheDocument();
   });
 
+  // The harness renders a <output data-testid="location-search"> (implicit
+  // role=status), so bare getByRole('status') is ambiguous — scope to the
+  // section's filter region.
+  const getSearchStatus = (): HTMLElement => {
+    const region = screen
+      .getAllByRole('status')
+      .find((el) => el.classList.contains('acx-roster-section__filter'));
+    if (!region) {
+      throw new Error('roster search status region not found');
+    }
+    return region;
+  };
+
   /**
    * [ROSTER-W-03] [WBUX-5-R2-S6-BR-04] [TEST-15]
    * Filter the table immediately, but do not rewrite the role=status search
@@ -446,7 +459,7 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
       act(() => {
         vi.advanceTimersByTime(1);
       });
-      expect(within(screen.getByRole('status')).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -462,11 +475,11 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
       act(() => {
         vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS);
       });
-      expect(within(screen.getByRole('status')).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
 
       fireEvent.change(search, { target: { value: 'Sarahzzz' } });
       // Goes red if empty outcome waits for debounce or lives outside status.
-      const status = screen.getByRole('status');
+      const status = getSearchStatus();
       expect(within(status).queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
       expect(within(status).getByText('No people match “Sarahzzz”.')).toBeInTheDocument();
     } finally {
@@ -484,7 +497,7 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
       act(() => {
         vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS);
       });
-      expect(within(screen.getByRole('status')).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
       // Goes red if the stale count stays announced for the 300ms window.

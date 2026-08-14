@@ -43,14 +43,34 @@ const isInteractiveControl = (el: Element): boolean => {
 };
 
 describe('thumbnailCropOwnerId', () => {
-  it('prefers identity_id over media+bbox [E21-19-R2-BR-01]', () => {
+  it('includes bbox on assigned identities so a usability change invalidates the crop [E21-19-REV1-05]', () => {
     expect(
       thumbnailCropOwnerId({
         media_id: 100,
         identity_id: 'identity-first',
         bbox: { x: 10, y: 20, width: 30, height: 40 },
       }),
-    ).toBe('identity-first');
+    ).toBe('identity-first:10,20,30,40');
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+        identity_id: 'identity-first',
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      }),
+    ).toBe('identity-first:0,0,0,0');
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+        identity_id: 'identity-first',
+      }),
+    ).toBe('identity-first:none');
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 200,
+        identity_id: 'identity-second',
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      }),
+    ).toBe('identity-second:10,20,30,40');
   });
 
   it('folds bbox into the unassigned media fallback [E21-19-R2-BR-01]', () => {

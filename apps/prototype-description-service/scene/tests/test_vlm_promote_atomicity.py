@@ -1311,7 +1311,7 @@ def test_wf3_caption_face_generators_same_stem_refuse(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
     stem = "shared-stem-collision"
-    man = Path("scene/tests/seed/golden.json")
+    man = Path(__file__).resolve().parent / "seed" / "golden.json"
 
     cap.write_anchor(manifest_path=man, out_dir=out, stem=stem)
     caption_run = (out / f"{stem}.json").read_text()

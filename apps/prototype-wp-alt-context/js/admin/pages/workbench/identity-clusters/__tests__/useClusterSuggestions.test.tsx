@@ -103,6 +103,25 @@ describe('selectClusterSuggestions', () => {
     });
     expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c9'));
   });
+
+  it('threads ProjectedSuggestion.suggestionId onto option.suggestion_id (BR-16)', () => {
+    // Predicted first failure: suggestion_id undefined when only camelCase suggestionId present
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'i1',
+          clusterId: 'c1',
+          label: 'Alice',
+          similarity: 0.9,
+          identityCount: 2,
+          suggestionId: 'sug-from-projection',
+        },
+      ],
+      namingOptions: [],
+    });
+    expect(options).toHaveLength(1);
+    expect(options[0]?.suggestion_id).toBe('sug-from-projection');
+  });
 });
 
 describe('useClusterSuggestions', () => {

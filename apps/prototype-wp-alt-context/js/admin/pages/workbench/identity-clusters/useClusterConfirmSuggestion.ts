@@ -34,7 +34,7 @@ interface UseClusterConfirmSuggestionOptions {
 }
 
 export const useClusterConfirmSuggestion = ({
-  clusterLabel,
+  clusterLabel: _clusterLabel,
   members,
   editableClusterId,
   canEdit,
@@ -49,6 +49,7 @@ export const useClusterConfirmSuggestion = ({
   resetSaveStatus,
   saveAbortRef,
 }: UseClusterConfirmSuggestionOptions) => {
+  void _clusterLabel;
   const { runMatchedAction } = useClusterMatchAction({
     members,
     editableClusterId,
@@ -76,9 +77,9 @@ export const useClusterConfirmSuggestion = ({
       let mutationStarted = false;
 
       try {
-        const currentLabel = clusterLabel ?? '';
-        // Exact no-op (B6 / PR-09): case-only confirm ("bob"→"Bob") must apply.
-        if (label === currentLabel) {
+        // Exact no-op (BR-42): same target cluster id — not same label. Same-label
+        // different-target (e.g. Bob→other-bob) must still merge/assign.
+        if (clusterId === editableClusterId) {
           cancelEditing();
           resetSaveStatus();
           return;
@@ -104,7 +105,7 @@ export const useClusterConfirmSuggestion = ({
       cancelEditing,
       canEdit,
       canSearchForMatch,
-      clusterLabel,
+      editableClusterId,
       mutations,
       queueSaveStatus,
       resetSaveStatus,

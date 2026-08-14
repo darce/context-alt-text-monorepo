@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
+import { selectClusterSuggestions } from '../useClusterSuggestions';
 
 describe('ClusterEditForm', () => {
   const defaultProps = {
@@ -263,5 +264,38 @@ describe('ClusterEditForm', () => {
     fireEvent.click(rejectButton);
 
     expect(onRejectSuggestion).toHaveBeenCalledWith('s-1');
+  });
+
+  it('threads projected suggestionId into reject via selectClusterSuggestions (BR-16)', () => {
+    // Predicted first failure: selector drops suggestionId → no reject button / wrong id
+    const onRejectSuggestion = vi.fn();
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'identity-1',
+          clusterId: 'cluster-alice',
+          label: 'Alice',
+          similarity: 0.91,
+          identityCount: 4,
+          suggestionId: 'sug-real-alice',
+        },
+      ],
+      namingOptions: [],
+      labelInput: '',
+    });
+
+    expect(options[0]?.suggestion_id).toBe('sug-real-alice');
+
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="A"
+        options={options}
+        onRejectSuggestion={onRejectSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /reject/i }));
+    expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
   });
 });

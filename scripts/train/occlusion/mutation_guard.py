@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2292  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2325  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1784,9 +1784,9 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF15MidExceptionUnknownRem::test_offset0_unknown_still_denies',
     'test_license_policy.py::TestF15MidExceptionUnknownRem::test_red_proof_mid_exception_unknown_rem_neuter',
     'test_license_policy.py::TestF15PaddleModelFileExtensions::test_compact_glue_controls_stay_deny',
-    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[fastsam.pdparams]',
-    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[yolov8.pdmodel]',
-    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[yolov8.pdparams]',
+    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[fastsam.pdparams-fastsam]',
+    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[yolov8.pdmodel-yolov8]',
+    'test_license_policy.py::TestF15PaddleModelFileExtensions::test_deny_seed_plus_pd_extension_still_denies[yolov8.pdparams-yolov8]',
     'test_license_policy.py::TestF15PaddleModelFileExtensions::test_pdparams_pdmodel_strip_admits[ppyolo_r50vd_dcn_1x_coco.pdparams]',
     'test_license_policy.py::TestF15PaddleModelFileExtensions::test_pdparams_pdmodel_strip_admits[ppyoloe_plus_crn_s_80e_coco.pdmodel]',
     'test_license_policy.py::TestF15PaddleModelFileExtensions::test_pdparams_pdmodel_strip_admits[ppyoloe_plus_crn_s_80e_coco.pdparams]',
@@ -1819,11 +1819,16 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF16EmptyIdentityHonestyAndStackedTags::test_yolox_stacked_latest_still_admits',
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_nasal]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_nashville]',
+    'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_nasls]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_english_nas_prefix_is_not_deci[pp_yolo_naso]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nas]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nas_l]',
+    'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[pp_yolo_nass]',
     'test_license_policy.py::TestF16NasResidualAttribution::test_known_nas_residual_is_deci_nc[ppyoloenas]',
-    'test_license_policy.py::TestF16PaddleVendorMerge::test_non_vendor_pp_yoloe_still_denies[weights_pp_yoloe]',
+    'test_license_policy.py::TestF16PaddleVendorMerge::test_non_vendor_pp_yoloe_still_denies[model_pp_yoloe-yolo]',
+    'test_license_policy.py::TestF16PaddleVendorMerge::test_non_vendor_pp_yoloe_still_denies[paddles_pp_yoloe-yolo]',
+    'test_license_policy.py::TestF16PaddleVendorMerge::test_non_vendor_pp_yoloe_still_denies[v2_pp_yoloe-yolo]',
+    'test_license_policy.py::TestF16PaddleVendorMerge::test_non_vendor_pp_yoloe_still_denies[weights_pp_yoloe-yolo]',
     'test_license_policy.py::TestF16PaddleVendorMerge::test_paddle_vendor_segment_set_is_pinned',
     'test_license_policy.py::TestF16PaddleVendorMerge::test_vendor_pp_yoloe_admits[baidu_pp_yoloe]',
     'test_license_policy.py::TestF16PaddleVendorMerge::test_vendor_pp_yoloe_admits[paddle_pp_yoloe]',
@@ -1840,6 +1845,12 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_agpl_stem_junk_infix_exception_denies[yolorxyoloxextra-yolor]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_agpl_stem_junk_infix_exception_denies[yolov5zyoloxsfoo-yolov5]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_agpl_stem_junk_infix_exception_denies[yoloworldxyoloxextra-yolo_world]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_classify_owned_unknown_rem_controls_hold[buffalo_lxyoloxextra-yolox_unknown_residual]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_classify_owned_unknown_rem_controls_hold[buffalo_lxyoloxlatest-yolox_unknown_residual]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_classify_owned_unknown_rem_controls_hold[xyoloxsextra-yolox_unknown_residual]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_classify_owned_unknown_rem_controls_hold[yoloyoloxextra-yolo]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_elevated_and_exact_prefix_controls_hold[arcfaceyoloxextra-arcface]',
+    'test_license_policy.py::TestF16PrefixDenyLaundering::test_elevated_and_exact_prefix_controls_hold[fastsamx-fastsam]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_legit_f15_5_admits_hold[ayoloxs]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_legit_f15_5_admits_hold[xyoloxs]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_nc_stem_junk_infix_exception_denies[arcfacexyoloxextra-arcface]',
@@ -1847,13 +1858,35 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_nc_stem_junk_infix_exception_denies[scrfdxyoloxextra-scrfd]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_nc_stem_junk_infix_exception_denies[vec2facexyoloxextra-vec2face]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_nc_stem_junk_infix_exception_denies[yolonasxyoloxextra-yolo_nas]',
-    'test_license_policy.py::TestF16PrefixDenyLaundering::test_no_junk_and_unknown_rem_controls_hold[arcfaceyoloxextra-arcface]',
-    'test_license_policy.py::TestF16PrefixDenyLaundering::test_no_junk_and_unknown_rem_controls_hold[fastsamx-fastsam]',
-    'test_license_policy.py::TestF16PrefixDenyLaundering::test_no_junk_and_unknown_rem_controls_hold[xyoloxsextra-yolox_unknown_residual]',
-    'test_license_policy.py::TestF16PrefixDenyLaundering::test_no_junk_and_unknown_rem_controls_hold[yoloyoloxextra-yolo]',
     'test_license_policy.py::TestF16PrefixDenyLaundering::test_red_proof_mid_exception_unknown_rem_neuter_gadgets',
     'test_license_policy.py::TestF16StealHonestyPin::test_red_proof_steal_flag_turns_fastsam_residual_red',
     'test_license_policy.py::TestF16StealHonestyPin::test_steal_names_fastsam_residual_honest',
+    'test_license_policy.py::TestF17StackedExceptionStemAttribution::test_fastsam_stacked_exception_names_stem',
+    'test_license_policy.py::TestF17StackedExceptionStemAttribution::test_junk_prefix_stacked_exception_stays_yolo',
+    'test_license_policy.py::TestF17StackedExceptionStemAttribution::test_red_proof_stem_over_exc_rem_neuter',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_a3_must_stay_deny_fence',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_a4_must_stay_admit_fence',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_four_plus_suffix_junk_without_exception_is_floor_miss',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_full_cross_product_sweep_denies',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_mid_exception_unknown_rem_neuter_underscore',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_underscore_glued_owner_neuter',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[antelope_v2-abc-yolox]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_l-x-yolox]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_l2-v9-yoloxs]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_pt-abc-yolop]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_s-abcd-yolos]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_sc-x-yolof]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_representative_seed_junk_spelling_denies[buffalo_trt-v9-ppyoloe]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[BUFFALO_TRTXYOLOX-buffalo_trt]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[Buffalo_LXYoloX-buffalo_l]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[antelope_v2x_yolox-antelope_v2]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[antelope_v2xyolox_s-antelope_v2]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo-lxyolox-buffalo_l]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_lx_yolox-buffalo_l]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_lxyolox:latest-buffalo_l]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_lxyolox_s-buffalo_l]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_scabcyolox:v0.3.0-buffalo_sc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_sx_yoloxs-buffalo_s]',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',
@@ -3704,7 +3737,8 @@ MUTATIONS: list[Mutation] = [
             # Wave F16: new deny pins (R18-01/04/06/09/02).
             "test_agpl_stem_junk_infix_exception_denies",
             "test_nc_stem_junk_infix_exception_denies",
-            "test_no_junk_and_unknown_rem_controls_hold",
+            "test_elevated_and_exact_prefix_controls_hold",
+            "test_classify_owned_unknown_rem_controls_hold",
             "test_known_nas_residual_is_deci_nc",
             "test_english_nas_prefix_is_not_deci",
             "test_non_vendor_pp_yoloe_still_denies",
@@ -3712,6 +3746,13 @@ MUTATIONS: list[Mutation] = [
             "test_deny_seed_plus_pd_extension_still_denies",
             "test_steal_names_fastsam_residual_honest",
             "test_f15_1_must_list_same_path_still_floor_denies",
+            # Wave F17: underscore-NC gadgets + stacked-exception stem.
+            "test_representative_seed_junk_spelling_denies",
+            "test_variant_shapes_deny",
+            "test_full_cross_product_sweep_denies",
+            "test_a3_must_stay_deny_fence",
+            "test_fastsam_stacked_exception_names_stem",
+            "test_junk_prefix_stacked_exception_stays_yolo",
         ),
     ),
     Mutation(
@@ -3931,11 +3972,14 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_dota_tag_drop",
             "test_red_proof_exception_spelling_glue_neuter",
             "test_red_proof_ppyolo_nas_residual_neuter",
-            # Wave F16: classify-owned NAS / unknown-rem / 4-char pins
-            # (R18-03: yoloppyoloe spelling-glue is not a classify victim).
+            # Wave F16/F17: classify-owned NAS / unknown-rem pins.
+            # R18-01 gadgets are prefix-owner, not classify (R19-09);
+            # the gadget red-proof still dies here via classify-owned
+            # siblings (yoloxsextra / yoloyoloxextra). R19-10 lists
+            # only the classify-owned split, not the elevated/(c) rows.
             "test_known_nas_residual_is_deci_nc",
             "test_english_nas_prefix_is_not_deci",
-            "test_no_junk_and_unknown_rem_controls_hold",
+            "test_classify_owned_unknown_rem_controls_hold",
             "test_red_proof_mid_exception_unknown_rem_neuter_gadgets",
         ),
     ),
@@ -4057,10 +4101,11 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_dota_tag_drop",
             "test_red_proof_exception_spelling_glue_neuter",
             "test_red_proof_ppyolo_nas_residual_neuter",
-            # Wave F16: unknown-default pins (R18-03: yoloppyoloe
-            # spelling-glue never enters classify).
+            # Wave F16/F17: unknown-default pins. R18-01 gadgets are
+            # prefix-owner, not classify (R19-09). R19-10: only the
+            # classify-owned split is a mutant witness here.
             "test_english_nas_prefix_is_not_deci",
-            "test_no_junk_and_unknown_rem_controls_hold",
+            "test_classify_owned_unknown_rem_controls_hold",
             "test_red_proof_mid_exception_unknown_rem_neuter_gadgets",
         ),
     ),

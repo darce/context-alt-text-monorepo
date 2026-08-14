@@ -139,8 +139,12 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
              unknown-residual note (NOT a fabricated Ultralytics
              attribution). Covers compact-glue deny (A14-1), long debris
              (``yolosegme`` / ``yolosfree``), tag+debris laundering
-             (``yolox_tiny_eg`` / ``yolox_s_free``), and short non-
-             artifact rem (``yolox_z`` / ``yolos_ti``).
+             (``yolox_tiny_eg`` / ``yolox_s_free``), short non-
+             artifact rem (``yolox_z`` / ``yolos_ti``), and junk-prefix
+             mid-token exception + unknown rem (F15-5:
+             ``xyoloxsextra`` / ``myyoloxsextra`` →
+             ``yolox_unknown_residual``; ``ayoloxs`` / ``xyoloxs``
+             stay admit).
        **B14-1 / F12-1 steal** is the same mechanism: when the residual
        came from unbounded compact prefix (walker cannot re-queue it)
        and has any deny hit — exact identity included (``yoloxyolo`` →

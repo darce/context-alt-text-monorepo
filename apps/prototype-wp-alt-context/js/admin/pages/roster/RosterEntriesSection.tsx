@@ -180,9 +180,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 
   /**
    * Extend the existing filter status surface with a search result summary so
-   * SR users hear one status region (no second live region / A11Y-21). The
-   * summary only appears when search is active and the list is non-empty —
-   * empty-search copy is a separate, distinct message below.
+   * SR users hear one status region (no second live region / A11Y-21). Match
+   * counts debounce; empty-search / empty-filter copy joins the same region
+   * immediately [E21-19-REV1-02].
    */
   const searchStatus =
     hasActiveSearch && visibleEntries.length > 0
@@ -196,8 +196,6 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   // Filter/table stay live; only non-null status-region rewrites are delayed
   // [ROSTER-W-03]. Transition to null flushes immediately [E21-19-REV1-01].
   const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
-
-  const statusLines = [activeFilterStatus, announcedSearchStatus].filter((line): line is string => line !== null);
 
   const emptySearchMessage = hasActiveSearch
     ? hasCategoricalFilter
@@ -318,6 +316,16 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     emptyFilterMessage !== null &&
     visibleEntries.length === 0 &&
     !hasActiveSearch;
+
+  const immediateEmptyStatus =
+    isEmptySearchResult && emptySearchMessage !== null
+      ? emptySearchMessage
+      : isEmptyFilterResult
+        ? emptyFilterMessage
+        : null;
+  const statusLines = [activeFilterStatus, announcedSearchStatus, immediateEmptyStatus].filter(
+    (line): line is string => line !== null,
+  );
 
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
@@ -495,7 +503,6 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           </div>
         ) : isEmptySearchResult && emptySearchMessage !== null ? (
           <div className="acx-roster-section__filter" data-testid="roster-search-empty">
-            <p>{emptySearchMessage}</p>
             <button type="button" className="acx-link-button" onClick={clearSearch}>
               {__('Clear search', 'alt-context')}
             </button>
@@ -505,9 +512,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               </button>
             )}
           </div>
-        ) : isEmptyFilterResult ? (
-          <p>{emptyFilterMessage}</p>
-        ) : (
+        ) : isEmptyFilterResult ? null : (
           <RosterEntriesTable entries={visibleEntries} />
         ))}
     </div>

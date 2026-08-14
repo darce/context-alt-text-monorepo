@@ -1421,28 +1421,60 @@ _MODEL_FILE_EXTENSIONS: tuple[str, ...] = (
 )
 
 
-# Unofficial separators folded to ``_`` in :func:`canonical` *before* the
-# official ``[-_.\\s]`` collapse and any compact / seed matching (F13-1 /
-# R15-G1-1 / R15-G1-2 / R15-G1-3). NFKC already maps fullwidth twins
-# (``＋＝：＠＃｜``) onto these ASCII forms, so the ASCII set is sufficient.
-# Empty string disables the fold (TEST-15 red-proof / revert to old charset).
+# F14-1: production uses the total ASCII-punct class fold (every remaining
+# non-alnum ASCII character except ``/``). ``_UNOFFICIAL_SEPARATOR_CHARS``
+# is the F13-1 enumeration, consulted only when ``_ASCII_PUNCT_FOLD_TOTAL``
+# is False (TEST-15 revert to the old charset). Empty charset + total-fold
+# off is the pre-F13-1 official-only ``[-_.\\s]`` fold (F13-1 red-proof).
+_ASCII_PUNCT_FOLD_TOTAL: bool = True
 _UNOFFICIAL_SEPARATOR_CHARS: str = "+=:@|#"
 
 
-def canonical(value: str) -> str | None:
-    """NFKC → strip Cf/format chars → casefold → unify separators → collapse.
+def _has_c0_c1_control(text: str) -> bool:
+    """True when any C0/C1 control (Unicode Cc, including NUL) remains."""
+    return any(unicodedata.category(ch) == "Cc" for ch in text)
 
-    Separators unified to ``_``: unofficial ``+ = : @ | #`` (and their
-    NFKC fullwidth twins) first, then runs of ``[-_.\\s]+``. Slash (``/``)
-    and backslash are preserved as path separators so slash-components can
-    be exact-matched independently. Returns ``None`` when any non-ASCII
-    residue survives (untrusted / undecidable — callers treat as
-    ``invalid_row``).
+
+def _fold_ascii_non_alnum(text: str) -> str:
+    """Fold every non-alphanumeric ASCII character except ``/`` to ``_``.
+
+    Slash keeps path-component split semantics. Backslash is normalised
+    to slash before this runs. Non-ASCII survivors are left intact so the
+    later residue check can fail-closed ``invalid_row``.
+    """
+    out: list[str] = []
+    for ch in text:
+        if ord(ch) < 128 and not ch.isalnum() and ch != "/":
+            out.append("_")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def canonical(value: str) -> str | None:
+    """NFKC → strip Cf → fail-closed C0/C1 → casefold → fold punct → collapse.
+
+    After NFKC and Cf/format stripping, any C0/C1 control (including NUL)
+    fails closed (``None`` / ``invalid_row``) — never admit, never silently
+    strip. Remaining non-alphanumeric ASCII folds to ``_`` except ``/``
+    (path separator). Backslash is normalised to slash first so it keeps
+    component-split behaviour. ``_`` runs collapse; leading/trailing ``_``
+    strip; a token that folds to empty is ``""`` (callers treat as
+    ``invalid_row`` on row/scalar floors). Non-ASCII residue that survives
+    NFKC (U+2010, en/em-dash) still returns ``None``. Fullwidth forms
+    NFKC-map to ASCII first and then fold.
+
+    When ``_ASCII_PUNCT_FOLD_TOTAL`` is False the F13-1 enumeration
+    ``_UNOFFICIAL_SEPARATOR_CHARS`` plus official ``[-_.\\s]`` is used
+    instead (TEST-15).
     """
     if value is None:
         return None
     text = unicodedata.normalize("NFKC", str(value))
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    # F14-1: C0/C1 controls fail closed — never strip, never admit.
+    if _has_c0_c1_control(text):
+        return None
     text = text.strip().casefold()
     if not text:
         return ""
@@ -1459,13 +1491,17 @@ def canonical(value: str) -> str | None:
                 break
         stripped_parts.append(p)
     text = "/".join(stripped_parts)
-    # F13-1: unofficial separators → ``_`` BEFORE official ``[-_.\\s]``
-    # collapse / compact folding / seed matching (SECD-05 fail-closed).
-    if _UNOFFICIAL_SEPARATOR_CHARS:
-        unofficial_cls = "[" + re.escape(_UNOFFICIAL_SEPARATOR_CHARS) + "]+"
-        text = re.sub(unofficial_cls, "_", text)
-    # Unify official non-slash separators to underscore; collapse runs; trim.
-    text = re.sub(r"[-_.\s]+", "_", text)
+    if _ASCII_PUNCT_FOLD_TOTAL:
+        # F14-1: total class fold. Enumeration is structurally unwinnable
+        # (every ASCII punct outside +=:@#| fail-opened under F13-1).
+        text = _fold_ascii_non_alnum(text)
+    else:
+        # TEST-15 revert: F13-1 unofficial charset, then official ``[-_.\\s]``.
+        if _UNOFFICIAL_SEPARATOR_CHARS:
+            unofficial_cls = "[" + re.escape(_UNOFFICIAL_SEPARATOR_CHARS) + "]+"
+            text = re.sub(unofficial_cls, "_", text)
+        text = re.sub(r"[-_.\s]+", "_", text)
+    # Collapse underscore runs; trim per slash component and whole token.
     text = re.sub(r"_+", "_", text)
     text = "/".join(seg.strip("_") for seg in text.split("/"))
     text = text.strip("_")

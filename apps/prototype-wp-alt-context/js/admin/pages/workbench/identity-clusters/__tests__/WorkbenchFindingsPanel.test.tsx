@@ -142,14 +142,29 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={onTargetFindings} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={onTargetFindings} />);
 
     expect(screen.getByText('Recognition findings')).toBeInTheDocument();
     expect(screen.getByText('2 to review')).toBeInTheDocument();
     expect(screen.getByText('1 merge candidate')).toBeInTheDocument();
     expect(screen.getByText('3 suggested names')).toBeInTheDocument();
     expect(screen.getByText('4 unlabeled groups')).toBeInTheDocument();
-    expect(screen.getAllByRole('img')).toHaveLength(2);
+    // L2V-04: pin real preview imgs (alt + src), not placeholder count alone.
+    const previewImgs = screen.getAllByRole('img');
+    expect(previewImgs).toHaveLength(2);
+    expect(previewImgs[0]).toHaveAttribute('src', 'http://example.test/face-1.jpg');
+    expect(previewImgs[0]).toHaveAttribute('alt', 'Grace Hopper');
+    expect(previewImgs[1]).toHaveAttribute('src', 'http://example.test/face-2.jpg');
+    expect(previewImgs[1]).toHaveAttribute('alt', 'Reference image');
+    // Spy path also pins the real Avatar/FaceThumbnail renderers (not bare placeholders).
+    expect(avatarSpy).toHaveBeenCalled();
+    expect(
+      avatarSpy.mock.calls.some(
+        (call) =>
+          (call[0] as { src?: string }).src === 'http://example.test/face-1.jpg' ||
+          (call[0] as { src?: string }).src === 'http://example.test/face-2.jpg',
+      ),
+    ).toBe(true);
 
     const primary = screen.getByRole('button', { name: /Review next/ });
     expect(primary).toBeEnabled();
@@ -158,7 +173,6 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   it('routes cluster next-actions through onTargetFindings (queue owns cluster cards)', async () => {
-    const onLabel = vi.fn();
     const onTargetFindings = vi.fn();
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
@@ -168,17 +182,16 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={onLabel} onTargetFindings={onTargetFindings} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={onTargetFindings} />);
 
     await userEvent.click(screen.getByRole('button', { name: /Review next/ }));
     expect(onTargetFindings).toHaveBeenCalledTimes(1);
-    expect(onLabel).not.toHaveBeenCalled();
   });
 
   it('disables the primary action and explains population in the empty state', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel());
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
       screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
@@ -197,7 +210,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
   });
@@ -210,7 +223,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('Checking recognition findings…')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Review next/ })).not.toBeInTheDocument();
@@ -224,7 +237,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
   });
@@ -241,7 +254,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
@@ -259,7 +272,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const live = screen.getByRole('status');
     expect(live).toHaveAttribute('aria-live', 'polite');
@@ -270,7 +283,7 @@ describe('WorkbenchFindingsPanel', () => {
   it('UI-04: aria-live announces empty only after a successful load with no findings', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel());
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const live = screen.getByRole('status');
     expect(live).toHaveAttribute('aria-live', 'polite');
@@ -295,7 +308,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.queryByText('0 unlabeled groups')).not.toBeInTheDocument();
     expect(screen.queryByText('0 unlabeled group')).not.toBeInTheDocument();
@@ -311,7 +324,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('Recognition findings are unavailable right now.')).toBeInTheDocument();
   });
@@ -326,7 +339,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
     expect(
@@ -347,7 +360,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={onTargetFindings} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={onTargetFindings} />);
 
     const secondary = screen.getByRole('button', { name: 'View all findings' });
     await userEvent.click(secondary);
@@ -381,7 +394,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const image = screen.getByAltText('Ada Lovelace');
     expect(image.tagName).toBe('IMG');
@@ -415,7 +428,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const cropRoot = container.querySelector('.acx-face-thumbnail');
     expect(cropRoot).toBeInTheDocument();
@@ -455,7 +468,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
     expect(avatarSpy).toHaveBeenCalledWith(
@@ -504,7 +517,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const crop = container.querySelector('.acx-face-thumbnail');
     expect(crop).toBeInTheDocument();
@@ -537,7 +550,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Reference image')).toBeInTheDocument();
     expect(screen.queryByAltText('Detected face')).not.toBeInTheDocument();
@@ -570,7 +583,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const image = screen.getByAltText('Ada Lovelace');
     expect(image).toBeInTheDocument();
@@ -600,7 +613,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText('Ada Lovelace')).not.toBeInTheDocument();
@@ -624,7 +637,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Reference image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText('Ada Lovelace')).not.toBeInTheDocument();
@@ -655,7 +668,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     const image = screen.getByAltText('Detected face');
     expect(image).toBeInTheDocument();
@@ -691,7 +704,7 @@ describe('WorkbenchFindingsPanel', () => {
       }),
     );
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
     expect(avatarSpy).toHaveBeenCalledWith(
@@ -747,7 +760,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     vi.mocked(useWorkbenchFindings).mockReturnValue(model);
 
-    const { container } = render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Detected face')).toBeInTheDocument();
     expect(screen.queryByAltText(/cluster-7/)).not.toBeInTheDocument();
@@ -805,7 +818,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     vi.mocked(useWorkbenchFindings).mockReturnValue(model);
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Detected face')).toBeInTheDocument();
     expect(screen.queryByAltText(/cluster-7/)).not.toBeInTheDocument();
@@ -861,7 +874,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     vi.mocked(useWorkbenchFindings).mockReturnValue(model);
 
-    render(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText(/cluster-9/)).not.toBeInTheDocument();

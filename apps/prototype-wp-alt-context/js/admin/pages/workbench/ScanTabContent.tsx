@@ -155,10 +155,7 @@ export const ScanTabContent = (): React.JSX.Element => {
         projectionSyncState={status.projectionSyncState}
       />
       <ErrorBoundary>
-        <WorkbenchFindingsPanel
-          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-          onTargetFindings={handleTargetFindings}
-        />
+        <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
       </ErrorBoundary>
       <ScanScrollRestoration />
       {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}

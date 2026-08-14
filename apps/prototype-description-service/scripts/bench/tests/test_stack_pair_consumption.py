@@ -28,8 +28,9 @@ def test_valid_pair_loads(tmp_path: Path) -> None:
 def test_unknown_stack_id_fails(tmp_path: Path) -> None:
     stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
     stacks[0]["stack_id"] = "acx-prod-something"
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         _load(tmp_path, stacks=stacks)
+    assert exc.value.code == "unknown_stack_id"
 
 
 def test_unknown_base_url_fails(tmp_path: Path) -> None:
@@ -79,8 +80,9 @@ def test_floor_forms_accepted(tmp_path: Path, value: object) -> None:
 def test_missing_required_stat_keys_fail(tmp_path: Path, missing: str) -> None:
     payload = valid_pair_dict()
     del payload[missing]
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         load_stack_pair(write_pair(tmp_path / f"miss-{missing}.yaml", payload))
+    assert exc.value.code == "missing_required_key"
 
 
 def test_wrong_primary_endpoint_invalid(tmp_path: Path) -> None:
@@ -94,5 +96,6 @@ def test_unknown_root_key_rejected(tmp_path: Path) -> None:
     payload["compose_not_this"] = True
     # unknown key that is not a deploy-ownership name
     payload["not_a_real_key"] = 1
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         load_stack_pair(write_pair(tmp_path / "unk.yaml", payload))
+    assert exc.value.code == "unknown_config_key"

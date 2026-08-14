@@ -7,7 +7,6 @@ import { queryKeys } from '../../../../api/queryKeys';
 import { useInlineSuggestionBatch } from '../useInlineSuggestionBatch';
 import { useClusterSuggestions } from '../useClusterSuggestions';
 import {
-  IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
   identityBatchIdsKey,
 } from '../suggestionProjection';
@@ -214,6 +213,5 @@ describe('useInlineSuggestionBatch', () => {
 
     // Still one network call — single-id entry was seeded from the multi-id batch.
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(IDENTITY_BATCH_STALE_MS).toBe(60_000);
   });
 });

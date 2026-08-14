@@ -101,7 +101,9 @@ describe('ClusterEditForm', () => {
     // Clicking the confirm button unwraps namespaced cluster: ids.
     const confirmButton = screen.getAllByRole('button', { name: /confirm match/i })[1]; // Index 1 for Person B
     fireEvent.click(confirmButton);
-    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B'));
+    await waitFor(() =>
+      expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
+    );
   });
 
   it('person-source confirm uses onPersonSelect and never onConfirmSuggestion (PR-16 / FIX-1)', async () => {
@@ -203,7 +205,9 @@ describe('ClusterEditForm', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
-    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob'));
+    await waitFor(() =>
+      expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
+    );
   });
 
   it('is disabled when isPending is true', () => {
@@ -297,5 +301,37 @@ describe('ClusterEditForm', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /reject/i }));
     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
+  });
+
+  it('threads option.suggestion_id into onConfirmSuggestion (BR-16 / L1R-01)', async () => {
+    // Predicted first failure on f54f7c87 production: called with (clusterId, label) only —
+    // confirm branch dropped option.suggestion_id so the pending row was never resolved by id.
+    const onConfirmSuggestion = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="A"
+        options={[
+          {
+            value: 'cluster:cluster-alice',
+            label: 'Alice',
+            source: 'cluster',
+            group: 'Suggested',
+            similarity: 0.91,
+            suggestion_id: 'sug-confirm-alice',
+          },
+        ]}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    await waitFor(() =>
+      expect(onConfirmSuggestion).toHaveBeenCalledWith(
+        'cluster-alice',
+        'Alice',
+        'sug-confirm-alice',
+      ),
+    );
   });
 });

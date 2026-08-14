@@ -277,7 +277,12 @@ describe('useClusterSaveAction casing grid (B6)', () => {
       await result.current.handleSave();
     });
 
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(mutations.rename).not.toHaveBeenCalled();
     expect(cancelEditing).not.toHaveBeenCalled();
   });
@@ -302,7 +307,12 @@ describe('useClusterSaveAction casing grid (B6)', () => {
     });
 
     // Different cluster with case-variant label → merge (exact post-bail lets it through)
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(mutations.rename).not.toHaveBeenCalled();
     expect(cancelEditing).not.toHaveBeenCalled();
     expect(queueSaveStatus).toHaveBeenCalled();

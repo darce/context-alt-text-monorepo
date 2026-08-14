@@ -248,6 +248,9 @@ export const identityBatchIdsKey = (identityIds: readonly string[]): string =>
  * Seed per-identity projection entries from a multi-id batch response (BR-10).
  * Single-id loaders (`useClusterSuggestionsLoader`) read these keys so one
  * invalidation/stale window covers inline batch + dropdown without dual fetches.
+ *
+ * Only seeds ids the server actually returned in `matches` (L1R-04 / rg-015).
+ * Omitted keys are not written as authoritative empty results.
  */
 export const seedIdentityBatchSingles = (
   queryClient: QueryClient,
@@ -255,6 +258,9 @@ export const seedIdentityBatchSingles = (
   identityIds: readonly string[],
 ): void => {
   for (const id of identityIds) {
+    if (!Object.prototype.hasOwnProperty.call(response.matches, id)) {
+      continue;
+    }
     const singleResponse: IdentityBatchSuggestionsResponse = {
       matches: { [id]: response.matches[id] ?? [] },
     };
@@ -266,53 +272,46 @@ export const seedIdentityBatchSingles = (
 };
 
 /**
- * Read a single identity's matches from any cached identityBatch entry (BR-10).
- * Prefers the canonical single-id key, then any multi-id batch that includes the id.
+ * Read a single identity's matches + the matching entry's dataUpdatedAt (BR-10 / L1R-03).
+ * Prefers the canonical single-id key, then the first multi-id batch that includes the id.
+ * Data and timestamp always come from the same cache entry so stale data cannot be
+ * stamped with a fresher sibling batch's updatedAt.
  */
-export const readIdentityFromBatchCache = (
+export const readIdentityBatchCacheEntry = (
   queryClient: QueryClient,
   identityId: string,
-): IdentityBatchSuggestionsResponse | undefined => {
+): { data: IdentityBatchSuggestionsResponse; dataUpdatedAt: number | undefined } | undefined => {
   const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([identityId]));
   const single = queryClient.getQueryData<IdentityBatchSuggestionsResponse>(singleKey);
   if (single?.matches && Object.prototype.hasOwnProperty.call(single.matches, identityId)) {
-    return { matches: { [identityId]: single.matches[identityId] ?? [] } };
+    return {
+      data: { matches: { [identityId]: single.matches[identityId] ?? [] } },
+      dataUpdatedAt: queryClient.getQueryState(singleKey)?.dataUpdatedAt,
+    };
   }
 
   const batches = queryClient.getQueriesData<IdentityBatchSuggestionsResponse>({
     queryKey: [...queryKeys.suggestions.projection.all, 'identity-batch'],
   });
-  for (const [, data] of batches) {
-    if (!data?.matches || !Object.prototype.hasOwnProperty.call(data.matches, identityId)) {
-      continue;
-    }
-    return { matches: { [identityId]: data.matches[identityId] ?? [] } };
-  }
-  return undefined;
-};
-
-export const readIdentityBatchUpdatedAt = (queryClient: QueryClient, identityId: string): number | undefined => {
-  const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([identityId]));
-  const singleState = queryClient.getQueryState(singleKey);
-  if (singleState?.dataUpdatedAt) {
-    return singleState.dataUpdatedAt;
-  }
-
-  const batches = queryClient.getQueriesData<IdentityBatchSuggestionsResponse>({
-    queryKey: [...queryKeys.suggestions.projection.all, 'identity-batch'],
-  });
-  let latest: number | undefined;
   for (const [key, data] of batches) {
     if (!data?.matches || !Object.prototype.hasOwnProperty.call(data.matches, identityId)) {
       continue;
     }
-    const updatedAt = queryClient.getQueryState(key)?.dataUpdatedAt;
-    if (updatedAt !== undefined && (latest === undefined || updatedAt > latest)) {
-      latest = updatedAt;
-    }
+    return {
+      data: { matches: { [identityId]: data.matches[identityId] ?? [] } },
+      dataUpdatedAt: queryClient.getQueryState(key)?.dataUpdatedAt,
+    };
   }
-  return latest;
+  return undefined;
 };
+
+export const readIdentityFromBatchCache = (
+  queryClient: QueryClient,
+  identityId: string,
+): IdentityBatchSuggestionsResponse | undefined => readIdentityBatchCacheEntry(queryClient, identityId)?.data;
+
+export const readIdentityBatchUpdatedAt = (queryClient: QueryClient, identityId: string): number | undefined =>
+  readIdentityBatchCacheEntry(queryClient, identityId)?.dataUpdatedAt;
 
 export const invalidateSuggestionProjection = (queryClient: QueryClient): Promise<void> =>
   queryClient.invalidateQueries({

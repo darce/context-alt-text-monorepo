@@ -88,7 +88,8 @@ Flow: ingest → analyze → cluster → export persist. Resume is append-only v
 | `bootstrap_series_mismatch` | named cell stamps this as `bootstrap_status`; CONFIRMATORY is refused | paired series length/presence disagrees across legs |
 | `bootstrap_status` | cell field `ok` / `partial` / a fail-closed code; `partial` or any non-`ok` demotes CONFIRMATORY | inspect `bootstrap_n_used`; undefined resamples are Δ = 0 over B (conservative p) |
 | `export_envelope_invalid` | `score` aborts | exports must be a **bare JSON array**; `{"data": [...]}` object envelopes are rejected |
-| `preflight_missing` | `score` aborts | each `legs/<stack_id>/preflight.json` must exist (PROV-01) |
+| `preflight_missing` | `score` aborts | each `legs/<stack_id>/preflight.json` must exist (PROV-01); recover with `preflight --config <stack-pair.yaml> --out <run-dir>` |
+| `preflight_invalid` | `score` aborts | `preflight.json` is unreadable (including non-UTF-8), not a JSON object, or missing required PROV-01 keys (key-presence only); rewrite from a successful `preflight --config <stack-pair.yaml> --out <run-dir>` |
 | `leg_outcome_unreadable` | `status` / `run` aborts | rewrite or delete a torn `leg_outcome.json`; it is not treated as absence |
 
 **Do not run this against live endpoints until `acx-dev-fir` exists.** A mocked/unit path is the only verified path in this task.

@@ -32,10 +32,11 @@ uv run python -m scripts.bench.cross_stack_bench score --run-dir ../../benchmark
 | `provenance_sha_unavailable` | git SHA for the bench/harness tree is unavailable (no checkout) |
 | `join_row_missing` | score join hole (path or media_id has no metric row) |
 | `bootstrap_series_mismatch` | named cell's paired bootstrap series missing or length-mismatched |
-| `bootstrap_status` | cell stamp; `!= ok` on the primary or a Holm secondary demotes CONFIRMATORY |
+| `bootstrap_status` | cell stamp / demotion reason; `!= ok` on the primary or a Holm secondary demotes CONFIRMATORY |
+| `bootstrap_status_missing` | `assign_tier` raises if a confirmatory-eligible ctx omits the stamp (not a demotion) |
 | `export_envelope_invalid` | export is not a bare JSON array (object envelopes are rejected) |
-| `preflight_missing` | score-time: a leg has no `preflight.json` |
-| `preflight_invalid` | score-time: `preflight.json` is unreadable or missing PROV-01 keys |
+| `preflight_missing` | score-time: a leg has no `preflight.json`; recover with `preflight --config <stack-pair.yaml> --out <run-dir>` |
+| `preflight_invalid` | score-time: `preflight.json` is unreadable (incl. non-UTF-8), not an object, or missing PROV-01 keys (key-presence only). `frames.json` `preflight_present` means present-and-structurally-valid. |
 | `leg_outcome_unreadable` | `leg_outcome.json` exists but is torn / not JSON |
 
 See the plan's [stable error codes table](../../../../docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md#stable-error-codes-normative) and the runbook §4 failure modes.

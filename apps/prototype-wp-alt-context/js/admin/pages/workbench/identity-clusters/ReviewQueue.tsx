@@ -866,7 +866,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           />
         ) : null}
         <header className="acx-review-queue__header">
-          <h3 className="acx-review-queue__title">{__('Review Suggestions', 'alt-context')}</h3>
+          <h3 id="acx-workbench-queue-heading" className="acx-review-queue__title">
+            {__('Review Suggestions', 'alt-context')}
+          </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
               {length}

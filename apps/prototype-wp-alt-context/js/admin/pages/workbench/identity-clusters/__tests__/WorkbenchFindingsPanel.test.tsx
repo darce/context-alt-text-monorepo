@@ -216,6 +216,43 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.queryByRole('button', { name: /Review next/ })).not.toBeInTheDocument();
   });
 
+  it('L3V-01: keeps #acx-workbench-findings-heading mounted in non-success states', () => {
+    // ScanTabContent always aria-labelledby this id; early returns must not drop it.
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isLoading: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.LOADING },
+      }),
+    );
+
+    const { container, rerender } = render(
+      <WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />,
+    );
+
+    const loadingHeading = container.querySelector('#acx-workbench-findings-heading');
+    expect(loadingHeading).toBeTruthy();
+    expect(loadingHeading?.tagName).toBe('H3');
+    expect(loadingHeading?.textContent).toBe('Recognition findings');
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    expect(container.querySelector('#acx-workbench-findings-heading')).toBeTruthy();
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isUnavailable: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onLabel={vi.fn()} onTargetFindings={vi.fn()} />);
+    expect(container.querySelector('#acx-workbench-findings-heading')).toBeTruthy();
+  });
+
   it('renders an explicit error state', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({

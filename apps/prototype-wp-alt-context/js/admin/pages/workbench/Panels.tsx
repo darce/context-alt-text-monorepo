@@ -1,22 +1,109 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
+import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 import { CONFIRM_NO_JOB_ZERO_STATE, CONFIRM_PANEL_INTRO } from './confirmTabCopy';
 import type { ScanRunViewModel } from './JobPipelineContext';
 import { JOB_PHASE_PRESENTATION } from './phasePresentation';
 import { formatSyncJobPhase } from './syncPresentation';
+import { SYNC_VOCABULARY } from './syncVocabulary';
 export { mediaEditUrl, rosterUrl } from '../../utils/adminUrls';
 
 export const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
+
+type ScanActionPanelVariant = 'default' | 'compact';
+
+/** Idle region (d) copy — short description when no cancel/progress chrome is shown. */
+const SCAN_REGION_DESCRIPTION = __(
+  'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
+  'alt-context',
+);
+
+/** Per-tick patterns that must stay visual-only when progressPhase is absent (L3R-01 / L3V-03). */
+const TICKING_STATUS_TEXT = /\d+\s*\/\s*\d+|\d+\s*s\b/;
+
+/**
+ * Coarse AT announcement for the job live region (L3R-01 residual).
+ * Prefer progress phase labels (stable across SSE ticks). Fall back to statusText
+ * only when it has no N/M count or countdown pattern — per-tick "Processed N/M"
+ * and "starting in Ns" stay visual-only (L3V-03).
+ */
+export const buildCoarseJobAnnouncement = ({
+  jobId,
+  statusText,
+  progressPhase,
+}: {
+  jobId?: string | null;
+  statusText?: string;
+  progressPhase?: JobProgress['phase'] | null;
+}): string | null => {
+  if (!statusText && !progressPhase) {
+    return null;
+  }
+  const jobLabel = jobId ?? __('pending', 'alt-context');
+  if (progressPhase) {
+    return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, formatSyncJobPhase(progressPhase));
+  }
+  // No phase: announce stable status only (terminal words, "Starting scan…", etc.).
+  if (statusText && !TICKING_STATUS_TEXT.test(statusText)) {
+    return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, statusText);
+  }
+  return null;
+};
+
+/**
+ * Compact strip leading verb from pipeline phase (L3R-06). Falls back to job
+ * progress phase, then the generic scanning headline.
+ */
+const compactLeadingVerb = (
+  currentPhase?: PipelinePhase | null,
+  progressPhase?: JobProgress['phase'] | null,
+): string => {
+  if (currentPhase === 'clustering') {
+    return SYNC_VOCABULARY.clusteringHeadline;
+  }
+  if (currentPhase === 'projecting') {
+    return SYNC_VOCABULARY.resultsSyncingHeadline;
+  }
+  if (currentPhase === 'scanning') {
+    return SYNC_VOCABULARY.scanningHeadline;
+  }
+  if (progressPhase === 'clustering' || progressPhase === 'retrying') {
+    return SYNC_VOCABULARY.clusteringHeadline;
+  }
+  if (progressPhase === 'awaiting_projection') {
+    return SYNC_VOCABULARY.resultsSyncingHeadline;
+  }
+  if (progressPhase === 'queued') {
+    return sprintf(__('%s…', 'alt-context'), SYNC_VOCABULARY.phaseQueued);
+  }
+  return SYNC_VOCABULARY.scanningHeadline;
+};
 
 interface ScanActionPanelProps {
   scanRun: ScanRunViewModel;
   onCancelScan?: () => void;
   onRetryStream?: () => void;
+  /** Compact single-row strip for the active-job chrome (E21-18 S1). */
+  variant?: ScanActionPanelVariant;
+  /**
+   * When the compact strip owns progress + cancel, suppress those controls here
+   * so only statusText / stall / batch failures / errors remain (L3R-02).
+   */
+  suppressPrimaryChrome?: boolean;
+  /** Pipeline phase for compact leading verb (L3R-06). */
+  currentPhase?: PipelinePhase | null;
 }
 
-export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanActionPanelProps): React.JSX.Element => {
+export const ScanActionPanel = ({
+  scanRun,
+  onCancelScan,
+  onRetryStream,
+  variant = 'default',
+  suppressPrimaryChrome = false,
+  currentPhase = null,
+}: ScanActionPanelProps): React.JSX.Element => {
   const {
     isScanning,
     isCancelling,
@@ -38,21 +125,83 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
     ? JOB_PHASE_PRESENTATION[progress.phase]
     : JOB_PHASE_PRESENTATION.detecting;
 
+  // L3R-01 residual: live region text is phase/terminal only; statusText stays visual.
+  const coarseAnnouncement = buildCoarseJobAnnouncement({
+    jobId,
+    statusText,
+    progressPhase: progress?.phase,
+  });
+
+  if (variant === 'compact') {
+    // Strip keeps progress/phase/cancel only — full panel retains backend job messages
+    // so operators still see a single source for statusText (no duplicate live regions).
+    const pct =
+      progress && progress.total > 0
+        ? Math.min(100, Math.round((progress.completed / progress.total) * 100))
+        : null;
+    const phaseLabel = progress?.phase ? formatJobPhase(progress.phase) : null;
+    const summaryParts = [
+      compactLeadingVerb(currentPhase, progress?.phase),
+      pct !== null ? `${pct}%` : null,
+      phaseLabel ? sprintf(__('phase: %s', 'alt-context'), phaseLabel) : null,
+    ].filter(Boolean);
+
+    return (
+      <div className="acx-apply-panel acx-apply-panel--compact" data-variant="compact">
+        <p className="acx-apply-panel__status acx-apply-panel__status--compact">{summaryParts.join(' · ')}</p>
+        {progress && progress.total > 0 && (
+          <progress
+            className="acx-apply-panel__progress acx-apply-panel__progress--compact"
+            value={Math.min(progress.completed, progress.total)}
+            max={progress.total}
+            aria-label={progressPresentation.progressAriaLabel}
+          />
+        )}
+        {onCancelScan && isScanning && (
+          <button
+            type="button"
+            className="acx-link-button"
+            onClick={onCancelScan}
+            disabled={Boolean(isCancelling)}
+          >
+            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel', 'alt-context')}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="acx-apply-panel">
-      {onCancelScan && (
+      {/* L3R-05: hide permanently-disabled cancel when idle; L3R-02: strip owns cancel while active. */}
+      {onCancelScan && isScanning && !suppressPrimaryChrome && (
         <button
           type="button"
           className="acx-link-button"
           onClick={onCancelScan}
-          disabled={Boolean(isCancelling) || !isScanning}
+          disabled={Boolean(isCancelling)}
         >
           {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel scan', 'alt-context')}
         </button>
       )}
+      {/* L3R-05: mockup region (d) short description when truly idle (no job chrome). */}
+      {!isScanning && !statusText && !errorMessage && !(progress && progress.total > 0) && !batchRunStatus && (
+        <p className="acx-apply-panel__status">{SCAN_REGION_DESCRIPTION}</p>
+      )}
+      {/* Visual status updates every tick; live region is phase-stable (L3R-01 residual). */}
       {statusText && (
-        <p className="acx-apply-panel__status" role="status" aria-live="polite">
+        <p className="acx-apply-panel__status" data-testid="scan-status-visual">
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
+        </p>
+      )}
+      {coarseAnnouncement && (
+        <p
+          className="screen-reader-text"
+          role="status"
+          aria-live="polite"
+          data-testid="scan-status-announce"
+        >
+          {coarseAnnouncement}
         </p>
       )}
       {typeof stallSeconds === 'number' && (
@@ -62,12 +211,13 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
             <button type="button" className="acx-link-button" onClick={onRetryStream} disabled={!onRetryStream}>
               {__('Retry', 'alt-context')}
             </button>
-            {onCancelScan && (
+            {/* L3R-07: strip owns Cancel while suppressPrimaryChrome — avoid dual Cancel. */}
+            {onCancelScan && isScanning && !suppressPrimaryChrome && (
               <button
                 type="button"
                 className="acx-link-button"
                 onClick={onCancelScan}
-                disabled={Boolean(isCancelling) || !isScanning}
+                disabled={Boolean(isCancelling)}
               >
                 {__('Cancel', 'alt-context')}
               </button>
@@ -77,6 +227,7 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
       )}
       {progress && progress.total > 0 && (
         <>
+          {/* Unique detail kept while strip owns the progress bar (L3R-02). */}
           {progress.phase && (
             <p className="acx-apply-panel__status">
               {sprintf(__('Phase: %s', 'alt-context'), formatJobPhase(progress.phase))}
@@ -100,12 +251,14 @@ export const ScanActionPanel = ({ scanRun, onCancelScan, onRetryStream }: ScanAc
                   : ''}
               </p>
             )}
-          <progress
-            className="acx-apply-panel__progress"
-            value={Math.min(progress.completed, progress.total)}
-            max={progress.total}
-            aria-label={progressPresentation.progressAriaLabel}
-          />
+          {!suppressPrimaryChrome && (
+            <progress
+              className="acx-apply-panel__progress"
+              value={Math.min(progress.completed, progress.total)}
+              max={progress.total}
+              aria-label={progressPresentation.progressAriaLabel}
+            />
+          )}
           {typeof etaSeconds === 'number' && (
             <p className="acx-apply-panel__eta">
               {sprintf(__('Remaining: %s', 'alt-context'), formatDuration(etaSeconds))}

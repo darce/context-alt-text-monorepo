@@ -36,6 +36,20 @@ interface WorkbenchFindingsPanelProps {
  */
 export const FINDINGS_PREVIEW_SIZE_PX = 72;
 
+/** Stable region label for ScanTabContent aria-labelledby (L3V-01 / A11Y-04). */
+const FindingsRegionHeading = ({
+  visuallyHidden = false,
+}: {
+  visuallyHidden?: boolean;
+}): React.JSX.Element => (
+  <h3
+    id="acx-workbench-findings-heading"
+    className={visuallyHidden ? 'screen-reader-text' : 'acx-findings-panel__title'}
+  >
+    {__('Recognition findings', 'alt-context')}
+  </h3>
+);
+
 const nextActionHint = (action: WorkbenchNextAction): string | null => {
   switch (action.kind) {
     case NEXT_ACTION_KIND.ASSIGNMENT:
@@ -137,8 +151,12 @@ export const WorkbenchFindingsPanel = ({
 
   if (!hasFindings && isLoading) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--loading" role="status" aria-live="polite">
-        <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
+      <div className="acx-findings-panel acx-findings-panel--loading">
+        {/* L3V-01: keep aria-labelledby target mounted in non-success early returns. */}
+        <FindingsRegionHeading visuallyHidden />
+        <div role="status" aria-live="polite">
+          <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
+        </div>
       </div>
     );
   }
@@ -149,18 +167,24 @@ export const WorkbenchFindingsPanel = ({
   // isError, so isError alone covers both failure modes here (UI-03 hook test).
   if (!hasFindings && isError) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--error" role="status" aria-live="polite">
-        <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
+      <div className="acx-findings-panel acx-findings-panel--error">
+        <FindingsRegionHeading visuallyHidden />
+        <div role="status" aria-live="polite">
+          <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
+        </div>
       </div>
     );
   }
 
   if (!hasFindings && isUnavailable) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--unavailable" role="status" aria-live="polite">
-        <p className="acx-findings-panel__status">
-          {__('Recognition findings are unavailable right now.', 'alt-context')}
-        </p>
+      <div className="acx-findings-panel acx-findings-panel--unavailable">
+        <FindingsRegionHeading visuallyHidden />
+        <div role="status" aria-live="polite">
+          <p className="acx-findings-panel__status">
+            {__('Recognition findings are unavailable right now.', 'alt-context')}
+          </p>
+        </div>
       </div>
     );
   }
@@ -181,7 +205,7 @@ export const WorkbenchFindingsPanel = ({
 
   return (
     <div className="acx-findings-panel">
-      <h3 className="acx-findings-panel__title">{__('Recognition findings', 'alt-context')}</h3>
+      <FindingsRegionHeading />
 
       {isReadOnly && (
         <p className="acx-findings-panel__notice">

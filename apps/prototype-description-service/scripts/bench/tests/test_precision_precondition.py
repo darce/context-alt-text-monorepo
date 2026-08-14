@@ -89,3 +89,25 @@ def test_holm_on_secondaries() -> None:
 
 def test_bootstrap_resamples_pinned() -> None:
     assert BOOTSTRAP_RESAMPLES == 2000
+
+
+def test_unknown_metric_raises() -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    try:
+        bootstrap_paired_delta([1.0], [0.0], seed=1, metric="ratio")
+    except BenchError as exc:
+        assert exc.code == "config_invalid"
+    else:
+        raise AssertionError("unknown metric must fail closed")
+
+
+def test_empty_series_raises() -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    try:
+        bootstrap_paired_delta([], [], seed=1, metric="mean")
+    except BenchError as exc:
+        assert exc.code == "bootstrap_empty_series"
+    else:
+        raise AssertionError("empty series must fail closed")

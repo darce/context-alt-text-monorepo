@@ -87,7 +87,7 @@ def load_bench_manifest(
     manifest = load_manifest(str(path), images_dir=images)
     non_exhaustive: list[int] = []
     for entry in manifest.entries:
-        exhaustive = entry.face_count == len(entry.face_boxes)
+        exhaustive = bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)
         if not exhaustive:
             if require_detection_exhaustiveness:
                 raise BenchError(
@@ -101,7 +101,7 @@ def load_bench_manifest(
 
 
 def is_detection_exhaustive(entry: GoldenEntry) -> bool:
-    return entry.face_count == len(entry.face_boxes)
+    return bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)
 
 
 def non_exhaustive_ids(manifest: GoldenManifest) -> frozenset[int]:

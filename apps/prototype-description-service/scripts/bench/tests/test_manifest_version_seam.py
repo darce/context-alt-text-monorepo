@@ -30,9 +30,13 @@ def test_exhaustive_stranger_faces_from_unnamed_boxes() -> None:
     manifest = load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=False)
     multi = next(e for e in manifest.entries if e.media_id == 1)
     assert stranger_faces_for(multi) == 0  # both boxes named
-    # zero-face exhaustive
+    # zero-box entry cannot be scored for detection (boxes present is required)
+    from scripts.bench.corpus import is_detection_exhaustive
+
     zero = next(e for e in manifest.entries if e.media_id == 2)
     assert zero.face_count == len(zero.face_boxes) == 0
+    assert is_detection_exhaustive(zero) is False
+    assert 2 in non_exhaustive_ids(manifest)
 
 
 def test_detection_cell_directional_when_non_exhaustive_dropped() -> None:

@@ -207,3 +207,79 @@ def test_failed_item_is_reattempted(tmp_path: Path) -> None:
     assert client.analyze_calls
     posted_ids = [img[0] for call in client.analyze_calls for img in call]
     assert 1 in posted_ids
+
+
+def test_ingest_ok_does_not_burn_first_analyze_attempt(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-attempt", pair, manifest)
+    items_path = out / "legs" / "acx-dev-insightface" / "items.jsonl"
+    store = ItemOutcomeStore(items_path)
+    store.append(
+        {
+            "manifest_media_id": 1,
+            "manifest_path": "img_1.jpg",
+            "content_sha256": "x",
+            "stack_media_id": 1,
+            "image_width": 16,
+            "image_height": 16,
+            "phase": "ingest",
+            "outcome": "ok",
+            "error_code": None,
+            "attempt": 1,
+            "terminal_ingest_outcome": "success",
+        }
+    )
+    client = FakeClient()
+    client.wait_job = lambda job_id: {"status": "completed_with_errors", "id": job_id}  # type: ignore[method-assign]
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=client,
+    )
+    analyze = [r for r in ItemOutcomeStore(items_path).read_all() if r.get("phase") == "analyze"]
+    assert analyze
+    assert analyze[-1]["attempt"] == 1
+    assert analyze[-1]["outcome"] == "failed"
+
+
+def test_missing_stack_media_id_fails_closed(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-sid-miss", pair, manifest)
+    client = FakeClient()
+    client.wait_job = lambda job_id: {"status": "completed", "id": job_id}  # type: ignore[method-assign]
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=client,
+    )
+    store = ItemOutcomeStore(out / "legs" / "acx-dev-insightface" / "items.jsonl")
+    analyze = [r for r in store.read_all() if r.get("phase") == "analyze"]
+    assert analyze
+    assert analyze[-1]["outcome"] == "failed"
+    assert analyze[-1]["error_code"] == "stack_media_id_missing"
+
+
+def test_provenance_sha_failure_refuses_run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.bench import driver as driver_mod
+    from scripts.bench.stack_pair import BenchError
+
+    def boom(*_a, **_k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(driver_mod.subprocess, "check_output", boom)
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    with pytest.raises(BenchError) as exc:
+        init_run_dir(tmp_path / "out-sha-fail", pair, manifest)
+    assert exc.value.code == "provenance_sha_unavailable"

@@ -69,6 +69,7 @@ def test_absent_baseline_key_skips_assert(tmp_path: Path) -> None:
             "acx-dev-insightface": fake_a,
             "acx-dev-fir": fake_b,
         },
+        skip_preflight=True,
     )
     assert fake_a.analyze_calls
     assert fake_b.analyze_calls

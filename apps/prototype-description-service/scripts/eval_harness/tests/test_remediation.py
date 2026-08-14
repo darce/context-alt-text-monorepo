@@ -334,6 +334,31 @@ def test_retag_id_unknown_attestation_is_dropped(tmp_path: Path) -> None:
     )
 
 
+def test_retag_id_third_party_attestation_is_dropped(tmp_path: Path) -> None:
+    """PROV-01: third_party on a FIXED_RETAG_ID drops; sidecar records the verdict.
+
+    Kills a mutant that re-inserts a retag keep between the UNKNOWN and
+    THIRD_PARTY branches (FIR-11-SL1-R2-02).
+    """
+    draft = load_manifest(str(_draft(tmp_path, [633, 100])))
+    records = [
+        AttestationRecord.model_validate(_record(633, attestation="third_party")),
+        AttestationRecord.model_validate(_record(100, attestation="own_capture")),
+    ]
+    sidecar = tmp_path / "gate_drops.json"
+    result = emit_remediated_manifest(draft, records, drop_sidecar_path=sidecar)
+    survivor_ids = {e.media_id for e in result.manifest.entries}
+    assert 633 not in survivor_ids
+    assert 100 in survivor_ids
+    drop = next(d for d in result.dropped if d.media_id == 633)
+    assert drop.rationale == ATTESTATION_THIRD_PARTY_RATIONALE
+    sidecar_doc = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert any(
+        row["media_id"] == 633 and row["rationale"] == ATTESTATION_THIRD_PARTY_RATIONALE
+        for row in sidecar_doc["dropped"]
+    )
+
+
 def test_emitter_rejects_pass_bound_to_mutated_draft_sha(tmp_path: Path) -> None:
     """A pass validated against draft A must not emit draft B with a mutated sha256."""
     path_a = _draft(tmp_path, [1])

@@ -11,7 +11,7 @@ from http.client import HTTPSConnection
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -228,11 +228,14 @@ def _default_resolve(host: str) -> list[str]:
 
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
 
 def _is_non_public(addr: str) -> bool:
     ip = ipaddress.ip_address(addr)
     if ip.version == 4 and ip in _CGNAT:
+        return True
+    if ip.version == 6 and ip in _NAT64:
         return True
     if ip.is_unspecified or not ip.is_global:
         return True
@@ -252,7 +255,7 @@ def _http_fetch_pinned(
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise BenchError("media_unresolvable", f"remote URL must be https: {url}")
-    target = next(iter(pinned_addrs))
+    target = sorted(pinned_addrs)[0]
     port = parsed.port or 443
     path = parsed.path or "/"
     if parsed.query:
@@ -263,7 +266,7 @@ def _http_fetch_pinned(
         if not location:
             raise BenchError("media_unresolvable", f"redirect from {url} missing Location")
         return _fetch_remote(
-            location if location.startswith("https://") else f"https://{parsed.hostname}{location}",
+            _absolute_https_redirect(url, location),
             allow_private_source=allow_private_source,
             resolver=resolver,
             fetcher=None,
@@ -272,6 +275,14 @@ def _http_fetch_pinned(
     if status >= 400:
         raise BenchError("media_unresolvable", f"GET {url} returned {status}")
     return body
+
+
+def _absolute_https_redirect(base_url: str, location: str) -> str:
+    resolved = urljoin(base_url, location.strip())
+    parsed = urlparse(resolved)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise BenchError("media_unresolvable", f"redirect is not https: {resolved}")
+    return resolved
 
 
 def _https_get_pinned(host: str, port: int, path: str, pinned_ip: str) -> tuple[int, dict[str, str], bytes]:

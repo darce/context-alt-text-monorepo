@@ -140,3 +140,125 @@ def test_redirect_to_rfc1918_is_refused(tmp_path: Path, monkeypatch: pytest.Monk
         )
     assert exc.value.code == "media_unresolvable"
     assert seen == ["8.8.8.8"]
+
+
+def test_nat64_of_rfc1918_is_refused() -> None:
+    assert _is_non_public("64:ff9b::10.0.0.1") is True
+    assert _is_non_public("64:ff9b::8.8.8.8") is True
+
+
+def test_https_get_pinned_connects_to_pinned_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.bench import corpus as corpus_mod
+
+    connects: list[tuple[str, int]] = []
+
+    class FakeHTTPS:
+        def __init__(self, host: str, port: int = 443, timeout: float | None = None, context=None) -> None:
+            self.host = host
+            self.port = port
+            self.sock = None
+
+        def request(self, method: str, path: str, headers: dict | None = None) -> None:
+            if self.sock is None:
+                self.connect()
+
+        def getresponse(self):
+            class _Resp:
+                status = 200
+
+                def read(self) -> bytes:
+                    return b"ok"
+
+                def getheaders(self) -> list:
+                    return []
+
+            return _Resp()
+
+        def close(self) -> None:
+            return None
+
+    def fake_create_connection(address: tuple, timeout: object = None):
+        connects.append(address)
+        return object()
+
+    monkeypatch.setattr(corpus_mod, "HTTPSConnection", FakeHTTPS)
+    monkeypatch.setattr(corpus_mod.socket, "create_connection", fake_create_connection)
+    monkeypatch.setattr(corpus_mod.ssl.SSLContext, "wrap_socket", lambda self, sock, server_hostname=None: sock)
+    status, _headers, body = corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
+    assert status == 200
+    assert body == b"ok"
+    assert connects == [("203.0.113.10", 443)]
+
+
+def test_protocol_relative_redirect_is_re_pinned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_media_host_pins()
+    url_map = tmp_path / "urls.json"
+    url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
+    seen_hosts: list[str] = []
+
+    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+        seen_hosts.append(host)
+        if host == "media.example.com":
+            return 302, {"location": "//cdn.example.com/meta"}, b""
+        return 200, {}, _JPEG
+
+    def resolver(host: str) -> list[str]:
+        return ["203.0.113.20"] if host == "cdn.example.com" else ["203.0.113.10"]
+
+    monkeypatch.setattr("scripts.bench.corpus._https_get_pinned", fake_get)
+    data = resolve_media_bytes(
+        _entry(),
+        images_dir=tmp_path / "missing",
+        url_map_path=url_map,
+        allow_private_source=True,
+        resolver=resolver,
+    )
+    assert data == _JPEG
+    assert seen_hosts == ["media.example.com", "cdn.example.com"]
+
+
+def test_http_redirect_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_media_host_pins()
+    url_map = tmp_path / "urls.json"
+    url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
+
+    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+        return 302, {"location": "http://evil.example/x"}, b""
+
+    def resolver(_host: str) -> list[str]:
+        return ["203.0.113.10"]
+
+    monkeypatch.setattr("scripts.bench.corpus._https_get_pinned", fake_get)
+    with pytest.raises(BenchError) as exc:
+        resolve_media_bytes(
+            _entry(),
+            images_dir=tmp_path / "missing",
+            url_map_path=url_map,
+            allow_private_source=True,
+            resolver=resolver,
+        )
+    assert exc.value.code == "media_unresolvable"
+
+
+def test_multi_a_pin_is_deterministic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_media_host_pins()
+    url_map = tmp_path / "urls.json"
+    url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
+    pinned_seen: list[str] = []
+
+    def fake_get(host: str, port: int, path: str, pinned_ip: str):
+        pinned_seen.append(pinned_ip)
+        return 200, {}, _JPEG
+
+    def resolver(_host: str) -> list[str]:
+        return ["203.0.113.20", "203.0.113.10"]
+
+    monkeypatch.setattr("scripts.bench.corpus._https_get_pinned", fake_get)
+    resolve_media_bytes(
+        _entry(),
+        images_dir=tmp_path / "missing",
+        url_map_path=url_map,
+        allow_private_source=True,
+        resolver=resolver,
+    )
+    assert pinned_seen == ["203.0.113.10"]

@@ -109,6 +109,7 @@ const preview = (overrides: Partial<WorkbenchFindingPreview> & Pick<WorkbenchFin
 const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
+  zeroEvidenceClusterCount: 0,
   hasFindings: false,
   isLoading: false,
   isError: false,
@@ -1017,5 +1018,133 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('No image')).toBeInTheDocument();
     expect(avatarSpy).not.toHaveBeenCalled();
     expect(container.querySelector('img[src=""]')).toBeNull();
+  });
+
+  // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).
+  it('S2: aggregate repair row renders with the gated cluster count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 2,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('S2: Resync on the aggregate repair row refetches top-unlabeled', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
+        zeroEvidenceClusterCount: 3,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('3 groups missing preview data')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
+    expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+  });
+
+  it('S2: counts and previews exclude gated zero-evidence clusters [TEST-15]', () => {
+    const model = buildWorkbenchFindings(
+      {
+        reviewItems: [],
+        assignmentTotal: 0,
+        mergeSuggestions: [],
+        mergeTotal: 0,
+        nameSuggestions: [],
+        nameTotal: 0,
+        topUnlabeledClusters: [
+          {
+            id: 'zero-count',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [
+              {
+                id: 'rep-zero',
+                media_id: 11,
+                media_url: 'http://example.test/uploads/zero.jpg',
+                bbox: { x: 1, y: 2, width: 10, height: 10 },
+                is_pinned: false,
+              },
+            ],
+          },
+          {
+            id: 'empty-reps',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 5,
+            representatives: [],
+          },
+          {
+            id: 'reviewable',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 4,
+            representatives: [
+              {
+                id: 'rep-ok',
+                media_id: 12,
+                media_url: 'http://example.test/uploads/ok.jpg',
+                bbox: { x: 10, y: 20, width: 80, height: 90 },
+                is_pinned: false,
+              },
+            ],
+          },
+        ],
+        topUnlabeledTotal: 3,
+      },
+      {
+        assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        nameDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        isLoading: false,
+        isError: false,
+        isTopUnlabeledError: false,
+        queueSettled: true,
+      },
+    );
+
+    expect(model.zeroEvidenceClusterCount).toBe(2);
+    expect(model.counts.unlabeledClusters).toBe(1);
+    expect(model.counts.total).toBe(1);
+    expect(model.previews.map((preview) => preview.key)).toEqual(['cluster-reviewable']);
+    expect(model.queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
+    expect(model.hasFindings).toBe(true);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.queryByText('3 unlabeled groups')).not.toBeInTheDocument();
   });
 });

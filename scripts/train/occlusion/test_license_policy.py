@@ -13307,6 +13307,38 @@ class TestF17UnderscoreNcSeedGluedException:
         ("fastsamxyolox:v8", "fastsam", "agpl"),
         ("buffalolxyolox:v8", "buffalo_l", "nc"),
     )
+    # R21-01: multi-segment rem tails that fold past last-segment peel
+    # (``v8-3`` canon ``v83`` != last ``3``; ``onnxtiny`` != ``tiny``).
+    LISTED_MULTI_SEGMENT_REM: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("buffalo_lxyolox_v8-3", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_v8.3", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_onnx_tiny", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_v8_tiny", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_tiny_v8", "buffalo_l", "nc"),
+        ("buffalo_l2xyolox_onnx_tiny", "buffalo_l2", "nc"),
+        ("buffalo_scxyolox_v8-3", "buffalo_sc", "nc"),
+        ("buffalo_lxyolox_v8_onnx", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_onnx_v8", "buffalo_l", "nc"),
+        ("buffalo_lxyolox_extra_v8", "buffalo_l", "nc"),
+        ("fastsamxyolox_v8-3", "fastsam", "agpl"),
+    )
+    # Cross-product: {3 NC seeds} × {5 two-segment rem pairs} ×
+    # {2 orderings} × {sep variants _, -, .}. First rem connector is
+    # ``_`` so the tail is ``_{a}{sep}{b}`` matching the listed shape.
+    MULTI_SEGMENT_SEEDS: ClassVar[tuple[str, ...]] = (
+        "buffalo_l",
+        "buffalo_l2",
+        "buffalo_sc",
+    )
+    MULTI_SEGMENT_PAIRS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("v8", "3"),
+        ("onnx", "tiny"),
+        ("v8", "tiny"),
+        ("v8", "onnx"),
+        ("extra", "v8"),
+    )
+    MULTI_SEGMENT_SEPS: ClassVar[tuple[str, ...]] = ("_", "-", ".")
+    MULTI_SEGMENT_SWEEP_ROWS: ClassVar[int] = 90  # 3 × 5 × 2 × 3
     # Current oracle attributions — verdicts AND package_id must hold.
     A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
         ("buffalo_lyolox", "buffalo_l", "nc"),
@@ -13642,6 +13674,71 @@ class TestF17UnderscoreNcSeedGluedException:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: without separate-rem owner, {token!r} must admit"
             )
+        assert policy._package_denylist_hit("buffalo_lxyolox") is not None
+        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert extra is not None
+        assert extra.package_id == "yolox_unknown_residual"
+        assert policy._package_denylist_hit("ayoloxs") is None
+
+    @pytest.mark.parametrize("token,expected_pkg,axis", LISTED_MULTI_SEGMENT_REM)
+    def test_listed_multi_segment_rem_tail_gadgets_deny(
+        self, token: str, expected_pkg: str, axis: str
+    ) -> None:
+        """R21-01: consolidator-reproduced multi-segment rem tails deny."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (R21-01 multi-seg rem)"
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        if axis == "nc":
+            assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        else:
+            assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_multi_segment_rem_tail_cross_product_sweep_denies(self) -> None:
+        """R21-01: {3 seeds}×{2-seg rem pairs}×{orderings}×{_,_,-. seps}."""
+        seen = 0
+        junk = "x"
+        spelling = "yolox"
+        for seed in self.MULTI_SEGMENT_SEEDS:
+            for left, right in self.MULTI_SEGMENT_PAIRS:
+                for a, b in ((left, right), (right, left)):
+                    for sep in self.MULTI_SEGMENT_SEPS:
+                        token = f"{seed}{junk}{spelling}_{a}{sep}{b}"
+                        self._assert_nc_seed_deny(token, seed)
+                        seen += 1
+        assert seen == self.MULTI_SEGMENT_SWEEP_ROWS, (
+            f"R21-01 sweep must cover {self.MULTI_SEGMENT_SWEEP_ROWS} rows, "
+            f"got {seen}"
+        )
+
+    def test_red_proof_multi_segment_rem_owner_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop multi-seg rem peel → R21-01 gadgets admit.
+
+        Single-segment R20-01 tails, empty-rem R19-01 gadgets, and A.3
+        glued rem stay on their own arms.
+        """
+        gadgets = [token for token, _pkg, _axis in self.LISTED_MULTI_SEGMENT_REM]
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(
+            policy, "_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED", False
+        )
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without multi-seg rem owner, {token!r} must admit"
+            )
+        # R20-01 single-segment rem still denies.
+        assert policy._package_denylist_hit("buffalo_lxyolox_v8") is not None
+        assert policy._package_denylist_hit("fastsamxyolox:v8") is not None
         assert policy._package_denylist_hit("buffalo_lxyolox") is not None
         extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
         assert extra is not None

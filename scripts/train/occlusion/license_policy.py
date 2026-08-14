@@ -4675,6 +4675,17 @@ _MID_EXCEPTION_STEM_OVER_EXC_REM_ENABLED: bool = True
 # ``buffalo_lxyolox:v8``). TEST-15: False restores the rem-path
 # has_sep skip so rem-bearing tails admit again.
 _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED: bool = True
+# R21-01: when rem is several trailing ``_`` segments (``v8-3`` /
+# ``onnx_tiny``) the single-segment peel misses (canon ``v83`` !=
+# ``3``). Retry ownership after peeling those segments. TEST-15:
+# False restores last-segment-only peel so multi-segment rem tails
+# admit again.
+_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED: bool = True
+# Rem-tail class bound: version/size/export debris is short. A
+# mid-chain ``yolop_yolop_…`` rem is thousands of chars — refuse
+# so the B8-02 deep-chain pin stays O(n) (R20-01 last-segment miss).
+_MAX_COMPOSED_REM_COMPACT_LEN: int = 48
+_MAX_COMPOSED_REM_PEEL_SEGMENTS: int = 8
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
 _PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
@@ -4826,6 +4837,53 @@ def _mid_exception_rem_is_trailing_segment(
     return token[sep + 1 :] == rem
 
 
+def _peel_composed_trailing_rem_segments(
+    token: str, rem: str
+) -> str | None:
+    """Peel trailing ``_`` segments that together compose compact rem.
+
+    R21-01: ``buffalo_lxyolox_v8_3`` rem ``v83`` is two segments
+    (``v8`` + ``3``), so last-segment-equals-rem fails (``v83`` !=
+    ``3``; ``onnxtiny`` != ``tiny``). Peel while the last segment's
+    compact form is a suffix of the remaining rem; return the prefix
+    once rem is fully consumed by **two or more** segments. A single
+    trailing rem segment stays on
+    :func:`_mid_exception_rem_is_trailing_segment` (R20-01 sole-path).
+    Glued rem (``buffalo_lxyoloxextra``) cannot peel — the last
+    segment is longer than rem — so A.3 unknown-residual holds.
+    Mid-chain rem longer than ``_MAX_COMPOSED_REM_COMPACT_LEN``
+    (the 1200-``yolop`` deep-chain pin) returns None immediately.
+    """
+    if not rem or not token or "_" not in token:
+        return None
+    if len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN:
+        return None
+    # Mid-chain rem (``yolop_yolop_ultralytics``) is exception residue,
+    # not a rem tail. Refuse so peel stays off the B8-02 O(n) path.
+    for _sc, _sk, spelling in _iter_exception_compact_spellings():
+        if spelling and spelling in rem:
+            return None
+    remaining = rem
+    current = token
+    peels = 0
+    while remaining and "_" in current:
+        sep = current.rfind("_")
+        last = current[sep + 1 :]
+        last_k = _compact_canonical(last) if last else ""
+        if not last_k or not remaining.endswith(last_k):
+            return None
+        remaining = remaining[: -len(last_k)]
+        current = current[:sep].rstrip("_")
+        peels += 1
+        if peels > _MAX_COMPOSED_REM_PEEL_SEGMENTS:
+            return None
+        if not current:
+            return None
+        if not remaining:
+            return current if peels >= 2 else None
+    return None
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -4857,11 +4915,14 @@ def _compact_mid_exception_deny_adjacency(
     unknown-residual (A.3 attribution fence). R20-01: rem that
     lives in its own ``_`` / folded-tag segment
     (``buffalo_lxyolox_v8`` / ``:v8``) is peeled first so the
-    same empty-rem owner sees ``buffalo_lxyolox``. Separator-
-    aligned deny forms (``my_yoloxyolo`` / ``buffalo_l_xyolox``)
-    still hit earlier via (b) / suffix walk. Prefix ownership on
-    the compact (no-``_``) path is compact-(a) / contained-long /
-    elevated (c) only — the folded (b) ``seed_`` arm of
+    same empty-rem owner sees ``buffalo_lxyolox``. R21-01:
+    multi-segment rem tails (``v8-3`` / ``onnx_tiny``) fail
+    last-segment-equals-rem and retry on progressively peeled
+    trailing rem segments. Separator-aligned deny forms
+    (``my_yoloxyolo`` / ``buffalo_l_xyolox``) still hit earlier
+    via (b) / suffix walk. Prefix ownership on the compact
+    (no-``_``) path is compact-(a) / contained-long / elevated
+    (c) only — the folded (b) ``seed_`` arm of
     ``_deny_has_folded_ab_claim`` cannot fire on a compact slice
     (R19-05).
     """
@@ -4893,12 +4954,17 @@ def _compact_mid_exception_deny_adjacency(
                 # prefix owner, but not when rem is a legitimate
                 # family/export tag — ``yolov8yolox_s`` stays on
                 # head-known-rem glue (F13 red-proof sole-path).
-                if (
-                    has_sep
-                    and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED
-                    and _mid_exception_rem_is_trailing_segment(token, rem)
-                ):
-                    peeled = token[: token.rfind("_")].rstrip("_")
+                peeled = None
+                if has_sep and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED:
+                    if _mid_exception_rem_is_trailing_segment(token, rem):
+                        peeled = token[: token.rfind("_")].rstrip("_")
+                    elif _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED:
+                        # R21-01: last-segment peel misses when rem is
+                        # several trailing segments (``v83`` != ``3``).
+                        peeled = _peel_composed_trailing_rem_segments(
+                            token, rem
+                        )
+                if peeled:
                     owned = None
                     if "_" in peeled:
                         owned = _underscore_preserving_glued_seed_owner(

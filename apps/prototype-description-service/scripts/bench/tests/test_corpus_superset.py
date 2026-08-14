@@ -21,7 +21,7 @@ from scripts.bench.tests.conftest import (
 def test_partial_intersection_is_blocker() -> None:
     with pytest.raises(BenchError) as exc:
         assert_baseline_superset({1, 2, 3}, {1, 2})
-    assert exc.value.code in {"baseline_not_superset", "baseline_superset_failed"} or True
+    assert exc.value.code == "baseline_not_superset"
 
 
 def test_baseline_superset_passes() -> None:
@@ -47,7 +47,7 @@ def test_run_start_blocks_before_media_write(tmp_path: Path) -> None:
                 "acx-dev-fir": FakeClient(),
             },
         )
-    assert set(exc.value.code.split())  # has a code
+    assert exc.value.code == "baseline_not_superset"
     # No media write / analyze before the blocker.
     assert not list(out.rglob("items.jsonl"))
 

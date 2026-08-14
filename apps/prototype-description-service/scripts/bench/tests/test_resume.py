@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.bench.corpus import ItemOutcomeStore
 from scripts.bench.driver import init_run_dir, run_leg
 from scripts.bench.stack_pair import load_stack_pair
@@ -70,6 +72,50 @@ def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:
     posted_ids = [img[0] for call in client.analyze_calls for img in call]
     assert 1 not in posted_ids
     assert 2 in posted_ids
+
+
+def test_resume_does_not_duplicate_ok_ingest(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-dup", pair, manifest)
+    items_path = out / "legs" / "acx-dev-insightface" / "items.jsonl"
+    _seed_terminal_success(items_path, 1, width=100, height=100)
+    # Drop the analyze row so resume re-attempts analyze after an ok ingest.
+    recs = [json.loads(line) for line in items_path.read_text().splitlines() if line.strip()]
+    recs = [r for r in recs if r.get("phase") != "analyze"]
+    items_path.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=FakeClient(),
+    )
+    store = ItemOutcomeStore(items_path)
+    ingest_rows = [r for r in store.read_all() if r.get("phase") == "ingest"]
+    assert len(ingest_rows) == 1
+
+
+def test_zero_dimension_ok_record_rejected(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    path = tmp_path / "items.jsonl"
+    store = ItemOutcomeStore(path)
+    store.append(
+        {
+            "manifest_media_id": 1,
+            "phase": "analyze",
+            "outcome": "ok",
+            "image_width": 0,
+            "image_height": 16,
+            "stack_media_id": 1,
+        }
+    )
+    with pytest.raises(BenchError) as exc:
+        store.read_all()
+    assert exc.value.code == "image_dimensions_missing"
 
 
 def test_cli_and_harness_shas_are_distinct_or_explicit(tmp_path: Path) -> None:

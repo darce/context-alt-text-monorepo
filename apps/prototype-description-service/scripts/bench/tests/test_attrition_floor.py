@@ -37,7 +37,8 @@ def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> No
     frames = json.loads((run_dir / "score" / "frames.json").read_text())
     # Some detection cell must have labeled count including the zero-export item.
     encoded = json.dumps(frames)
-    assert "zero_detection_media_count" in encoded or accepted.zero_detection_media_count >= 1
+    assert accepted.zero_detection_media_count >= 1
+    assert frames["zero_detection_media_count"] == accepted.zero_detection_media_count
     assert report_dir.exists()
 
 

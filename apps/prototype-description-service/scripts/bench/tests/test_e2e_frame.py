@@ -130,6 +130,32 @@ def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
     assert native.false_negatives == 1
 
 
+def test_optimistic_maps_unlabeled_cluster_by_overlap() -> None:
+    from scripts.bench.export_map import map_cluster_labels_optimistic
+
+    manifest = _manifest()
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "i1",
+                "media_id": 10,
+                "cluster_id": "c1",
+                "cluster_label": "",
+                "is_auto_label": True,
+                "bbox": {"x": 200, "y": 200, "width": 200, "height": 200},
+            }
+        ],
+        "clusters": [{"id": "c1", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = _join()
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    assert "Alice Q" in mapped.get(10, [])
+    primary_only = to_face_metric_inputs(export, manifest, join, "primary", frame="e2e")[1]
+    optimistic = to_face_metric_inputs(export, manifest, join, "optimistic", frame="e2e")[1]
+    assert identification_pr(optimistic).true_positives > identification_pr(primary_only).true_positives
+
+
 def test_zero_export_stays_in_both_detection_denominators() -> None:
     manifest = _manifest()
     export = _export_partial_only()

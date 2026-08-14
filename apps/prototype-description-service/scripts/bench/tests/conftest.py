@@ -196,7 +196,7 @@ def health_payload(*, profile: str) -> dict[str, Any]:
 def write_image_corpus(images_dir: Path, media_ids: list[int]) -> dict[int, str]:
     images_dir.mkdir(parents=True, exist_ok=True)
     shas: dict[int, str] = {}
-    data = png_bytes(16, 16)
+    data = png_bytes(100, 100)
     digest = hashlib.sha256(data).hexdigest()
     for mid in media_ids:
         dest = images_dir / f"img_{mid}.jpg"
@@ -208,9 +208,17 @@ def write_image_corpus(images_dir: Path, media_ids: list[int]) -> dict[int, str]
 def write_hashed_manifest(path: Path, images_dir: Path, media_ids: list[int]) -> Path:
     shas = write_image_corpus(images_dir, media_ids)
     entries = [
-        minimal_entry(mid, path=f"img_{mid}.jpg", sha256=shas[mid]) for mid in media_ids
+        minimal_entry(
+            mid,
+            path=f"img_{mid}.jpg",
+            sha256=shas[mid],
+            face_count=1,
+            present_identities=["Alice Q"],
+            face_boxes=[{"x": 0.05, "y": 0.05, "w": 0.1, "h": 0.1, "name": "Alice Q", "source": "iptc"}],
+        )
+        for mid in media_ids
     ]
-    payload = {"manifest_version": 2, "roster": [], "entries": entries}
+    payload = {"manifest_version": 2, "roster": ["Alice Q"], "entries": entries}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 

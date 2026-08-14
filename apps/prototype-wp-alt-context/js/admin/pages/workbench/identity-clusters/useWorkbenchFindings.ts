@@ -15,11 +15,14 @@ import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFa
 import type { SuggestionReviewItem } from './SuggestionCards';
 import {
   buildReviewQueue,
+  CLUSTER_EVIDENCE,
+  clusterEvidence,
   emptyNextAction,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   NONE_REASON,
   queueItemToNextAction,
+  type ClusterEvidence,
   type NextActionKind,
   type NoneReason,
   type ReviewQueueBand,
@@ -31,9 +34,11 @@ import { isHumanLabeledTarget } from './suggestionProjection';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
 export {
+  CLUSTER_EVIDENCE,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   NONE_REASON,
+  type ClusterEvidence,
   type NextActionKind,
   type NoneReason,
   type ReviewQueueBand,
@@ -47,10 +52,12 @@ export {
   buildReviewQueue,
   bulkSelectableIdsInFilters,
   clampQueueIndex,
+  clusterEvidence,
   filterReviewQueue,
   filterReviewQueueByBand,
   filterReviewQueueComposite,
   intersectSelectionWithFilters,
+  isZeroEvidenceCluster,
   matchesSimilarityBand,
   nextQueueIndex,
   prevQueueIndex,
@@ -113,6 +120,11 @@ export interface WorkbenchFindingsSourceState {
 export interface WorkbenchFindingsViewModel {
   counts: WorkbenchFindingsCounts;
   previews: WorkbenchFindingPreview[];
+  /**
+   * Loaded clusters gated out of the queue (identity_count === 0 or no representatives).
+   * Surfaced as one aggregate repair row — never silently dropped (RLSE-05).
+   */
+  zeroEvidenceClusterCount: number;
   hasFindings: boolean;
   isLoading: boolean;
   isError: boolean;
@@ -325,12 +337,18 @@ export const buildWorkbenchFindings = (
   queues: WorkbenchFindingsQueues,
   state: WorkbenchFindingsSourceState,
 ): WorkbenchFindingsViewModel => {
+  const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
+  const evidenceClusters = sortedClusters.filter(
+    (cluster) => clusterEvidence(cluster) === CLUSTER_EVIDENCE.PRESENT,
+  );
+  const zeroEvidenceClusterCount = sortedClusters.length - evidenceClusters.length;
+  const unlabeledClusters = Math.max(0, queues.topUnlabeledTotal - zeroEvidenceClusterCount);
   const counts: WorkbenchFindingsCounts = {
     assignments: queues.assignmentTotal,
     merges: queues.mergeTotal,
     names: queues.nameTotal,
-    unlabeledClusters: queues.topUnlabeledTotal,
-    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + queues.topUnlabeledTotal,
+    unlabeledClusters,
+    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + unlabeledClusters,
   };
 
   // WHY: assignment + top-unlabeled are the canonical availability signals; merge/name
@@ -342,12 +360,11 @@ export const buildWorkbenchFindings = (
     state.nameDataSource === DATA_SOURCE.BACKEND_PROXY ||
     state.topUnlabeledDataSource === DATA_SOURCE.BACKEND_PROXY;
 
-  const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
   const queue = buildReviewQueue({
     reviewItems: queues.reviewItems,
     mergeSuggestions: queues.mergeSuggestions,
     nameSuggestions: queues.nameSuggestions,
-    sortedClusters,
+    sortedClusters: evidenceClusters,
   });
 
   // WHY: a top-unlabeled 500 with an empty primary queue is still a failure, not
@@ -356,7 +373,8 @@ export const buildWorkbenchFindings = (
 
   return {
     counts,
-    previews: collectPreviews(queues, sortedClusters),
+    previews: collectPreviews(queues, evidenceClusters),
+    zeroEvidenceClusterCount,
     hasFindings: counts.total > 0,
     isLoading: state.isLoading,
     isError,

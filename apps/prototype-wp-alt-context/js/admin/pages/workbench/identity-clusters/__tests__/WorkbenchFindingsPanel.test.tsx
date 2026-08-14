@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,9 +23,12 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-const { faceThumbnailSpy, avatarSpy } = vi.hoisted(() => ({
+const { faceThumbnailSpy, avatarSpy, refetchAssignment, refetchMerge, refetchTopUnlabeled } = vi.hoisted(() => ({
   faceThumbnailSpy: vi.fn(),
   avatarSpy: vi.fn(),
+  refetchAssignment: vi.fn(() => Promise.resolve()),
+  refetchMerge: vi.fn(() => Promise.resolve()),
+  refetchTopUnlabeled: vi.fn(() => Promise.resolve()),
 }));
 
 // Radix Avatar's Image uses Image.onload which never fires in JSDOM.
@@ -86,6 +89,14 @@ vi.mock('../useWorkbenchFindings', async () => {
   };
 });
 
+vi.mock('../useSuggestionReviewQueries', () => ({
+  useSuggestionReviewQueries: vi.fn(() => ({
+    assignmentQuery: { refetch: refetchAssignment },
+    mergeQuery: { refetch: refetchMerge },
+    topUnlabeledQuery: { refetch: refetchTopUnlabeled },
+  })),
+}));
+
 const preview = (overrides: Partial<WorkbenchFindingPreview> & Pick<WorkbenchFindingPreview, 'key'>): WorkbenchFindingPreview => ({
   thumbUrl: null,
   mediaUrl: null,
@@ -98,6 +109,7 @@ const preview = (overrides: Partial<WorkbenchFindingPreview> & Pick<WorkbenchFin
 const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
+  zeroEvidenceClusterCount: 0,
   hasFindings: false,
   isLoading: false,
   isError: false,
@@ -915,5 +927,224 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText(/cluster-9/)).not.toBeInTheDocument();
+  });
+
+  // S3 / TEST-15: kills the dead <p> error with no Retry / no refetch.
+  it('S3: error Retry fires assignment+merge refetch', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // S3 / TEST-15: kills hint-less unavailable copy that never names the setting.
+  it('S3: unavailable state names the recognition-service setting', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isUnavailable: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Recognition findings are unavailable right now.')).toBeInTheDocument();
+    expect(screen.getByText(/Service API URL/)).toBeInTheDocument();
+    expect(screen.getByText(/Recognition API Settings/)).toBeInTheDocument();
+  });
+
+  // S3 / TEST-15: kills copy-only unlabeled outage with no retry action.
+  it('S3: degraded unlabeled chip Retry refetches top-unlabeled', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    expect(refetchAssignment).not.toHaveBeenCalled();
+    expect(refetchMerge).not.toHaveBeenCalled();
+  });
+
+  // S3 / TEST-15: kills Avatar src="" terminal branch.
+  it('S3: data-missing chip uses role/name when no usable preview url', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: null,
+            mediaUrl: null,
+            label: null,
+            bbox: null,
+          }),
+        ],
+        hasFindings: true,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: null,
+        },
+      }),
+    );
+
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('img', { name: 'Preview image unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(avatarSpy).not.toHaveBeenCalled();
+    expect(container.querySelector('img[src=""]')).toBeNull();
+  });
+
+  // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).
+  it('S2: aggregate repair row renders with the gated cluster count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 2,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('S2: Resync on the aggregate repair row refetches top-unlabeled', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
+        zeroEvidenceClusterCount: 3,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('3 groups missing preview data')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
+    expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+  });
+
+  it('S2: counts and previews exclude gated zero-evidence clusters [TEST-15]', () => {
+    const model = buildWorkbenchFindings(
+      {
+        reviewItems: [],
+        assignmentTotal: 0,
+        mergeSuggestions: [],
+        mergeTotal: 0,
+        nameSuggestions: [],
+        nameTotal: 0,
+        topUnlabeledClusters: [
+          {
+            id: 'zero-count',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [
+              {
+                id: 'rep-zero',
+                media_id: 11,
+                media_url: 'http://example.test/uploads/zero.jpg',
+                bbox: { x: 1, y: 2, width: 10, height: 10 },
+                is_pinned: false,
+              },
+            ],
+          },
+          {
+            id: 'empty-reps',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 5,
+            representatives: [],
+          },
+          {
+            id: 'reviewable',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 4,
+            representatives: [
+              {
+                id: 'rep-ok',
+                media_id: 12,
+                media_url: 'http://example.test/uploads/ok.jpg',
+                bbox: { x: 10, y: 20, width: 80, height: 90 },
+                is_pinned: false,
+              },
+            ],
+          },
+        ],
+        topUnlabeledTotal: 3,
+      },
+      {
+        assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        nameDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        isLoading: false,
+        isError: false,
+        isTopUnlabeledError: false,
+        queueSettled: true,
+      },
+    );
+
+    expect(model.zeroEvidenceClusterCount).toBe(2);
+    expect(model.counts.unlabeledClusters).toBe(1);
+    expect(model.counts.total).toBe(1);
+    expect(model.previews.map((preview) => preview.key)).toEqual(['cluster-reviewable']);
+    expect(model.queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
+    expect(model.hasFindings).toBe(true);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.queryByText('3 unlabeled groups')).not.toBeInTheDocument();
   });
 });

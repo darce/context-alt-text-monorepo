@@ -80,7 +80,7 @@ const makeCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabeled
   is_auto_label: false,
   identity_count: 3,
   user_confirmed: false,
-  representatives: [],
+  representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false, thumb_url: 'http://example.test/face.jpg' }],
   ...overrides,
 });
 
@@ -332,7 +332,7 @@ describe('buildWorkbenchFindings', () => {
               { id: 'rep-1', media_id: 11, thumb_url: 'http://example.test/cluster-thumb.jpg', is_pinned: false },
             ],
           }),
-          makeCluster({ id: 'no-face', identity_count: 2 }),
+          makeCluster({ id: 'no-face', identity_count: 2, representatives: [] }),
         ],
       }),
       makeState(),

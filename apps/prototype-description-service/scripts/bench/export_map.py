@@ -50,7 +50,7 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
     identities = client.media_identities(media_ids)
     clusters = client.clusters()
     members: Any
-    rows = _unwrap_rows(clusters, keys=("clusters",), what="clusters")
+    rows = _unwrap_rows(clusters, what="clusters")
     members = []
     for cluster in rows:
         cid = cluster.get("id") if cluster.get("id") is not None else cluster.get("cluster_id")
@@ -200,12 +200,19 @@ def match_detection_boxes(
     )
 
 
-def _unwrap_rows(raw: Any, *, keys: tuple[str, ...], what: str) -> list[dict[str, Any]]:
+def _unwrap_rows(raw: Any, *, what: str) -> list[dict[str, Any]]:
     # Live stack routes return a JSON array. Object envelopes are a second
     # shape and are rejected so a mid-series change cannot pass silently.
-    del keys
     if isinstance(raw, list):
-        return [row for row in raw if isinstance(row, dict)]
+        rows: list[dict[str, Any]] = []
+        for i, row in enumerate(raw):
+            if not isinstance(row, dict):
+                raise BenchError(
+                    "export_envelope_invalid",
+                    f"{what}[{i}] must be a JSON object; got {type(row).__name__}",
+                )
+            rows.append(row)
+        return rows
     raise BenchError(
         "export_envelope_invalid",
         f"{what} must be a JSON array (bare list); got {type(raw).__name__}",
@@ -214,18 +221,28 @@ def _unwrap_rows(raw: Any, *, keys: tuple[str, ...], what: str) -> list[dict[str
 
 def _identities_list(export: Any) -> list[dict[str, Any]]:
     if isinstance(export, dict):
-        raw = export.get("media_identities", [])
+        if "media_identities" not in export:
+            raise BenchError(
+                "export_envelope_invalid",
+                "dict export is missing required key media_identities",
+            )
+        raw = export["media_identities"]
     else:
-        raw = getattr(export, "media_identities", [])
-    return _unwrap_rows(raw, keys=("data",), what="media_identities")
+        raw = getattr(export, "media_identities")
+    return _unwrap_rows(raw, what="media_identities")
 
 
 def _clusters_list(export: Any) -> list[dict[str, Any]]:
     if isinstance(export, dict):
-        raw = export.get("clusters", [])
+        if "clusters" not in export:
+            raise BenchError(
+                "export_envelope_invalid",
+                "dict export is missing required key clusters",
+            )
+        raw = export["clusters"]
     else:
-        raw = getattr(export, "clusters", [])
-    return _unwrap_rows(raw, keys=("clusters",), what="clusters")
+        raw = getattr(export, "clusters")
+    return _unwrap_rows(raw, what="clusters")
 
 
 def _primary_name_for_row(row: dict[str, Any], roster: Sequence[str]) -> str | None:

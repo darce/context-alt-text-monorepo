@@ -193,7 +193,8 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           trimmedSearch,
         )
       : null;
-  // Filter/table stay live; only the status-region string is delayed [ROSTER-W-03].
+  // Filter/table stay live; only non-null status-region rewrites are delayed
+  // [ROSTER-W-03]. Transition to null flushes immediately [E21-19-REV1-01].
   const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
 
   const statusLines = [activeFilterStatus, announcedSearchStatus].filter((line): line is string => line !== null);

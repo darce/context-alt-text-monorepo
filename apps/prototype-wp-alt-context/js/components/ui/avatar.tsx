@@ -45,6 +45,8 @@ export interface AvatarProps {
   shape?: 'circle' | 'square';
   /** Additional CSS class on the root element */
   className?: string;
+  /** Accessible name for the data-missing branch. Visible text stays the default short label. */
+  missingLabel?: string;
 }
 
 function hasAvatarSrc(src: string | undefined): src is string {
@@ -84,6 +86,7 @@ export const Avatar = ({
   sizePx,
   shape = 'circle',
   className = '',
+  missingLabel = __('No image', 'alt-context'),
 }: AvatarProps): React.JSX.Element => {
   const displaySize = sizePx ?? sizeMap[size];
   const iconSize = Math.max(12, Math.round(displaySize * 0.35));
@@ -106,7 +109,7 @@ export const Avatar = ({
         className={classes}
         data-avatar-state={AVATAR_STATES.dataMissing}
         role="img"
-        aria-label={__('No image', 'alt-context')}
+        aria-label={missingLabel}
         style={rootStyle}
       >
         <ImageOff className={`${baseClass}__missing-icon`} size={iconSize} aria-hidden="true" />

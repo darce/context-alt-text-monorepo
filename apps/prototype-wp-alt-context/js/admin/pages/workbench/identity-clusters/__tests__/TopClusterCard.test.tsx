@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BoundingBox } from '../../../../api/recognition/types/identity';
+import type { DetectedIdentity } from '../../../../api/recognition';
 import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
+import { ClusterPreview } from '../ClusterPreview';
 import { TopClusterCard } from '../TopClusterCard';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -42,7 +44,8 @@ const FACE_THUMB_URL = 'https://example.test/wp-content/uploads/recognition/face
 const MEDIA_URL = 'https://example.test/wp-content/uploads/2026/01/group-photo.jpg';
 const BBOX: BoundingBox = { x: 12, y: 24, width: 80, height: 96 };
 
-const MISSING_LABEL = 'No image';
+const MISSING_LABEL = 'Representative image unavailable';
+const MISSING_VISIBLE_LABEL = 'No image';
 const FACE_ALT = 'Face to label';
 
 const buildRepresentative = (
@@ -116,7 +119,7 @@ describe('TopClusterCard', () => {
     expect(image).toHaveClass('acx-avatar__image');
     expect(container.querySelector('.acx-avatar')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
-    expect(screen.queryByText(MISSING_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
   it('renders an avatar for a plain (non face-thumbs) thumb URL when no crop data is present', () => {
@@ -153,7 +156,7 @@ describe('TopClusterCard', () => {
     expect(image.closest('.acx-face-thumbnail')).toBeInTheDocument();
     expect(container.querySelector('.acx-avatar')).toBeNull();
     expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
-    expect(screen.queryByText(MISSING_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
   // The reported DOM showed "5 faces in cluster" next to a placeholder thumb —
@@ -184,6 +187,35 @@ describe('TopClusterCard', () => {
     }
     expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
+  });
+
+  // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share
+  // this accessible name. Pre-fix TopClusterCard used Avatar's 'No image'
+  // default, so this goes red if either surface diverges.
+  it('shares missing-representative vocabulary with ClusterPreview', () => {
+    const { unmount } = render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
+    const cardName = screen.getByRole('img', { name: MISSING_LABEL }).getAttribute('aria-label');
+    unmount();
+
+    const previewRep: DetectedIdentity = {
+      identity_id: 'identity-1',
+      representative_id: 'rep-1',
+      media_id: 101,
+      cluster_id: 'cluster-1',
+      cluster_label: 'Known Person',
+      is_auto_label: false,
+      is_pinned: false,
+      bbox: { x: 10, y: 20, width: 30, height: 40 },
+      confidence: 0.98,
+      similarity: null,
+      thumb_url: 'https://example.test/thumb.jpg',
+      media_url: null,
+    };
+    render(<ClusterPreview representative={previewRep} memberCount={1} />);
+    const previewName = screen.getByRole('img', { name: MISSING_LABEL }).getAttribute('aria-label');
+
+    expect(cardName).toBe(MISSING_LABEL);
+    expect(previewName).toBe(cardName);
   });
 
   // E21-16 W2: machine suggested_label must not open the Yes/No confirm path.

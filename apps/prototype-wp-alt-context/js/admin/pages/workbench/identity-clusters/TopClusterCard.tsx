@@ -11,6 +11,7 @@ import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { isHumanLabeledTarget } from './suggestionProjection';
 
@@ -132,6 +133,7 @@ export const TopClusterCard = ({
   };
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
+  const missingRepresentativeLabel = REPRESENTATIVE_VOCABULARY.imageUnavailable;
   const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
@@ -174,6 +176,7 @@ export const TopClusterCard = ({
                       sizePx={cellSize}
                       shape="square"
                       alt={faceAltText}
+                      missingLabel={missingRepresentativeLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : cropData ? (
@@ -191,12 +194,14 @@ export const TopClusterCard = ({
                       sizePx={cellSize}
                       shape="square"
                       alt={faceAltText}
+                      missingLabel={missingRepresentativeLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : (
                     <Avatar
                       sizePx={cellSize}
                       shape="square"
+                      missingLabel={missingRepresentativeLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   )}
@@ -205,7 +210,12 @@ export const TopClusterCard = ({
             })}
           </div>
         ) : (
-          <Avatar sizePx={gridSizePx} shape="square" className="acx-top-cluster-card__thumb" />
+          <Avatar
+            sizePx={gridSizePx}
+            shape="square"
+            missingLabel={missingRepresentativeLabel}
+            className="acx-top-cluster-card__thumb"
+          />
         )}
       </div>
 

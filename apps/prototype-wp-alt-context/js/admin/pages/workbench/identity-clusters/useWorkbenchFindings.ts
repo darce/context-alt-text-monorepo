@@ -74,6 +74,7 @@ export interface WorkbenchFindingsCounts {
 export interface WorkbenchFindingPreview {
   key: string;
   thumbUrl: string | null;
+  attachmentUrl?: string | null;
   mediaUrl: string | null;
   label: string | null;
   /**
@@ -260,6 +261,7 @@ const collectPreviews = (
     previews.push({
       key: `assignment-${suggestion.suggestionId}`,
       thumbUrl: suggestion.enrichment?.identityThumbUrl ?? null,
+      attachmentUrl: suggestion.enrichment?.identityAttachmentUrl ?? null,
       mediaUrl: suggestion.enrichment?.identityMediaUrl ?? null,
       label,
       labelIsSuggested,
@@ -275,6 +277,7 @@ const collectPreviews = (
     previews.push({
       key: `merge-${merge.id}`,
       thumbUrl: merge.cluster_a_representative_thumb_url ?? null,
+      attachmentUrl: merge.cluster_a_representative_attachment_url ?? null,
       mediaUrl: merge.cluster_a_representative_media_url ?? null,
       label,
       labelIsSuggested: false,
@@ -288,6 +291,7 @@ const collectPreviews = (
     previews.push({
       key: `name-${name.id}`,
       thumbUrl: representative?.thumb_url ?? null,
+      attachmentUrl: representative?.attachment_url ?? null,
       mediaUrl: representative?.media_url ?? null,
       label,
       // suggested_name is always a machine suggestion.
@@ -305,6 +309,7 @@ const collectPreviews = (
     previews.push({
       key: `cluster-${cluster.id}`,
       thumbUrl: representative?.thumb_url ?? null,
+      attachmentUrl: representative?.attachment_url ?? null,
       mediaUrl: representative?.media_url ?? null,
       label,
       labelIsSuggested: Boolean(label),
@@ -315,7 +320,9 @@ const collectPreviews = (
   // Exact-capture dedupe, then diversity-first cap (HAI-17).
   return selectDiversePreviews(
     dedupePreviewsByCapture(
-      previews.filter((preview) => preview.thumbUrl !== null || preview.mediaUrl !== null),
+      previews.filter(
+        (preview) => preview.thumbUrl !== null || preview.mediaUrl !== null || preview.attachmentUrl != null,
+      ),
     ),
     PREVIEW_LIMIT,
   );

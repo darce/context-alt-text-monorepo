@@ -38,6 +38,8 @@ export interface FaceThumbnailProps {
   loading?: 'lazy' | 'eager';
   /** Additional CSS class */
   className?: string;
+  onLoad?: () => void;
+  onError?: () => void;
 }
 
 type LoadingState = 'loading' | 'loaded' | 'error';
@@ -59,6 +61,8 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
       alt = __('Detected face', 'alt-context'),
       loading,
       className = '',
+      onLoad,
+      onError,
     },
     ref,
   ) => {
@@ -70,11 +74,13 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
 
     const handleLoad = React.useCallback(() => {
       setLoadState('loaded');
-    }, []);
+      onLoad?.();
+    }, [onLoad]);
 
     const handleError = React.useCallback(() => {
       setLoadState('error');
-    }, []);
+      onError?.();
+    }, [onError]);
 
     React.useEffect(() => {
       setLoadState('loading');

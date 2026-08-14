@@ -10,10 +10,7 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import { Avatar } from '../../../../components/ui/avatar';
-import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
-import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
+import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import {
   NEXT_ACTION_KIND,
   useWorkbenchFindings,
@@ -88,45 +85,21 @@ const previewAltText = (preview: WorkbenchFindingPreview, cropped: boolean): str
  * target-size floor applies to interactive controls; these remain display-only).
  */
 const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): React.JSX.Element => {
-  const useDedicatedThumb = isDedicatedFaceThumbUrl(preview.thumbUrl);
   const canCrop =
-    typeof preview.mediaUrl === 'string' &&
-    preview.mediaUrl.trim() !== '' &&
-    isCroppableBbox(preview.bbox);
-
-  if (useDedicatedThumb && preview.thumbUrl) {
-    return (
-      <Avatar
-        src={preview.thumbUrl}
-        sizePx={FINDINGS_PREVIEW_SIZE_PX}
-        shape="square"
-        alt={previewAltText(preview, true)}
-        className="acx-findings-panel__preview"
-      />
-    );
-  }
-
-  if (canCrop && preview.mediaUrl && preview.bbox) {
-    return (
-      <FaceThumbnail
-        mediaUrl={preview.mediaUrl}
-        bbox={preview.bbox}
-        sizePx={FINDINGS_PREVIEW_SIZE_PX}
-        shape="square"
-        alt={previewAltText(preview, true)}
-        className="acx-findings-panel__preview"
-      />
-    );
-  }
-
-  const fallbackSrc = preview.thumbUrl ?? preview.mediaUrl ?? '';
+    (typeof preview.attachmentUrl === 'string' && preview.attachmentUrl.trim() !== '') ||
+    (typeof preview.mediaUrl === 'string' && preview.mediaUrl.trim() !== '');
   return (
-    <Avatar
-      src={fallbackSrc}
+    <DurableFaceThumb
+      source={{
+        thumbUrl: preview.thumbUrl,
+        attachmentUrl: preview.attachmentUrl,
+        mediaUrl: preview.mediaUrl,
+        bbox: preview.bbox,
+      }}
       sizePx={FINDINGS_PREVIEW_SIZE_PX}
       shape="square"
-      alt={previewAltText(preview, false)}
-      className="acx-findings-panel__preview acx-findings-panel__preview--uncropped"
+      alt={previewAltText(preview, canCrop && preview.bbox != null)}
+      className="acx-findings-panel__preview"
     />
   );
 };

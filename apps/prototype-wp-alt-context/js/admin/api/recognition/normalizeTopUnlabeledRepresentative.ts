@@ -13,6 +13,7 @@ export interface TopUnlabeledRepresentativePayload {
   id: string;
   media_id?: string | null;
   thumb_url?: string | null;
+  attachment_url?: string | null;
   media_url?: string | null;
   bbox?: BoundingBox | null;
   is_user_selected?: boolean;
@@ -53,6 +54,7 @@ export const normalizeTopUnlabeledRepresentative = (
   id: representative.id,
   media_id: normalizeRepresentativeMediaId(representative.media_id),
   thumb_url: normalizeOptionalUrl(representative.thumb_url ?? null),
+  attachment_url: normalizeOptionalUrl(representative.attachment_url ?? null),
   media_url: normalizeOptionalUrl(representative.media_url ?? null),
   bbox: representative.bbox ?? null,
   is_pinned: representative.is_user_selected ?? false,

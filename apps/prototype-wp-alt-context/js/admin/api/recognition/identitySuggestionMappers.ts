@@ -22,10 +22,12 @@ export interface PendingSuggestionApiResponse {
   cluster_identity_count?: number | null;
   identity_media_id?: number | null;
   identity_media_url?: string | null;
+  identity_attachment_url?: string | null;
   identity_thumb_url?: string | null;
   identity_bbox?: BoundingBox | null;
   representative_media_id?: number | null;
   representative_media_url?: string | null;
+  representative_attachment_url?: string | null;
   representative_thumb_url?: string | null;
   representative_bbox?: BoundingBox | null;
   suggested_label?: string | null;
@@ -45,10 +47,12 @@ export interface PendingMergeSuggestionApiResponse {
   cluster_b_identity_count?: number | null;
   cluster_a_representative_media_id?: number | null;
   cluster_a_representative_media_url?: string | null;
+  cluster_a_representative_attachment_url?: string | null;
   cluster_a_representative_thumb_url?: string | null;
   cluster_a_representative_bbox?: BoundingBox | null;
   cluster_b_representative_media_id?: number | null;
   cluster_b_representative_media_url?: string | null;
+  cluster_b_representative_attachment_url?: string | null;
   cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
   /** Authoritative post-accept retired id (optional on list/older backends). */
@@ -107,10 +111,12 @@ export const mapPendingSuggestions = (response: PendingSuggestionsResponse): Pen
       cluster_identity_count: suggestion.cluster_identity_count ?? null,
       identity_media_id: suggestion.identity_media_id ?? null,
       identity_media_url: suggestion.identity_media_url ?? null,
+      identity_attachment_url: suggestion.identity_attachment_url ?? null,
       identity_thumb_url: suggestion.identity_thumb_url ?? null,
       identity_bbox: suggestion.identity_bbox ?? null,
       representative_media_id: suggestion.representative_media_id ?? null,
       representative_media_url: suggestion.representative_media_url ?? null,
+      representative_attachment_url: suggestion.representative_attachment_url ?? null,
       representative_thumb_url: suggestion.representative_thumb_url ?? null,
       representative_bbox: suggestion.representative_bbox ?? null,
       suggested_label: suggestion.suggested_label ?? null,
@@ -209,6 +215,10 @@ export const mapPendingMergeSuggestion = (raw: unknown): PendingMergeSuggestion 
       typeof suggestion.cluster_a_representative_media_url === 'string'
         ? suggestion.cluster_a_representative_media_url
         : null,
+    cluster_a_representative_attachment_url:
+      typeof suggestion.cluster_a_representative_attachment_url === 'string'
+        ? suggestion.cluster_a_representative_attachment_url
+        : null,
     cluster_a_representative_thumb_url:
       typeof suggestion.cluster_a_representative_thumb_url === 'string'
         ? suggestion.cluster_a_representative_thumb_url
@@ -221,6 +231,10 @@ export const mapPendingMergeSuggestion = (raw: unknown): PendingMergeSuggestion 
     cluster_b_representative_media_url:
       typeof suggestion.cluster_b_representative_media_url === 'string'
         ? suggestion.cluster_b_representative_media_url
+        : null,
+    cluster_b_representative_attachment_url:
+      typeof suggestion.cluster_b_representative_attachment_url === 'string'
+        ? suggestion.cluster_b_representative_attachment_url
         : null,
     cluster_b_representative_thumb_url:
       typeof suggestion.cluster_b_representative_thumb_url === 'string'

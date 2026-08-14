@@ -49,10 +49,12 @@ export type SuggestionResolution = (typeof SUGGESTION_RESOLUTION)[keyof typeof S
 export interface ProjectedSuggestionEnrichment {
   identityMediaId?: PendingSuggestion['identity_media_id'];
   identityMediaUrl?: PendingSuggestion['identity_media_url'];
+  identityAttachmentUrl?: PendingSuggestion['identity_attachment_url'];
   identityThumbUrl?: PendingSuggestion['identity_thumb_url'];
   identityBbox?: PendingSuggestion['identity_bbox'];
   representativeMediaId?: PendingSuggestion['representative_media_id'];
   representativeMediaUrl?: PendingSuggestion['representative_media_url'];
+  representativeAttachmentUrl?: PendingSuggestion['representative_attachment_url'];
   representativeThumbUrl?: PendingSuggestion['representative_thumb_url'];
   representativeBbox?: PendingSuggestion['representative_bbox'];
   suggestedLabel?: PendingSuggestion['suggested_label'];
@@ -144,10 +146,12 @@ export const fromIdentityMatch = (identityId: string, match: ClusterSuggestion):
 const ENRICHMENT_SOURCE_FIELDS = [
   ['identityMediaId', 'identity_media_id'],
   ['identityMediaUrl', 'identity_media_url'],
+  ['identityAttachmentUrl', 'identity_attachment_url'],
   ['identityThumbUrl', 'identity_thumb_url'],
   ['identityBbox', 'identity_bbox'],
   ['representativeMediaId', 'representative_media_id'],
   ['representativeMediaUrl', 'representative_media_url'],
+  ['representativeAttachmentUrl', 'representative_attachment_url'],
   ['representativeThumbUrl', 'representative_thumb_url'],
   ['representativeBbox', 'representative_bbox'],
   ['suggestedLabel', 'suggested_label'],

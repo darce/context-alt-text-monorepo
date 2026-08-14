@@ -25,7 +25,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { removeClusterMember } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import {
   DialogContent,
   DialogDescription,
@@ -34,8 +34,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
-import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
-import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
+
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
@@ -136,34 +135,17 @@ export const ClusterReviewPanel = ({
               {members.map((member) => (
                 <div key={member.identity_id} className="acx-cluster-member-card">
                   <div className="acx-cluster-member-card__thumbnail">
-                    {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                      <img
-                        src={member.thumb_url}
-                        alt={__('Cluster member', 'alt-context')}
-                        className="acx-cluster-member-card__image"
-                      />
-                    ) : member.media_url && isCroppableBbox(member.bbox) ? (
-                      <FaceThumbnail
-                        mediaUrl={member.media_url}
-                        bbox={member.bbox}
-                        size="lg"
-                        alt={__('Cluster member', 'alt-context')}
-                      />
-                    ) : member.thumb_url ? (
-                      <img
-                        src={member.thumb_url}
-                        alt={__('Cluster member', 'alt-context')}
-                        className="acx-cluster-member-card__image"
-                      />
-                    ) : (
-                      <div
-                        className="acx-placeholder"
-                        role="img"
-                        aria-label={__('Member image unavailable', 'alt-context')}
-                      >
-                        <span className="acx-placeholder__label">{__('No image', 'alt-context')}</span>
-                      </div>
-                    )}
+                    <DurableFaceThumb
+                      source={{
+                        thumbUrl: member.thumb_url,
+                        attachmentUrl: member.attachment_url,
+                        mediaUrl: member.media_url,
+                        bbox: member.bbox,
+                      }}
+                      size="lg"
+                      alt={__('Cluster member', 'alt-context')}
+                      className="acx-cluster-member-card__image"
+                    />
                     <button
                       type="button"
                       className="acx-cluster-member-card__remove"

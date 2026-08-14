@@ -44,4 +44,16 @@
     background-color: var(--acx-color-data-placeholder);
     border-radius: inherit;
   }
+
+  &--missing {
+    background-color: var(--acx-color-data-placeholder);
+  }
+
+  &--error {
+    box-shadow: inset 0 0 0 1px var(--acx-color-danger);
+  }
+
+  &--fallback-crop {
+    background-color: var(--acx-color-data-placeholder);
+  }
 }

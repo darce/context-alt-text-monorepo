@@ -45,6 +45,8 @@ export interface TopUnlabeledRepresentative {
   /** Normalized from wire `string | null`; null must not coerce to 0. */
   media_id: number | null;
   thumb_url?: string | null;
+  /** Durable WP attachment URL used to crop after scan-time blobs expire. */
+  attachment_url?: string | null;
   media_url?: string | null;
   bbox?: BoundingBox | null;
   /** Internal pin flag; wire name is `is_user_selected`. */

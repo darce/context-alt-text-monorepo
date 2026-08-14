@@ -12963,17 +12963,25 @@ class TestF16PrefixDenyLaundering:
 
 
 class TestF16NasResidualAttribution:
-    """R18-04: ppyolo + nas residual is exact/known-variant Deci only."""
+    """R18-04 / R19-04: ppyolo + nas residual is exact/known-variant Deci.
+
+    Trailing ``s`` is not a one-letter wobble: ``pp_yolo_nass`` is the
+    exact compact of ``yolo_nas_s`` (Deci S) so it stays Deci;
+    ``pp_yolo_nasls`` is ``nasl`` + junk ``s`` and is not a Deci
+    compact, so it stays ``ppyolo_unknown_residual``.
+    """
 
     DECI: ClassVar[tuple[str, ...]] = (
         "pp_yolo_nas",
         "pp_yolo_nas_l",
         "ppyoloenas",
+        "pp_yolo_nass",
     )
     NOT_DECI: ClassVar[tuple[str, ...]] = (
         "pp_yolo_naso",
         "pp_yolo_nashville",
         "pp_yolo_nasal",
+        "pp_yolo_nasls",
     )
 
     @pytest.mark.parametrize("token", DECI)

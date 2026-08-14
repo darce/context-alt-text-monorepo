@@ -134,6 +134,40 @@ def test_export_media_not_in_roster_fail_closed(tmp_path: Path) -> None:
     assert exc.value.code == "export_media_not_in_roster"
 
 
+def test_manifest_id_echo_export_row_is_refused(tmp_path: Path) -> None:
+    """Export row keyed by manifest id (not stack_media_id) must fail closed."""
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    for stack in ("acx-dev-insightface", "acx-dev-fir"):
+        items = run_dir / "legs" / stack / "items.jsonl"
+        recs = [json.loads(line) for line in items.read_text().splitlines() if line.strip()]
+        for rec in recs:
+            if rec.get("manifest_media_id") == 1:
+                rec["stack_media_id"] = 42
+        items.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+        export_path = run_dir / "legs" / stack / "exports" / "media_identities.json"
+        rows = json.loads(export_path.read_text())
+        for row in rows:
+            if row.get("media_id") == 1:
+                row["media_id"] = 42
+        # Manifest-id echo: media_id=2 is a real manifest id but not a stack id here
+        # (stack ids are 42 for media 1 and 2 for media 2). Add a row with media_id=1
+        # after remapping media 1's stack id to 42 — old OR-chain would accept 1.
+        rows.append(
+            {
+                "identity_id": "echo",
+                "media_id": 1,
+                "cluster_id": "c1",
+                "cluster_label": "Alice Q",
+                "is_auto_label": False,
+                "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+            }
+        )
+        export_path.write_text(json.dumps(rows), encoding="utf-8")
+    with pytest.raises(BenchError) as exc:
+        compute_accepted_set(run_dir)
+    assert exc.value.code == "export_media_not_in_roster"
+
+
 def test_differential_attrition_writes_artifacts_then_refuses(tmp_path: Path) -> None:
     # One-sided: leg A accepts 1,2,3; leg B accepts only 1. |3-0|/3 = 1.0 > 0.05
     run_dir = _asymmetric_run(tmp_path, a_ok=[1, 2, 3], b_ok=[1])

@@ -103,4 +103,38 @@ describe('DurableFaceThumb [TEST-15]', () => {
       expect(container.querySelector('[data-avatar-state="error"]')).toBeInTheDocument();
     });
   });
+
+  it('crops a non-dedicated attachment thumbUrl instead of painting it as an avatar [REV1-01]', () => {
+    const { container } = render(
+      <DurableFaceThumb
+        source={{ thumbUrl: ATTACHMENT_URL, attachmentUrl: ATTACHMENT_URL, bbox: BBOX }}
+        alt="Face to label"
+      />,
+    );
+
+    const crop = screen.getByAltText('Face to label');
+    expect(crop).toHaveAttribute('src', ATTACHMENT_URL);
+    expect(crop.closest('.acx-face-thumbnail')).toBeInTheDocument();
+    expect(container.querySelector('.acx-avatar')).toBeNull();
+    expect(container.querySelector('[data-avatar-state="loading"]')).toBeInTheDocument();
+  });
+
+  it('renders a real uncropped img when mediaUrl has no croppable bbox [REV1-02]', () => {
+    const { container } = render(
+      <DurableFaceThumb
+        source={{ mediaUrl: ATTACHMENT_URL, bbox: { x: 0, y: 0, width: 0, height: 0 } }}
+        className="acx-findings-panel__preview"
+      />,
+    );
+
+    const image = screen.getByAltText('Reference image');
+    expect(image.tagName).toBe('IMG');
+    expect(image).toHaveAttribute('src', ATTACHMENT_URL);
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(container.querySelector('[data-avatar-state="uncropped"]')).toBeInTheDocument();
+    expect(container.querySelector('.acx-durable-face-thumb--uncropped')).toBeInTheDocument();
+    expect(container.querySelector('.acx-findings-panel__preview--uncropped')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Representative image unavailable' })).not.toBeInTheDocument();
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+  });
 });

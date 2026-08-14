@@ -11,6 +11,8 @@ import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import {
   NEXT_ACTION_KIND,
   useWorkbenchFindings,
@@ -85,9 +87,10 @@ const previewAltText = (preview: WorkbenchFindingPreview, cropped: boolean): str
  * target-size floor applies to interactive controls; these remain display-only).
  */
 const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): React.JSX.Element => {
-  const canCrop =
+  const hasSceneUrl =
     (typeof preview.attachmentUrl === 'string' && preview.attachmentUrl.trim() !== '') ||
     (typeof preview.mediaUrl === 'string' && preview.mediaUrl.trim() !== '');
+  const cropped = isDedicatedFaceThumbUrl(preview.thumbUrl) || (hasSceneUrl && isCroppableBbox(preview.bbox));
   return (
     <DurableFaceThumb
       source={{
@@ -98,7 +101,7 @@ const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): Rea
       }}
       sizePx={FINDINGS_PREVIEW_SIZE_PX}
       shape="square"
-      alt={previewAltText(preview, canCrop && preview.bbox != null)}
+      alt={previewAltText(preview, cropped)}
       className="acx-findings-panel__preview"
     />
   );

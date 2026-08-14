@@ -1,9 +1,14 @@
 /**
  * Pure face-thumb display resolver.
  *
- * Prefer the scan-time dedicated blob (`thumb_url` under recognition/face-thumbs).
- * When that blob 404s after cleanup, crop from durable attachment_url + bbox.
- * Missing data stays quiet; a claimed URL that then fails stays loud.
+ * Hop order matches ClusterLabelingPanel:
+ *   dedicated face-thumb blob → CSS crop of attachment/media + bbox →
+ *   uncropped source → missing.
+ *
+ * PHP MapsResponseFields::resolve_thumb_url falls back to the full-scene
+ * attachment URL whenever no /recognition/face-thumbs/ blob exists, so
+ * "thumbUrl is nonempty" is not "thumbUrl is a dedicated face crop".
+ * Gate the avatar-first branch on isDedicatedFaceThumbUrl alone.
  */
 
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
@@ -14,6 +19,7 @@ export const AVATAR_STATE = {
   loading: 'loading',
   real: 'real',
   fallbackCrop: 'fallback-crop',
+  uncropped: 'uncropped',
   missing: 'missing',
   error: 'error',
 } as const;
@@ -23,6 +29,7 @@ export type AvatarState = (typeof AVATAR_STATE)[keyof typeof AVATAR_STATE];
 export const FACE_THUMB_MODE = {
   avatar: 'avatar',
   crop: 'crop',
+  uncropped: 'uncropped',
   none: 'none',
 } as const;
 
@@ -49,6 +56,7 @@ export interface FaceThumbSource {
 export interface FaceThumbLoadStatus {
   blobStatus: LoadStatus;
   cropStatus: LoadStatus;
+  uncroppedStatus?: LoadStatus;
 }
 
 export interface FaceThumbCrop {
@@ -68,6 +76,9 @@ export interface FaceThumbDisplay {
 const nonemptyUrl = (value: string | null | undefined): value is string =>
   typeof value === 'string' && value.trim() !== '';
 
+const trimmedUrl = (value: string | null | undefined): string | null =>
+  nonemptyUrl(value) ? value.trim() : null;
+
 export const resolveFaceThumbCrop = (source: FaceThumbSource): FaceThumbCrop | null => {
   const mediaUrl = nonemptyUrl(source.attachmentUrl)
     ? source.attachmentUrl
@@ -80,14 +91,36 @@ export const resolveFaceThumbCrop = (source: FaceThumbSource): FaceThumbCrop | n
   return { mediaUrl, bbox: source.bbox };
 };
 
+/**
+ * Last-hop source when no dedicated blob and no croppable bbox exist.
+ * Prefer attachment, then media, then a non-dedicated thumb_url.
+ */
+export const resolveUncroppedSource = (source: FaceThumbSource): string | null => {
+  const attachment = trimmedUrl(source.attachmentUrl);
+  if (attachment) {
+    return attachment;
+  }
+  const media = trimmedUrl(source.mediaUrl);
+  if (media) {
+    return media;
+  }
+  const thumb = trimmedUrl(source.thumbUrl);
+  if (thumb && !isDedicatedFaceThumbUrl(thumb)) {
+    return thumb;
+  }
+  return null;
+};
+
 export const resolveFaceThumbDisplay = (
   source: FaceThumbSource,
   loadStatus: FaceThumbLoadStatus,
 ): FaceThumbDisplay => {
-  const thumbUrl = nonemptyUrl(source.thumbUrl) ? source.thumbUrl.trim() : null;
+  const thumbUrl = trimmedUrl(source.thumbUrl);
   const crop = resolveFaceThumbCrop(source);
   const dedicated = isDedicatedFaceThumbUrl(thumbUrl);
+  const uncroppedSrc = resolveUncroppedSource(source);
   const { blobStatus, cropStatus } = loadStatus;
+  const uncroppedStatus = loadStatus.uncroppedStatus ?? LOAD_STATUS.idle;
 
   const missing = (partial?: Partial<FaceThumbDisplay>): FaceThumbDisplay => ({
     state: AVATAR_STATE.missing,
@@ -118,37 +151,17 @@ export const resolveFaceThumbDisplay = (
     isLoudError: false,
   });
 
-  if (thumbUrl && (dedicated || crop)) {
-    if (blobStatus === LOAD_STATUS.error) {
-      if (crop && cropStatus !== LOAD_STATUS.error) {
-        return fallbackCrop();
-      }
-      return loudError();
-    }
-    if (blobStatus === LOAD_STATUS.loaded) {
-      return {
-        state: AVATAR_STATE.real,
-        mode: FACE_THUMB_MODE.avatar,
-        src: thumbUrl,
-        crop: null,
-        unavailableLabel: null,
-        isLoudError: false,
-      };
-    }
-    return {
-      state: AVATAR_STATE.loading,
-      mode: FACE_THUMB_MODE.avatar,
-      src: thumbUrl,
-      crop: null,
-      unavailableLabel: null,
-      isLoudError: false,
-    };
-  }
+  const uncropped = (): FaceThumbDisplay => ({
+    state: AVATAR_STATE.uncropped,
+    mode: FACE_THUMB_MODE.uncropped,
+    src: uncroppedSrc,
+    crop: null,
+    unavailableLabel: null,
+    isLoudError: false,
+  });
 
-  if (thumbUrl) {
-    if (blobStatus === LOAD_STATUS.error) {
-      return loudError();
-    }
+  // Dedicated blob only — a nonempty attachment URL in thumb_url is not a face chip.
+  if (dedicated && thumbUrl && blobStatus !== LOAD_STATUS.error) {
     if (blobStatus === LOAD_STATUS.loaded) {
       return {
         state: AVATAR_STATE.real,
@@ -173,6 +186,9 @@ export const resolveFaceThumbDisplay = (
     if (cropStatus === LOAD_STATUS.error) {
       return loudError();
     }
+    if (dedicated && blobStatus === LOAD_STATUS.error) {
+      return fallbackCrop();
+    }
     if (cropStatus === LOAD_STATUS.loaded) {
       return {
         state: AVATAR_STATE.real,
@@ -191,6 +207,17 @@ export const resolveFaceThumbDisplay = (
       unavailableLabel: null,
       isLoudError: false,
     };
+  }
+
+  if (uncroppedSrc) {
+    if (uncroppedStatus === LOAD_STATUS.error) {
+      return loudError();
+    }
+    return uncropped();
+  }
+
+  if (dedicated && blobStatus === LOAD_STATUS.error) {
+    return loudError();
   }
 
   return missing();

@@ -7,6 +7,7 @@ import {
   type FaceThumbSource,
   type LoadStatus,
 } from './faceThumbDisplay';
+import { isDedicatedFaceThumbUrl } from './isDedicatedFaceThumbUrl';
 
 export interface UseDurableFaceThumbResult {
   display: FaceThumbDisplay;
@@ -14,22 +15,30 @@ export interface UseDurableFaceThumbResult {
   onBlobError: () => void;
   onCropLoad: () => void;
   onCropError: () => void;
+  onUncroppedLoad: () => void;
+  onUncroppedError: () => void;
 }
 
 export const useDurableFaceThumb = (source: FaceThumbSource): UseDurableFaceThumbResult => {
   const [blobStatus, setBlobStatus] = React.useState<LoadStatus>(LOAD_STATUS.idle);
   const [cropStatus, setCropStatus] = React.useState<LoadStatus>(LOAD_STATUS.idle);
+  const [uncroppedStatus, setUncroppedStatus] = React.useState<LoadStatus>(LOAD_STATUS.idle);
 
-  const thumbKey = source.thumbUrl ?? '';
+  const dedicatedKey = isDedicatedFaceThumbUrl(source.thumbUrl) ? (source.thumbUrl ?? '') : '';
   const cropKey = `${source.attachmentUrl ?? ''}|${source.mediaUrl ?? ''}`;
+  const uncroppedKey = `${source.attachmentUrl ?? ''}|${source.mediaUrl ?? ''}|${source.thumbUrl ?? ''}`;
 
   React.useEffect(() => {
-    setBlobStatus(thumbKey ? LOAD_STATUS.loading : LOAD_STATUS.idle);
-  }, [thumbKey]);
+    setBlobStatus(dedicatedKey ? LOAD_STATUS.loading : LOAD_STATUS.idle);
+  }, [dedicatedKey]);
 
   React.useEffect(() => {
-    setCropStatus(cropKey ? LOAD_STATUS.idle : LOAD_STATUS.idle);
+    setCropStatus(LOAD_STATUS.idle);
   }, [cropKey]);
+
+  React.useEffect(() => {
+    setUncroppedStatus(LOAD_STATUS.idle);
+  }, [uncroppedKey]);
 
   const onBlobLoad = React.useCallback(() => {
     setBlobStatus(LOAD_STATUS.loaded);
@@ -47,7 +56,23 @@ export const useDurableFaceThumb = (source: FaceThumbSource): UseDurableFaceThum
     setCropStatus(LOAD_STATUS.error);
   }, []);
 
-  const display = resolveFaceThumbDisplay(source, { blobStatus, cropStatus });
+  const onUncroppedLoad = React.useCallback(() => {
+    setUncroppedStatus(LOAD_STATUS.loaded);
+  }, []);
 
-  return { display, onBlobLoad, onBlobError, onCropLoad, onCropError };
+  const onUncroppedError = React.useCallback(() => {
+    setUncroppedStatus(LOAD_STATUS.error);
+  }, []);
+
+  const display = resolveFaceThumbDisplay(source, { blobStatus, cropStatus, uncroppedStatus });
+
+  return {
+    display,
+    onBlobLoad,
+    onBlobError,
+    onCropLoad,
+    onCropError,
+    onUncroppedLoad,
+    onUncroppedError,
+  };
 };

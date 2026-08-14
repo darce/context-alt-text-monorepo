@@ -1,5 +1,5 @@
 /**
- * Durable face thumbnail: dedicated blob first, then attachment+bbox crop.
+ * Durable face thumbnail: dedicated blob → attachment+bbox crop → uncropped source.
  */
 
 import * as React from 'react';
@@ -9,10 +9,17 @@ import { Avatar, type AvatarSize } from './avatar';
 import { FaceThumbnail } from './FaceThumbnail';
 import {
   AVATAR_STATE,
+  FACE_THUMB_MODE,
   REPRESENTATIVE_IMAGE_UNAVAILABLE,
   type FaceThumbSource,
 } from './faceThumbDisplay';
 import { useDurableFaceThumb } from './useDurableFaceThumb';
+
+const SIZE_PX: Record<AvatarSize, number> = {
+  sm: 32,
+  md: 48,
+  lg: 64,
+};
 
 export interface DurableFaceThumbProps {
   source: FaceThumbSource;
@@ -33,11 +40,15 @@ export const DurableFaceThumb = ({
   className = '',
   loading,
 }: DurableFaceThumbProps): React.JSX.Element => {
-  const { display, onBlobLoad, onBlobError, onCropLoad, onCropError } = useDurableFaceThumb(source);
+  const { display, onBlobLoad, onBlobError, onCropLoad, onCropError, onUncroppedLoad, onUncroppedError } =
+    useDurableFaceThumb(source);
+  const defaultDetectedAlt = __('Detected face', 'alt-context');
   const baseClass = 'acx-durable-face-thumb';
   const stateClass = display.state !== AVATAR_STATE.real ? `${baseClass}--${display.state}` : '';
   const errorClass = display.isLoudError ? `${baseClass}--error` : '';
-  const classes = [baseClass, stateClass, errorClass, className].filter(Boolean).join(' ');
+  const callerUncropped =
+    display.mode === FACE_THUMB_MODE.uncropped && className !== '' ? `${className}--uncropped` : '';
+  const classes = [baseClass, stateClass, errorClass, className, callerUncropped].filter(Boolean).join(' ');
 
   if (display.state === AVATAR_STATE.missing) {
     return (
@@ -63,7 +74,7 @@ export const DurableFaceThumb = ({
     );
   }
 
-  if (display.mode === 'crop' && display.crop) {
+  if (display.mode === FACE_THUMB_MODE.crop && display.crop) {
     return (
       <span className={classes} data-avatar-state={display.state}>
         <FaceThumbnail
@@ -82,7 +93,30 @@ export const DurableFaceThumb = ({
     );
   }
 
-  if (display.mode === 'avatar' && display.src) {
+  if (display.mode === FACE_THUMB_MODE.uncropped && display.src) {
+    const displaySize = sizePx ?? SIZE_PX[size];
+    const uncroppedAlt = alt === defaultDetectedAlt ? __('Reference image', 'alt-context') : alt;
+    return (
+      <span
+        className={classes}
+        data-avatar-state={AVATAR_STATE.uncropped}
+        style={{ width: displaySize, height: displaySize }}
+      >
+        <img
+          className={`${baseClass}__uncropped`}
+          src={display.src}
+          alt={uncroppedAlt}
+          width={displaySize}
+          height={displaySize}
+          loading={loading}
+          onLoad={onUncroppedLoad}
+          onError={onUncroppedError}
+        />
+      </span>
+    );
+  }
+
+  if (display.mode === FACE_THUMB_MODE.avatar && display.src) {
     return (
       <span className={classes} data-avatar-state={display.state}>
         <Avatar

@@ -33,6 +33,15 @@ export interface IdentityThumbnailProps {
 
 const PADDING_RATIO = 0.15;
 
+interface OwnedCrop {
+  ownerId: string;
+  src: string;
+}
+
+/** Face/media key for a crop so a previous person's data: URL cannot paint on a swap. */
+export const thumbnailCropOwnerId = (identity: ThumbnailIdentity): string =>
+  identity.identity_id ?? `media:${identity.media_id}`;
+
 /** Positive finite area required — zero-area is schema-legal but cannot crop [S8-BR-01]. */
 const isUsableBbox = (
   bbox: ThumbnailIdentity['bbox'],
@@ -52,10 +61,11 @@ export const IdentityThumbnail = ({
   onClick,
   alt,
 }: IdentityThumbnailProps): React.JSX.Element => {
-  const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
+  const [cropped, setCropped] = React.useState<OwnedCrop | null>(null);
   const [isIntersecting, setIsIntersecting] = React.useState(false);
   const hostRef = React.useRef<HTMLSpanElement | null>(null);
   const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;
+  const cropOwnerId = thumbnailCropOwnerId(identity);
 
   // Canvas crop path only (no thumb_url). thumb_url / bare media_url skip the
   // observer and do not construct Image(). Zero-area bbox is not usable.
@@ -91,30 +101,31 @@ export const IdentityThumbnail = ({
 
   React.useEffect(() => {
     if (identity.thumb_url) {
-      setCroppedSrc(null);
+      setCropped(null);
       return;
     }
     if (!sourceUrl) {
-      setCroppedSrc(null);
+      setCropped(null);
       return;
     }
     if (!isUsableBbox(identity.bbox)) {
-      setCroppedSrc(sourceUrl);
+      setCropped({ ownerId: cropOwnerId, src: sourceUrl });
       return;
     }
     // Defer full-res Image construction until the thumb is on-screen.
     if (!isIntersecting) {
-      setCroppedSrc(null);
+      setCropped(null);
       return;
     }
 
     // [S6-BR-01] Drop any previous data: crop immediately when source/bbox
     // changes so the old face cannot remain painted under new data attributes
     // while the replacement Image loads.
-    setCroppedSrc(null);
+    setCropped(null);
 
     let cancelled = false;
     const bbox = identity.bbox;
+    const ownerId = cropOwnerId;
     const img = new Image();
     img.crossOrigin = 'anonymous';
 
@@ -129,7 +140,7 @@ export const IdentityThumbnail = ({
       const ctx = canvas.getContext('2d');
 
       if (!ctx) {
-        setCroppedSrc(sourceUrl);
+        setCropped({ ownerId, src: sourceUrl });
         return;
       }
 
@@ -174,14 +185,14 @@ export const IdentityThumbnail = ({
 
       ctx.clearRect(0, 0, size, size);
       ctx.drawImage(img, sx, sy, sWidth, sHeight, dx, dy, destWidth, destHeight);
-      setCroppedSrc(canvas.toDataURL('image/jpeg', 0.92));
+      setCropped({ ownerId, src: canvas.toDataURL('image/jpeg', 0.92) });
     };
 
     // Assign handlers before src so load/error cannot race past the bindings.
     img.onload = draw;
     img.onerror = () => {
       if (!cancelled) {
-        setCroppedSrc(sourceUrl);
+        setCropped({ ownerId, src: sourceUrl });
       }
     };
     img.src = sourceUrl;
@@ -190,6 +201,7 @@ export const IdentityThumbnail = ({
       cancelled = true;
     };
   }, [
+    cropOwnerId,
     identity.thumb_url,
     identity.bbox,
     identity.media_url,
@@ -204,6 +216,9 @@ export const IdentityThumbnail = ({
   // While canvas crop is required and not yet ready, keep a sized placeholder
   // — both pre-intersection and during the post-intersect crop window — so
   // rows never paint/fetch the full uncropped scene [S6-BR-02] [PERC-02].
+  // Ignore a previous identity's crop on this render — effect cleanup is
+  // post-paint and would leak one frame [WBUX-5-R2-S3-BR-01].
+  const croppedSrc = cropped !== null && cropped.ownerId === cropOwnerId ? cropped.src : null;
   const resolvedSrc = identity.thumb_url ?? croppedSrc ?? (needsCanvasCrop ? null : sourceUrl);
   const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
 

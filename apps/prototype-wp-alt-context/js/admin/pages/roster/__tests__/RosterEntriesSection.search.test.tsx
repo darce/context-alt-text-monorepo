@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   MemoryRouter,
@@ -13,7 +13,7 @@ import { vi } from 'vitest';
 import type { RosterEntry } from '../../../api/rosterApi';
 import { useCreatePerson, useDeletePerson, useUpdatePerson } from '../../../hooks/useRosterHooks';
 import { createMockMutation } from '../../../test-utils/mockHooks';
-import { RosterEntriesSection } from '../RosterEntriesSection';
+import { RosterEntriesSection, SEARCH_STATUS_DEBOUNCE_MS } from '../RosterEntriesSection';
 import type { RosterEntriesQuery } from '../RosterEntriesSection';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -408,6 +408,48 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
     );
     expect(screen.getByText('Unable to load roster entries.')).toBeInTheDocument();
     expect(screen.queryByText(/No people match/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * [ROSTER-W-03] [WBUX-5-R2-S6-BR-04] [TEST-15]
+   * Filter the table immediately, but do not rewrite the role=status search
+   * summary on every keystroke (WCAG 4.1.3 noise). Intermediate counts must
+   * be observable here — a final-state-only assertion would stay green
+   * without debounce.
+   */
+  it('does not announce search status per keystroke; settles to the final count [ROSTER-W-03]', () => {
+    vi.useFakeTimers();
+    try {
+      renderSection(readyQuery());
+      const search = screen.getByRole('searchbox', { name: /search people/i });
+
+      fireEvent.change(search, { target: { value: 'S' } });
+      // Immediate filter: "S" matches Alice Anderson + Sarah Chen.
+      expect(screen.getByText('Alice Anderson')).toBeInTheDocument();
+      expect(screen.getByText('Sarah Chen')).toBeInTheDocument();
+      // Goes red if status copies the live query (Showing 2 matching “S”).
+      expect(screen.queryByText(/Showing 2 matching/)).not.toBeInTheDocument();
+
+      fireEvent.change(search, { target: { value: 'Sa' } });
+      expect(screen.queryByText('Alice Anderson')).not.toBeInTheDocument();
+      expect(screen.getByText('Sarah Chen')).toBeInTheDocument();
+      expect(screen.queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
+
+      fireEvent.change(search, { target: { value: 'Sarah' } });
+      expect(screen.queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS - 1);
+      });
+      expect(screen.queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Clear filter does not wipe an active search (separate affordances)', async () => {

@@ -28,6 +28,10 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
         clients=clients,
         skip_preflight=True,
     )
+    from scripts.bench.tests.conftest import write_stub_preflight
+
+    for stack_id in clients:
+        write_stub_preflight(out, stack_id)
     report = score_head_to_head(out)
     assert report.exists()
     accepted = json.loads((out / "score" / "accepted_set.json").read_text())

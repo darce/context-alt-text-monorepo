@@ -12598,14 +12598,23 @@ class TestF15PaddleModelFileExtensions:
         assert policy.audit_derived_from_model(token).ok is True
 
     @pytest.mark.parametrize(
-        "token",
-        ("yolov8.pdmodel", "yolov8.pdparams", "fastsam.pdparams"),
+        "token,expected_pkg",
+        (
+            ("yolov8.pdmodel", "yolov8"),
+            ("yolov8.pdparams", "yolov8"),
+            ("fastsam.pdparams", "fastsam"),
+        ),
     )
-    def test_deny_seed_plus_pd_extension_still_denies(self, token: str) -> None:
-        """R18-09: strip never launders a deny seed (F15-7 deny-side)."""
+    def test_deny_seed_plus_pd_extension_still_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        """R18-09 / R19-02: strip never launders a deny seed; pin attribution."""
         hit = policy._package_denylist_hit(token)
         assert hit is not None, (
             f"{token!r} must DENY (deny seed + Paddle extension)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
         )
         result = policy.audit_derived_from_model(token)
         assert result.ok is False

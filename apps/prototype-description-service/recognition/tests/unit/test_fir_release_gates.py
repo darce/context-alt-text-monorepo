@@ -22,12 +22,27 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import stat
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
+from recognition.tests.dockerfile_stages import (
+    DEFAULT_BUILDER_STAGE,
+    DEFAULT_RUNTIME_STAGE,
+    RUNTIME_VLM_STAGE,
+    _PROJECT_EXTRAS_RE,
+    default_build_target,
+    dockerfile_stages,
+    effective_stage_body,
+    has_vlm_extra,
+    join_continued_lines,
+    unlocked_project_extra_installs,
+)
 from recognition.tests.unit import face_pipeline_support as fps
 from recognition.tests.unit.face_pipeline_support import (
     FACE_PIPELINE_PARITY_REQUIRED_ENV,
@@ -49,10 +64,51 @@ _PARITY_WORKFLOW_CANDIDATES = (
     _REPO_ROOT / ".github" / "workflows" / "face_pipeline_ort_parity.yml",
 )
 
+# Every stage that contributes to a shippable image (recognition + VLM).
+# ACX_BUILD_TARGET=runtime-vlm publishes acx-backend-vlm; lock-integrity and
+# unlocked-install gates must cover both image paths (REV-r08112960-B-10).
+_BUILDER_VLM_STAGE = "builder-vlm"
+_SHIPPABLE_IMAGE_STAGES = (
+    DEFAULT_BUILDER_STAGE,
+    _BUILDER_VLM_STAGE,
+    DEFAULT_RUNTIME_STAGE,
+    RUNTIME_VLM_STAGE,
+)
+# Back-compat alias used by tests that mean "all publishable stage bodies".
+_DEFAULT_IMAGE_STAGES = _SHIPPABLE_IMAGE_STAGES
 
-def _dockerfile_text() -> str:
+
+def _dockerfile_stages() -> dict[str, str]:
     assert _DOCKERFILE.is_file(), f"missing Dockerfile at {_DOCKERFILE}"
-    return _DOCKERFILE.read_text(encoding="utf-8")
+    return dockerfile_stages(_DOCKERFILE)
+
+
+def _builder_body() -> str:
+    stages = _dockerfile_stages()
+    assert DEFAULT_BUILDER_STAGE in stages, (
+        f"Dockerfile missing {DEFAULT_BUILDER_STAGE!r} stage; have {list(stages)}"
+    )
+    return stages[DEFAULT_BUILDER_STAGE]
+
+
+def _runtime_body() -> str:
+    """Effective runtime body (built-image claims; follows FROM inheritance)."""
+    stages = _dockerfile_stages()
+    assert DEFAULT_RUNTIME_STAGE in stages, (
+        f"Dockerfile missing {DEFAULT_RUNTIME_STAGE!r} stage; have {list(stages)}"
+    )
+    return effective_stage_body(_DOCKERFILE, DEFAULT_RUNTIME_STAGE)
+
+
+def _default_image_stage_text() -> str:
+    """Effective bodies for every shippable image stage (recognition + VLM)."""
+    stages = _dockerfile_stages()
+    parts: list[str] = []
+    for name in _SHIPPABLE_IMAGE_STAGES:
+        if name not in stages:
+            continue
+        parts.append(effective_stage_body(_DOCKERFILE, name))
+    return "\n".join(parts)
 
 
 def _parity_workflow_path() -> Path:
@@ -63,9 +119,160 @@ def _parity_workflow_path() -> Path:
     return _PARITY_WORKFLOW_CANDIDATES[0]
 
 
+def _write_dockerfile(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "Dockerfile"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
-# 1. Docker frozen-lock install (FIR4-BR-01)
+# 1. Docker frozen-lock install (FIR4-BR-01) — stage-scoped (RC-02/RC-03)
 # ---------------------------------------------------------------------------
+
+
+_ENTRYPOINT = _SERVICE_ROOT / "scripts" / "docker-entrypoint.sh"
+
+
+def test_entrypoint_exports_baked_image_variant() -> None:
+    """S1-A-08: bake must be exported so children see ACX_IMAGE_VARIANT without image ENV."""
+    text = _ENTRYPOINT.read_text(encoding="utf-8")
+    assert re.search(r"(?m)^export\s+ACX_IMAGE_VARIANT=", text), (
+        "docker-entrypoint.sh must `export ACX_IMAGE_VARIANT=...` from the bake "
+        "(plain assignment is not visible to children if image ENV is stripped)"
+    )
+
+
+def test_entrypoint_traps_term_during_pre_uvicorn() -> None:
+    """A-13: PID 1 must handle SIGTERM during migrate/schema/verify window."""
+    text = _ENTRYPOINT.read_text(encoding="utf-8")
+    assert re.search(r"""trap\s+['"]_on_term['"]\s+TERM\b""", text), (
+        "entrypoint must install trap _on_term TERM before long boot steps"
+    )
+    # alembic backgrounded so the trap can kill it (not a forever-foreground child).
+    assert re.search(r"(?m)^alembic\b.+\s&\s*$", text), (
+        "alembic must run under &+wait so SIGTERM can interrupt the migrate step"
+    )
+
+
+def test_entrypoint_export_reaches_child_process() -> None:
+    """Behavioural: export (not bare assign) propagates bake into a child shell."""
+    # Mirrors the entrypoint's prefer-bake export without running the full boot chain.
+    probe = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "BAKED_IMAGE_VARIANT=vlm\n"
+        "export ACX_IMAGE_VARIANT=\"${BAKED_IMAGE_VARIANT}\"\n"
+        # Child without inherited env would still see exported names from parent.
+        "sh -c 'printf %s \"$ACX_IMAGE_VARIANT\"'\n"
+    )
+    proc = subprocess.run(
+        ["sh", "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "vlm"
+    # Control: bare assign without export does not reach an env-cleared child.
+    bare = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "ACX_IMAGE_VARIANT=vlm\n"
+        "env -i PATH=\"$PATH\" sh -c 'printf %s \"${ACX_IMAGE_VARIANT:-missing}\"'\n"
+    )
+    bare_proc = subprocess.run(
+        ["sh", "-c", bare],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert bare_proc.returncode == 0
+    assert bare_proc.stdout == "missing"
+
+
+def _stub_bin(dir_path: Path, name: str, body: str = "#!/bin/sh\nexit 0\n") -> None:
+    path = dir_path / name
+    path.write_text(body, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def test_entrypoint_unreadable_data_cache_fails_closed(tmp_path: Path) -> None:
+    """A-08: VLM boot must refuse an unreadable /data/cache host bind with ownership hint.
+
+    Image-layer chown is masked by the host bind; without this gate, uid 10001
+    hits a bare library PermissionError. Behavioural: run the real entrypoint
+    under path rewrites (do not only grep source for the FATAL string).
+    """
+    root = tmp_path / "root"
+    app = root / "app"
+    blobs = root / "var" / "lib" / "acx-blobs"
+    cache = root / "data" / "cache"
+    bin_dir = root / "bin"
+    app.mkdir(parents=True)
+    blobs.mkdir(parents=True)
+    cache.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (app / ".image-variant").write_text("vlm\n", encoding="utf-8")
+    # Mode 000: exists but not readable by the executing uid (non-root).
+    cache.chmod(0o000)
+
+    for name in ("alembic", "python", "uvicorn"):
+        _stub_bin(bin_dir, name)
+    _stub_bin(
+        bin_dir,
+        "id",
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            if [ "$1" = "-u" ]; then echo 10001; else echo acx; fi
+            """
+        ),
+    )
+
+    src = _ENTRYPOINT.read_text(encoding="utf-8")
+    rewritten = (
+        src.replace("/app", str(app))
+        .replace("/var/lib/acx-blobs", str(blobs))
+        .replace("/data/cache", str(cache))
+    )
+    script = root / "docker-entrypoint.sh"
+    script.write_text(rewritten, encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(root),
+        "RECOGNITION_BLOB_ROOT": str(blobs),
+        "ACX_IMAGE_VARIANT": "vlm",
+    }
+    result = subprocess.run(
+        ["/bin/sh", str(script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        cwd=str(root),
+    )
+    # Restore cache perms so tmp cleanup cannot fail on some hosts.
+    cache.chmod(0o755)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    err = result.stderr
+    assert "not readable" in err, err
+    assert "10001" in err or "ACX_MODELS_PATH" in err, err
+
+    # Control: readable cache proceeds past the ownership gate (stubs exit 0).
+    cache.chmod(0o755)
+    result_ok = subprocess.run(
+        ["/bin/sh", str(script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        cwd=str(root),
+    )
+    assert result_ok.returncode == 0, result_ok.stdout + result_ok.stderr
+    assert "not readable" not in result_ok.stderr
 
 
 def test_service_uv_lock_exists() -> None:
@@ -77,77 +284,226 @@ def test_service_uv_lock_exists() -> None:
 
 def test_dockerfile_copies_uv_lock() -> None:
     """Builder must COPY uv.lock so frozen sync can consume exact pins."""
-    text = _dockerfile_text()
+    text = _builder_body()
     # Accept COPY of lock alone or alongside pyproject on one line.
     assert re.search(r"^COPY\s+[^\n]*\buv\.lock\b", text, re.MULTILINE), (
-        "Dockerfile must COPY uv.lock into the build context "
+        "builder stage must COPY uv.lock into the build context "
         "(FIR4-BR-01: lock is system of record for image deps)"
     )
 
 
 def test_dockerfile_installs_deps_via_uv_sync_frozen() -> None:
     """Dependency install must use uv sync with a frozen/locked resolution."""
-    text = _dockerfile_text()
+    text = _builder_body()
     assert "uv sync" in text, (
-        "Dockerfile must install runtime deps with `uv sync` (not unlocked pip resolve)"
+        "builder stage must install runtime deps with `uv sync` "
+        "(not unlocked pip resolve)"
     )
     assert "--frozen" in text or "--locked" in text, (
-        "Dockerfile `uv sync` must pass --frozen (or --locked) for exact lock consumption"
+        "builder stage `uv sync` must pass --frozen (or --locked) for exact lock consumption"
     )
 
 
 def test_dockerfile_frozen_sync_enables_bench_extra() -> None:
     """runtime+[bench]: insightface stays available for the dark default until FIR-6."""
-    text = _dockerfile_text()
+    text = _builder_body()
     # Prefer explicit --extra bench on a uv sync line; allow multi-line RUN.
     sync_blocks = re.findall(r"uv sync[^\n]*(?:\\\n[^\n]*)*", text)
     joined = "\n".join(sync_blocks) if sync_blocks else text
     assert re.search(r"--extra\s+bench\b", joined) or "extras=bench" in joined, (
-        "Dockerfile frozen install must enable the bench extra "
+        "builder frozen install must enable the bench extra "
         "(`uv sync --frozen --extra bench` or equivalent)"
     )
 
 
 def test_dockerfile_rejects_unlocked_pip_bench_dependency_install() -> None:
-    """Unlocked ``pip install .[bench]`` (without --no-deps) must not resolve deps."""
-    text = _dockerfile_text()
-    offenders = [
-        ln.strip()
-        for ln in text.splitlines()
-        if "pip install" in ln and ".[bench]" in ln.replace(" ", "") and "--no-deps" not in ln
-    ]
-    # Also catch spaced forms: pip install ".[bench]"
-    if not offenders:
-        offenders = [
-            ln.strip()
-            for ln in text.splitlines()
-            if "pip install" in ln and ".[bench]" in ln and "--no-deps" not in ln
-        ]
+    """Unlocked project-with-extras install must not resolve deps outside the lock.
+
+    Structural (RC-03): catch ``.[bench]``, ``".[bench,vlm]"``, any extra name,
+    quoting, spacing, and line continuations — not just the literal ``.[bench]``
+    token the old gate matched.
+    """
+    offenders: list[str] = []
+    stages = _dockerfile_stages()
+    for stage in _DEFAULT_IMAGE_STAGES:
+        if stage not in stages:
+            continue
+        # Effective body: an unlocked install inherited from a parent stage is
+        # indistinguishable in the built image from one declared directly.
+        body = effective_stage_body(_DOCKERFILE, stage)
+        for hit in unlocked_project_extra_installs(body):
+            offenders.append(f"{stage}: {hit}")
     assert not offenders, (
-        "Dockerfile must not use unlocked `pip install .[bench]` for dependency "
-        "resolution; switch to COPY uv.lock + `uv sync --frozen --extra bench`. "
-        "Found:\n  - " + "\n  - ".join(offenders)
+        "shippable image stages (builder, builder-vlm, runtime, runtime-vlm) must "
+        "not use unlocked project+extras pip/uv install for dependency resolution; "
+        "switch to COPY uv.lock + `uv sync --frozen --extra bench`. Found:\n  - "
+        + "\n  - ".join(offenders)
+    )
+
+
+def test_default_builder_stage_has_no_vlm_extra() -> None:
+    """RC-02: default builder dependency set must not pull the vlm extra.
+
+    Whole-file greps stay green when ``--extra vlm`` lives only on builder-vlm
+    *or* when it is smuggled into the default builder — stage scope is the only
+    way to enforce the comment that the default builder/runtime set is unchanged.
+    """
+    stages = _dockerfile_stages()
+    builder = stages[DEFAULT_BUILDER_STAGE]
+    assert not has_vlm_extra(builder), (
+        "default builder stage must not resolve --extra vlm / .[vlm] / --all-extras "
+        "(torch belongs to builder-vlm only; RC-02 stage scope)"
+    )
+    # Active (non-comment) lines must not mention torch in the default builder.
+    active = "\n".join(
+        ln
+        for ln in join_continued_lines(builder)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert "torch" not in active.lower(), (
+        "default builder active body must not mention torch (VLM path only)"
+    )
+
+
+def test_dockerfile_stage_topology_keeps_default_torch_free() -> None:
+    """S1-RC-06: default target stays torch-free; VLM path is explicit + offline.
+
+    Stage-aware: last stage must be runtime; builder has no --extra vlm; VLM
+    builder/stage exist with offline fail-closed env on runtime-vlm.
+    """
+    stages = _dockerfile_stages()
+    assert stages, "expected named Dockerfile stages"
+    last = default_build_target(_DOCKERFILE)
+    assert last == DEFAULT_RUNTIME_STAGE, (
+        f"last Dockerfile stage is {last!r}; bare docker build would ship it. "
+        f"{DEFAULT_RUNTIME_STAGE!r} must stay last (S1-RC-06 / RA-05)."
+    )
+    assert not has_vlm_extra(stages[DEFAULT_BUILDER_STAGE]), (
+        "default builder must not pull --extra vlm"
+    )
+    assert _BUILDER_VLM_STAGE in stages and RUNTIME_VLM_STAGE in stages, (
+        "builder-vlm and runtime-vlm must remain reachable via --target"
+    )
+    assert has_vlm_extra(stages[_BUILDER_VLM_STAGE]), (
+        "builder-vlm must resolve --extra vlm"
+    )
+    vlm_eff = effective_stage_body(_DOCKERFILE, RUNTIME_VLM_STAGE)
+    # Offline second line of defense (HF hub / transformers only — not insightface).
+    active_vlm = "\n".join(
+        ln
+        for ln in join_continued_lines(vlm_eff)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", active_vlm), (
+        "runtime-vlm must set ENV HF_HUB_OFFLINE=1 (fail closed if weights missing)"
+    )
+    assert re.search(r"(?m)^ENV\s+TRANSFORMERS_OFFLINE=1\s*$", active_vlm), (
+        "runtime-vlm must set ENV TRANSFORMERS_OFFLINE=1"
+    )
+
+
+def test_guard_bites_when_runtime_vlm_drops_offline_env(tmp_path: Path) -> None:
+    """TEST-15: removing HF_HUB_OFFLINE from a synthetic runtime-vlm fails the gate."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --frozen --extra bench\n"
+        "\n"
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --frozen --extra bench --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime-base\n"
+        "RUN true\n"
+        "\n"
+        "FROM runtime-base AS runtime-vlm\n"
+        "COPY --from=builder-vlm /opt/venv /opt/venv\n"
+        "ENV TRANSFORMERS_OFFLINE=1\n"
+        "\n"
+        "FROM runtime-base AS runtime\n"
+        "COPY --from=builder /opt/venv /opt/venv\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    vlm_eff = effective_stage_body(path, RUNTIME_VLM_STAGE)
+    active = "\n".join(
+        ln
+        for ln in join_continued_lines(vlm_eff)
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    assert not re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", active)
+    # Control: both offline ENVs present would pass the same predicate.
+    with_both = active + "\nENV HF_HUB_OFFLINE=1\n"
+    assert re.search(r"(?m)^ENV\s+HF_HUB_OFFLINE=1\s*$", with_both)
+    assert re.search(r"(?m)^ENV\s+TRANSFORMERS_OFFLINE=1\s*$", with_both)
+
+
+def test_no_stage_installs_deps_outside_uv_lock() -> None:
+    """RC-03: every stage that creates ``/opt/venv`` must use locked ``uv sync``.
+
+    Creating a venv then ``pip install ".[bench,vlm]"`` abandons frozen-lock
+    resolution while still producing ``/opt/venv`` — the headline supply-chain
+    invariant. Detect create-site stages and require ``uv sync --frozen|--locked``.
+    """
+    stages = _dockerfile_stages()
+    create_markers = (
+        re.compile(r"\buv\s+venv\b.*/opt/venv"),
+        re.compile(r"\bpython(?:3)?\s+-m\s+venv\s+/opt/venv"),
+        re.compile(r"\bvirtualenv\s+/opt/venv"),
+    )
+    offenders: list[str] = []
+    for name, body in stages.items():
+        joined = "\n".join(join_continued_lines(body))
+        creates = any(
+            m.search(ln)
+            for ln in join_continued_lines(body)
+            if not ln.strip().startswith("#")
+            for m in create_markers
+        ) or bool(re.search(r"UV_PROJECT_ENVIRONMENT=/opt/venv", joined))
+        if not creates:
+            # Also treat an own-body ``uv sync`` that writes /opt/venv as a create site.
+            has_sync = any(
+                re.search(r"\buv\s+sync\b", ln)
+                for ln in join_continued_lines(body)
+                if not ln.strip().startswith("#")
+            )
+            if not has_sync:
+                continue
+            # Sync without create in this stage is fine only if it is a re-sync
+            # of an inherited venv (builder-vlm FROM builder). Still require lock flags.
+            creates = True
+        sync_cmds = [
+            ln.strip()
+            for ln in join_continued_lines(body)
+            if re.search(r"\buv\s+sync\b", ln) and not ln.strip().startswith("#")
+        ]
+        if not sync_cmds:
+            offenders.append(f"{name}: creates/uses /opt/venv but has no `uv sync`")
+            continue
+        for cmd in sync_cmds:
+            if "--frozen" not in cmd and "--locked" not in cmd:
+                offenders.append(f"{name}: uv sync without --frozen/--locked: {cmd}")
+    assert not offenders, (
+        "stages that materialise /opt/venv must install via `uv sync --frozen` "
+        "(or --locked). Found:\n  - " + "\n  - ".join(offenders)
     )
 
 
 def test_dockerfile_runtime_editable_install_may_remain_no_deps() -> None:
     """App package install may stay `pip install -e . --no-deps` after lock-based deps."""
-    text = _dockerfile_text()
+    text = _runtime_body()
     # Not a hard requirement that editable install exists — only that if pip
-    # installs the app package without the bench extra, --no-deps is used.
+    # installs the app package without extras, --no-deps is used.
     app_pip = [
         ln
         for ln in text.splitlines()
         if "pip install" in ln and re.search(r"\s-e\s+\.|\spip install[^\n]*\s\.\s", ln)
     ]
     for ln in app_pip:
-        if ".[bench]" in ln or ".[dev]" in ln:
+        if _PROJECT_EXTRAS_RE.search(ln):
             continue
         if re.search(r"pip install[^\n]*\s\.(?:\s|$)", ln) or " -e ." in ln or " -e ." in ln.replace(
             "  ", " "
         ):
             assert "--no-deps" in ln, (
-                "Runtime app `pip install` of `.` must use --no-deps when deps "
+                "runtime stage app `pip install` of `.` must use --no-deps when deps "
                 f"come from the lock. Offending line: {ln.strip()}"
             )
 
@@ -162,7 +518,7 @@ def _project_install_lines(text: str) -> list[str]:
         if "pip install" not in stripped and "uv pip install" not in stripped:
             continue
         # Project package: `-e .` or bare `.` without extras; skip deps-only paths.
-        if ".[bench]" in stripped or ".[dev]" in stripped:
+        if _PROJECT_EXTRAS_RE.search(stripped):
             continue
         if re.search(r"(?:^|\s)-e\s+\.(?:\s|$)", stripped) or re.search(
             r"pip install[^\n]*\s\.(?:\s|$)", stripped
@@ -179,18 +535,19 @@ def test_dockerfile_project_install_disables_build_isolation() -> None:
     pull ``setuptools>=68`` (etc.) from the network, unbound by ``uv.lock``.
     GREEN must disable build isolation (and keep install inside ``/opt/venv``).
     """
-    text = _dockerfile_text()
-    # Preserve frozen lock consumption for deps.
-    assert "uv sync" in text and ("--frozen" in text or "--locked" in text), (
-        "FINALB-05: Dockerfile must keep frozen uv sync for dependency install"
+    builder = _builder_body()
+    runtime = _runtime_body()
+    # Preserve frozen lock consumption for deps (builder stage).
+    assert "uv sync" in builder and ("--frozen" in builder or "--locked" in builder), (
+        "FINALB-05: builder stage must keep frozen uv sync for dependency install"
     )
-    assert re.search(r"--extra\s+bench\b", text) or "extras=bench" in text, (
-        "FINALB-05: frozen sync must still enable the bench extra"
+    assert re.search(r"--extra\s+bench\b", builder) or "extras=bench" in builder, (
+        "FINALB-05: builder frozen sync must still enable the bench extra"
     )
 
-    project_lines = _project_install_lines(text)
+    project_lines = _project_install_lines(runtime)
     assert project_lines, (
-        "FINALB-05: expected a project install step "
+        "FINALB-05: expected a project install step in the runtime stage "
         "(`pip install -e .` / `uv pip install -e .`) after frozen dep sync"
     )
     for ln in project_lines:
@@ -204,18 +561,20 @@ def test_dockerfile_project_install_disables_build_isolation() -> None:
             f"Offending: {ln}"
         )
         # Install executes with /opt/venv on PATH (builder/runtime copy pattern).
-        assert "/opt/venv" in text, (
+        assert "/opt/venv" in runtime or "/opt/venv" in builder, (
             "FINALB-05: image must install into /opt/venv (relocatable locked venv)"
         )
 
-    # Reject unlocked bench dependency resolution (regression guard).
-    offenders = [
-        ln.strip()
-        for ln in text.splitlines()
-        if "pip install" in ln and ".[bench]" in ln.replace(" ", "") and "--no-deps" not in ln
-    ]
+    # Structural unlocked-extras rejection on the default image path (RC-03).
+    offenders: list[str] = []
+    for stage_name, body in (
+        (DEFAULT_BUILDER_STAGE, builder),
+        (DEFAULT_RUNTIME_STAGE, runtime),
+    ):
+        for hit in unlocked_project_extra_installs(body):
+            offenders.append(f"{stage_name}: {hit}")
     assert not offenders, (
-        "FINALB-05: unlocked `pip install .[bench]` must not resolve deps. Found:\n  - "
+        "FINALB-05: unlocked project+extras pip/uv install must not resolve deps. Found:\n  - "
         + "\n  - ".join(offenders)
     )
 
@@ -225,8 +584,10 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
 
     A post-install smoke may still import onnxruntime, but hard-coded version
     tuples (e.g. ``(1, 22) <= p < (2, 0)``) reintroduce dual writers vs the lock.
+    Scoped to every shippable image stage (builder, builder-vlm, runtime,
+    runtime-vlm) so the VLM publish path is not ungated (B-10).
     """
-    text = _dockerfile_text()
+    text = _default_image_stage_text()
     # Only flag executable/version-check forms — not prose mentioning 1.22.
     patterns = (
         r"\(1\s*,\s*22\)\s*<=",  # tuple lower bound
@@ -236,10 +597,128 @@ def test_dockerfile_no_hardcoded_ort_version_independent_of_lock() -> None:
     )
     hits = [m.group(0) for pat in patterns if (m := re.search(pat, text))]
     assert not hits, (
-        "Dockerfile must not hard-code a second ORT version bound independent of "
-        "uv.lock (remove the pip-resolved [1.22, 2.0) smoke; lock pins ORT). "
-        f"Matched: {hits!r}"
+        "Dockerfile shippable stages must not hard-code a second ORT version "
+        "bound independent of uv.lock (remove the pip-resolved [1.22, 2.0) smoke; "
+        f"lock pins ORT). Matched: {hits!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 1b. Negative guards — prove stage scope + structural install bite (TEST-15)
+# ---------------------------------------------------------------------------
+
+def test_guard_bites_when_uv_lock_copy_only_in_non_builder_stage(tmp_path: Path) -> None:
+    """RC-02: uv.lock present only outside builder must not satisfy the gate."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN uv sync --frozen --extra bench\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "COPY pyproject.toml uv.lock ./\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    stages = dockerfile_stages(path)
+    # Whole-file would still see the lock COPY.
+    assert re.search(r"^COPY\s+[^\n]*\buv\.lock\b", path.read_text(), re.MULTILINE)
+    assert not re.search(
+        r"^COPY\s+[^\n]*\buv\.lock\b", stages[DEFAULT_BUILDER_STAGE], re.MULTILINE
+    ), "stage-scoped builder body must not claim a lock COPY that lives in runtime"
+
+
+def test_guard_bites_on_python_m_pip_unlocked_extra_install() -> None:
+    """Wave-3 M3b/RC4: ``python -m pip install ".[bench]"`` must be caught."""
+    for form in (
+        'RUN python -m pip install ".[bench]"',
+        'RUN python3 -m pip install ".[bench]"',
+        'RUN /opt/venv/bin/python -m pip install ".[bench]"',
+        'RUN /app/.venv/bin/python -m pip install ".[dev]"',
+    ):
+        offenders = unlocked_project_extra_installs(form)
+        assert offenders, f"must catch interpreter form: {form}"
+
+
+def test_guard_bites_on_semicolon_sibling_no_deps_whitelist() -> None:
+    """Wave-3 M4/RC4: --no-deps on a sibling fragment must not whitelist extras install."""
+    line = 'RUN pip install --no-deps wheel ; pip install ".[bench]"'
+    offenders = unlocked_project_extra_installs(line)
+    assert offenders, (
+        "per-fragment --no-deps: harmless `pip install --no-deps wheel` must not "
+        "whitelist sibling `pip install \".[bench]\"`"
+    )
+    assert all("--no-deps" not in o for o in offenders)
+
+
+def test_guard_bites_on_quoted_multi_extra_unlocked_install(tmp_path: Path) -> None:
+    """RC-03 mutation (c): ``pip install ".[bench,vlm]"`` must be rejected."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "COPY pyproject.toml uv.lock ./\n"
+        "RUN uv sync --frozen --no-dev --extra bench --no-install-project\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        'RUN pip install ".[bench,vlm]"\n'
+    )
+    path = _write_dockerfile(tmp_path, text)
+    offenders = unlocked_project_extra_installs(
+        dockerfile_stages(path)[DEFAULT_RUNTIME_STAGE]
+    )
+    assert offenders, (
+        "structural gate must reject quoted multi-extra unlocked project install"
+    )
+    assert any("bench" in o and "vlm" in o for o in offenders)
+
+
+def test_guard_bites_on_continued_line_unlocked_extra_install(tmp_path: Path) -> None:
+    """RC-03: line-continued pip install of project extras must still be caught."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN true\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN pip install \\\n"
+        "    --no-cache-dir \\\n"
+        "    '.[dev]'\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    offenders = unlocked_project_extra_installs(
+        dockerfile_stages(path)[DEFAULT_RUNTIME_STAGE]
+    )
+    assert offenders, "line-continued unlocked project+extras install must be caught"
+
+
+def test_guard_bites_when_uv_sync_only_in_vlm_builder(tmp_path: Path) -> None:
+    """RC-02: frozen uv sync only in builder-vlm must not satisfy the default builder."""
+    text = (
+        "FROM python:3.12-slim AS builder\n"
+        "RUN echo no-sync-here\n"
+        "\n"
+        "FROM python:3.12-slim AS builder-vlm\n"
+        "RUN uv sync --frozen --extra bench --extra vlm\n"
+        "\n"
+        "FROM python:3.12-slim AS runtime\n"
+        "RUN true\n"
+    )
+    path = _write_dockerfile(tmp_path, text)
+    stages = dockerfile_stages(path)
+    whole = path.read_text()
+    assert "uv sync" in whole and "--frozen" in whole  # whole-file would stay green
+    assert "uv sync" not in stages[DEFAULT_BUILDER_STAGE]
+    assert "--frozen" not in stages[DEFAULT_BUILDER_STAGE]
+
+
+def test_literal_bench_token_gate_is_evadable_control(tmp_path: Path) -> None:
+    """Control: the old literal ``.[bench]`` match misses quoted multi-extra forms.
+
+    Documents why RC-03 replaced the token check with a structural parser.
+    """
+    line = 'RUN pip install ".[bench,vlm]"'
+    # Old gate (simplified): look for the exact ``.[bench]`` token.
+    old_hit = ".[bench]" in line.replace(" ", "") and "--no-deps" not in line
+    # ``.[bench,vlm]`` does not contain the exact ``.[bench]`` token after
+    # space-stripping either — the comma breaks the literal.
+    assert ".[bench]" not in line.replace(" ", "")
+    assert old_hit is False
+    assert unlocked_project_extra_installs(line), "structural parser must still catch it"
 
 
 # ---------------------------------------------------------------------------

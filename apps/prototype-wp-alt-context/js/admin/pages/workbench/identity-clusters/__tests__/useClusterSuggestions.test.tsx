@@ -103,6 +103,75 @@ describe('selectClusterSuggestions', () => {
     });
     expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c9'));
   });
+
+  it('BR-17: empty-label filter + section-2 search filter/dedupe with non-zero clusters', () => {
+    // Predicted first failure: empty/whitespace identity labels appear; All Labels includes
+    // search miss (Bob) or duplicate Alice cluster not suppressed by Suggested.
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'i0',
+          clusterId: 'c-empty',
+          label: '',
+          similarity: 0.99,
+          identityCount: 1,
+        },
+        {
+          identityId: 'i1',
+          clusterId: 'c1',
+          label: 'Alice',
+          similarity: 0.9,
+          identityCount: 2,
+        },
+        {
+          identityId: 'i2',
+          clusterId: 'c-ws',
+          label: '   ',
+          similarity: 0.88,
+          identityCount: 1,
+        },
+        {
+          identityId: 'i3',
+          clusterId: 'c2',
+          label: 'Alicia',
+          similarity: 0.7,
+          identityCount: 3,
+        },
+      ],
+      namingOptions: [
+        {
+          value: namingOptionValue('cluster', 'c3'),
+          label: 'Alice',
+          source: 'cluster',
+          identityCount: 4,
+        },
+        {
+          value: namingOptionValue('cluster', 'c4'),
+          label: 'Albert',
+          source: 'cluster',
+          identityCount: 5,
+        },
+        {
+          value: namingOptionValue('cluster', 'c5'),
+          label: 'Bob',
+          source: 'cluster',
+          identityCount: 6,
+        },
+        { value: namingOptionValue('person', 1), label: 'Alana', source: 'person' },
+      ],
+      labelInput: 'Al',
+    });
+
+    expect(options.map((option) => ({ label: option.label, group: option.group, source: option.source }))).toEqual([
+      { label: 'Alice', group: 'Suggested', source: 'cluster' },
+      { label: 'Alicia', group: 'Suggested', source: 'cluster' },
+      { label: 'Albert', group: 'All Labels', source: 'cluster' },
+      { label: 'Alana', group: 'All Labels', source: 'person' },
+    ]);
+    expect(options.some((option) => option.label === 'Bob')).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c-empty'))).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c3'))).toBe(false);
+  });
 });
 
 describe('useClusterSuggestions', () => {

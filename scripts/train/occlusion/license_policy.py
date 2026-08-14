@@ -4796,7 +4796,7 @@ def _underscore_preserving_glued_seed_owner(
     for seed_c, _seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
         if "_" not in seed_c:
             continue
-        if not token.startswith(seed_c) or len(token) <= len(seed_c):
+        if not token.startswith(seed_c):
             continue
         rest = token[len(seed_c) :]
         if not rest or not rest[0].isalnum():

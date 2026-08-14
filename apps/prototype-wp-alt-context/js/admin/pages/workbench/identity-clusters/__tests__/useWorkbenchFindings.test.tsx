@@ -1371,4 +1371,48 @@ describe('useWorkbenchFindings', () => {
       label: 'Default Label',
     });
   });
+
+  // Carry-over / TEST-15: panel tests mock useWorkbenchFindings, so
+  // `const isAssignmentError = false` stays green there. This hook test fails
+  // if that assignmentQuery.isError wiring is dropped.
+  it('REV2-01 carry-over: wires isAssignmentError from assignmentQuery.isError', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment endpoint down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: false,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isAssignmentError).toBe(true);
+    expect(result.current.isError).toBe(false);
+    expect(result.current.hasFindings).toBe(false);
+  });
 });

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import Any
 
@@ -16,6 +17,7 @@ from scripts.eval_harness.bakeoff_candidates import (
     ServingStack,
 )
 from scripts.eval_harness.bakeoff_runner import (
+    NotCompetingError,
     UnknownCandidateError,
     UnsupportedStackError,
     VramBudgetError,
@@ -145,6 +147,9 @@ def test_llama_cpp_serve_argv_contains_artifacts_ctx_and_extra_flags() -> None:
     assert argv.index("--model") < argv.index("--mmproj") < argv.index("-c")
     assert argv.index("-c") < argv.index("--image-max-tokens") < argv.index("-np")
     assert argv.index("-np") < len(argv) - len(extra)
+    assert argv[argv.index("--host") + 1] == "localhost"
+    assert argv[argv.index("--port") + 1] == "8000"
+    assert argv.index("--host") < argv.index("--port") < argv.index("--model")
 
 
 def test_reasoning_tuned_controls_no_think_on_run_argv() -> None:
@@ -161,19 +166,21 @@ def test_reasoning_tuned_controls_no_think_on_run_argv() -> None:
     for plan in plans.values():
         assert plan.run_argv[:3] == ("python", "-m", "scripts.eval_harness.bakeoff")
         assert "--two-pass" in plan.run_argv
-        assert plan.run_argv[plan.run_argv.index("--limit") + 1] == "0"
+        assert "--limit" not in plan.run_argv
         assert plan.out_path == f"out/run-bakeoff-{plan.candidate_id}.json"
         assert plan.run_argv[plan.run_argv.index("--out") + 1] == plan.out_path
 
 
-def test_vllm_stack_raises_unsupported_naming_id() -> None:
+def test_vllm_stack_skipped_unless_explicitly_requested() -> None:
     registry = _mutate_entry(
         _sample_registry(),
         "bravo",
         recipe=_recipe(stack=ServingStack.VLLM, gguf=None, mmproj=None, extra_flags=[]),
     )
+    plans = build_plans(registry, **_PLAN_KW)
+    assert [plan.candidate_id for plan in plans] == ["alpha", "charlie"]
     with pytest.raises(UnsupportedStackError, match="bravo") as exc_info:
-        build_plans(registry, **_PLAN_KW)
+        build_plans(registry, **_PLAN_KW, only=["bravo"])
     assert "vllm" in str(exc_info.value)
 
 
@@ -214,6 +221,12 @@ def test_emit_shell_is_bash_n_clean_and_mentions_incumbents(tmp_path) -> None:
         assert plan.out_path in script
     assert "/records/florence-anchor.json" in script
     assert "/records/qwen-anchor.json" in script
+    assert "seq 1 40" in script
+    assert "--max-time" in script
+    assert "trap" in script
+    assert 'kill "${_serve_pid}" 2>/dev/null || true' in script
+    assert "[ -f /records/florence-anchor.json ]" in script
+    assert "[ -f /records/qwen-anchor.json ]" in script
 
 
 def test_build_plans_is_deterministic() -> None:
@@ -229,3 +242,60 @@ def test_cli_only_unknown_id_exits_2(capsys: pytest.CaptureFixture[str]) -> None
     assert main(["--only", "definitely-missing"]) == 2
     err = capsys.readouterr().err
     assert "definitely-missing" in err
+
+
+def test_run_argv_omits_limit_zero() -> None:
+    plan = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)[0]
+    assert "--limit" not in plan.run_argv
+
+
+def test_only_non_competing_id_raises() -> None:
+    registry = _sample_registry()
+    with pytest.raises(NotCompetingError, match="florence-anchor"):
+        build_plans(registry, **_PLAN_KW, only=["florence-anchor"])
+    with pytest.raises(NotCompetingError, match="phi-ref"):
+        build_plans(registry, **_PLAN_KW, only=["phi-ref"])
+
+
+def test_no_think_extra_flag_stays_off_serve_argv() -> None:
+    registry = _registry(
+        [
+            _entry(
+                "thinky",
+                reasoning_tuned=True,
+                recipe=_recipe(extra_flags=["--flash-attn", "--no-think", "--no-mmap"]),
+            )
+        ]
+    )
+    plan = build_plans(registry, **_PLAN_KW)[0]
+    assert "--no-think" not in plan.serve_argv
+    assert plan.serve_argv[-2:] == ("--flash-attn", "--no-mmap")
+    assert plan.run_argv.count("--no-think") == 1
+
+
+def test_serve_argv_binds_host_port_from_endpoint() -> None:
+    kw = {**_PLAN_KW, "endpoint": "http://127.0.0.1:9001"}
+    plan = build_plans(_registry([_entry("alpha")]), **kw)[0]
+    assert plan.serve_argv[plan.serve_argv.index("--host") + 1] == "127.0.0.1"
+    assert plan.serve_argv[plan.serve_argv.index("--port") + 1] == "9001"
+    assert plan.run_argv[plan.run_argv.index("--endpoint") + 1] == "http://127.0.0.1:9001"
+
+
+def test_cli_default_on_sealed_registry_plans_llama_cpp_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = [row["candidate_id"] for row in payload]
+    assert ids == [
+        "minicpm-v-45",
+        "qwen38-27b",
+        "kimi-vl-a3b",
+        "gemma-4-12b",
+        "minicpm-v-46",
+    ]
+    for row in payload:
+        assert "--limit" not in row["run_argv"]
+        assert "--host" in row["serve_argv"]
+        assert "--port" in row["serve_argv"]
+        assert "--no-think" not in row["serve_argv"]

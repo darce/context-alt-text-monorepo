@@ -14,6 +14,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from scripts.eval_harness.bakeoff_candidates import (
     BakeoffCandidateRegistry,
@@ -28,6 +29,9 @@ DEFAULT_MANIFEST = "scripts/eval_harness/corpus646-interleave-manifest-20260716.
 DEFAULT_OUT_DIR = "out"
 DEFAULT_MODELS_DIR = "/opt/models"
 MMPROJ_ESTIMATE_GB = 1.0
+READY_ATTEMPTS = 40
+READY_SLEEP_S = 15
+_CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
 _REPORT_MODULE = "scripts.eval_harness.build_bakeoff_report"
 _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
 
@@ -42,6 +46,10 @@ class VramBudgetError(Exception):
 
 class UnknownCandidateError(Exception):
     """``--only`` named an id that is not in the registry."""
+
+
+class NotCompetingError(Exception):
+    """``--only`` named a known id that is not a competing candidate."""
 
 
 @dataclass(frozen=True)
@@ -76,39 +84,59 @@ def build_plans(
         manifest: Corpus manifest path passed to the bake-off runner.
         out_dir: Directory for ``run-bakeoff-<id>.json`` records.
         models_dir: Root directory that holds ``<id>/<gguf|mmproj>`` artifacts.
-        only: Optional id filter. Unknown ids are rejected. Order stays
-            registry order, not the order of ``only``.
+        only: Optional id filter. Unknown and non-competing ids are rejected.
+            Order stays registry order, not the order of ``only``.
 
     Returns:
-        One ``CandidatePlan`` per selected competing candidate.
+        One ``CandidatePlan`` per selected competing ``llama_cpp`` candidate.
+        Other stacks are skipped unless named in ``only``.
 
     Raises:
         UnknownCandidateError: An ``only`` id is not in the registry.
-        UnsupportedStackError: A selected candidate is not ``llama_cpp``.
+        NotCompetingError: An ``only`` id exists but is not competing.
+        UnsupportedStackError: An explicitly selected candidate is not
+            ``llama_cpp``.
         VramBudgetError: A selected candidate exceeds the usable VRAM budget.
     """
     selected = _select_competing(registry, only)
-    return [
-        _plan_candidate(
-            entry,
-            endpoint=endpoint,
-            manifest=manifest,
-            out_dir=out_dir,
-            models_dir=models_dir,
-            budget_gb=float(registry.hardware_target.usable_vram_budget_gb),
+    requested = set(only) if only is not None else None
+    plans: list[CandidatePlan] = []
+    for entry in selected:
+        if (
+            entry.recipe.stack is not ServingStack.LLAMA_CPP
+            and (requested is None or entry.id not in requested)
+        ):
+            continue
+        plans.append(
+            _plan_candidate(
+                entry,
+                endpoint=endpoint,
+                manifest=manifest,
+                out_dir=out_dir,
+                models_dir=models_dir,
+                budget_gb=float(registry.hardware_target.usable_vram_budget_gb),
+            )
         )
-        for entry in selected
-    ]
+    return plans
 
 
 def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, str]) -> str:
     """Return a ``set -euo pipefail`` bash script for the planned bake-off.
 
-    Per candidate: download-hint comment, serve, wait for ``/v1/models``,
-    run, stop. Then one ``build_bakeoff_report`` invocation covering every
-    candidate plan plus each incumbent anchor's existing run-record path.
+    Per candidate: download-hint comment, serve, bounded wait for
+    ``/v1/models``, run (continue on fetch failure), stop. Then one
+    ``build_bakeoff_report`` invocation covering existing candidate and
+    incumbent run-record paths.
     """
-    lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'trap \'if [ -n "${_serve_pid:-}" ]; then '
+        'kill "${_serve_pid}" 2>/dev/null || true; '
+        'wait "${_serve_pid}" 2>/dev/null || true; fi\' EXIT',
+        "",
+    ]
     for plan in plans:
         local_dir = f"{plan.models_dir.rstrip('/')}/{plan.candidate_id}"
         hint = (
@@ -121,16 +149,28 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append(f"# download: {hint}")
         lines.append(f"{shlex.join(plan.serve_argv)} &")
         lines.append("_serve_pid=$!")
-        lines.append(f"until curl -sf {shlex.quote(models_url)} >/dev/null; do")
-        lines.append("  sleep 2")
+        lines.append("_ready=0")
+        lines.append(f"for _i in $(seq 1 {READY_ATTEMPTS}); do")
+        lines.append(f"  if curl -sf --max-time 6 {shlex.quote(models_url)} >/dev/null; then")
+        lines.append("    _ready=1")
+        lines.append("    break")
+        lines.append("  fi")
+        lines.append(f"  sleep {READY_SLEEP_S}")
         lines.append("done")
-        lines.append(shlex.join(plan.run_argv))
-        lines.append('kill "${_serve_pid}"')
-        lines.append('wait "${_serve_pid}" || true')
+        lines.append('if [ "${_ready}" -ne 1 ]; then')
+        lines.append(f'  echo "candidate {plan.candidate_id} never became ready" >&2')
+        lines.append("else")
+        lines.append(
+            f"  {shlex.join(plan.run_argv)} || "
+            f'echo "candidate {plan.candidate_id} fetch FAILED" >&2'
+        )
+        lines.append("fi")
+        lines.append('kill "${_serve_pid}" 2>/dev/null || true')
+        lines.append('wait "${_serve_pid}" 2>/dev/null || true')
+        lines.append("_serve_pid=")
         lines.append("")
 
-    report_argv = _report_argv(plans, incumbent_runs)
-    lines.append(shlex.join(report_argv))
+    lines.extend(_emit_report_lines(plans, incumbent_runs))
     lines.append("")
     return "\n".join(lines)
 
@@ -165,7 +205,12 @@ def main(argv: list[str] | None = None) -> int:
             models_dir=args.models_dir,
             only=only,
         )
-    except (UnsupportedStackError, VramBudgetError, UnknownCandidateError) as exc:
+    except (
+        UnsupportedStackError,
+        VramBudgetError,
+        UnknownCandidateError,
+        NotCompetingError,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -191,6 +236,7 @@ def _select_competing(
 ) -> list[CandidateEntry]:
     known = [entry.id for entry in registry.entries]
     known_set = set(known)
+    competing_ids = {entry.id for entry in registry.entries if entry.competing}
     if only is not None:
         unknown = [candidate_id for candidate_id in only if candidate_id not in known_set]
         if unknown:
@@ -198,6 +244,15 @@ def _select_competing(
                 f"unknown candidate id {unknown[0]!r}; "
                 f"known ids: {', '.join(known)}. "
                 "Pass an id from bakeoff_candidates.yaml."
+            )
+        not_competing = [
+            candidate_id for candidate_id in only if candidate_id not in competing_ids
+        ]
+        if not_competing:
+            raise NotCompetingError(
+                f"candidate id {not_competing[0]!r} is not competing; "
+                "incumbent and reference rows are measured, not planned. "
+                "Pass a competing id from bakeoff_candidates.yaml."
             )
         wanted = set(only)
         return [entry for entry in registry.entries if entry.competing and entry.id in wanted]
@@ -237,8 +292,14 @@ def _plan_candidate(
 
     gguf_path = _artifact_path(models_dir, entry.id, entry.recipe.gguf)
     mmproj_path = _artifact_path(models_dir, entry.id, entry.recipe.mmproj)
+    host, port = _endpoint_bind(endpoint)
+    serve_flags = [flag for flag in entry.recipe.extra_flags if flag not in _CLIENT_ONLY_FLAGS]
     serve_argv = (
         "llama-server",
+        "--host",
+        host,
+        "--port",
+        port,
         "--model",
         gguf_path,
         "--mmproj",
@@ -249,7 +310,7 @@ def _plan_candidate(
         str(entry.recipe.image_max_tokens),
         "-np",
         str(entry.recipe.parallel),
-        *entry.recipe.extra_flags,
+        *serve_flags,
     )
     out_path = _run_out_path(out_dir, entry.id)
     run_argv_list = [
@@ -267,12 +328,10 @@ def _plan_candidate(
         "--prompt-variant",
         entry.prompt_template,
         "--two-pass",
-        "--limit",
-        "0",
         "--out",
         out_path,
     ]
-    if entry.reasoning_tuned:
+    if entry.reasoning_tuned or "--no-think" in entry.recipe.extra_flags:
         run_argv_list.append("--no-think")
     return CandidatePlan(
         candidate_id=entry.id,
@@ -308,13 +367,24 @@ def _argv_flag(argv: Sequence[str], flag: str) -> str:
         raise ValueError(f"plan argv missing {flag}") from exc
 
 
-def _report_argv(plans: Sequence[CandidatePlan], incumbent_runs: Mapping[str, str]) -> list[str]:
+def _endpoint_bind(endpoint: str) -> tuple[str, str]:
+    parsed = urlparse(endpoint)
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"endpoint {endpoint!r} has no hostname")
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return host, str(port)
+
+
+def _report_base_argv(plans: Sequence[CandidatePlan]) -> list[str]:
     manifest = DEFAULT_MANIFEST
     out_dir = DEFAULT_OUT_DIR
     if plans:
         manifest = _argv_flag(plans[0].run_argv, "--manifest")
         out_dir = plans[0].out_path.rsplit("/", 1)[0] or DEFAULT_OUT_DIR
-    argv = [
+    return [
         "python",
         "-m",
         _REPORT_MODULE,
@@ -323,11 +393,34 @@ def _report_argv(plans: Sequence[CandidatePlan], incumbent_runs: Mapping[str, st
         "--out",
         f"{out_dir.rstrip('/')}/bakeoff-report.html",
     ]
+
+
+def _emit_report_lines(
+    plans: Sequence[CandidatePlan],
+    incumbent_runs: Mapping[str, str],
+) -> list[str]:
+    lines = ["_runs=()"]
     for plan in plans:
-        argv.extend(["--run", f"{plan.candidate_id}={plan.out_path}"])
+        quoted = shlex.quote(plan.out_path)
+        run_spec = shlex.quote(f"{plan.candidate_id}={plan.out_path}")
+        lines.append(f"if [ -f {quoted} ]; then")
+        lines.append(f"  _runs+=(--run {run_spec})")
+        lines.append("fi")
     for incumbent_id, run_path in sorted(incumbent_runs.items()):
-        argv.extend(["--run", f"{incumbent_id}={run_path}"])
-    return argv
+        quoted = shlex.quote(run_path)
+        run_spec = shlex.quote(f"{incumbent_id}={run_path}")
+        lines.append(f"if [ -f {quoted} ]; then")
+        lines.append(f"  _runs+=(--run {run_spec})")
+        lines.append("else")
+        lines.append(f'  echo "WARN: missing incumbent run-record ({run_path})" >&2')
+        lines.append("fi")
+    base = shlex.join(_report_base_argv(plans))
+    lines.append('if [ "${#_runs[@]}" -gt 0 ]; then')
+    lines.append(f'  {base} "${{_runs[@]}}"')
+    lines.append("else")
+    lines.append('  echo "WARN: no run-records to report" >&2')
+    lines.append("fi")
+    return lines
 
 
 def _plan_json(plan: CandidatePlan) -> dict[str, Any]:

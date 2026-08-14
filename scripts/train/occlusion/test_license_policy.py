@@ -13391,3 +13391,52 @@ class TestF17UnderscoreNcSeedGluedException:
         assert policy._package_denylist_hit("buffalo_lyolox") is not None
         assert policy._package_denylist_hit("ayoloxs") is None
         assert policy._package_denylist_hit("yolop_yolox") is None
+
+
+class TestF17StackedExceptionStemAttribution:
+    """R19-03: stacked exception rem must not steal a deny-stem prefix.
+
+    ``fastsamxyoloxsyolox`` used to name ``yolo`` because rem ``yolox``
+    is a legitimate exception spelling that hits yolo via (c). The
+    prefix stem ``fastsam`` is the honest owner. Junk prefixes keep
+    the family-true rem hit so ``xyoloxsyolox`` stays ``yolo``.
+    """
+
+    def test_fastsam_stacked_exception_names_stem(self) -> None:
+        for token in ("fastsamxyoloxsyolox", "fastsamxyoloxyoloxs"):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None
+            assert hit.package_id == "fastsam", (
+                f"{token!r}: expected stem fastsam, got {hit.package_id!r}"
+            )
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_junk_prefix_stacked_exception_stays_yolo(self) -> None:
+        """Pin: no stem → rem yolo-(c) remains (family-true, fail-closed)."""
+        for token in ("xyoloxsyolox", "xyoloxyoloxs"):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None
+            assert hit.package_id == "yolo", (
+                f"{token!r}: expected yolo rem hit, got {hit.package_id!r}"
+            )
+
+    def test_red_proof_stem_over_exc_rem_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: without the retarget, stacked rem names fabricated yolo."""
+        token = "fastsamxyoloxsyolox"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None and hit.package_id == "fastsam"
+        monkeypatch.setattr(
+            policy, "_MID_EXCEPTION_STEM_OVER_EXC_REM_ENABLED", False
+        )
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "yolo", (
+            f"red-proof: without stem-over-exc-rem, {token!r} must name "
+            f"yolo; got {hit2.package_id!r}"
+        )
+        assert policy._package_denylist_hit("fastsamxyolox") is not None
+        assert policy._package_denylist_hit("xyoloxsyolox") is not None

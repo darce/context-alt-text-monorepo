@@ -4653,6 +4653,10 @@ _DENY_HEAD_LONG_VARIANT_REMS: frozenset[str] = frozenset(
 # token even when rem is empty (``fastsamxyolox``). TEST-15: False
 # restores the deny/NC-rem-only mid scanner (gadgets admit again).
 _MID_EXCEPTION_UNKNOWN_REM_ENABLED: bool = True
+# R19-03: prefer a deny/NC stem in the mid-exception prefix when rem
+# is itself a legitimate exception spelling (``fastsamxyoloxsyolox``
+# → fastsam, not fabricated yolo). TEST-15 sole-path.
+_MID_EXCEPTION_STEM_OVER_EXC_REM_ENABLED: bool = True
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
 _PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
@@ -4861,6 +4865,21 @@ def _compact_mid_exception_deny_adjacency(
                     deny = _classify_exception_plus_residual(rem)
                 if deny is None:
                     deny = _deny_prefix_plus_residual_hit(rem)
+                # R19-03: a rem that is itself a legitimate exception
+                # spelling (``yolox`` after mid-token ``yoloxs``) hits
+                # fabricated yolo via (c). Prefer a deny/NC stem in
+                # the prefix so ``fastsamxyoloxsyolox`` names
+                # ``fastsam``, not ``yolo``. Junk prefixes (``x``)
+                # have no owner and keep the rem hit — fail-closed
+                # and family-true.
+                if (
+                    deny is not None
+                    and _MID_EXCEPTION_STEM_OVER_EXC_REM_ENABLED
+                    and _is_legitimate_exception_compact_spelling(rem)
+                ):
+                    owned = _mid_exception_prefix_deny_owner(prefix)
+                    if owned is not None:
+                        deny = owned
                 # F15-5 / R18-01: unknown non-tag rem after a mid-token
                 # exception spelling uses the same fail-closed landing
                 # as offset-0 steal (``xyoloxsextra`` →

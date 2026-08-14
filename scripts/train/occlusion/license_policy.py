@@ -4413,6 +4413,16 @@ _COMPACT_JOINED_RULE_E_ENABLED: bool = True
 # after the seed (junk on both sides: ``aainsightfaceaa``). TEST-15:
 # False restores both-sides-junk admit.
 _COMPACT_MID_NC_OCCURRENCE_ENABLED: bool = True
+# F15-2: deny-head of compact length ≥ 5 + a known variant rem that
+# does not fit the 1–3 (c) bound (``tiny`` / ``small`` / …) fail-closes
+# as the catalog seed (``yolov4tiny``). Not a generic long-rem deny —
+# ``buffalo_lakes`` (BR-28 name-continuation) and F14-6 suffix-tolerant
+# witnesses must stay on their own axes. TEST-15: False restores the
+# 1–3-only (c) bound.
+_DENY_HEAD_LONG_REM_ENABLED: bool = True
+_DENY_HEAD_LONG_VARIANT_REMS: frozenset[str] = frozenset(
+    {"tiny", "small", "large", "nano", "base"}
+)
 
 
 def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
@@ -4425,8 +4435,12 @@ def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
 
     F14-5: a 4-char head (``yolo``) also hits when the *entire* rem is
     exactly an exception-family spelling (``yoloyolox`` / ``yoloyoloxs``).
-    ``yolodummy`` rem is not an exception spelling and stays admitted.
-    Floor is ``_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN`` (TEST-15: restore 5).
+    F15-2: the same 4-char head now routes unknown/non-exception rem
+    through :func:`_rem_is_known_family_or_seed` (suffix-tolerant
+    classification) so ``yoloyoloxextra`` / ``yoloyolo`` deny.
+    ``yolodummy`` rem is not an exception spelling or known seed and
+    stays admitted. Floor is ``_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN``
+    (TEST-15: restore 5).
     """
     if not token_compact or not seed_k:
         return False
@@ -4435,8 +4449,21 @@ def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
     rem = token_compact[len(seed_k) :]
     if not rem:
         return False
-    if len(seed_k) == 4 and len(seed_k) >= _DENY_HEAD_KNOWN_REM_MIN_SEED_LEN:
-        return _is_legitimate_exception_compact_spelling(rem)
+    if len(seed_k) < _DENY_HEAD_KNOWN_REM_MIN_SEED_LEN:
+        return False
+    if len(seed_k) == 4:
+        # F15-2a: suffix-tolerant exception rem (yoloyoloxextra) or an
+        # exact known seed (yoloyolo / yolobuffalol). Do NOT take
+        # deny-prefix leftovers (ultralyticsplus) — that would let the
+        # 4-char yolo head outrank a longer honest AGPL seed.
+        if _is_legitimate_exception_compact_spelling(rem):
+            return True
+        rem_k = _compact_canonical(rem)
+        for mapping in (PACKAGE_EXCEPTION_ALLOWLIST, PACKAGE_DENYLIST):
+            for seed_c, sk, _entry in _iter_family_seeds(mapping):
+                if rem == seed_c or rem == sk or rem_k == sk or rem_k == seed_c:
+                    return True
+        return _classify_exception_plus_residual(rem) is not None
     if len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
         return False
     return _rem_is_known_family_or_seed(rem)
@@ -4649,11 +4676,35 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
         # F13-3 / R15-L-2: head-position deny/NC + known-seed rem.
         if not hit and seed_k and _deny_head_known_rem_glue(token_compact, seed_k):
             hit = True
+        # F15-2: deny-head (len ≥ 5) + known variant rem longer than
+        # (c)'s 1–3 bound. ``yolov4tiny`` is the Darknet tiny twin of
+        # ``yolov4_tiny``. Generic leftover (``akes`` / ``yoloxextra``)
+        # is NOT this path.
+        if (
+            not hit
+            and _DENY_HEAD_LONG_REM_ENABLED
+            and seed_k
+            and len(seed_k) >= _COMPACT_SUFFIX_MIN_SEED_LEN
+            and token_compact.startswith(seed_k)
+        ):
+            rem = token_compact[len(seed_k) :]
+            if rem in _DENY_HEAD_LONG_VARIANT_REMS:
+                hit = True
         if not hit:
             continue
         spec = _family_match_specificity(token, seed_c, seed_k)
         if spec <= 0 and _deny_head_known_rem_glue(token_compact, seed_k):
             spec = 2
+        if (
+            spec <= 0
+            and _DENY_HEAD_LONG_REM_ENABLED
+            and seed_k
+            and len(seed_k) >= _COMPACT_SUFFIX_MIN_SEED_LEN
+            and token_compact.startswith(seed_k)
+        ):
+            rem = token_compact[len(seed_k) :]
+            if rem in _DENY_HEAD_LONG_VARIANT_REMS:
+                spec = 2
         # Prefer the seed whose folded spelling is actually in the token
         # (yolov8yolox → yolov8, not the yolo_v8 compact alias).
         folded_prefix = 1 if token.startswith(seed_c) else 0

@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
+import { AlertTriangle, Circle, ImageOff } from 'lucide-react';
 
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
@@ -20,6 +21,17 @@ import {
   type WorkbenchFindingPreview,
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
+import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+
+/** Panel-level fallback chain (design B.2). First match wins. */
+export const FINDINGS_PANEL_STATE = {
+  LOADING: 'loading',
+  ERROR: 'error',
+  UNAVAILABLE: 'unavailable',
+  DEGRADED: 'degraded',
+  EMPTY: 'empty',
+  DATA: 'data',
+} as const;
 
 interface WorkbenchFindingsPanelProps {
   /** Scrolls/focuses the detailed findings queues below the panel. */
@@ -82,6 +94,26 @@ const previewAltText = (preview: WorkbenchFindingPreview, cropped: boolean): str
   return cropped ? __('Detected face', 'alt-context') : __('Reference image', 'alt-context');
 };
 
+const usablePreviewUrl = (url: string | null | undefined): string | null => {
+  if (typeof url !== 'string') {
+    return null;
+  }
+  const trimmed = url.trim();
+  return trimmed === '' ? null : trimmed;
+};
+
+const FindingsPreviewMissing = (): React.JSX.Element => (
+  <div
+    className="acx-findings-panel__preview acx-findings-panel__preview--missing"
+    role="img"
+    aria-label={__('Preview image unavailable', 'alt-context')}
+    style={{ width: FINDINGS_PREVIEW_SIZE_PX, height: FINDINGS_PREVIEW_SIZE_PX }}
+  >
+    <ImageOff aria-hidden="true" size={20} />
+    <span className="acx-findings-panel__preview-missing-label">{__('No image', 'alt-context')}</span>
+  </div>
+);
+
 /**
  * Renderer order mirrors TopClusterCard (dedicated thumb → CSS face crop →
  * uncropped fallback). Previews are non-interactive evidence chips (A11Y-14:
@@ -119,7 +151,11 @@ const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): Rea
     );
   }
 
-  const fallbackSrc = preview.thumbUrl ?? preview.mediaUrl ?? '';
+  const fallbackSrc = usablePreviewUrl(preview.thumbUrl) ?? usablePreviewUrl(preview.mediaUrl);
+  if (!fallbackSrc) {
+    return <FindingsPreviewMissing />;
+  }
+
   return (
     <Avatar
       src={fallbackSrc}
@@ -135,6 +171,7 @@ export const WorkbenchFindingsPanel = ({
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
+  const { assignmentQuery, mergeQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
   const {
     counts,
     previews,
@@ -147,12 +184,24 @@ export const WorkbenchFindingsPanel = ({
     nextAction,
   } = findings;
 
+  const handleRetryFindings = (): void => {
+    void assignmentQuery.refetch().then(() => mergeQuery.refetch());
+  };
+
+  const handleRetryTopUnlabeled = (): void => {
+    void topUnlabeledQuery.refetch();
+  };
+
   if (!hasFindings && isLoading) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--loading">
+      <div
+        className="acx-findings-panel acx-findings-panel--loading"
+        data-findings-state={FINDINGS_PANEL_STATE.LOADING}
+      >
         {/* L3V-01: keep aria-labelledby target mounted in non-success early returns. */}
         <FindingsRegionHeading visuallyHidden />
         <div role="status" aria-live="polite">
+          <div className="acx-findings-panel__skeleton-row" aria-hidden="true" />
           <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
         </div>
       </div>
@@ -165,10 +214,19 @@ export const WorkbenchFindingsPanel = ({
   // isError, so isError alone covers both failure modes here (UI-03 hook test).
   if (!hasFindings && isError) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--error">
+      <div
+        className="acx-findings-panel acx-findings-panel--error"
+        data-findings-state={FINDINGS_PANEL_STATE.ERROR}
+      >
         <FindingsRegionHeading visuallyHidden />
         <div role="status" aria-live="polite">
-          <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
+          <p className="acx-findings-panel__status">
+            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+            {__('Could not load recognition findings.', 'alt-context')}
+          </p>
+          <button type="button" className="acx-button acx-button--secondary" onClick={handleRetryFindings}>
+            {__('Retry', 'alt-context')}
+          </button>
         </div>
       </div>
     );
@@ -176,11 +234,18 @@ export const WorkbenchFindingsPanel = ({
 
   if (!hasFindings && isUnavailable) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--unavailable">
+      <div
+        className="acx-findings-panel acx-findings-panel--unavailable"
+        data-findings-state={FINDINGS_PANEL_STATE.UNAVAILABLE}
+      >
         <FindingsRegionHeading visuallyHidden />
         <div role="status" aria-live="polite">
           <p className="acx-findings-panel__status">
+            <Circle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
             {__('Recognition findings are unavailable right now.', 'alt-context')}
+          </p>
+          <p className="acx-findings-panel__hint">
+            {__('Check the Service API URL in Recognition API Settings.', 'alt-context')}
           </p>
         </div>
       </div>
@@ -201,8 +266,10 @@ export const WorkbenchFindingsPanel = ({
   // positive total with an empty loaded page must not yield an enabled no-op button.
   const primaryDisabled = isReadOnly || nextAction.kind === NEXT_ACTION_KIND.NONE;
 
+  const panelState = isTopUnlabeledError ? FINDINGS_PANEL_STATE.DEGRADED : FINDINGS_PANEL_STATE.DATA;
+
   return (
-    <div className="acx-findings-panel">
+    <div className="acx-findings-panel" data-findings-state={!hasFindings ? FINDINGS_PANEL_STATE.EMPTY : panelState}>
       <FindingsRegionHeading />
 
       {isReadOnly && (
@@ -229,12 +296,24 @@ export const WorkbenchFindingsPanel = ({
               {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
             </li>
             <li className="acx-findings-panel__count">
-              {isTopUnlabeledError
-                ? __('Unlabeled groups unavailable', 'alt-context')
-                : sprintf(
-                    _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
-                    counts.unlabeledClusters,
-                  )}
+              {isTopUnlabeledError ? (
+                <span className="acx-findings-panel__degraded-chip">
+                  <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={14} />
+                  {__('Unlabeled groups unavailable', 'alt-context')}
+                  <button
+                    type="button"
+                    className="acx-button acx-button--secondary acx-button--small"
+                    onClick={handleRetryTopUnlabeled}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </span>
+              ) : (
+                sprintf(
+                  _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
+                  counts.unlabeledClusters,
+                )
+              )}
             </li>
           </ul>
         </div>

@@ -1294,7 +1294,44 @@ button.acx-accent-primary-action {
   }
 
   &__status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-8);
     margin: 0;
+  }
+
+  &__status-icon {
+    flex: 0 0 auto;
+    color: var(--acx-color-warning-pill-text);
+  }
+
+  &__skeleton-row {
+    height: var(--acx-space-16);
+    margin: 0 auto var(--acx-space-8);
+    max-width: 16rem;
+    border-radius: var(--acx-radius-md);
+    background: linear-gradient(
+      90deg,
+      var(--acx-gray-100) 0%,
+      var(--acx-gray-50) 50%,
+      var(--acx-gray-100) 100%
+    );
+    background-size: 200% 100%;
+    animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
+  }
+
+  &__hint {
+    margin: var(--acx-space-8) 0 0;
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__degraded-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    color: var(--acx-color-warning-pill-text);
   }
 
   &__title {
@@ -1341,6 +1378,22 @@ button.acx-accent-primary-action {
     // Distinguish uncropped / non-face fallbacks from real face crops (A11Y-02 companion).
     outline: 1px dashed var(--acx-color-border);
     outline-offset: calc(var(--acx-space-2) * -1);
+  }
+
+  &__preview--missing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-4);
+    background-color: var(--acx-gray-100);
+    color: var(--acx-gray-500);
+    border-radius: var(--acx-radius-md);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__preview-missing-label {
+    color: var(--acx-gray-600);
   }
 
   &__empty {

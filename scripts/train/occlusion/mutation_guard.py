@@ -3852,6 +3852,34 @@ MUTATIONS: list[Mutation] = [
             "test_unbounded_exception_nc_denies_on_doors",
             "test_short_residual_unknown_on_doors_exact_entry",
             "test_strongest_hit_names_ultralytics_in_compound",
+            # F13/F14 unofficial-sep / total-fold door-reason pins
+            # assert denylisted_package via the same helper (RV-07).
+            "test_unofficial_sep_agpl_denies_honest",
+            "test_unofficial_sep_unknown_residual_denies",
+            "test_total_fold_agpl_denies_honest",
+            "test_total_fold_unknown_residual_denies",
+            "test_registry_tag_strip_does_not_launder_deny",
+            "test_pp_yolov8_fail_closed",
+            "test_yolo_head_exception_rem_denies",
+            "test_agpl_head_or_mid_plus_residual_denies",
+            "test_agpl_head_exception_rem_denies_honest",
+            "test_junk_prefix_exception_deny_denies_honest",
+            # F17/F18 door-reason pins (honest NC / AGPL reason).
+            "test_representative_seed_junk_spelling_denies",
+            "test_variant_shapes_deny",
+            "test_full_cross_product_sweep_denies",
+            "test_a3_must_stay_deny_fence",
+            "test_rem_tail_glued_axes_deny",
+            "test_listed_rem_tail_gadgets_deny",
+            "test_fastsam_stacked_exception_names_stem",
+            "test_yolobuffalo_l_is_yolo_head_plus_known_rem",
+            "test_deny_seed_plus_pd_extension_still_denies",
+            "test_agpl_stem_junk_infix_exception_denies",
+            "test_nc_stem_junk_infix_exception_denies",
+            "test_non_vendor_pp_yoloe_still_denies",
+            "test_steal_names_fastsam_residual_honest",
+            "test_known_nas_residual_is_deci_nc",
+            "test_exact_pp_yolo_nas_is_deci_via_compact",
         ),
     ),
     Mutation(
@@ -4024,6 +4052,10 @@ MUTATIONS: list[Mutation] = [
             "test_english_nas_prefix_is_not_deci",
             "test_classify_owned_unknown_rem_controls_hold",
             "test_red_proof_mid_exception_unknown_rem_neuter_gadgets",
+            # R20-01: glued rem stays classify unknown-residual; rem-tail
+            # red-proof preconditions on that classify-owned deny.
+            "test_glued_rem_stays_unknown_residual",
+            "test_red_proof_separate_rem_owner_neuter",
         ),
     ),
     Mutation(
@@ -4150,6 +4182,9 @@ MUTATIONS: list[Mutation] = [
             "test_english_nas_prefix_is_not_deci",
             "test_classify_owned_unknown_rem_controls_hold",
             "test_red_proof_mid_exception_unknown_rem_neuter_gadgets",
+            # R20-01: glued rem / rem-tail red-proof are classify-owned.
+            "test_glued_rem_stays_unknown_residual",
+            "test_red_proof_separate_rem_owner_neuter",
         ),
     ),
     Mutation(

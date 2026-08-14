@@ -191,6 +191,15 @@ def test_unsupported_version_reported_before_missing_provenance(tmp_path: Path) 
     assert "provenance is required" not in message
 
 
+def test_array_root_raises_manifest_error(tmp_path: Path) -> None:
+    """A JSON array root is ManifestError, not AttributeError (FIR-11-SL1-R2-04)."""
+    path = tmp_path / "array.json"
+    path.write_text("[1, 2, 3]\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="JSON object") as exc_info:
+        load_manifest(str(path))
+    assert not isinstance(exc_info.value, AttributeError)
+
+
 def test_malformed_entries_structure_reported_before_missing_provenance(
     tmp_path: Path,
 ) -> None:

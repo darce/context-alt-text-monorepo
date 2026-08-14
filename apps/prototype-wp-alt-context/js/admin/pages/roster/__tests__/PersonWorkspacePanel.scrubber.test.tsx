@@ -14,7 +14,7 @@ import { toPersonFaceId } from '../personFaces';
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
-  sprintf: (format: string, ...args: Array<string | number>) => {
+  sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
     return format.replace(/%[sd]/g, () => String(args[index++]));
   },
@@ -224,10 +224,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     cluster1Rail.focus();
     await user.keyboard('{End}{ArrowRight}{ArrowDown}');
     expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-a2'));
-    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute(
       'aria-selected',
       'false',
@@ -236,10 +233,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     cluster2Rail.focus();
     await user.keyboard('{ArrowRight}');
     expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-b1', CLUSTER_B));
-    expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('status', { name: 'Face selection announcements' })).toHaveTextContent(
       'Selected face 1 of 2',
     );
@@ -283,12 +277,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     const pinButton = screen.getByRole('button', { name: 'Set as representative' });
     await user.click(pinButton);
 
-    expect(pinRepresentative).toHaveBeenCalledWith(
-      CLUSTER_UUID,
-      'identity-2',
-      true,
-      expect.any(AbortSignal),
-    );
+    expect(pinRepresentative).toHaveBeenCalledWith(CLUSTER_UUID, 'identity-2', true, expect.any(AbortSignal));
     expect(pinButton).toBeDisabled();
     expect(invalidateSpy).not.toHaveBeenCalled();
 
@@ -532,10 +521,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
       'src',
       'https://example.com/instance-102.jpg',
     );
-    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => {
       expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-2'));
     });
@@ -545,10 +531,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: previewName(1, 1, 101) })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => {
       expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-1'));
     });
@@ -590,7 +573,9 @@ describe('PersonWorkspacePanel face scrubber', () => {
     expect(within(metadata).getByText('Match evidence from current cluster response')).toBeInTheDocument();
 
     await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
-    expect(within(screen.getByRole('region', { name: 'Selected face details' })).getByText('possible match')).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Selected face details' })).getByText('possible match'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' }).textContent ?? '').not.toMatch(/%/);
   });
 

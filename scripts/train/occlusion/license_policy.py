@@ -71,12 +71,13 @@ character except ``/`` folds to ``_`` (total class rule; the F13-1
 so it keeps path-component split. ``_`` runs collapse; edges strip.
 Known model-file extensions (``.pt`` / ``.pdparams`` / ``.pdmodel`` /
 …) strip per slash component before fold (F15-7:
-``ppyoloe_plus_crn_s_80e_coco.pdparams`` admits). Before fold, one
-trailing registry tag ``:latest`` / ``:v0.3.0`` is stripped from the
-last path component (``yolox:latest`` / ``megvii/yolox:latest`` /
-``yolox:v0.3.0`` admit as the bare family; ``yolo:latest`` strips then
-denies ``yolo``; ``yolox:s`` is not a registry tag and folds to
-``yolox_s``). A bare single-number tag (``:v8`` / ``:8`` / ``:v2``) is
+``ppyoloe_plus_crn_s_80e_coco.pdparams`` admits). Before fold,
+trailing registry tags ``:latest`` / ``:v0.3.0`` are stripped from
+the last path component until none remain (R18-12 loop;
+``yolox:latest`` / ``megvii/yolox:latest`` / ``yolox:v0.3.0`` /
+``yolox:latest:latest`` admit as the bare family; ``yolo:latest``
+strips then denies ``yolo``; ``yolox:s`` is not a registry tag
+and folds to ``yolox_s``). A bare single-number tag (``:v8`` / ``:8`` / ``:v2``) is
 **not** stripped (F15-3) — it folds to ``_v8`` / ``_8`` / ``_v2`` and
 fail-closes as unknown residual, matching the compact twin ``yoloxv8``.
 A nonblank identity that strips/folds to empty or slash-only
@@ -1682,11 +1683,12 @@ def canonical(value: str) -> str | None:
 
     When ``_ASCII_PUNCT_FOLD_TOTAL`` is False the F13-1 enumeration
     ``_UNOFFICIAL_SEPARATOR_CHARS`` plus official ``[-_.\\s]`` is used
-    instead (TEST-15). A single trailing registry tag
-    (``:latest`` / ``:v0.3.0``) is stripped from the last path component
-    before fold (F14-2). After fold, a ``pp`` segment followed by a
-    ``yolo*`` segment merges to ``ppyolo*`` when it is the component
-    head or is preceded by a known Paddle vendor (F14-3 / F15-10).
+    instead (TEST-15). Trailing registry tags (``:latest`` /
+    ``:v0.3.0``) are stripped from the last path component before fold
+    until none remain (F14-2 / R18-12). After fold, a ``pp`` segment
+    followed by a ``yolo*`` segment merges to ``ppyolo*`` when it is
+    the component head or is preceded by a known Paddle vendor
+    (F14-3 / F15-10).
     """
     if value is None:
         return None
@@ -1715,8 +1717,9 @@ def canonical(value: str) -> str | None:
                 break
         stripped_parts.append(p)
     text = "/".join(stripped_parts)
-    # F14-2: strip one trailing registry tag from the last component
-    # *before* punct fold so :latest / :v0.3.0 do not become unknown debris.
+    # F14-2 / R18-12: strip trailing registry tags from the last
+    # component until none remain, *before* punct fold so :latest /
+    # :v0.3.0 / stacked :latest:latest do not become unknown debris.
     text = _strip_trailing_registry_tag(text)
     if _ASCII_PUNCT_FOLD_TOTAL:
         # F14-1: total class fold. Enumeration is structurally unwinnable
@@ -4256,7 +4259,7 @@ def _contained_long_deny_seed_hit(
             continue
         if seed_k in rk and len(seed_k) > best_len:
             best_len = len(seed_k)
-            best = entry  # type: ignore[assignment]
+            best = entry
     return best
 
 
@@ -4510,6 +4513,11 @@ def _deny_has_folded_ab_claim(token: str) -> bool:
     their compact forms spell exception seeds ``yolox`` / ``yolos``.
     Load-bearing at the elevated-deny call site (FIR-7-B12-1): without it
     the carve-out would suppress ``yolo_x`` via compact exception identity.
+
+    The (b) ``seed_`` arm is live at the walker call site (``yolo_x``).
+    Mid-adjacency passes a compact prefix slice (no ``_``), so only
+    folded (a) can fire there — not a bypass, just compact-only
+    exactness on that path (R19-05).
     """
     if not token:
         return False
@@ -4589,7 +4597,7 @@ def _deny_prefix_plus_residual_hit(rem: str) -> PackageDenylistEntry | None:
         leftover = rem_k[len(seed_k) :]
         if leftover and leftover.isalnum() and len(seed_k) > best_len:
             best_len = len(seed_k)
-            best = entry  # type: ignore[assignment]
+            best = entry
     return best
 
 
@@ -5138,7 +5146,7 @@ def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
         rank = (spec, honesty, folded_prefix, len(seed_k), len(seed_c))
         if rank > best_key:
             best_key = rank
-            best = entry  # type: ignore[assignment]
+            best = entry
     return best
 
 

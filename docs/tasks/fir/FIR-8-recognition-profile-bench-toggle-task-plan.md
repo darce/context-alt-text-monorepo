@@ -1168,60 +1168,60 @@ Single-lane work. No multi-agent lane split required.
 
 ### Context and Ownership
 
-- [ ] Loaded this plan, eval_harness remote client, health probes, media identity export keys, 001 schema table list, FIR23-STACK endpoint/reset docs.
-- [ ] Confirmed no recognition-service files in the intended diff.
-- [ ] FIR23-STACK dependency recorded as BLOCKING for live runs (unit tests unblocked).
-- [ ] Package root pinned: `apps/prototype-description-service/scripts/bench/`.
+- [x] Loaded this plan, eval_harness remote client, health probes, media identity export keys, 001 schema table list, FIR23-STACK endpoint/reset docs.
+- [x] Confirmed no recognition-service files in the intended diff.
+- [x] FIR23-STACK dependency recorded as BLOCKING for live runs (unit tests unblocked).
+- [x] Package root pinned: `apps/prototype-description-service/scripts/bench/`.
 
 ### Checklist for Slice 1: Bench CLI skeleton
 
-- [ ] Package under `apps/prototype-description-service/scripts/bench/` + `cross_stack_bench.py` subcommands `preflight` / `run` / `status`
-- [ ] `StackPairConfig` validates the full [key schema](#s1-executable-contracts-normative) at load ([rg-008]) against the FIR23-STACK consumption table (dev: insightface/512; fir: face_pipeline/128; refuse unknown stacks / foreign base URLs / deploy-ownership keys)
-- [ ] Preflight uses real `/ready` + authenticated `/health/detailed` contracts; stable codes; `opencv_major` required (`opencv_major_unattested` when absent); writes per-leg `preflight.json` (PROV-01) with flat `opencv_major` / `opencv_major_source`
-- [ ] Manifest via `load_manifest` (`--manifest` + `--images-dir`); `manifest.sha` written
-- [ ] Flow: media resolve (local then remote+CF-1 pin) → analyze → cluster (every analyze job for a leg has reached a terminal outcome — success, or failure with `item_max_attempts` exhausted — and at least one succeeded) → **S1 `export_map` symbols only** (`export_leg` / `require_cluster_success` / `load_leg_exports` — persist; no GT mapping); zero analyze successes → no cluster/export, `cluster_gate_refused` in `legs/<stack_id>/leg_outcome.json`; run-dir tree as specified; package marker `scripts/bench/__init__.py` present
-- [ ] Terminal ingest outcome written to `items.jsonl` at analyze return (`success` or failure reason); missing outcome = failure for condition (i) (fail closed)
-- [ ] When config key `baseline_manifest_path` is present, baseline superset blocker (`assert_baseline_superset(manifest_ids, baseline_ids)`) asserted against the **manifest** set at `run` start, before any media write; when absent, skipped; `score` stamps `baseline_superset_checked` in the score provenance block (never written by `preflight`); public-unicast default on remote fetches; optional `media_url_map_path` for operator URL map / corpus overlay
-- [ ] Append-only `items.jsonl` resume (skip terminal-success; bounded retry on failures); each ok record carries int `stack_media_id`, `image_width`, `image_height`, terminal ingest outcome
-- [ ] `status` reads run.json + items.jsonl (no network)
-- [ ] Wall-clock + job-poll budgets enforced in CLI
-- [ ] Named-stack allowlist guard before writes
-- [ ] Unit tests: preflight, superset, resume, consumption-table, public-unicast, cluster-gate, **rg-015 (`test_export_map_rg015.py`)** — each observed red first
+- [x] Package under `apps/prototype-description-service/scripts/bench/` + `cross_stack_bench.py` subcommands `preflight` / `run` / `status`
+- [x] `StackPairConfig` validates the full [key schema](#s1-executable-contracts-normative) at load ([rg-008]) against the FIR23-STACK consumption table (dev: insightface/512; fir: face_pipeline/128; refuse unknown stacks / foreign base URLs / deploy-ownership keys)
+- [x] Preflight uses real `/ready` + authenticated `/health/detailed` contracts; stable codes; `opencv_major` required (`opencv_major_unattested` when absent); writes per-leg `preflight.json` (PROV-01) with flat `opencv_major` / `opencv_major_source`
+- [x] Manifest via `load_manifest` (`--manifest` + `--images-dir`); `manifest.sha` written
+- [x] Flow: media resolve (local then remote+CF-1 pin) → analyze → cluster (every analyze job for a leg has reached a terminal outcome — success, or failure with `item_max_attempts` exhausted — and at least one succeeded) → **S1 `export_map` symbols only** (`export_leg` / `require_cluster_success` / `load_leg_exports` — persist; no GT mapping); zero analyze successes → no cluster/export, `cluster_gate_refused` in `legs/<stack_id>/leg_outcome.json`; run-dir tree as specified; package marker `scripts/bench/__init__.py` present
+- [x] Terminal ingest outcome written to `items.jsonl` at analyze return (`success` or failure reason); missing outcome = failure for condition (i) (fail closed)
+- [x] When config key `baseline_manifest_path` is present, baseline superset blocker (`assert_baseline_superset(manifest_ids, baseline_ids)`) asserted against the **manifest** set at `run` start, before any media write; when absent, skipped; `score` stamps `baseline_superset_checked` in the score provenance block (never written by `preflight`); public-unicast default on remote fetches; optional `media_url_map_path` for operator URL map / corpus overlay
+- [x] Append-only `items.jsonl` resume (skip terminal-success; bounded retry on failures); each ok record carries int `stack_media_id`, `image_width`, `image_height`, terminal ingest outcome
+- [x] `status` reads run.json + items.jsonl (no network)
+- [x] Wall-clock + job-poll budgets enforced in CLI
+- [x] Named-stack allowlist guard before writes
+- [x] Unit tests: preflight, superset, resume, consumption-table, public-unicast, cluster-gate, **rg-015 (`test_export_map_rg015.py`)** — each observed red first
 - [ ] Handoff decision for S1 with verification commands
 
 ### Checklist for Slice 2: Export + score
 
-- [ ] Score offline on run-dir only (exports already persisted by S1; no credentials)
-- [ ] Accepted set = ingest + analyze + int `stack_media_id` + presence on both legs' `items.jsonl` rosters, computed once; roster-present + zero export rows = zero detections (`pred_faces = 0`, `zero_detection_media_count`); one-leg roster only = `ingest_asymmetric_media`; export row absent from roster → `export_media_not_in_roster`; both join sides are ints with no coercion; primary + optimistic label-space mapping
-- [ ] **S2 `export_map` symbols only** (`map_cluster_labels_primary` / `map_cluster_labels_optimistic` / `to_face_metric_inputs(..., frame: Literal["native", "e2e"])` / `match_detection_boxes`); two frame calls; detection rows identical across frames, identification rows differ; S1 persist symbols already exist — not re-owned; mapper preserves upstream envelope fields already written by S1 ([rg-015]); no embedding/landmark requirement
-- [ ] FIR-5 pure `detection_pr` / `identification_pr` only on constructed `ImageDetection` / `ImageIdentities`; the harness edits are the optional-with-default `matched_faces` field (added last) and `scene/tests/test_eval_harness_face_metrics.py` bounds + optional-last assertions; `report.py` is READ, NOT EDITED
-- [ ] Dual sampling frames + dual label-map frames side-by-side; **`frame_e2e` pinned as the sole CONFIRMATORY sampling frame** (primary endpoint uses `e2e`; `e2e` recall ≤ `native` recall by construction)
-- [ ] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules applied first-match-wins
-- [ ] Detection P/R is **IoU-matched**; count-only retained as a DIAGNOSTIC companion; [TEST-15] pinned GREEN/RED geometry red-proof observed red first (translation + centre-in-box/containment cases)
-- [ ] Precision precondition implemented: declared δ, image-level cluster bootstrap, equal-tailed 95% percentile interval, `ci_half_width` stamped per cell on the 0..1 fraction scale, half-width ≤ δ/2, Holm across declared secondaries (empty list stamps empty family); partial-occasion resampling rules (a)–(c) with `partial_occasions` / mixed `resampling_unit`; media-vs-occasion discrimination fixture
-- [ ] Floor policy: `floor_config` = raw configured value; `resolved_floor_count = max(2, ceil(accepted_set_floor × N))` with `N = |manifest entries|`; stamps `floor_config`, `resolved_floor_count`, `accepted_set_size`, `manifest_entry_count`; integer floor > N → `accepted_set_floor_exceeds_corpus` at manifest load; `differential_attrition_exceeded` order: (1) write accepted-set + attrition artifacts FIRST; (2) emit NO P/R cells; (3) exit non-zero with `differential_attrition_exceeded`; provenance stamps `attrition_ingest_analyze` and `attrition_join`
-- [ ] Detection exhaustiveness gated by `require_detection_exhaustiveness` on `load_bench_manifest`; `v2_boxed_detection.json` loaded with the flag `True`; no module under `scripts/bench/` derives a face count by subtracting `len(present_identities)` from `face_count` (`report.py:454-461` retains the legacy form and is out of scope)
-- [ ] Report under `benchmarks/results/crossbench-*/` with preflight provenance (incl. `opencv_major` + its source), cascade honesty, license banner, tier labels, and the exhaustiveness eligibility ceiling
-- [ ] Mocked E2E + dual-frame (partial miss + whole-image zero-export) + localization + `test_precision_precondition` + exhaustiveness + attrition tests green (cluster gate and rg-015 are S1); harness edit proofs green via `uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py` from `apps/prototype-description-service`
+- [x] Score offline on run-dir only (exports already persisted by S1; no credentials)
+- [x] Accepted set = ingest + analyze + int `stack_media_id` + presence on both legs' `items.jsonl` rosters, computed once; roster-present + zero export rows = zero detections (`pred_faces = 0`, `zero_detection_media_count`); one-leg roster only = `ingest_asymmetric_media`; export row absent from roster → `export_media_not_in_roster`; both join sides are ints with no coercion; primary + optimistic label-space mapping
+- [x] **S2 `export_map` symbols only** (`map_cluster_labels_primary` / `map_cluster_labels_optimistic` / `to_face_metric_inputs(..., frame: Literal["native", "e2e"])` / `match_detection_boxes`); two frame calls; detection rows identical across frames, identification rows differ; S1 persist symbols already exist — not re-owned; mapper preserves upstream envelope fields already written by S1 ([rg-015]); no embedding/landmark requirement
+- [x] FIR-5 pure `detection_pr` / `identification_pr` only on constructed `ImageDetection` / `ImageIdentities`; the harness edits are the optional-with-default `matched_faces` field (added last) and `scene/tests/test_eval_harness_face_metrics.py` bounds + optional-last assertions; `report.py` is READ, NOT EDITED
+- [x] Dual sampling frames + dual label-map frames side-by-side; **`frame_e2e` pinned as the sole CONFIRMATORY sampling frame** (primary endpoint uses `e2e`; `e2e` recall ≤ `native` recall by construction)
+- [x] `score/accepted_set.json` + attrition table ([EVAL-19]); `CrossbenchTier` cell rules applied first-match-wins
+- [x] Detection P/R is **IoU-matched**; count-only retained as a DIAGNOSTIC companion; [TEST-15] pinned GREEN/RED geometry red-proof observed red first (translation + centre-in-box/containment cases)
+- [x] Precision precondition implemented: declared δ, image-level cluster bootstrap, equal-tailed 95% percentile interval, `ci_half_width` stamped per cell on the 0..1 fraction scale, half-width ≤ δ/2, Holm across declared secondaries (empty list stamps empty family); partial-occasion resampling rules (a)–(c) with `partial_occasions` / mixed `resampling_unit`; media-vs-occasion discrimination fixture
+- [x] Floor policy: `floor_config` = raw configured value; `resolved_floor_count = max(2, ceil(accepted_set_floor × N))` with `N = |manifest entries|`; stamps `floor_config`, `resolved_floor_count`, `accepted_set_size`, `manifest_entry_count`; integer floor > N → `accepted_set_floor_exceeds_corpus` at manifest load; `differential_attrition_exceeded` order: (1) write accepted-set + attrition artifacts FIRST; (2) emit NO P/R cells; (3) exit non-zero with `differential_attrition_exceeded`; provenance stamps `attrition_ingest_analyze` and `attrition_join`
+- [x] Detection exhaustiveness gated by `require_detection_exhaustiveness` on `load_bench_manifest`; `v2_boxed_detection.json` loaded with the flag `True`; no module under `scripts/bench/` derives a face count by subtracting `len(present_identities)` from `face_count` (`report.py:454-461` retains the legacy form and is out of scope)
+- [x] Report under `benchmarks/results/crossbench-*/` with preflight provenance (incl. `opencv_major` + its source), cascade honesty, license banner, tier labels, and the exhaustiveness eligibility ceiling
+- [x] Mocked E2E + dual-frame (partial miss + whole-image zero-export) + localization + `test_precision_precondition` + exhaustiveness + attrition tests green (cluster gate and rg-015 are S1); harness edit proofs green via `uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py` from `apps/prototype-description-service`
 - [ ] Handoff decision for S2
 
 ### Checklist for Slice 3: Runbook + teardown
 
-- [ ] `docs/runbooks/fir-8-cross-stack-bench.md` complete per outline
-- [ ] License posture explicit; insightface non-exposure rule explicit
-- [ ] Teardown cites FIR23-STACK reset only
-- [ ] Failure routing table (stack gap → FIR23-STACK; CLI → FIR-8; embedding diagnostic → optional upstream)
-- [ ] Commands match CLI help ([rg-006]); package root / import path documented
+- [x] `docs/runbooks/fir-8-cross-stack-bench.md` complete per outline
+- [x] License posture explicit; insightface non-exposure rule explicit
+- [x] Teardown cites FIR23-STACK reset only
+- [x] Failure routing table (stack gap → FIR23-STACK; CLI → FIR-8; embedding diagnostic → optional upstream)
+- [x] Commands match CLI help ([rg-006]); package root / import path documented
 - [ ] Handoff decision for S3 / task close path prepared
 
 ## Review Readiness
 
-- [ ] No recognition-service or deploy-YAML changes slipped into the branch. The two expected offline-harness edits (`face_metrics.py`, `test_eval_harness_face_metrics.py`) are present and are the **only** files outside `scripts/bench/`; a third such file is a review stop.
-- [ ] Boundary adapters do not invent pagination/provenance metadata ([rg-015]).
-- [ ] Preflight field claims match `register_health_probes` + `health.py` (no invented top-level dim fields).
-- [ ] Live run path blocked in docs until FIR23-STACK delivers `acx-dev-fir` (not silently mocked as success).
+- [x] No recognition-service or deploy-YAML changes slipped into the branch. The two expected offline-harness edits (`face_metrics.py`, `test_eval_harness_face_metrics.py`) are present and are the **only** files outside `scripts/bench/`; a third such file is a review stop.
+- [x] Boundary adapters do not invent pagination/provenance metadata ([rg-015]).
+- [x] Preflight field claims match `register_health_probes` + `health.py` (no invented top-level dim fields).
+- [x] Live run path blocked in docs until FIR23-STACK delivers `acx-dev-fir` (not silently mocked as success).
 - [ ] Handoff decisions record verification + dependency status.
-- [ ] Review findings recorded in MCP only (never pasted into this plan).
+- [x] Review findings recorded in MCP only (never pasted into this plan).
 
 ## Stretch Goals
 
@@ -1232,19 +1232,19 @@ Single-lane work. No multi-agent lane split required.
 ## Success Criteria
 
 - [ ] Operator can preflight + run + score a corpus against **both** stacks with **zero** recognition-service code changes in the FIR-8 diff (two offline-harness files are in scope and enumerated; see [Target Outcome](#target-outcome) item 6).
-- [ ] S1 and S2 are implementable and green against **today's** v2 harness — no FIR-8 step calls a symbol FIR-11 has not yet created; detection fixture is `v2_boxed_detection.json` (`manifest_version: 2`); no alternate manifest schema, no `load_legacy_manifest`.
-- [ ] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the codes in the [stable error codes table](#stable-error-codes-normative).
-- [ ] Cluster phase runs per leg; export gated on success.
-- [ ] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present, with `frame_e2e` + `label_map_primary` pinned as the only CONFIRMATORY combination.
-- [ ] Detection P/R is localization-aware (IoU-matched), and the [TEST-15] pinned GREEN/RED geometry fixtures (translation + centre-in-box/containment) prove the metric can go red under an IoU-only predicate.
-- [ ] No cell reaches CONFIRMATORY without a stamped `ci_half_width ≤ head_to_head_delta / 2` from the image-level cluster bootstrap on the endpoint's scoring population (`accepted_set` for identification/primary, `detection_scoring_set` for detection).
-- [ ] The head-to-head gate number is explicitly **withheld** until a production corpus passes FIR-8's own exhaustiveness assertion (`face_count == len(face_boxes)` on detection-scoring entries); a box-less production run ships as a **DIRECTIONAL** orchestration dry run (reason `detection_exhaustiveness_unasserted`) and says so in the artifact. FIR-11 Slice 2 may later supply a larger boxed corpus but is not required for any FIR-8 code path.
-- [ ] Superset / partial-intersection blocker enforced.
-- [ ] Resume does not reprocess terminal-success items; bounded retry on failures.
-- [ ] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) / PROV-01 (`preflight.json`) discipline and insightface license banner.
-- [ ] Runbook forbids commercial exposure of the insightface stack and points teardown at FIR23-STACK.
-- [ ] v5 in-service vehicle explicitly superseded (decision #2951; history at `bc97ff4b`).
-- [ ] Single package root `apps/prototype-description-service/scripts/bench/` documented and used by tests.
+- [x] S1 and S2 are implementable and green against **today's** v2 harness — no FIR-8 step calls a symbol FIR-11 has not yet created; detection fixture is `v2_boxed_detection.json` (`manifest_version: 2`); no alternate manifest schema, no `load_legacy_manifest`.
+- [x] Preflight fails closed on dimension or profile drift / auth failure / missing endpoints / unattested `opencv_major` with the codes in the [stable error codes table](#stable-error-codes-normative).
+- [x] Cluster phase runs per leg; export gated on success.
+- [x] Scoring uses public bbox/cluster metadata + manifest GT + label mapping → detection P/R + identification P/R; dual sampling and label-map frames present, with `frame_e2e` + `label_map_primary` pinned as the only CONFIRMATORY combination.
+- [x] Detection P/R is localization-aware (IoU-matched), and the [TEST-15] pinned GREEN/RED geometry fixtures (translation + centre-in-box/containment) prove the metric can go red under an IoU-only predicate.
+- [x] No cell reaches CONFIRMATORY without a stamped `ci_half_width ≤ head_to_head_delta / 2` from the image-level cluster bootstrap on the endpoint's scoring population (`accepted_set` for identification/primary, `detection_scoring_set` for detection).
+- [x] The head-to-head gate number is explicitly **withheld** until a production corpus passes FIR-8's own exhaustiveness assertion (`face_count == len(face_boxes)` on detection-scoring entries); a box-less production run ships as a **DIRECTIONAL** orchestration dry run (reason `detection_exhaustiveness_unasserted`) and says so in the artifact. FIR-11 Slice 2 may later supply a larger boxed corpus but is not required for any FIR-8 code path.
+- [x] Superset / partial-intersection blocker enforced.
+- [x] Resume does not reprocess terminal-success items; bounded retry on failures.
+- [x] Head-to-head report exists under `benchmarks/results/crossbench-*/` with EVAL-16 / EVAL-19 (`accepted_set.json`) / PROV-01 (`preflight.json`) discipline and insightface license banner.
+- [x] Runbook forbids commercial exposure of the insightface stack and points teardown at FIR23-STACK.
+- [x] v5 in-service vehicle explicitly superseded (decision #2951; history at `bc97ff4b`).
+- [x] Single package root `apps/prototype-description-service/scripts/bench/` documented and used by tests.
 
 ## Residual risks (pinned)
 

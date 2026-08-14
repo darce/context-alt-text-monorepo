@@ -177,6 +177,50 @@ def test_roster_outsider_raises(tmp_path: Path) -> None:
         load_manifest(str(path))
 
 
+def test_unsupported_version_reported_before_missing_provenance(tmp_path: Path) -> None:
+    """Version error precedes provenance: 999 + unprovenanced entries is a version error."""
+    doc = {
+        "manifest_version": 999,
+        "roster": [],
+        "entries": 1,
+    }
+    path = _write_manifest(tmp_path, doc)
+    with pytest.raises(ManifestError, match="manifest_version") as exc_info:
+        load_manifest(str(path))
+    message = str(exc_info.value)
+    assert "provenance is required" not in message
+
+
+def test_malformed_entries_structure_reported_before_missing_provenance(
+    tmp_path: Path,
+) -> None:
+    """entries-not-a-list is ManifestError (not TypeError), not a provenance hole."""
+    doc = {
+        "manifest_version": 2,
+        "roster": [],
+        "entries": 1,
+    }
+    path = _write_manifest(tmp_path, doc)
+    with pytest.raises(ManifestError, match="entries") as exc_info:
+        load_manifest(str(path))
+    message = str(exc_info.value)
+    assert "provenance is required" not in message
+    assert "list" in message
+
+
+def test_non_object_entry_is_manifest_error(tmp_path: Path) -> None:
+    """An entry that is not an object is a structural ManifestError."""
+    doc = {
+        "manifest_version": 2,
+        "roster": ["Ada Example"],
+        "entries": ["not-a-dict"],
+    }
+    path = _write_manifest(tmp_path, doc)
+    with pytest.raises(ManifestError, match="object") as exc_info:
+        load_manifest(str(path))
+    assert "provenance is required" not in str(exc_info.value)
+
+
 def test_manifest_module_does_not_import_ingest_checks() -> None:
     """R3P-10 / R4P-08: loader surface must not call the scrape heuristic."""
     source = (

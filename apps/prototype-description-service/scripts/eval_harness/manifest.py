@@ -446,14 +446,39 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     except (OSError, json.JSONDecodeError) as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
+    if not isinstance(raw, dict):
+        raise ManifestError(
+            f"golden manifest must be a JSON object, got {type(raw).__name__}"
+        )
+
+    # Version and structural shape fail before field-level holes (FIR-11-SL1-R1-04):
+    # unsupported version / entries-not-a-list / entry-not-an-object must not
+    # surface as TypeError or as a missing-provenance report.
+    version = raw.get("manifest_version")
+    if version is not None and version != SUPPORTED_MANIFEST_VERSION:
+        raise ManifestError(
+            f"unsupported manifest_version {version}; this loader understands "
+            f"version {SUPPORTED_MANIFEST_VERSION} only"
+        )
+    entries_raw = raw.get("entries")
+    if entries_raw is not None and not isinstance(entries_raw, list):
+        raise ManifestError(
+            f"manifest 'entries' must be a list, got {type(entries_raw).__name__}"
+        )
+    if isinstance(entries_raw, list):
+        for index, raw_entry in enumerate(entries_raw):
+            if not isinstance(raw_entry, dict):
+                raise ManifestError(
+                    f"manifest entry at index {index} must be an object, "
+                    f"got {type(raw_entry).__name__}"
+                )
+
     # v2 corpus contract (S6-01 / rg-008): base_caption is a first-class field, not
     # an optional golden-only convention. Require the key on every entry so
     # consumers can index entry["base_caption"] without KeyError; use "" when the
     # corpus does not author a reference caption (e.g. bake-off subset).
-    if isinstance(raw, dict) and raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
-        for raw_entry in raw.get("entries") or []:
-            if not isinstance(raw_entry, dict):
-                continue
+    if raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
+        for raw_entry in entries_raw or []:
             if "base_caption" not in raw_entry:
                 raise ManifestError(
                     f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
@@ -470,27 +495,24 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     # FIR-11 Slice 1: provenance is required. Aggregate every missing/null
     # entry into one ManifestError naming every offending path — fail-closed
     # and not fail-first, so a junior operator sees the full hole list.
-    if isinstance(raw, dict):
-        missing_provenance: list[str] = []
-        for raw_entry in raw.get("entries") or []:
-            if not isinstance(raw_entry, dict):
-                continue
-            if raw_entry.get("provenance") is None:
-                path = raw_entry.get("path")
-                media_id = raw_entry.get("media_id")
-                if isinstance(path, str) and path:
-                    label = path
-                    if media_id is not None:
-                        label = f"{path} (media_id={media_id})"
-                else:
-                    label = f"media_id={media_id!r}"
-                missing_provenance.append(label)
-        if missing_provenance:
-            listed = ", ".join(missing_provenance)
-            raise ManifestError(
-                f"provenance is required (fail-closed); missing on "
-                f"{len(missing_provenance)} entries: {listed}"
-            )
+    missing_provenance: list[str] = []
+    for raw_entry in entries_raw or []:
+        if raw_entry.get("provenance") is None:
+            entry_path = raw_entry.get("path")
+            media_id = raw_entry.get("media_id")
+            if isinstance(entry_path, str) and entry_path:
+                label = entry_path
+                if media_id is not None:
+                    label = f"{entry_path} (media_id={media_id})"
+            else:
+                label = f"media_id={media_id!r}"
+            missing_provenance.append(label)
+    if missing_provenance:
+        listed = ", ".join(missing_provenance)
+        raise ManifestError(
+            f"provenance is required (fail-closed); missing on "
+            f"{len(missing_provenance)} entries: {listed}"
+        )
 
     try:
         manifest = GoldenManifest.model_validate(raw)

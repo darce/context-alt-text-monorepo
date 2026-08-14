@@ -4286,22 +4286,36 @@ def _rem_is_known_family_or_seed(rem: str) -> bool:
     return False
 
 
+# F14-5: 4-char deny heads (``yolo``) accept an exact exception-family rem.
+# Restore ``5`` to revert to the F13-3 min-len-5 refusal (TEST-15).
+_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN: int = 4
+
+
 def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
-    """F13-3 / R15-L-2: deny/NC head + exception/known-seed rem.
+    """F13-3 / F14-5: deny/NC head + exception/known-seed rem.
 
     Accepts seeds of compact length ≥ ``_COMPACT_SUFFIX_MIN_SEED_LEN``
     when the remainder is itself an exception-family spelling or any
     known seed. Distinct from B13-5 long-seed glue (min 11, any alnum
-    rem). Single load-bearing helper (TEST-15).
+    rem).
+
+    F14-5: a 4-char head (``yolo``) also hits when the *entire* rem is
+    exactly an exception-family spelling (``yoloyolox`` / ``yoloyoloxs``).
+    ``yolodummy`` rem is not an exception spelling and stays admitted.
+    Floor is ``_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN`` (TEST-15: restore 5).
     """
     if not token_compact or not seed_k:
-        return False
-    if len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
         return False
     if not token_compact.startswith(seed_k):
         return False
     rem = token_compact[len(seed_k) :]
-    return bool(rem and _rem_is_known_family_or_seed(rem))
+    if not rem:
+        return False
+    if len(seed_k) == 4 and len(seed_k) >= _DENY_HEAD_KNOWN_REM_MIN_SEED_LEN:
+        return _is_legitimate_exception_compact_spelling(rem)
+    if len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+        return False
+    return _rem_is_known_family_or_seed(rem)
 
 
 def _compact_mid_exception_deny_adjacency(

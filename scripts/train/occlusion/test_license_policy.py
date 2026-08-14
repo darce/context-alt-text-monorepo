@@ -12887,11 +12887,20 @@ class TestF16PrefixDenyLaundering:
         "ayoloxs",
         "xyoloxs",
     )
-    NO_JUNK_STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+    # R19-10: split mixed-row witness. Elevated (c) / F14-6 prefix
+    # identities survive M23/M25; only classify-owned unknown-rem
+    # rows die under those mutants.
+    ELEVATED_OR_EXACT_STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
         ("fastsamx", "fastsam"),
         ("arcfaceyoloxextra", "arcface"),
+    )
+    CLASSIFY_OWNED_STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
         ("xyoloxsextra", "yolox_unknown_residual"),
         ("yoloyoloxextra", "yolo"),
+        # R19-01 A.3 unknown-residual fence (split out of the mixed A.3
+        # loop so M23/M25 have a classify-only witness).
+        ("buffalo_lxyoloxextra", "yolox_unknown_residual"),
+        ("buffalo_lxyoloxlatest", "yolox_unknown_residual"),
     )
 
     @pytest.mark.parametrize("token,expected_pkg", AGPL_GADGETS)
@@ -12929,10 +12938,20 @@ class TestF16PrefixDenyLaundering:
         assert policy._package_denylist_hit(token) is None
         assert policy.audit_derived_from_model(token).ok is True
 
-    @pytest.mark.parametrize("token,expected_pkg", NO_JUNK_STILL_DENY)
-    def test_no_junk_and_unknown_rem_controls_hold(
+    @pytest.mark.parametrize("token,expected_pkg", ELEVATED_OR_EXACT_STILL_DENY)
+    def test_elevated_and_exact_prefix_controls_hold(
         self, token: str, expected_pkg: str
     ) -> None:
+        """R19-10: immune to M23/M25 — not classify-owned."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    @pytest.mark.parametrize("token,expected_pkg", CLASSIFY_OWNED_STILL_DENY)
+    def test_classify_owned_unknown_rem_controls_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        """R19-10: classify-owned rows — M23/M25 victims."""
         hit = policy._package_denylist_hit(token)
         assert hit is not None
         assert hit.package_id == expected_pkg
@@ -12989,7 +13008,11 @@ class TestF16NasResidualAttribution:
         hit = policy._package_denylist_hit(token)
         assert hit is not None
         assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
-        assert "nas" in hit.package_id
+        # R19-11: exact Deci base id. Residual-NC always lands
+        # ``yolo_nas`` (not ``yolo_nas_l``) even for ``pp_yolo_nas_l``.
+        assert hit.package_id == "yolo_nas", (
+            f"{token!r}: expected exact yolo_nas, got {hit.package_id!r}"
+        )
         result = policy.audit_derived_from_model(token)
         assert result.ok is False
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
@@ -13020,8 +13043,11 @@ class TestF16PaddleVendorMerge:
         "paddlepaddle_pp_yoloe",
         "pp_yoloe",
     )
-    STILL_DENY: ClassVar[tuple[str, ...]] = (
-        "weights_pp_yoloe",
+    STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("weights_pp_yoloe", "yolo"),
+        ("model_pp_yoloe", "yolo"),
+        ("v2_pp_yoloe", "yolo"),
+        ("paddles_pp_yoloe", "yolo"),
     )
 
     def test_paddle_vendor_segment_set_is_pinned(self) -> None:
@@ -13044,11 +13070,18 @@ class TestF16PaddleVendorMerge:
         )
         assert policy.audit_derived_from_model(token).ok is True
 
-    @pytest.mark.parametrize("token", STILL_DENY)
-    def test_non_vendor_pp_yoloe_still_denies(self, token: str) -> None:
+    @pytest.mark.parametrize("token,expected_pkg", STILL_DENY)
+    def test_non_vendor_pp_yoloe_still_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
         hit = policy._package_denylist_hit(token)
         assert hit is not None, f"{token!r} is not a vendor shorthand"
-        assert policy.audit_derived_from_model(token).ok is False
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
 
 class TestF16EmptyIdentityHonestyAndStackedTags:
@@ -13217,8 +13250,6 @@ class TestF17UnderscoreNcSeedGluedException:
     A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
         ("buffalo_lyolox", "buffalo_l", "nc"),
         ("buffalolxyolox", "buffalo_l", "nc"),
-        ("buffalo_lxyoloxextra", "yolox_unknown_residual", "agpl"),
-        ("buffalo_lxyoloxlatest", "yolox_unknown_residual", "agpl"),
         ("buffalo_l_xyolox", "buffalo_l", "nc"),
         ("buffalo_l~xyolox", "buffalo_l", "nc"),
         ("buffalo_l.xyolox", "buffalo_l", "nc"),
@@ -13307,6 +13338,7 @@ class TestF17UnderscoreNcSeedGluedException:
         assert seen == 168
 
     def test_a3_must_stay_deny_fence(self) -> None:
+        """Non-classify A.3 neighbours. extra/latest live on the classify pin."""
         for token, expected_pkg, axis in self.A3_STILL_DENY:
             hit = policy._package_denylist_hit(token)
             assert hit is not None, f"{token!r} A.3 must stay DENY"

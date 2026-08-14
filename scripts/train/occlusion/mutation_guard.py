@@ -3785,6 +3785,14 @@ MUTATIONS: list[Mutation] = [
             "test_full_rem_tail_cross_product_sweep_denies",
             "test_glued_rem_stays_unknown_residual",
             "test_red_proof_separate_rem_owner_neuter",
+            # Wave F18 R20-02: F17 red-proofs / floor-miss contrast plus
+            # two pre-F17 red-proofs that also die when hit always misses.
+            "test_four_plus_suffix_junk_without_exception_is_floor_miss",
+            "test_red_proof_mid_exception_unknown_rem_neuter_underscore",
+            "test_red_proof_underscore_glued_owner_neuter",
+            "test_red_proof_stem_over_exc_rem_neuter",
+            "test_red_proof_mid_exception_unknown_rem_neuter_gadgets",
+            "test_red_proof_steal_flag_turns_fastsam_residual_red",
         ),
     ),
     Mutation(

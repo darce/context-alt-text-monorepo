@@ -33,7 +33,7 @@ export const useRosterFaceCursor = (
   }, [retainVisible, visibleIds]);
 
   return {
-    selectedId,
+    selectedId: resolveVisibleFaceId(visibleIds, requestedId, selectedId),
     select,
     retainVisible,
   };

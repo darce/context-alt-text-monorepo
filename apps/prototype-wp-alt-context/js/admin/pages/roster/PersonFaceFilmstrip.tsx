@@ -11,7 +11,7 @@ const RAIL_THUMB_PX = 64;
 interface PersonFaceFilmstripProps {
   faces: readonly PersonScrubFace[];
   selectedId: string | null;
-  onSelect: (faceId: string) => void;
+  onSelect: (faceId: string, railFaceIds: readonly string[]) => void;
   railRef?: React.Ref<HTMLDivElement>;
   clusterOrdinal: number;
 }
@@ -57,12 +57,12 @@ export const PersonFaceFilmstrip = ({
       return;
     }
 
-    const currentIndex = selectedInRail && selectedId ? visibleIds.indexOf(selectedId) : 0;
+    const currentIndex = selectedInRail && selectedId ? visibleIds.indexOf(selectedId) : -1;
     let nextIndex = currentIndex;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      nextIndex = Math.min(visibleIds.length - 1, Math.max(0, currentIndex) + 1);
+      nextIndex = Math.min(visibleIds.length - 1, currentIndex + 1);
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      nextIndex = Math.max(0, (currentIndex < 0 ? 0 : currentIndex) - 1);
+      nextIndex = Math.max(0, currentIndex < 0 ? 0 : currentIndex - 1);
     } else if (event.key === 'Home') {
       nextIndex = 0;
     } else if (event.key === 'End') {
@@ -74,7 +74,7 @@ export const PersonFaceFilmstrip = ({
     event.preventDefault();
     const nextId = visibleIds[nextIndex];
     if (nextId) {
-      onSelect(nextId);
+      onSelect(nextId, visibleIds);
     }
   };
 
@@ -106,7 +106,7 @@ export const PersonFaceFilmstrip = ({
             aria-label={alt}
             aria-selected={isSelected}
             tabIndex={-1}
-            onClick={() => onSelect(face.faceId)}
+            onClick={() => onSelect(face.faceId, visibleIds)}
           >
             {renderRailMedia(face, alt)}
             <span className="acx-roster__person-workspace-rail-caption">

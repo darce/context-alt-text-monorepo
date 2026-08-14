@@ -261,7 +261,8 @@ def test_two_pass_malformed_pass1_json_is_typed_per_item_failure_and_run_continu
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": [], "entries": entries})
+    manifest = GoldenManifest.model_validate({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": [], "entries": entries})
     captured: list[dict] = []
     # item 0: pass-1 malformed; item 1: valid facts then a caption.
     client = _client(captured, ["not json at all", _FACTS_JSON, "A quiet shoreline."], two_pass=True)
@@ -614,7 +615,8 @@ def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    return GoldenManifest.model_validate({"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries})
+    return GoldenManifest.model_validate({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries})
 
 
 def test_weave_bench_messages_match_live_pass2_without_image() -> None:
@@ -928,7 +930,8 @@ def test_v3_malformed_or_incomplete_weave_json_is_typed_per_item_failure_and_run
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": [], "entries": entries})
+    manifest = GoldenManifest.model_validate({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": [], "entries": entries})
     captured: list[dict] = []
     # item 0: weave JSON missing the "caption" field; item 1: valid three-surface JSON.
     missing_key = json.dumps({"title": "A title of five words", "alt": "An alt."})

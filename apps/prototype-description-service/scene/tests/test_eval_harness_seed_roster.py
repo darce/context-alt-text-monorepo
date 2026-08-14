@@ -185,7 +185,8 @@ def _scene_fixture(tmp_path):
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = {"manifest_version": 2, "roster": ["Alice Example", "Bob Example"], "entries": entries}
+    manifest = {"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Alice Example", "Bob Example"], "entries": entries}
     manifest_path = tmp_path / "golden.json"
     manifest_path.write_text(json.dumps(manifest))
     return str(manifest_path), str(tmp_path / "images")

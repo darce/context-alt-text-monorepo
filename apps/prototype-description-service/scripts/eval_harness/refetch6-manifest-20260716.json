@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
   "roster": [
     "Ellyn Heald",
     "Hillary Sampliner",
@@ -32,7 +33,19 @@
           "w": 113.0,
           "h": 143.0,
           "name": "Zoe Elefterin",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {
@@ -66,7 +79,19 @@
           "w": 135.0,
           "h": 183.0,
           "name": "Sarah Fairbank",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {
@@ -100,7 +125,19 @@
           "w": 69.0,
           "h": 94.0,
           "name": "Maria Correonero",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {
@@ -134,7 +171,19 @@
           "w": 109.0,
           "h": 157.0,
           "name": "Olivia Lee",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         },
         {
           "x": 330.0,
@@ -142,7 +191,19 @@
           "w": 452.0,
           "h": 482.0,
           "name": "Olivia Lee",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         },
         {
           "x": 1553.0,
@@ -150,7 +211,19 @@
           "w": 340.0,
           "h": 443.0,
           "name": "Olivia Lee",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {
@@ -186,7 +259,19 @@
           "w": 47.0,
           "h": 64.0,
           "name": "Laura Sampliner",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         },
         {
           "x": 223.5,
@@ -194,7 +279,19 @@
           "w": 47.0,
           "h": 59.0,
           "name": "Hillary Sampliner",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {
@@ -228,7 +325,19 @@
           "w": 188.0,
           "h": 270.0,
           "name": "Ellyn Heald",
-          "source": "workbench"
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
         }
       ],
       "context_pack": {

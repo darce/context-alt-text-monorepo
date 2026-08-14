@@ -262,15 +262,19 @@ def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
     dropped_ids = {d.media_id for d in result.dropped}
     survivor_ids = {e.media_id for e in result.manifest.entries}
 
-    assert 375 in dropped_ids
-    assert any(
-        d.media_id == 375 and d.rationale == FIXED_SCRAPE_DROP_RATIONALE
+    # Every fixed-disposition id is exercised (kills `in FIXED_*` → `== one id`
+    # and delete-retag-branch mutants).
+    assert FIXED_SCRAPE_DROP_IDS <= dropped_ids
+    assert all(
+        d.rationale == FIXED_SCRAPE_DROP_RATIONALE
         for d in result.dropped
+        if d.media_id in FIXED_SCRAPE_DROP_IDS
     )
-    assert 11 in dropped_ids
-    assert any(
-        d.media_id == 11 and d.rationale == FIXED_CELEB_DROP_RATIONALE
+    assert FIXED_CELEB_DROP_IDS <= dropped_ids
+    assert all(
+        d.rationale == FIXED_CELEB_DROP_RATIONALE
         for d in result.dropped
+        if d.media_id in FIXED_CELEB_DROP_IDS
     )
     assert 102 in dropped_ids
     assert any(
@@ -283,11 +287,12 @@ def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
         for d in result.dropped
     )
 
-    assert 603 in survivor_ids
-    retagged = next(e for e in result.manifest.entries if e.media_id == 603)
-    assert retagged.provenance.source is ProvenanceSource.OPERATOR
-    assert retagged.provenance.license is LicenseTag.MOCK_ENTITY
-    assert retagged.provenance.note == FIXED_RETAG_RATIONALE
+    assert FIXED_RETAG_IDS <= survivor_ids
+    for media_id in FIXED_RETAG_IDS:
+        retagged = next(e for e in result.manifest.entries if e.media_id == media_id)
+        assert retagged.provenance.source is ProvenanceSource.OPERATOR
+        assert retagged.provenance.license is LicenseTag.MOCK_ENTITY
+        assert retagged.provenance.note == FIXED_RETAG_RATIONALE
 
     ada = next(e for e in result.manifest.entries if e.media_id == 100)
     assert ada.provenance.source is ProvenanceSource.OPERATOR
@@ -306,6 +311,68 @@ def test_emitter_end_to_end_on_synthetic_fixture(tmp_path: Path) -> None:
     sidecar_doc = json.loads(sidecar.read_text(encoding="utf-8"))
     assert sidecar_doc["scope"] == "fr_gate"
     assert {row["media_id"] for row in sidecar_doc["dropped"]} == dropped_ids
+
+
+def test_retag_id_unknown_attestation_is_dropped(tmp_path: Path) -> None:
+    """PROV-01: unknown on a FIXED_RETAG_ID drops; sidecar records the verdict."""
+    draft = load_manifest(str(_draft(tmp_path, [603, 100])))
+    records = [
+        AttestationRecord.model_validate(_record(603, attestation="unknown")),
+        AttestationRecord.model_validate(_record(100, attestation="own_capture")),
+    ]
+    sidecar = tmp_path / "gate_drops.json"
+    result = emit_remediated_manifest(draft, records, drop_sidecar_path=sidecar)
+    survivor_ids = {e.media_id for e in result.manifest.entries}
+    assert 603 not in survivor_ids
+    assert 100 in survivor_ids
+    drop = next(d for d in result.dropped if d.media_id == 603)
+    assert drop.rationale == ATTESTATION_UNKNOWN_RATIONALE
+    sidecar_doc = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert any(
+        row["media_id"] == 603 and row["rationale"] == ATTESTATION_UNKNOWN_RATIONALE
+        for row in sidecar_doc["dropped"]
+    )
+
+
+def test_emitter_rejects_pass_bound_to_mutated_draft_sha(tmp_path: Path) -> None:
+    """A pass validated against draft A must not emit draft B with a mutated sha256."""
+    path_a = _draft(tmp_path, [1])
+    draft_a = load_manifest(str(path_a))
+    attested = validate_attestation_pass(
+        [AttestationRecord.model_validate(_record(1))], draft_a
+    )
+    doc = json.loads(path_a.read_text(encoding="utf-8"))
+    doc["entries"][0]["sha256"] = "b" * 64
+    path_b = tmp_path / "draft_b.json"
+    path_b.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    draft_b = load_manifest(str(path_b))
+    with pytest.raises(RemediationError, match="sha256"):
+        emit_remediated_manifest(draft_b, attested)
+
+
+def test_zwsp_attested_by_rejected(tmp_path: Path) -> None:
+    """attested_by that is empty after format/space strip is rejected."""
+    path = _jsonl(tmp_path, [_record(1, attested_by="\u200b")])
+    with pytest.raises(RemediationError, match="attested_by"):
+        load_attestation_jsonl(path)
+
+
+def test_empty_attestation_jsonl_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(RemediationError, match="empty"):
+        load_attestation_jsonl(path)
+    path.write_text("\n\n", encoding="utf-8")
+    with pytest.raises(RemediationError, match="empty"):
+        load_attestation_jsonl(path)
+
+
+def test_missing_attested_at_rejected(tmp_path: Path) -> None:
+    payload = _record(1)
+    del payload["attested_at"]
+    path = _jsonl(tmp_path, [payload])
+    with pytest.raises(RemediationError, match="attested_at"):
+        load_attestation_jsonl(path)
 
 
 def test_fixed_disposition_constants_match_plan() -> None:

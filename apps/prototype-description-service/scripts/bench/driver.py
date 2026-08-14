@@ -110,6 +110,12 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
     (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
     digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
     (root / "manifest.sha").write_text(digest + "\n", encoding="utf-8")
+    (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
+    run_doc["manifest_path"] = str(Path(manifest_path))
+    (root / "run.json").write_text(json.dumps(run_doc, indent=2), encoding="utf-8")
+    redacted["baseline_manifest_path"] = pair.baseline_manifest_path
+    (root / "stack_pair.json").write_text(json.dumps(redacted, indent=2), encoding="utf-8")
+    (root / "manifest.json").write_bytes(Path(manifest_path).read_bytes())
     for stack in pair.stacks:
         (root / "legs" / stack.stack_id).mkdir(parents=True, exist_ok=True)
     return root

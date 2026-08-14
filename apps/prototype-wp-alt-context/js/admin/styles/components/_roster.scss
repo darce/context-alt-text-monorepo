@@ -241,6 +241,16 @@
 
 /* Cluster drawer — always-visible keyboard member-fix affordances (E21-9 Slice 3). */
 .acx-cluster-drawer {
+  &__state {
+    margin: 0 0 var(--acx-space-12);
+    padding: var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background: var(--acx-color-surface-alt);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+  }
+
   &__faces {
     display: flex;
     flex-wrap: wrap;

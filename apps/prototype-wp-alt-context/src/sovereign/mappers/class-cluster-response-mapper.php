@@ -149,6 +149,8 @@ class ClusterResponseMapper {
 			$sample_identities[] = $this->map_cluster_identity( $member_row );
 		}
 
+		$person_uuid = trim( (string) ( $cluster_row['person_uuid'] ?? '' ) );
+
 		return array(
 			'id' => $cluster_id,
 			'label' => $label_state['label'],
@@ -157,6 +159,7 @@ class ClusterResponseMapper {
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
+			'person_uuid' => '' !== $person_uuid ? $person_uuid : null,
 		);
 	}
 

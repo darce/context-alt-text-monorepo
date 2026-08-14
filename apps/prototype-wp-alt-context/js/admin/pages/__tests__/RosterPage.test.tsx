@@ -291,12 +291,12 @@ describe('ClusterDrawerPanel', () => {
     expect(closeButton).toHaveFocus();
   });
 
-  it('opens the selected person workspace when the roster entry has a person_uuid', async () => {
+  it('opens person review from the cluster person_uuid without inventing a picker link', async () => {
     const onOpenPersonWorkspace = vi.fn();
 
     render(
       <ClusterDrawerPanel
-        cluster={makeCluster()}
+        cluster={makeCluster({ person_uuid: 'person-uuid-alex' })}
         identities={[]}
         mediaMap={{}}
         onClose={vi.fn()}
@@ -305,21 +305,7 @@ describe('ClusterDrawerPanel', () => {
         onCommitCluster={vi.fn()}
         onOpenPersonWorkspace={onOpenPersonWorkspace}
         isCommitting={false}
-        rosterEntries={[
-          {
-            id: 42,
-            person_uuid: 'person-uuid-alex',
-            name: 'Alex Carter',
-            tags: ['event'],
-            cluster_count: 3,
-            updated_at: '2026-01-01T00:00:00Z',
-            source_version: 1,
-            projection_status: 'current',
-            projection_refreshed_at: '2026-01-01T00:00:00Z',
-            queue_memberships: [],
-            clusters: [],
-          },
-        ]}
+        rosterEntries={[]}
         isDetailLoading={false}
         onFaceDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
@@ -330,12 +316,8 @@ describe('ClusterDrawerPanel', () => {
       />,
     );
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
-    const openWorkspaceButton = screen.getByRole('button', { name: /Open person workspace/i });
-
-    expect(openWorkspaceButton).toBeEnabled();
-
-    await userEvent.click(openWorkspaceButton);
+    const reviewLink = screen.getByRole('link', { name: /Open person review/i });
+    await userEvent.click(reviewLink);
 
     expect(onOpenPersonWorkspace).toHaveBeenCalledWith('person-uuid-alex');
   });

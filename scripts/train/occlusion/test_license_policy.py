@@ -12262,6 +12262,85 @@ class TestF15CompactRemCoverage:
         assert policy._package_denylist_hit("yolodummy") is None
 
 
+class TestF15RegistrySingleNumberTag:
+    """F15-3 / R17-G1-3: single-number registry tags must not strip.
+
+    ``:(v?N)$`` laundered ``yolox:v8`` / ``yolox:8`` to the bare family
+    while ``yoloxv8`` fail-closes. Strip only ``latest`` and ≥ 2 numeric
+    groups. ``yolox:v2`` is the documented single-group-with-v case and
+    also fail-closes.
+    """
+
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox:v8", "yolox_unknown_residual"),
+        ("yolox:v5", "yolox_unknown_residual"),
+        ("yolox:8", "yolox_unknown_residual"),
+        ("ppyolo:v8", "ppyolo_unknown_residual"),
+        ("yolox:v2", "yolox_unknown_residual"),
+    )
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox:latest",
+        "megvii/yolox:v0.3.0",
+        "paddledetection/ppyoloe:latest",
+        "yolox:v2.1",
+    )
+    STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolo:latest", "yolo"),
+        ("yolov8:v8", "yolov8"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_single_number_tag_fail_closes(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F15-3 single-number tag not stripped)"
+        )
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_latest_and_dotted_versions_still_admit(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (latest / ≥2 numeric groups)"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token,expected_pkg", STILL_DENY)
+    def test_deny_seed_plus_registry_tag_still_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    def test_red_proof_single_number_strip_restored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore ``{0,3}`` so ``yolox:v8`` strips and admits.
+
+        Neuter: ``_REGISTRY_TRAILING_TAG_RE`` → the F14-2 regex that
+        accepted a single numeric group.
+        """
+        import re
+
+        token = "yolox:v8"
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy,
+            "_REGISTRY_TRAILING_TAG_RE",
+            re.compile(r":(latest|v?[0-9]+(?:[._-][0-9]+){0,3})$"),
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: with single-group strip restored, yolox:v8 must ADMIT"
+        )
+        assert policy._package_denylist_hit("yolox:latest") is None
+        assert policy._package_denylist_hit("yolo:latest") is not None
+
+
 class TestF13StealRankingAndMultiStack:
     """F13-6 / R15-G1-4 / R15-G1-5: honest rem ranking + multi-stack steal.
 

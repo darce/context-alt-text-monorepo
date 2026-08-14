@@ -321,6 +321,7 @@ describe('matrix fixture outcomes', () => {
     const identityProjected = projectIdentityWindow(caseData.identityId, caseData.matches);
     expect(identityProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedIdentitySuggestionIds);
 
+    // BR-23: projectReviewQueue is the live assignment queryFn adapter.
     const reviewProjected = projectReviewQueue(caseData.pendingRows);
     expect(reviewProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
   });
@@ -330,10 +331,44 @@ describe('matrix fixture outcomes', () => {
     const identityProjected = projectIdentityLegFromPending(caseData.pendingRows);
     expect(identityProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedIdentitySuggestionIds);
 
+    // BR-23: live path (useSuggestionReviewQueries) calls projectReviewQueue in queryFn.
     const reviewProjected = projectReviewQueue(caseData.pendingRows);
     expect(reviewProjected.map((p) => p.suggestionId)).toEqual(caseData.expectedReviewSuggestionIds);
     const staleRow = reviewProjected.find((p) => p.suggestionId === 'sug-stale-accepted');
     expect(staleRow?.resolution).toBe(SUGGESTION_RESOLUTION.ACCEPTED);
+  });
+});
+
+describe('projectReviewQueue is the live review-page adapter (BR-23)', () => {
+  it('adapt + human-label filter + sort matches the assignment queryFn contract', () => {
+    const rows = [
+      buildPendingRow({
+        id: 'low',
+        identity_id: 'i1',
+        suggested_cluster_id: 'c-low',
+        cluster_label: 'Low',
+        representative_similarity: 0.4,
+        created_at: '2026-06-01T00:00:00.000Z',
+      }),
+      buildPendingRow({
+        id: 'auto',
+        identity_id: 'i2',
+        suggested_cluster_id: 'c-auto',
+        cluster_label: 'cluster-abcdef12',
+        representative_similarity: 0.99,
+      }),
+      buildPendingRow({
+        id: 'high',
+        identity_id: 'i3',
+        suggested_cluster_id: 'c-high',
+        cluster_label: 'High',
+        representative_similarity: 0.9,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }),
+    ];
+    const projected = projectReviewQueue(rows);
+    expect(projected.map((p) => p.suggestionId)).toEqual(['high', 'low']);
+    expect(projected.every((p) => isHumanLabeledTarget(p.label))).toBe(true);
   });
 });
 

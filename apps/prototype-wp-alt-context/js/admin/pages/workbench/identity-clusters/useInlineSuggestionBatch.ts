@@ -8,14 +8,16 @@
  */
 
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import { fetchIdentitiesSuggestions, type IdentityBatchSuggestionsResponse } from '../../../api/recognition';
 import {
+  IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
   identityBatchIdsKey,
   projectIdentityWindow,
+  seedIdentityBatchSingles,
   type ProjectedSuggestion,
 } from './suggestionProjection';
 
@@ -30,15 +32,23 @@ export interface InlineSuggestionBatchResult {
  * `top_k=PROJECTION_TOP_K` for the supplied identity ids and indexes the
  * keyed-by-id envelope under the shared projection cache key.
  *
+ * Also seeds per-identity cache entries (BR-10) so the single-id dropdown loader
+ * reuses this response instead of opening a divergent cache entry.
+ *
  * The caller derives `identityIds` with the same predicate as the render gate,
  * so an empty set (e.g. label-only mode, no unlabeled cards) fetches nothing.
  */
 export const useInlineSuggestionBatch = (identityIds: string[]): InlineSuggestionBatchResult => {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery<IdentityBatchSuggestionsResponse>({
     queryKey: queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(identityIds)),
-    queryFn: () => fetchIdentitiesSuggestions(identityIds, PROJECTION_TOP_K),
+    queryFn: async () => {
+      const response = await fetchIdentitiesSuggestions(identityIds, PROJECTION_TOP_K);
+      seedIdentityBatchSingles(queryClient, response, identityIds);
+      return response;
+    },
     enabled: identityIds.length > 0,
-    staleTime: 60000,
+    staleTime: IDENTITY_BATCH_STALE_MS,
   });
 
   const getMatch = React.useCallback(

@@ -1,10 +1,20 @@
 import type { QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
-import type { ClusterSuggestion, PendingSuggestion } from '../../../api/recognition';
+import type {
+  ClusterSuggestion,
+  IdentityBatchSuggestionsResponse,
+  PendingSuggestion,
+} from '../../../api/recognition';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
 export const PROJECTION_TOP_K = 5;
+
+/**
+ * Shared staleTime for every identityBatch query (inline multi-id + single-id loader).
+ * BR-10: divergent TTLs let two cache entries for the same identity disagree mid-window.
+ */
+export const IDENTITY_BATCH_STALE_MS = 60_000;
 
 /** Canonical auto-label prefix; human-format labels must not start with this. */
 export const AUTO_LABEL_PREFIX = 'cluster-' as const;
@@ -233,6 +243,76 @@ export const projectReviewQueue = (rows: readonly PendingSuggestion[]): Projecte
  */
 export const identityBatchIdsKey = (identityIds: readonly string[]): string =>
   [...new Set(identityIds)].sort().join(',');
+
+/**
+ * Seed per-identity projection entries from a multi-id batch response (BR-10).
+ * Single-id loaders (`useClusterSuggestionsLoader`) read these keys so one
+ * invalidation/stale window covers inline batch + dropdown without dual fetches.
+ */
+export const seedIdentityBatchSingles = (
+  queryClient: QueryClient,
+  response: IdentityBatchSuggestionsResponse,
+  identityIds: readonly string[],
+): void => {
+  for (const id of identityIds) {
+    const singleResponse: IdentityBatchSuggestionsResponse = {
+      matches: { [id]: response.matches[id] ?? [] },
+    };
+    queryClient.setQueryData(
+      queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([id])),
+      singleResponse,
+    );
+  }
+};
+
+/**
+ * Read a single identity's matches from any cached identityBatch entry (BR-10).
+ * Prefers the canonical single-id key, then any multi-id batch that includes the id.
+ */
+export const readIdentityFromBatchCache = (
+  queryClient: QueryClient,
+  identityId: string,
+): IdentityBatchSuggestionsResponse | undefined => {
+  const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([identityId]));
+  const single = queryClient.getQueryData<IdentityBatchSuggestionsResponse>(singleKey);
+  if (single?.matches && Object.prototype.hasOwnProperty.call(single.matches, identityId)) {
+    return { matches: { [identityId]: single.matches[identityId] ?? [] } };
+  }
+
+  const batches = queryClient.getQueriesData<IdentityBatchSuggestionsResponse>({
+    queryKey: [...queryKeys.suggestions.projection.all, 'identity-batch'],
+  });
+  for (const [, data] of batches) {
+    if (!data?.matches || !Object.prototype.hasOwnProperty.call(data.matches, identityId)) {
+      continue;
+    }
+    return { matches: { [identityId]: data.matches[identityId] ?? [] } };
+  }
+  return undefined;
+};
+
+export const readIdentityBatchUpdatedAt = (queryClient: QueryClient, identityId: string): number | undefined => {
+  const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([identityId]));
+  const singleState = queryClient.getQueryState(singleKey);
+  if (singleState?.dataUpdatedAt) {
+    return singleState.dataUpdatedAt;
+  }
+
+  const batches = queryClient.getQueriesData<IdentityBatchSuggestionsResponse>({
+    queryKey: [...queryKeys.suggestions.projection.all, 'identity-batch'],
+  });
+  let latest: number | undefined;
+  for (const [key, data] of batches) {
+    if (!data?.matches || !Object.prototype.hasOwnProperty.call(data.matches, identityId)) {
+      continue;
+    }
+    const updatedAt = queryClient.getQueryState(key)?.dataUpdatedAt;
+    if (updatedAt !== undefined && (latest === undefined || updatedAt > latest)) {
+      latest = updatedAt;
+    }
+  }
+  return latest;
+};
 
 export const invalidateSuggestionProjection = (queryClient: QueryClient): Promise<void> =>
   queryClient.invalidateQueries({

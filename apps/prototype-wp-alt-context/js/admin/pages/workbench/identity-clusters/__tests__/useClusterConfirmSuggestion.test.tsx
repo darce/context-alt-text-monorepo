@@ -107,15 +107,42 @@ describe('useClusterConfirmSuggestion casing grid (B6)', () => {
     expect(queueSaveStatus).toHaveBeenCalled();
   });
 
-  it('exact same confirm Bob→Bob still no-ops without merge', async () => {
-    // Predicted first failure: none if exact compare lands; stays green as no-op
-    const { result, mutations, cancelEditing } = renderConfirm({
+  it('same-label different-target-id must NOT no-op (BR-42)', async () => {
+    // BR-42: bail is cluster-id equality, not label. Bob→other-bob must merge.
+    // Predicted first failure (pre-fix label bail): cancelEditing; merge not called
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderConfirm({
       clusterLabel: 'Bob',
+      editableClusterId: 'editable',
       members: [member({ cluster_label: 'Bob' })],
+      options: [
+        {
+          value: 'cluster:other-bob',
+          label: 'Bob',
+          source: 'cluster',
+          group: 'Suggested',
+          identityCount: 2,
+        },
+      ],
     });
 
     await act(async () => {
       await result.current.handleConfirmSuggestion('other-bob', 'Bob');
+    });
+
+    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('confirm of already-editable cluster id still no-ops (BR-42)', async () => {
+    const { result, mutations, cancelEditing } = renderConfirm({
+      clusterLabel: 'Bob',
+      editableClusterId: 'editable',
+      members: [member({ cluster_label: 'Bob' })],
+    });
+
+    await act(async () => {
+      await result.current.handleConfirmSuggestion('editable', 'Bob');
     });
 
     expect(cancelEditing).toHaveBeenCalled();

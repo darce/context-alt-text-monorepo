@@ -174,10 +174,12 @@ def test_completed_with_errors_is_not_ok(tmp_path: Path) -> None:
     assert analyze[-1]["outcome"] == "failed"
     assert analyze[-1]["error_code"] == "analyze_completed_with_errors"
     assert analyze[-1]["terminal_ingest_outcome"] == "success"
-    assert analyze[-1].get("stack_media_id") is None
+    assert "stack_media_id" in analyze[-1]
+    assert analyze[-1]["stack_media_id"] is None
     ingest = [r for r in store.read_all() if r.get("phase") == "ingest"]
     assert ingest
-    assert ingest[-1].get("stack_media_id") is None
+    assert "stack_media_id" in ingest[-1]
+    assert ingest[-1]["stack_media_id"] is None
 
 
 def test_non_analyze_ok_rows_stamp_null_stack_media_id(tmp_path: Path) -> None:
@@ -201,6 +203,55 @@ def test_non_analyze_ok_rows_stamp_null_stack_media_id(tmp_path: Path) -> None:
             continue
         assert "stack_media_id" in rec
         assert rec["stack_media_id"] is None
+
+
+def test_bencherror_append_stamps_null_stack_media_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-be", pair, manifest)
+
+    def boom(*_a, **_k):
+        raise BenchError("media_unresolvable", "test seam")
+
+    monkeypatch.setattr("scripts.bench.driver.resolve_media_bytes", boom)
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=FakeClient(),
+    )
+    store = ItemOutcomeStore(out / "legs" / "acx-dev-insightface" / "items.jsonl")
+    failed = [r for r in store.read_all() if r.get("outcome") == "failed"]
+    assert failed
+    assert failed[-1]["error_code"] == "media_unresolvable"
+    assert "stack_media_id" in failed[-1]
+    assert failed[-1]["stack_media_id"] is None
+
+
+def test_generic_exception_append_stamps_null_stack_media_id(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-ex", pair, manifest)
+    run_leg(
+        pair.endpoint("acx-dev-insightface"),
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        run_dir=out,
+        client=FakeClient(analyze_ok=False),
+    )
+    store = ItemOutcomeStore(out / "legs" / "acx-dev-insightface" / "items.jsonl")
+    analyze = [r for r in store.read_all() if r.get("phase") == "analyze"]
+    assert analyze
+    assert analyze[-1]["error_code"] == "analyze_failed"
+    assert "stack_media_id" in analyze[-1]
+    assert analyze[-1]["stack_media_id"] is None
 
 
 def test_failed_item_is_reattempted(tmp_path: Path) -> None:

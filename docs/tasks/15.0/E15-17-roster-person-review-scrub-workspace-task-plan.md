@@ -213,10 +213,10 @@ Proof:
 
 ### Checklist for Slice 3: Face Scrubber and Selection Controls
 
-- [ ] Scrubber supports pointer and keyboard navigation.
-- [ ] Face crop dimensions are stable and aspect-correct.
-- [ ] Selection actions map only to real API actions and are tested.
-- [ ] Metadata panel follows RSU-006 conservative labels until RCL-009 fields land and does not overclaim similarity semantics.
+- [x] Scrubber supports pointer and keyboard navigation. _Rail-scoped activedescendant listbox in `PersonFaceFilmstrip.tsx` (Arrow/Home/End, single tab stop) plus pointer selection; covered by `__tests__/PersonWorkspacePanel.scrubber.test.tsx` and `hooks/__tests__/useRosterFaceCursor.test.tsx`._
+- [x] Face crop dimensions are stable and aspect-correct. _`FaceThumbnail` reserves explicit 64px box across loading/loaded/error states; layout-shift assertions hardened per review Slice 3 findings._
+- [x] Selection actions map only to real API actions and are tested. _Representative pin maps to the existing pin API via `hooks/usePinRepresentative.ts` (pending guard, cache invalidation, error surface); no fabricated accept/reject/split controls shipped — those stay documented E15-13 dependencies._
+- [x] Metadata panel follows RSU-006 conservative labels until RCL-009 fields land and does not overclaim similarity semantics. _`similarityCopy.ts` renders banded labels ("strong/likely/possible/weak match") with current-cluster framing and no bare percentages; consumed by `PersonFaceMetadataPanel.tsx`._
 
 ### Checklist for Slice 4: Cluster Evidence Migration
 

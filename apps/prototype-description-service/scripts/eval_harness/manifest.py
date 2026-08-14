@@ -595,7 +595,6 @@ class GoldenManifest(BaseModel):
         derived from ``len(face_boxes)``. Equality under ``exhaustive`` proves
         internal consistency only — not exhaustiveness in the world.
         """
-        return
         for index, entry in enumerate(self.entries):
             n_boxes = len(entry.face_boxes)
             if self.annotation_mode is AnnotationMode.EXHAUSTIVE:

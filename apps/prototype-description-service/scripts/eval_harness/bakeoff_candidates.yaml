@@ -1,6 +1,9 @@
 # VLM-6 Slice 2 candidate registry.
 # 13 candidates + 2 incumbent anchors. Revision-pinned. Fail-fast validated.
 # qwen36-27b roster row swapped for Qwen3.8-27B GGUF UD-Q4_K_XL (17.9GB).
+# VLM6-S2A-01: kimi-vl-a3b repinned to a real Q4_K_M GGUF; deepseek-vl2-small
+# (unservable on A10 -- no quantized build exists, bf16 > 24GB) replaced by
+# gemma-4-12b. Sealed count unchanged at 13.
 schema: acx-bakeoff-candidates/v1
 task_ref: VLM-6
 hardware_target:
@@ -117,42 +120,46 @@ entries:
     role: candidate
     competing: true
     model_id: Kimi-VL-A3B-Instruct
-    repo: moonshotai/Kimi-VL-A3B-Instruct
-    revision: "398eede0903cd983a2bfa0cc634e9ac1d843f375"
-    quant: INT4
-    artifact: weights
-    artifact_gb: 10.0
+    repo: mradermacher/Kimi-VL-A3B-Instruct-GGUF
+    revision: "d645665be0a3028dca3ef3d08dddb51ab23ecf31"
+    quant: Q4_K_M
+    artifact: Kimi-VL-A3B-Instruct.Q4_K_M.gguf
+    artifact_gb: 11.5
     license: MIT
     prompt_template: v3
     tiers: [gpu_async]
     reasoning_tuned: true
-    notes: "INT4 required on A10; bf16 exceeds 24GB."
+    notes: "VLM6-S2A-01: was pinned INT4 against the bf16 base repo with no quantization method. Repinned to a real Q4_K_M GGUF (10.54GB) + mmproj-f16 (0.91GB); bf16 exceeds 24GB."
     recipe:
-      stack: vllm
+      stack: llama_cpp
       ctx_size: 8192
       image_max_tokens: 1536
       parallel: 1
       extra_flags: ["--no-think"]
+      gguf: Kimi-VL-A3B-Instruct.Q4_K_M.gguf
+      mmproj: Kimi-VL-A3B-Instruct.mmproj-f16.gguf
 
-  - id: deepseek-vl2-small
+  - id: gemma-4-12b
     role: candidate
     competing: true
-    model_id: DeepSeek-VL2-Small
-    repo: deepseek-ai/deepseek-vl2-small
-    revision: "6033e16432a1d771cf9fe4a6f894ff5e5e1459af"
-    quant: INT4
-    artifact: weights
-    artifact_gb: 10.0
-    license: check-at-download
+    model_id: gemma-4-12B-it
+    repo: google/gemma-4-12B-it-qat-q4_0-gguf
+    revision: "29d097773436b69ff9feafd636ab4cf873786537"
+    quant: q4_0-qat
+    artifact: gemma-4-12b-it-qat-q4_0.gguf
+    artifact_gb: 7.2
+    license: Apache-2.0
     prompt_template: v3
     tiers: [gpu_async]
     reasoning_tuned: false
-    notes: "Oldest candidate; likeliest serving-gate failure."
+    notes: "VLM6-S2A-01: replaces deepseek-vl2-small, which has no GGUF/AWQ/GPTQ anywhere and whose bf16 weights exceed 24GB, making it unservable on A10 at any quant. Gemma 4 12B is in the original bake-off matrix, is first-party QAT (6.98GB + 0.18GB mmproj), and is Apache-2.0."
     recipe:
-      stack: hf_transformers
+      stack: llama_cpp
       ctx_size: 8192
       image_max_tokens: 1536
       parallel: 1
+      gguf: gemma-4-12b-it-qat-q4_0.gguf
+      mmproj: mmproj-gemma-4-12b-it-qat-q4_0.gguf
 
   - id: glm-41v-9b
     role: candidate

@@ -12005,7 +12005,6 @@ class TestF15JunkMultiSegmentNcFloor:
         ("xyolo_nas_pose_l", "yolo_nas_pose_l"),
         ("aaantelope_v2", "antelope_v2"),
         ("xantelope_v2", "antelope_v2"),
-        ("yolobuffalo_l", "buffalo_l"),
     )
     BOTH_SIDES_FLOOR: ClassVar[tuple[tuple[str, str], ...]] = (
         ("aainsightfaceaa", "insightface"),
@@ -12097,7 +12096,6 @@ class TestF15JunkMultiSegmentNcFloor:
             "aabuffalo_trt",
             "aayolo_nas",
             "aaantelope_v2",
-            "yolobuffalo_l",
         )
         for token in compact_e_only:
             assert policy._package_denylist_hit(token) is not None, (
@@ -12130,6 +12128,138 @@ class TestF15JunkMultiSegmentNcFloor:
             )
         assert policy._package_denylist_hit("aabuffalo_l") is not None
         assert policy._package_denylist_hit("myarcface") is not None
+
+
+class TestF15CompactRemCoverage:
+    """F15-2 / R17-G1-2 / R17-CDX-2: 4-char head rem + deny-head long rem.
+
+    (a) The 4-char ``yolo`` head only accepted exact exception rem, so
+    ``yoloyoloxextra`` / ``yoloyolo`` admitted. Route unknown rem
+    through suffix-tolerant classification. ``yolodummy`` stays admit.
+
+    (b) Compact (c) is 1–3 rem, so ``yolov4tiny`` admitted while
+    ``yolov4_tiny`` denied. Deny-head (len ≥ 5) + a known variant rem
+    (``tiny``) fail-closes as the catalog seed. Generic leftover is
+    not this path (``buffalo_lakes`` stays admitted).
+    """
+
+    FOUR_CHAR_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloyoloxextra", "yolo"),
+        ("yoloyoloxv8", "yolo"),
+        ("yoloyoloxcoco", "yolo"),
+        ("yoloyoloxtiny", "yolo"),
+        ("yoloyoloxpt", "yolo"),
+        ("yoloyolosextra", "yolo"),
+        ("yoloyolo", "yolo"),
+    )
+    FOUR_CHAR_ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolodummy",
+        "myyolo",
+    )
+    LONG_REM_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolov4tiny", "yolov4"),
+        ("yolov4tiny.pt", "yolov4"),
+        ("vendor/yolov4tiny", "yolov4"),
+        ("yolov7tiny", "yolov7"),
+        ("yolov3tiny", "yolov3"),
+    )
+    ALREADY_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolov4_tiny", "yolov4"),
+        ("yolov8seg", "yolov8"),
+        ("yoloyolox", "yolo"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", FOUR_CHAR_DENY)
+    def test_four_char_head_suffix_tolerant_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F15-2 4-char suffix-tolerant rem)"
+        )
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", FOUR_CHAR_ADMIT)
+    def test_four_char_unknown_rem_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token,expected_pkg", LONG_REM_DENY)
+    def test_deny_head_long_rem_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F15-2 deny-head + long rem)"
+        )
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token,expected_pkg", ALREADY_DENY)
+    def test_existing_compact_and_separator_denies_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    def test_yolobuffalo_l_is_yolo_head_plus_known_rem(self) -> None:
+        """F15-2a structural reading: deny-head yolo + compact NC rem."""
+        token = "yolobuffalo_l"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == "yolo"
+        assert policy.audit_derived_from_model(token).ok is False
+
+    def test_red_proof_four_char_suffix_tolerant_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore min-len-5 so 4-char suffix-tolerant rem dies.
+
+        Neuter: ``_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN`` → ``5``.
+        ``yoloyoloxextra`` / ``yoloyolo`` admit; ``yolov4tiny`` and
+        ``yoloyolox`` (exact exception rem is also F14-5, but min-len-5
+        kills the 4-char path entirely) stay as documented.
+        """
+        for token, _pkg in self.FOUR_CHAR_DENY:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN", 5)
+        for token, _pkg in self.FOUR_CHAR_DENY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with min-len-5, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("yolov4tiny") is not None
+        assert policy._package_denylist_hit("yolodummy") is None
+
+    def test_red_proof_long_rem_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_DENY_HEAD_LONG_REM_ENABLED``.
+
+        ``yolov4tiny`` admits again; separator twin and 4-char
+        suffix-tolerant pins stay denied.
+        """
+        for token, _pkg in self.LONG_REM_DENY:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_DENY_HEAD_LONG_REM_ENABLED", False)
+        for token, _pkg in self.LONG_REM_DENY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without long-rem, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("yolov4_tiny") is not None
+        assert policy._package_denylist_hit("yoloyoloxextra") is not None
+        assert policy._package_denylist_hit("yolodummy") is None
 
 
 class TestF13StealRankingAndMultiStack:

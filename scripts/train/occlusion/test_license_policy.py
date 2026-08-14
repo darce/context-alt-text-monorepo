@@ -11993,23 +11993,28 @@ class TestF15JunkMultiSegmentNcFloor:
     follows existing exception-promotion rules.
     """
 
+    # R18-07: parametrize distinct compact-joined (e) behaviours only.
+    # Prefix-twin / rem-padding names stay in MUST_LIST_SAME_PATH (one
+    # nodeid) so the floor is not inflated by the same path.
     MULTI_SEG_FLOOR: ClassVar[tuple[tuple[str, str], ...]] = (
         ("aabuffalo_l", "buffalo_l"),
+        ("aabuffalo_trt", "buffalo_trt"),
+        ("aayolo_nas", "yolo_nas"),
+        ("aayolo_nas_l", "yolo_nas_l"),
+        ("xyolo_nas_pose_l", "yolo_nas_pose_l"),
+        ("aaantelope_v2", "antelope_v2"),
+    )
+    MUST_LIST_SAME_PATH: ClassVar[tuple[tuple[str, str], ...]] = (
         ("mybuffalo_l", "buffalo_l"),
         ("xbuffalo_l", "buffalo_l"),
         ("aabuffalo_s", "buffalo_s"),
         ("aabuffalo_sc", "buffalo_sc"),
         ("aabuffalo_l2", "buffalo_l2"),
-        ("aabuffalo_trt", "buffalo_trt"),
         ("aabuffalo_onnx", "buffalo_onnx"),
         ("aabuffalo_fp16", "buffalo_fp16"),
         ("aabuffalo_int8", "buffalo_int8"),
         ("aabuffalo_pt", "buffalo_pt"),
-        ("aayolo_nas", "yolo_nas"),
         ("aayolo_nas_s", "yolo_nas_s"),
-        ("aayolo_nas_l", "yolo_nas_l"),
-        ("xyolo_nas_pose_l", "yolo_nas_pose_l"),
-        ("aaantelope_v2", "antelope_v2"),
         ("xantelope_v2", "antelope_v2"),
     )
     BOTH_SIDES_FLOOR: ClassVar[tuple[tuple[str, str], ...]] = (
@@ -12044,6 +12049,18 @@ class TestF15JunkMultiSegmentNcFloor:
         assert hit.package_id == expected_pkg, (
             f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
         )
+
+    def test_f15_1_must_list_same_path_still_floor_denies(self) -> None:
+        """F15-1 must-list names that share compact-joined (e) (R18-07)."""
+        for token, expected_pkg in self.MUST_LIST_SAME_PATH:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, (
+                f"{token!r} must floor-deny (F15-1 must-list)"
+            )
+            assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            assert hit.package_id == expected_pkg, (
+                f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+            )
 
     @pytest.mark.parametrize("token,expected_pkg", BOTH_SIDES_FLOOR)
     def test_both_sides_junk_nc_floor_denies(
@@ -12220,12 +12237,24 @@ class TestF15CompactRemCoverage:
         assert hit.package_id == expected_pkg
 
     def test_yolobuffalo_l_is_yolo_head_plus_known_rem(self) -> None:
-        """F15-2a structural reading: deny-head yolo + compact NC rem."""
+        """F15-2a / R18-13: 4-char yolo head outranks compact NC rem.
+
+        F15-1 listed ``yolobuffalo_l`` as an NC floor candidate
+        (``buffalo_l``). Ranking prefers the deny-head ``yolo`` + exact
+        known rem; this pin documents that ranking rather than silently
+        retargeting the expected package. Door still denies (AGPL).
+        """
         token = "yolobuffalo_l"
         hit = policy._package_denylist_hit(token)
         assert hit is not None
-        assert hit.package_id == "yolo"
-        assert policy.audit_derived_from_model(token).ok is False
+        assert hit.package_id == "yolo", (
+            f"{token!r}: ranked landing is yolo (AGPL over NC rem); "
+            f"got {hit.package_id!r}"
+        )
+        assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
     def test_red_proof_four_char_suffix_tolerant_neuter(
         self, monkeypatch: pytest.MonkeyPatch
@@ -12446,6 +12475,7 @@ class TestF15EmptyCanonicalIdentity:
         "/",
         "///",
         "/:latest",
+        ":latest:latest",  # R18-12 stacked tags
     )
 
     @pytest.mark.parametrize("token", EMPTY_IDENTITY)
@@ -12567,6 +12597,20 @@ class TestF15PaddleModelFileExtensions:
         )
         assert policy.audit_derived_from_model(token).ok is True
 
+    @pytest.mark.parametrize(
+        "token",
+        ("yolov8.pdmodel", "yolov8.pdparams", "fastsam.pdparams"),
+    )
+    def test_deny_seed_plus_pd_extension_still_denies(self, token: str) -> None:
+        """R18-09: strip never launders a deny seed (F15-7 deny-side)."""
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (deny seed + Paddle extension)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
     def test_compact_glue_controls_stay_deny(self) -> None:
         for token in ("ppyoloes", "ppyoloer"):
             hit = policy._package_denylist_hit(token)
@@ -12590,6 +12634,11 @@ class TestF15PaddleModelFileExtensions:
         assert policy._package_denylist_hit(token) is not None, (
             "red-proof: without .pdparams strip, token must DENY"
         )
+        # R18-08: surviving siblings under the same neuter.
+        assert policy._package_denylist_hit("yolov8") is not None
+        assert policy._package_denylist_hit("yolov8.pdparams") is not None
+        assert policy._package_denylist_hit("ppyoloes") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
 
 
 class TestF15PpYoloeRRotateFamily:
@@ -12725,6 +12774,16 @@ class TestF15DenyReasonHonesty:
         )
         assert policy.audit_derived_from_model(token).ok is True
 
+    def test_yoloppyoloeplus_is_yolo_plus_exception_spelling(self) -> None:
+        """R18-06: official PP-YOLOE+ compact is yolo + ppyoloeplus."""
+        token = "yoloppyoloeplus"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == "yolo", (
+            f"{token!r}: expected structural yolo+ppyoloeplus, "
+            f"got {hit.package_id!r}"
+        )
+
     def test_pp_yolo_and_pp_yolov8_unchanged(self) -> None:
         assert policy._package_denylist_hit("pp_yolo") is None
         hit = policy._package_denylist_hit("pp_yolov8")
@@ -12750,6 +12809,13 @@ class TestF15DenyReasonHonesty:
             f"red-proof: without spelling-glue, {token!r} must land "
             f"yolop residual; got {hit2.package_id!r}"
         )
+        # R18-08: surviving siblings under the same neuter.
+        nas = policy._package_denylist_hit("pp_yolo_nas")
+        assert nas is not None
+        assert nas.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert policy._package_denylist_hit("paddlepaddle_pp_yoloe") is None
+        assert policy._package_denylist_hit("yolov8") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
 
     def test_red_proof_ppyolo_nas_residual_neuter(
         self, monkeypatch: pytest.MonkeyPatch
@@ -12769,3 +12835,303 @@ class TestF15DenyReasonHonesty:
             f"red-proof: without nas-residual NC, {token!r} must land "
             f"ppyolo residual; got {hit2.package_id!r}"
         )
+        # R18-08: surviving siblings under the same neuter.
+        yolo_glue = policy._package_denylist_hit("yoloppyoloe")
+        assert yolo_glue is not None and yolo_glue.package_id == "yolo"
+        assert policy._package_denylist_hit("yolov8") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
+        assert policy._package_denylist_hit("paddlepaddle_pp_yoloe") is None
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F16 — R18 findings
+# ---------------------------------------------------------------------------
+
+
+class TestF16PrefixDenyLaundering:
+    """R18-01: deny/NC stems must not launder through mid-token exception glue.
+
+    ``fastsamx`` denies, but ``fastsamxyolox`` / ``fastsamxyoloxextra``
+    admitted: ``prefix_is_deny`` treated a deny-(c) prefix as ownership
+    of the full token and skipped F15-5. The skip is now exact-identity
+    only; deny-(c) debris prefixes own the token via the stem.
+    """
+
+    AGPL_GADGETS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("fastsamxyolox", "fastsam"),
+        ("fastsamxyoloxs", "fastsam"),
+        ("fastsamxyoloxextra", "fastsam"),
+        ("yolov5zyoloxsfoo", "yolov5"),
+        ("yolorxyoloxextra", "yolor"),
+        ("yolo11xyoloxextra", "yolo11"),
+        ("yoloworldxyoloxextra", "yolo_world"),
+        ("fastsamxppyoloeextra", "fastsam"),
+    )
+    NC_GADGETS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("scrfdxyoloxextra", "scrfd"),
+        ("arcfacexyoloxextra", "arcface"),
+        ("yolonasxyoloxextra", "yolo_nas"),
+        ("retinafacexyoloxextra", "retinaface"),
+        ("vec2facexyoloxextra", "vec2face"),
+    )
+    STILL_ADMIT: ClassVar[tuple[str, ...]] = (
+        "ayoloxs",
+        "xyoloxs",
+    )
+    NO_JUNK_STILL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("fastsamx", "fastsam"),
+        ("arcfaceyoloxextra", "arcface"),
+        ("xyoloxsextra", "yolox_unknown_residual"),
+        ("yoloyoloxextra", "yolo"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_GADGETS)
+    def test_agpl_stem_junk_infix_exception_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (R18-01 deny-stem + exception glue)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected stem {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token,expected_pkg", NC_GADGETS)
+    def test_nc_stem_junk_infix_exception_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (R18-01 NC-stem + exception glue)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected stem {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", STILL_ADMIT)
+    def test_legit_f15_5_admits_hold(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token,expected_pkg", NO_JUNK_STILL_DENY)
+    def test_no_junk_and_unknown_rem_controls_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+
+    def test_red_proof_mid_exception_unknown_rem_neuter_gadgets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED``.
+
+        R18-01 gadgets admit; no-junk ``arcfaceyoloxextra`` / ``fastsamx``
+        and offset-0 ``yoloxsextra`` stay denied; ``ayoloxs`` stays admit.
+        """
+        gadgets = [t for t, _ in self.AGPL_GADGETS + self.NC_GADGETS]
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_MID_EXCEPTION_UNKNOWN_REM_ENABLED", False)
+        for token in gadgets:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without mid unknown-rem, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("arcfaceyoloxextra") is not None
+        assert policy._package_denylist_hit("fastsamx") is not None
+        assert policy._package_denylist_hit("yoloxsextra") is not None
+        assert policy._package_denylist_hit("ayoloxs") is None
+        assert policy._package_denylist_hit("yoloyoloxextra") is not None
+
+
+class TestF16NasResidualAttribution:
+    """R18-04: ppyolo + nas residual is exact/known-variant Deci only."""
+
+    DECI: ClassVar[tuple[str, ...]] = (
+        "pp_yolo_nas",
+        "pp_yolo_nas_l",
+        "ppyoloenas",
+    )
+    NOT_DECI: ClassVar[tuple[str, ...]] = (
+        "pp_yolo_naso",
+        "pp_yolo_nashville",
+        "pp_yolo_nasal",
+    )
+
+    @pytest.mark.parametrize("token", DECI)
+    def test_known_nas_residual_is_deci_nc(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert "nas" in hit.package_id
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert "deci" in result.detail.casefold() or "yolo_nas" in result.detail
+
+    @pytest.mark.parametrize("token", NOT_DECI)
+    def test_english_nas_prefix_is_not_deci(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must stay fail-closed"
+        assert hit.package_id == "ppyolo_unknown_residual", (
+            f"{token!r}: must not attribute English nas* as Deci; "
+            f"got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert "deci" not in result.detail.casefold()
+
+
+class TestF16PaddleVendorMerge:
+    """R18-05 / R18-10: PaddleDetection shorthands merge; set is pinned."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "paddledet_pp_yoloe",
+        "ppdet_pp_yoloe",
+        "baidu_pp_yoloe",
+        "paddle_pp_yoloe",
+        "paddledetection_pp_yoloe",
+        "paddlepaddle_pp_yoloe",
+        "pp_yoloe",
+    )
+    STILL_DENY: ClassVar[tuple[str, ...]] = (
+        "weights_pp_yoloe",
+    )
+
+    def test_paddle_vendor_segment_set_is_pinned(self) -> None:
+        expected = frozenset(
+            {
+                "paddlepaddle",
+                "paddle",
+                "paddledetection",
+                "paddledet",
+                "ppdet",
+                "baidu",
+            }
+        )
+        assert policy._PADDLE_VENDOR_SEGMENTS == expected
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_vendor_pp_yoloe_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT after Paddle vendor pp merge"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token", STILL_DENY)
+    def test_non_vendor_pp_yoloe_still_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} is not a vendor shorthand"
+        assert policy.audit_derived_from_model(token).ok is False
+
+
+class TestF16EmptyIdentityHonestyAndStackedTags:
+    """R18-11 / R18-12: honest empty-identity wording; stacked tags."""
+
+    def test_ingest_tooling_floor_use_empty_identity_wording(self) -> None:
+        token = ":latest"
+        for fn, needle in (
+            (policy.audit_model_ingest, "model_id"),
+            (policy.audit_tooling_dependency, "package_name"),
+            (policy.audit_derived_from_model, "derived_from_model"),
+            (policy.audit_source, "source"),
+        ):
+            result = fn(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.INVALID_ROW
+            detail_cf = result.detail.casefold()
+            assert "canonicalises to an empty identity" in detail_cf, (
+                f"{fn.__name__}: expected empty-identity wording; "
+                f"got {result.detail!r}"
+            )
+            assert "format-only characters" not in detail_cf, (
+                f"{fn.__name__}: must not claim format-only Cf chars; "
+                f"got {result.detail!r}"
+            )
+            assert needle in result.detail
+
+    def test_stacked_latest_tags_are_empty_identity(self) -> None:
+        token = ":latest:latest"
+        assert policy._canonical_lacks_identity(policy.canonical(token))
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_yolox_stacked_latest_still_admits(self) -> None:
+        token = "yolox:latest:latest"
+        assert policy.canonical(token) == "yolox"
+        assert policy._package_denylist_hit(token) is None
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_red_proof_stacked_tag_single_strip(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore single-pass tag strip → leftover ``latest`` admits."""
+        token = ":latest:latest"
+        assert policy.audit_derived_from_model(token).ok is False
+        orig = policy._REGISTRY_TRAILING_TAG_RE
+
+        class _Once:
+            def __init__(self) -> None:
+                self.n = 0
+
+            def sub(self, repl: str, text: str, count: int = 0) -> str:
+                if self.n >= 1:
+                    return text
+                self.n += 1
+                return orig.sub(repl, text, count=count)
+
+        monkeypatch.setattr(policy, "_REGISTRY_TRAILING_TAG_RE", _Once())
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            "red-proof: single strip of :latest:latest must leave "
+            f"'latest' and admit; got {result.detail!r}"
+        )
+
+
+class TestF16StealHonestyPin:
+    """R18-02: steal-path pin that dies when M26 skips the steal return.
+
+    ``yoloxfastsamx`` is unbounded compact rem ``fastsamx`` (deny-(c)
+    debris). Steal names ``fastsam``. After M26 skips the steal return
+    the residual defers, (e) cannot see ``fastsam`` as a suffix
+    (token ends in ``x``), and the token admits — this assertion dies.
+    ``yoloxfastsam`` is *not* used: (e) still names ``fastsam``.
+    """
+
+    def test_steal_names_fastsam_residual_honest(self) -> None:
+        token = "yoloxfastsamx"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY via F12-1 steal"
+        assert hit.package_id == "fastsam", (
+            f"{token!r}: steal must name fastsam, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == "fastsam"
+
+    def test_red_proof_steal_flag_turns_fastsam_residual_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: skip steal → ``yoloxfastsamx`` admits (e cannot see it)."""
+        token = "yoloxfastsamx"
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_exception_illegitimate_deny_steal", lambda _t: None
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: without steal, yoloxfastsamx must admit"
+        )
+        assert policy._package_denylist_hit("fastsam") is not None
+        assert policy._package_denylist_hit("yoloxfastsam") is not None
+        assert policy._package_denylist_hit("yolox") is None

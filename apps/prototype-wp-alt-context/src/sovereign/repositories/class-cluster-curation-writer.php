@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
 use function is_int;
@@ -15,6 +18,7 @@ use function method_exists;
 use function trim;
 
 class ClusterCurationWriter {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 
 	private string $table_name;
@@ -29,6 +33,10 @@ class ClusterCurationWriter {
 		$normalized_cluster_uuid = trim( $cluster_uuid );
 		$normalized_label        = trim( $label );
 		if ( '' === $normalized_cluster_uuid || '' === $normalized_label ) {
+			return 0;
+		}
+
+		if ( $this->is_reserved_label_shape( $normalized_label ) ) {
 			return 0;
 		}
 

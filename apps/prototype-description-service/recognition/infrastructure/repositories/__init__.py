@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
+    from recognition.infrastructure.repositories.atlas_repository import AtlasRepository
     from recognition.infrastructure.repositories.audit_repository import AuditRepository
     from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
     from recognition.infrastructure.repositories.constraint_repository import SqlAlchemyConstraintRepository
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
 
 __all__ = [
+    "AtlasRepository",
     "SqlAlchemyClusterRepository",
     "SqlAlchemyConstraintRepository",
     "SqlAlchemyIdentityClusterBlockRepository",
@@ -37,6 +39,10 @@ __all__ = [
 ]
 
 _EXPORTS = {
+    "AtlasRepository": (
+        "recognition.infrastructure.repositories.atlas_repository",
+        "AtlasRepository",
+    ),
     "SqlAlchemyApiKeyRepository": (
         "recognition.infrastructure.repositories.api_key_repository",
         "SqlAlchemyApiKeyRepository",

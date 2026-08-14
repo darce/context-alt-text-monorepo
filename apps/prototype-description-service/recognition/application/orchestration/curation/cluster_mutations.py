@@ -19,7 +19,7 @@ from recognition.application.orchestration.curation.similarity import (
 )
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger, CurationEventType
@@ -65,6 +65,9 @@ async def update_cluster(
     clustering_logger: ClusteringLogger | None = None,
 ) -> IdentityCluster | None:
     """Update cluster label and confirmation state."""
+    if is_reserved_label_shape(label):
+        raise ReservedClusterLabelError(label)
+
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     cluster = await cluster_repo.get_by_id(cluster_id)
     if not cluster or cluster.tenant_id.lower() != tenant_id.lower():
@@ -198,6 +201,9 @@ async def create_cluster_for_identity(
     suggestion_service: SuggestionServiceProtocol | None = None,
 ) -> IdentityCluster:
     """Create a new user-labeled cluster containing a single identity."""
+    if is_reserved_label_shape(label):
+        raise ReservedClusterLabelError(label)
+
     if session is None:
         raise RuntimeError("Database session is required for create_cluster_for_identity")
 

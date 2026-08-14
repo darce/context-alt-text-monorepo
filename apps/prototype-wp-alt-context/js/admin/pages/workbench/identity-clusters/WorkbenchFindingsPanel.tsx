@@ -10,8 +10,16 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
-import { NEXT_ACTION_KIND, useWorkbenchFindings, type WorkbenchNextAction } from './useWorkbenchFindings';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
+import {
+  NEXT_ACTION_KIND,
+  useWorkbenchFindings,
+  type WorkbenchFindingPreview,
+  type WorkbenchNextAction,
+} from './useWorkbenchFindings';
 
 interface WorkbenchFindingsPanelProps {
   /** Opens the existing cluster labeling drawer. */
@@ -20,7 +28,13 @@ interface WorkbenchFindingsPanelProps {
   onTargetFindings?: () => void;
 }
 
-const PREVIEW_SIZE_PX = 40;
+/**
+ * Findings-panel face preview box size in px.
+ * WHY: 72px ≈ 17× the effective face pixels of the old 40px uncropped square —
+ * sole owner of the preview box (Avatar / FaceThumbnail inline width/height).
+ * TopClusterCard still uses its own 80px const + --acx-thumb-size-md (out of scope).
+ */
+export const FINDINGS_PREVIEW_SIZE_PX = 72;
 
 const nextActionHint = (action: WorkbenchNextAction): string | null => {
   switch (action.kind) {
@@ -39,11 +53,87 @@ const nextActionHint = (action: WorkbenchNextAction): string | null => {
   }
 };
 
+/**
+ * Alt for a preview chip. Confirmed labels may name a real crop; suggested /
+ * machine labels are hedged (A11Y-02 / HAI-01). Uncropped fallbacks never claim
+ * "Detected face".
+ */
+const previewAltText = (preview: WorkbenchFindingPreview, cropped: boolean): string => {
+  if (preview.label) {
+    if (preview.labelIsSuggested) {
+      return cropped
+        ? sprintf(__('Face image, possibly %s', 'alt-context'), preview.label)
+        : sprintf(__('Reference image, possibly %s', 'alt-context'), preview.label);
+    }
+    return preview.label;
+  }
+  return cropped ? __('Detected face', 'alt-context') : __('Reference image', 'alt-context');
+};
+
+/**
+ * Renderer order mirrors TopClusterCard (dedicated thumb → CSS face crop →
+ * uncropped fallback). Previews are non-interactive evidence chips (A11Y-14:
+ * target-size floor applies to interactive controls; these remain display-only).
+ */
+const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): React.JSX.Element => {
+  const useDedicatedThumb = isDedicatedFaceThumbUrl(preview.thumbUrl);
+  const canCrop =
+    typeof preview.mediaUrl === 'string' &&
+    preview.mediaUrl.trim() !== '' &&
+    isCroppableBbox(preview.bbox);
+
+  if (useDedicatedThumb && preview.thumbUrl) {
+    return (
+      <Avatar
+        src={preview.thumbUrl}
+        sizePx={FINDINGS_PREVIEW_SIZE_PX}
+        shape="square"
+        alt={previewAltText(preview, true)}
+        className="acx-findings-panel__preview"
+      />
+    );
+  }
+
+  if (canCrop && preview.mediaUrl && preview.bbox) {
+    return (
+      <FaceThumbnail
+        mediaUrl={preview.mediaUrl}
+        bbox={preview.bbox}
+        sizePx={FINDINGS_PREVIEW_SIZE_PX}
+        shape="square"
+        alt={previewAltText(preview, true)}
+        className="acx-findings-panel__preview"
+      />
+    );
+  }
+
+  const fallbackSrc = preview.thumbUrl ?? preview.mediaUrl ?? '';
+  return (
+    <Avatar
+      src={fallbackSrc}
+      sizePx={FINDINGS_PREVIEW_SIZE_PX}
+      shape="square"
+      alt={previewAltText(preview, false)}
+      className="acx-findings-panel__preview acx-findings-panel__preview--uncropped"
+    />
+  );
+};
+
 export const WorkbenchFindingsPanel = ({
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
-  const { counts, previews, hasFindings, isLoading, isError, isUnavailable, isReadOnly, nextAction } = findings;
+  const {
+    counts,
+    previews,
+    hasFindings,
+    isLoading,
+    isError,
+    isTopUnlabeledError,
+    isUnavailable,
+    isReadOnly,
+    nextAction,
+  } = findings;
 
   if (!hasFindings && isLoading) {
     return (
@@ -53,6 +143,10 @@ export const WorkbenchFindingsPanel = ({
     );
   }
 
+  // UI-03 / UI-04: top-unlabeled (or primary) failure is not an empty backlog.
+  // Gate the drained empty copy + its aria-live on a successful load only.
+  // buildWorkbenchFindings already folds a zero-total top-unlabeled outage into
+  // isError, so isError alone covers both failure modes here (UI-03 hook test).
   if (!hasFindings && isError) {
     return (
       <div className="acx-findings-panel acx-findings-panel--error" role="status" aria-live="polite">
@@ -113,10 +207,12 @@ export const WorkbenchFindingsPanel = ({
               {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
             </li>
             <li className="acx-findings-panel__count">
-              {sprintf(
-                _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
-                counts.unlabeledClusters,
-              )}
+              {isTopUnlabeledError
+                ? __('Unlabeled groups unavailable', 'alt-context')
+                : sprintf(
+                    _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
+                    counts.unlabeledClusters,
+                  )}
             </li>
           </ul>
         </div>
@@ -125,18 +221,13 @@ export const WorkbenchFindingsPanel = ({
       {previews.length > 0 && (
         <div className="acx-findings-panel__previews">
           {previews.map((preview) => (
-            <Avatar
-              key={preview.key}
-              src={preview.thumbUrl ?? preview.mediaUrl ?? ''}
-              sizePx={PREVIEW_SIZE_PX}
-              shape="square"
-              alt={preview.label ?? __('Detected face', 'alt-context')}
-              className="acx-findings-panel__preview"
-            />
+            <FindingsPreview key={preview.key} preview={preview} />
           ))}
         </div>
       )}
 
+      {/* UI-04: empty drain copy is only for a successful zero — every failure
+          mode (including a zero-total top-unlabeled outage) returns above. */}
       {!hasFindings && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}

@@ -363,6 +363,7 @@ class FakeNameSuggestion:
         created_at=None,  # noqa: ANN001
         expires_at=None,  # noqa: ANN001
         resolved_at=None,  # noqa: ANN001
+        representatives=None,  # noqa: ANN001
     ) -> None:
         self.id = str(uuid.uuid4())
         self.cluster_id = cluster_id
@@ -374,6 +375,7 @@ class FakeNameSuggestion:
         self.created_at = created_at
         self.expires_at = expires_at
         self.resolved_at = resolved_at
+        self.representatives = list(representatives or [])
 
 
 class FakeMergeSuggestion:

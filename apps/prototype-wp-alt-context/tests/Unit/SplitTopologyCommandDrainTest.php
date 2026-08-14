@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Sync\CrossPlaneSequencer;
 use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SnapshotClientTransport;
@@ -100,6 +101,74 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([['tenant-test']], $syncStateRepository->metricRefreshCalls);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    /**
+     * E21-14-BR-11 / rg-007: ProjectionQueryException after claim must mark that
+     * command failed and let the drain continue to the next command.
+     */
+    public function testDrainMarksCommandFailedOnProjectionQueryExceptionAndContinues(): void
+    {
+        $first = $this->pendingSplitCommand();
+        $first['id'] = 1;
+        $second = $this->pendingSplitCommand();
+        $second['id'] = 2;
+        $second['entity_key'] = 'cluster-source-b';
+
+        $repository = new SplitTopologyCommandRepositoryFake([$first, $second]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $appliedPayload = [
+            'command_id' => 'remote-command-1',
+            'status' => 'applied',
+            'original_cluster_id' => 'cluster-source',
+            'new_cluster_ids' => ['cluster-new-1', 'cluster-new-2'],
+            'member_delta' => [
+                'source_cluster_id' => 'cluster-source',
+                'remaining_identity_ids' => ['identity-1'],
+                'created_clusters' => [
+                    ['cluster_id' => 'cluster-new-1', 'identity_ids' => ['identity-2']],
+                    ['cluster_id' => 'cluster-new-2', 'identity_ids' => ['identity-3']],
+                ],
+            ],
+            'moved_counts' => [1, 1],
+            'affected_cluster_ids' => ['cluster-source', 'cluster-new-1', 'cluster-new-2'],
+            'result_snapshot_version' => 44,
+        ];
+        $transport = new SplitTransportFake([
+            new WP_REST_Response($appliedPayload, 200),
+            new WP_REST_Response(array_merge($appliedPayload, ['command_id' => 'remote-command-2']), 200),
+        ]);
+
+        $membersRepository = new class() extends SplitMembersRepositoryFake {
+            public function list_for_cluster(
+                string $cluster_uuid,
+                int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT,
+                int $offset = 0,
+                ?string $tenant_id = null
+            ): array {
+                throw new ProjectionQueryException(
+                    'Projection query failed [identity_members.list_for_cluster]: schema missing assigned_at'
+                );
+            }
+        };
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            new SnapshotClientFake([]),
+            new SnapshotProjectorFake(),
+            new SplitClustersRepositoryFake(),
+            $membersRepository,
+            new SplitSyncStateRepositoryFake()
+        );
+        $drain->drain();
+
+        $this->assertNotEmpty($repository->failures, 'claimed command must be marked failed, not left in limbo');
+        $this->assertSame('projection_query_failed', $repository->failures[0]['error_code']);
+        $this->assertGreaterThanOrEqual(2, count($repository->claimCalls), 'drain must continue to next command');
+        $this->assertSame([], $repository->reconciled);
     }
 
     public function testDrainFallsBackToTargetedReconciliationWhenMemberDeltaIsIncomplete(): void

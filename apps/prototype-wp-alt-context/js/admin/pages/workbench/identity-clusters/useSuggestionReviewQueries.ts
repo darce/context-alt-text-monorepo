@@ -61,6 +61,7 @@ export const useSuggestionReviewQueries = () => {
     enabled: tenantId !== '',
     staleTime: 60000,
     refetchOnMount: 'always',
+    retry: false,
   });
 
   const assignmentSuggestions = assignmentQuery.data?.items;

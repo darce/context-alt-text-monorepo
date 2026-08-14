@@ -29,8 +29,22 @@ want both:
 
 Anything else non-terminated in the tenancy is unexpected — investigate.
 
+> **Observed 2026-08-04.** That line earned itself. The tenancy held a *second*
+> A10, `acx-gpu-smoke-20260728-0218` (`role=gpu-smoke-ephemeral`,
+> `owner=wanlora`), **`RUNNING` for 173 h** since 2026-07-28 — nothing reaped it
+> despite the "ephemeral" role tag, because `scale_to_zero` is only set on the
+> burst instance. The `acx-gpu-idle-reaper.timer` on `acx-gpu-burst` makes GPU
+> spend *look* self-limiting; hand-created smoke and one-off instances have no
+> reaper. **Always answer from the full instance list plus Cost Analysis, never
+> from one named instance.**
+
 Region: **`us-ashburn-1`** (iad). There are **no child compartments**; every
 resource lives under the tenancy root.
+
+For the disk/Docker side of the always-on `acx-backend` VM (what is consuming
+the 193 GB root filesystem, which reapers exist, and which accounts can see
+what), see
+[`docs/operations/acx-backend-host-disk-audit-2026-08-04.md`](../operations/acx-backend-host-disk-audit-2026-08-04.md).
 
 ## Check instance state (CLI)
 

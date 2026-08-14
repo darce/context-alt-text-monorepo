@@ -6,7 +6,9 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-blob-url-rewriter.php';
+require_once __DIR__ . '/../support/class-recognition-transport.php';
 
+use AltContext\Support\RecognitionTransport;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -36,7 +38,6 @@ use function time;
 use function trim;
 use function untrailingslashit;
 use function wp_unslash;
-use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
 use function wp_remote_retrieve_response_code;
@@ -241,7 +242,9 @@ class BlobsController extends AbstractRecognitionProxyController {
 			}
 			$url = esc_url_raw( add_query_arg( $crop_args, $url ) );
 		}
-		$response = wp_remote_get(
+		// BR-137: RecognitionTransport enforces safe non-loopback egress and
+		// forces redirection => 0 so X-API-Key cannot walk on a 3xx Location.
+		$response = RecognitionTransport::get(
 			$url,
 			array(
 				'headers' => array(
@@ -263,6 +266,16 @@ class BlobsController extends AbstractRecognitionProxyController {
 		$status       = (int) wp_remote_retrieve_response_code( $response );
 		$content_type = (string) wp_remote_retrieve_header( $response, 'content-type' );
 		$body         = wp_remote_retrieve_body( $response );
+
+		// BR-137: with redirection=0 a 3xx is the raw response — refuse it as
+		// an error rather than serving an empty body as a successful image.
+		if ( $status >= 300 && $status < 400 ) {
+			return new WP_Error(
+				self::ERROR_CODE_BLOB_REDIRECT_REFUSED,
+				sprintf( 'Recognition service returned unexpected redirect (%d) for blob.', $status ),
+				array( 'status' => 502 )
+			);
+		}
 
 		if ( $status >= 400 ) {
 			return new WP_Error(

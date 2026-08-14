@@ -34,12 +34,10 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
-
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
-};
 
 interface ClusterReviewPanelProps {
   clusterId: string;
@@ -66,6 +64,7 @@ export const ClusterReviewPanel = ({
     isExpanding,
     expandError,
     showAll,
+    refetch,
   } = useShowAllClusterMembers(clusterId);
 
   // AT affordance: when expansion completes the show-all button unmounts, so
@@ -125,7 +124,12 @@ export const ClusterReviewPanel = ({
         {isLoading ? (
           <p>{__('Loading members...', 'alt-context')}</p>
         ) : isError ? (
-          <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+          <div className="acx-cluster-review-panel__error" role="alert" data-testid="acx-cluster-members-error">
+            <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+            <button type="button" className="button" onClick={() => refetch()}>
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
         ) : members.length > 0 ? (
           <>
             <div className="acx-cluster-review-panel__grid" ref={memberGridRef} tabIndex={-1}>
@@ -138,7 +142,7 @@ export const ClusterReviewPanel = ({
                         alt={__('Cluster member', 'alt-context')}
                         className="acx-cluster-member-card__image"
                       />
-                    ) : member.media_url && member.bbox ? (
+                    ) : member.media_url && isCroppableBbox(member.bbox) ? (
                       <FaceThumbnail
                         mediaUrl={member.media_url}
                         bbox={member.bbox}
@@ -152,7 +156,13 @@ export const ClusterReviewPanel = ({
                         className="acx-cluster-member-card__image"
                       />
                     ) : (
-                      <div className="acx-placeholder" />
+                      <div
+                        className="acx-placeholder"
+                        role="img"
+                        aria-label={__('Member image unavailable', 'alt-context')}
+                      >
+                        <span className="acx-placeholder__label">{__('No image', 'alt-context')}</span>
+                      </div>
                     )}
                     <button
                       type="button"

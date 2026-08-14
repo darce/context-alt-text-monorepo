@@ -15,10 +15,12 @@ import { ScanTabContent } from '../ScanTabContent';
  *
  * BR-79 scope note: the real, un-mocked chrome whose stability this asserts is the
  * queue-shell anchor (`.acx-findings-detail-anchor`) rendered by ScanTabContent
- * itself — its className, tabindex, and structural position (footer always follows
- * it) are checked below against the live DOM. The swappable children (queue/panels)
- * and the peripheral panels (findings panel, action panel, footer) are stubbed
- * because this probe is about POSITION/IDENTITY stability, not their internals.
+ * itself — its className, tabindex, and stable-order position are checked below
+ * against the live DOM. The swappable children (queue/panels) and the peripheral
+ * panels (findings panel, action panel) are stubbed because this probe is about
+ * POSITION/IDENTITY stability, not their internals. (WBUX-5 S1c-2: the media footer
+ * moved out of ScanTabContent into the sibling library host, so it is no longer part
+ * of this subtree's chrome signature.)
  * JSDOM has no layout/computed-style engine, so a *restyle* (a CSS change that keeps
  * the same class names) cannot be detected here — that check belongs to the operator
  * visual re-baseline. This test guards the structural contract; it does not (and in
@@ -45,8 +47,6 @@ vi.mock('../../../hooks/useWorkbenchFilters', () => ({
   useWorkbenchFilters: () => ({
     queueState: { index: 0, kind: 'all', band: 'all' },
     setQueueState: vi.fn(),
-    mediaExpanded: false,
-    setMediaExpanded: vi.fn(),
   }),
 }));
 
@@ -85,10 +85,6 @@ vi.mock('../identity-clusters/useOpenReviewTargetLifecycle', () => ({
   useOpenReviewTargetLifecycle: () => ({ reviewClusterId: lifecycleState.reviewClusterId }),
 }));
 
-vi.mock('../MediaSelection', () => ({
-  MediaSelection: () => <div data-testid="media-selection-footer" />,
-}));
-
 vi.mock('../JobPipelineContext', () => ({
   useJobPipeline: () => ({
     scanRun: { isScanning: false, progress: null },
@@ -115,23 +111,22 @@ vi.mock('../WorkbenchMediaContext', () => ({
   useWorkbenchMediaContext: () => ({ mediaQueue: { hasIdentities: true } }),
 }));
 
+vi.mock('../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
+}));
+
 const SWAPPABLE = new Set(['review-queue', 'review-panel', 'label-panel']);
 
 interface ChromeSignature {
   anchorClass: string;
   anchorTabIndex: string | null;
   stableOrder: string;
-  footerFollowsAnchor: boolean;
 }
 
 const chromeSignature = (container: HTMLElement): ChromeSignature => {
   const anchor = container.querySelector('.acx-findings-detail-anchor');
   if (!anchor) {
     throw new Error('findings-detail anchor missing');
-  }
-  const footer = container.querySelector('[data-testid="media-selection-footer"]');
-  if (!footer) {
-    throw new Error('media footer missing');
   }
   const stableOrder = Array.from(container.querySelectorAll('[data-testid]'))
     .map((el) => (el as HTMLElement).dataset.testid ?? '')
@@ -141,9 +136,6 @@ const chromeSignature = (container: HTMLElement): ChromeSignature => {
     anchorClass: anchor.className,
     anchorTabIndex: anchor.getAttribute('tabindex'),
     stableOrder,
-    footerFollowsAnchor: Boolean(
-      anchor.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ),
   };
 };
 
@@ -187,7 +179,6 @@ describe('ScanTabContent — NAV-03 stable panel-mode chrome (§2 rider)', () =>
     // by ScanTabContent (not a stub), so its className/tabindex are the live DOM. A
     // class change here WOULD fail; a pure CSS restyle would not (JSDOM has no
     // computed styles) — that is the operator visual re-baseline's job, per the note.
-    expect(queueSig.footerFollowsAnchor).toBe(true);
     expect(queueSig.anchorClass).toBe('acx-findings-detail-anchor');
     expect(labelSig.anchorClass).toBe('acx-findings-detail-anchor');
     expect(reviewSig.anchorClass).toBe('acx-findings-detail-anchor');

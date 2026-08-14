@@ -69,6 +69,19 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(screen.getByText('Describe service unavailable')).toBeInTheDocument();
   });
 
+  it('announces submit errors with role=alert so they are not colour-only (BR-143 / A11Y-21 / A11Y-24)', () => {
+    // Stranded-run notice from formatBulkDescribeErrorMessage: text must be
+    // exposed via an assertive live region, not a bare coloured span [sr-004].
+    const strandedNotice =
+      'Failed to store describe run media membership. The describe run run-stranded-42 is already running upstream but cannot be applied on this site. Note the run id and retry or contact support — do not start another run for the same items.';
+    render(<BulkDescribeCta {...baseProps} errorMessage={strandedNotice} />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('run-stranded-42');
+    expect(alert).toHaveTextContent('already running upstream');
+    expect(alert.className).toContain('acx-media-selection__bulk-describe-error');
+  });
+
   it('gates submit with aria-disabled + a reason when offline (§7: never HTML disabled)', () => {
     const onSubmit = vi.fn();
     render(

@@ -9,12 +9,17 @@ require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use function array_keys;
 use function defined;
 use function function_exists;
+use function get_debug_type;
 use function get_option;
 use function is_object;
 use function is_readable;
+use function is_string;
+use function max;
 use function method_exists;
+use function sprintf;
 use function time;
 use function update_option;
 use function wp_clear_scheduled_hook;
@@ -23,6 +28,7 @@ class LifecycleManager {
 
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
+	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
@@ -31,23 +37,35 @@ class LifecycleManager {
 	private const SPLIT_TOPOLOGY_DRAIN_HOOK = 'acx_sync_drain_split_topology_commands';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	/**
-	 * Plugin-owned custom table suffixes (without WordPress prefix).
-	 *
-	 * @var string[]
+	 * Epoch DEFAULT for assigned_at under STRICT_TRANS_TABLES / NO_ZERO_DATE.
+	 * Matches IdentityMemberSnapshotMerger::ASSIGNED_AT_FALLBACK_UTC so ALTER TABLE
+	 * ADD COLUMN against populated tables succeeds (implicit zero-date is rejected).
 	 */
-	private const OWNED_TABLE_SUFFIXES = array(
-		'acx_clusters',
-		'acx_identity_members',
-		'acx_sync_state',
-		'acx_persons',
-		'acx_batch_runs',
-		'acx_batch_run_failures',
-		'acx_description_runs',
-		'acx_description_run_items',
-		'acx_sync_outbox',
-		'acx_topology_commands',
-		'acx_sync_conflicts',
+	private const ASSIGNED_AT_FALLBACK_UTC = '1970-01-01 00:00:00.000000';
+
+	/**
+	 * Leading tokens that are table-constraint / index definitions, not columns.
+	 * Kept explicit so an unrecognised ALL-CAPS keyword fails closed (SV-06)
+	 * instead of being collected as a phantom column that can never appear in
+	 * SHOW COLUMNS (permanent non-stamp / every-request dbDelta loop).
+	 */
+	private const SCHEMA_CONSTRAINT_KEYWORDS = array(
+		'PRIMARY',
+		'KEY',
+		'UNIQUE',
+		'FULLTEXT',
+		'SPATIAL',
+		'INDEX',
+		'CONSTRAINT',
+		'FOREIGN',
+		'CHECK',
 	);
+
+	/**
+	 * Legacy UNIQUE on acx_persons.name from pre-E21-9 DDL. dbDelta never DROP
+	 * INDEXes, so this must be removed explicitly (LO-03).
+	 */
+	private const LEGACY_PERSONS_NAME_UNIQUE_INDEX = 'idx_name';
 
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
@@ -69,41 +87,58 @@ class LifecycleManager {
 			update_option( self::OPTION_INSTALLED_AT, time() );
 		}
 
-		$this->maybe_create_projection_tables();
+		if ( $this->maybe_create_projection_tables() ) {
+			update_option( self::OPTION_SCHEMA_FINGERPRINT, $this->compute_projection_schema_fingerprint() );
+		}
 		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
 	}
 
 	/**
 	 * Apply projection-table schema upgrades when the packaged plugin version
-	 * diverges from the stored acx_version option.
+	 * or the projection DDL fingerprint diverges from stored options.
 	 *
 	 * WP-admin plugin updates (and `wp plugin install --force`) skip activation
-	 * hooks, so dbDelta must also run on load. Equal versions are a strict
-	 * no-op so the every-request path stays cheap. Does not run legacy roster
-	 * migration or flush rewrite rules — those remain activation-only.
+	 * hooks, so dbDelta must also run on load. Matching version AND fingerprint
+	 * is a strict no-op so the every-request path stays cheap (one option read
+	 * plus a hash of static DDL strings). Does not run legacy roster migration
+	 * or flush rewrite rules — those remain activation-only.
 	 *
-	 * The version is stamped only when the upgrade actually ran; if the
-	 * environment guards skip dbDelta, the mismatch persists so a later
+	 * Version and fingerprint are stamped only when the upgrade actually ran;
+	 * if the environment guards skip dbDelta, the mismatch persists so a later
 	 * request retries instead of permanently masking a missed upgrade.
 	 *
-	 * A mismatch includes downgrades (stored newer than code): dbDelta never
-	 * drops columns, but it may narrow a changed column type on rollback.
+	 * Fingerprint gating is the durable fix for DDL edits that forget to bump
+	 * ACX_VERSION (DATA-03 / DATA-04): any change to build_projection_schema_statements
+	 * changes the hash and re-runs dbDelta automatically.
+	 *
+	 * A version mismatch includes downgrades (stored newer than code): dbDelta
+	 * never drops columns, but it may narrow a changed column type on rollback.
 	 */
 	public function maybe_upgrade(): void {
 		if ( ! defined( 'ACX_VERSION' ) ) {
 			return;
 		}
 
-		$stored = get_option( self::OPTION_VERSION );
-		if ( $stored === ACX_VERSION ) {
+		$fingerprint         = $this->compute_projection_schema_fingerprint();
+		$version_matches     = get_option( self::OPTION_VERSION ) === ACX_VERSION;
+		$fingerprint_matches = get_option( self::OPTION_SCHEMA_FINGERPRINT ) === $fingerprint;
+		if ( $version_matches && $fingerprint_matches ) {
 			return;
 		}
 
 		if ( ! $this->maybe_create_projection_tables() ) {
+			// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
+			Telemetry::log_line(
+				sprintf(
+					'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
+					ACX_VERSION
+				)
+			);
 			return;
 		}
 		update_option( self::OPTION_VERSION, ACX_VERSION );
+		update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
 	}
 
 	/**
@@ -424,6 +459,7 @@ class LifecycleManager {
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
+		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
@@ -452,7 +488,8 @@ class LifecycleManager {
 	/**
 	 * Drop plugin-owned custom tables during uninstall.
 	 *
-	 * This keeps create/destroy behavior symmetric as sovereign tables are added.
+	 * Suffixes are derived from build_projection_schema_statements so create,
+	 * fingerprint, and destroy share one source of truth (BR-02 / BR-09).
 	 */
 	private function drop_tables(): void {
 		global $wpdb;
@@ -461,7 +498,7 @@ class LifecycleManager {
 			return;
 		}
 
-		foreach ( self::OWNED_TABLE_SUFFIXES as $table_suffix ) {
+		foreach ( $this->owned_table_suffixes() as $table_suffix ) {
 			$table_name = $wpdb->prefix . $table_suffix;
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names are fixed plugin-owned suffixes with wpdb prefix.
 			$wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" );
@@ -469,47 +506,36 @@ class LifecycleManager {
 	}
 
 	/**
-	 * Create sovereign projection tables during activation.
+	 * Plugin-owned custom table suffixes (without WordPress prefix).
 	 *
-	 * Safe to call multiple times; dbDelta performs idempotent updates.
-	 *
-	 * @return bool True when dbDelta ran; false when an environment guard
-	 *              skipped the upgrade (callers must not mark it complete).
+	 * @return list<string>
 	 */
-	private function maybe_create_projection_tables(): bool {
-		global $wpdb;
+	private function owned_table_suffixes(): array {
+		return array_keys( $this->build_projection_schema_statements( '', '' ) );
+	}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'get_charset_collate' ) ) {
-			return false;
-		}
-
-		if ( ! function_exists( 'dbDelta' ) ) {
-			$upgrade_path = defined( 'ABSPATH' ) ? ABSPATH . 'wp-admin/includes/upgrade.php' : '';
-			if ( '' === $upgrade_path || ! is_readable( $upgrade_path ) ) {
-				return false;
-			}
-
-			require_once $upgrade_path;
-
-			/** @phpstan-ignore booleanNot.alwaysTrue */
-			if ( ! function_exists( 'dbDelta' ) ) {
-				return false;
-			}
-		}
-
-		$charset_collate = $wpdb->get_charset_collate();
-		$clusters_table  = $wpdb->prefix . 'acx_clusters';
-		$members_table   = $wpdb->prefix . 'acx_identity_members';
-		$sync_table      = $wpdb->prefix . 'acx_sync_state';
-		$persons_table   = $wpdb->prefix . 'acx_persons';
-		$batch_runs_table = $wpdb->prefix . 'acx_batch_runs';
-		$batch_failures_table = $wpdb->prefix . 'acx_batch_run_failures';
-		$description_runs_table = $wpdb->prefix . 'acx_description_runs';
-		$description_run_items_table = $wpdb->prefix . 'acx_description_run_items';
-		$description_usage_table = $wpdb->prefix . 'acx_description_usage';
-		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
-		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
-		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
+	/**
+	 * Pure projection CREATE TABLE statements keyed by logical table name.
+	 *
+	 * Shared by the schema fingerprint and the dbDelta runner so DDL edits
+	 * cannot drift between the two surfaces. Keys are stable table suffixes
+	 * (without WordPress prefix).
+	 *
+	 * @return array<string, string>
+	 */
+	public function build_projection_schema_statements( string $prefix, string $charset_collate ): array {
+		$clusters_table              = $prefix . 'acx_clusters';
+		$members_table               = $prefix . 'acx_identity_members';
+		$sync_table                  = $prefix . 'acx_sync_state';
+		$persons_table               = $prefix . 'acx_persons';
+		$batch_runs_table            = $prefix . 'acx_batch_runs';
+		$batch_failures_table        = $prefix . 'acx_batch_run_failures';
+		$description_runs_table      = $prefix . 'acx_description_runs';
+		$description_run_items_table = $prefix . 'acx_description_run_items';
+		$description_usage_table     = $prefix . 'acx_description_usage';
+		$outbox_table                = $prefix . 'acx_sync_outbox';
+		$topology_table              = $prefix . 'acx_topology_commands';
+		$conflicts_table             = $prefix . 'acx_sync_conflicts';
 
 		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
 		// collation-folded idx_name. Greenfield — edit CREATE TABLE directly; no migration.
@@ -556,11 +582,16 @@ class LifecycleManager {
 			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
-		// rg-005 / DATA-09: assigned_at is the recognition source-of-truth membership-order
+		// rg-005 / DATA-15: assigned_at is the recognition source-of-truth membership-order
 		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
-		// sub-second precision so same-second members keep true order. Greenfield —
-		// no migration; CREATE TABLE is authoritative after wipe-on-deploy.
-		$members_sql = "CREATE TABLE {$members_table} (
+		// sub-second precision so same-second members keep true order. assigned_at is stamped
+		// by a single writer (recognition), so DATA-15's multi-node clock-skew failure mode
+		// does not apply, and the identity_uuid secondary sort makes same-timestamp ordering
+		// deterministic.
+		// Explicit DEFAULT is required under STRICT_TRANS_TABLES + NO_ZERO_DATE so
+		// dbDelta ALTER ADD COLUMN against populated tables does not fail (DATA-03).
+		$assigned_at_default = self::ASSIGNED_AT_FALLBACK_UTC;
+		$members_sql         = "CREATE TABLE {$members_table} (
 			identity_uuid varchar(64) NOT NULL,
 			cluster_uuid varchar(64) NOT NULL,
 			attachment_id bigint(20) unsigned NOT NULL,
@@ -570,7 +601,7 @@ class LifecycleManager {
 			similarity_threshold double NULL,
 			is_curated tinyint(1) NOT NULL DEFAULT 0,
 			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
-			assigned_at datetime(6) NOT NULL,
+			assigned_at datetime(6) NOT NULL DEFAULT '{$assigned_at_default}',
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (identity_uuid),
@@ -752,19 +783,502 @@ class LifecycleManager {
 			KEY idx_entity_resolution (entity_type, entity_key, resolution_status)
 		) {$charset_collate};";
 
-		dbDelta( $persons_sql );
-		dbDelta( $clusters_sql );
-		dbDelta( $members_sql );
-		dbDelta( $sync_sql );
-		dbDelta( $outbox_sql );
-		dbDelta( $topology_sql );
-		dbDelta( $conflicts_sql );
-		dbDelta( $batch_runs_sql );
-		dbDelta( $batch_failures_sql );
-		dbDelta( $description_runs_sql );
-		dbDelta( $description_run_items_sql );
-		dbDelta( $description_usage_sql );
+		return array(
+			'acx_persons'              => $persons_sql,
+			'acx_clusters'             => $clusters_sql,
+			'acx_identity_members'     => $members_sql,
+			'acx_sync_state'           => $sync_sql,
+			'acx_sync_outbox'          => $outbox_sql,
+			'acx_topology_commands'    => $topology_sql,
+			'acx_sync_conflicts'       => $conflicts_sql,
+			'acx_batch_runs'           => $batch_runs_sql,
+			'acx_batch_run_failures'   => $batch_failures_sql,
+			'acx_description_runs'     => $description_runs_sql,
+			'acx_description_run_items'=> $description_run_items_sql,
+			'acx_description_usage'    => $description_usage_sql,
+		);
+	}
+
+	/**
+	 * sha1 of normalised projection DDL. Prefix/charset are fixed placeholders so
+	 * the hash is environment-independent and cheap to recompute every request.
+	 */
+	public function compute_projection_schema_fingerprint(): string {
+		$statements = $this->build_projection_schema_statements( '{prefix}', '{charset_collate}' );
+		ksort( $statements );
+
+		$normalized_parts = array();
+		foreach ( $statements as $table => $sql ) {
+			$collapsed = preg_replace( '/\s+/', ' ', trim( $sql ) );
+			$normalized_parts[] = $table . "\n" . ( is_string( $collapsed ) ? $collapsed : trim( $sql ) );
+		}
+
+		return sha1( implode( "\n", $normalized_parts ) );
+	}
+
+	/**
+	 * Create sovereign projection tables during activation / upgrade.
+	 *
+	 * Safe to call multiple times; dbDelta performs idempotent updates.
+	 * Iterates the statement map directly (single source of truth with the
+	 * fingerprint and uninstall drop list). Partial applies are left in place
+	 * and return false so callers refuse to stamp; the next request retries.
+	 *
+	 * @return bool True when every statement and the assigned_at seed succeeded;
+	 *              false when an environment guard skipped the run or MySQL
+	 *              rejected a statement (callers must not mark complete).
+	 */
+	private function maybe_create_projection_tables(): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'get_charset_collate' ) ) {
+			return false;
+		}
+
+		if ( ! function_exists( 'dbDelta' ) ) {
+			$upgrade_path = defined( 'ABSPATH' ) ? ABSPATH . 'wp-admin/includes/upgrade.php' : '';
+			if ( '' === $upgrade_path || ! is_readable( $upgrade_path ) ) {
+				return false;
+			}
+
+			require_once $upgrade_path;
+
+			/** @phpstan-ignore booleanNot.alwaysTrue */
+			if ( ! function_exists( 'dbDelta' ) ) {
+				return false;
+			}
+		}
+
+		$statements = $this->build_projection_schema_statements(
+			(string) $wpdb->prefix,
+			$wpdb->get_charset_collate()
+		);
+
+		// Map insertion order is the apply order (persons before clusters, etc.).
+		foreach ( $statements as $key => $sql ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+
+			dbDelta( $sql );
+
+			$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+			if ( '' !== $error ) {
+				if ( property_exists( $wpdb, 'last_error' ) ) {
+					$wpdb->last_error = '';
+				}
+				Telemetry::log_line(
+					sprintf( '[acx] schema apply failed for %s: %s', $key, $error )
+				);
+				return false;
+			}
+		}
+
+		// LO-03: dbDelta never DROP INDEXes; remove the pre-E21-9 UNIQUE on name.
+		if ( ! $this->drop_legacy_persons_name_unique_index( (string) $wpdb->prefix . 'acx_persons' ) ) {
+			return false;
+		}
+
+		if ( ! $this->verify_projection_schema_columns( $statements ) ) {
+			return false;
+		}
+
+		if ( ! $this->seed_assigned_at_from_created_at( (string) $wpdb->prefix . 'acx_identity_members' ) ) {
+			return false;
+		}
 
 		return true;
+	}
+
+	/**
+	 * Extract column names from a CREATE TABLE statement.
+	 *
+	 * Single grammar shared with the test dbDelta stub (SV-03) so the suite
+	 * cannot tautologically agree with a second parser. Returns null when the
+	 * body cannot be parsed, yields no columns, or contains an unrecognised
+	 * leading keyword — empty intended sets are verifier defects (SV-01), not
+	 * a perfect match against SHOW COLUMNS.
+	 *
+	 * @return list<string>|null
+	 */
+	public static function parse_create_table_column_names( string $sql ): ?array {
+		$sql = trim( $sql );
+		if ( ! preg_match( '/^CREATE TABLE\s+[^\s(]+\s*\((.*)\)\s*[^)]*;?$/si', $sql, $matches ) ) {
+			return null;
+		}
+
+		$columns = array();
+		$definitions = preg_split( '/\R/', $matches[1] );
+		if ( ! is_array( $definitions ) ) {
+			$definitions = array();
+		}
+		foreach ( $definitions as $definition ) {
+			$line = trim( $definition );
+			$line = rtrim( $line, ',' );
+			$line = trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+
+			// Plain identifier, optionally backtick-quoted, followed by type/constraint rest.
+			if ( ! preg_match( '/^`([a-zA-Z_][a-zA-Z0-9_]*)`(?:\s|$)/', $line, $column_match )
+				&& ! preg_match( '/^([a-zA-Z_][a-zA-Z0-9_]*)(?:\s|$)/', $line, $column_match ) ) {
+				// Non-empty line that is not an identifier lead-in → unrecognised structure.
+				return null;
+			}
+
+			$name       = $column_match[1];
+			$name_upper = strtoupper( $name );
+
+			if ( in_array( $name_upper, self::SCHEMA_CONSTRAINT_KEYWORDS, true ) ) {
+				continue;
+			}
+
+			// Unquoted ALL-CAPS token that is not a known constraint keyword is
+			// treated as an unrecognised leading keyword (fail closed, SV-06).
+			// Production column names are lowercase; intentional keyword-as-column
+			// would need backticks and is accepted via the backtick branch above.
+			$is_backticked = str_starts_with( ltrim( $definition ), '`' );
+			if ( ! $is_backticked && $name === $name_upper ) {
+				return null;
+			}
+
+			$columns[] = $name;
+		}
+
+		if ( array() === $columns ) {
+			return null;
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * @param array<string,string> $statements
+	 */
+	private function verify_projection_schema_columns( array $statements ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return false;
+		}
+
+		$statement_count = count( $statements );
+		$parsed_count    = 0;
+
+		foreach ( $statements as $key => $sql ) {
+			$intended_columns = self::parse_create_table_column_names( $sql );
+			if ( null === $intended_columns ) {
+				Telemetry::log_line(
+					sprintf(
+						'[acx] schema verification failed for %s: could not parse intended columns (verifier defect or unrecognised DDL structure)',
+						$key
+					)
+				);
+				return false;
+			}
+			++$parsed_count;
+
+			$table = (string) $wpdb->prefix . $key;
+
+			// Match the dbDelta probe pattern: never attribute a prior query's
+			// last_error to this SHOW COLUMNS (SV-04).
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+
+			$query = method_exists( $wpdb, 'prepare' ) ? $wpdb->prepare( 'SHOW COLUMNS FROM %i', $table ) : "SHOW COLUMNS FROM `{$table}`";
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned table name.
+			$rows = $wpdb->get_results( $query, ARRAY_A );
+
+			$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+			if ( '' !== $error ) {
+				if ( property_exists( $wpdb, 'last_error' ) ) {
+					$wpdb->last_error = '';
+				}
+				Telemetry::log_line(
+					sprintf( '[acx] schema verification failed for %s: SHOW COLUMNS error: %s', $table, $error )
+				);
+				return false;
+			}
+
+			$actual_columns = array();
+			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+				if ( is_array( $row ) && isset( $row['Field'] ) ) {
+					$actual_columns[] = (string) $row['Field'];
+				}
+			}
+
+			$missing = array_values( array_diff( $intended_columns, $actual_columns ) );
+			if ( array() !== $missing ) {
+				Telemetry::log_line(
+					sprintf( '[acx] schema verification failed for %s; missing columns: %s', $table, implode( ', ', $missing ) )
+				);
+				return false;
+			}
+		}
+
+		if ( $parsed_count !== $statement_count ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema verification failed: parsed table count %d does not match statement map size %d',
+					$parsed_count,
+					$statement_count
+				)
+			);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Greenfield cleanup: drop the pre-E21-9 UNIQUE idx_name on acx_persons.name.
+	 * Idempotent — no-op when the index is absent. Verifier stays column-only
+	 * (extra indexes do not refuse the stamp; see LO-03 report rationale).
+	 *
+	 * @return bool False only when a probe/drop query errors.
+	 */
+	private function drop_legacy_persons_name_unique_index( string $persons_table ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return false;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$index_name = self::LEGACY_PERSONS_NAME_UNIQUE_INDEX;
+		$query      = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder.
+			$query = $wpdb->prepare(
+				'SHOW INDEX FROM %i WHERE Key_name = %s',
+				$persons_table,
+				$index_name
+			);
+		}
+		if ( ! is_string( $query ) || '' === $query ) {
+			$query = "SHOW INDEX FROM `{$persons_table}` WHERE Key_name = '{$index_name}'";
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned identifiers.
+		$rows  = $wpdb->get_results( $query, ARRAY_A );
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		// Mirror PreparesSqlQueries::guard_query_error: null from get_results is a
+		// failed probe (query did not execute), not an empty result set. Conflating
+		// the two would leave legacy idx_name in place while reporting success.
+		if ( '' !== $error || null === $rows ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error
+				? $error
+				: 'query did not execute (wpdb not ready or query filtered)';
+			Telemetry::log_line(
+				sprintf( '[acx] schema legacy-index probe failed for %s.%s: %s', $persons_table, $index_name, $message )
+			);
+			return false;
+		}
+
+		if ( ! is_array( $rows ) || array() === $rows ) {
+			return true;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$drop = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i identifiers.
+			$drop = $wpdb->prepare(
+				'ALTER TABLE %i DROP INDEX %i',
+				$persons_table,
+				$index_name
+			);
+		}
+		if ( ! is_string( $drop ) || '' === $drop ) {
+			$drop = "ALTER TABLE `{$persons_table}` DROP INDEX `{$index_name}`";
+		}
+
+		if ( ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above or plugin-owned identifiers.
+		$result = $wpdb->query( $drop );
+		$error  = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		if ( false === $result || '' !== $error ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error ? $error : 'query returned false';
+			Telemetry::log_line(
+				sprintf( '[acx] schema legacy-index drop failed for %s.%s: %s', $persons_table, $index_name, $message )
+			);
+			return false;
+		}
+
+		Telemetry::log_line(
+			sprintf( '[acx] schema dropped legacy index %s on %s', $index_name, $persons_table )
+		);
+
+		return true;
+	}
+
+	/**
+	 * Derived-projection repair: rows that received the epoch DEFAULT when
+	 * assigned_at was added keep a sane ORDER BY until the next recognition
+	 * sync overwrites them. Not a migration framework (Greenfield Policy).
+	 *
+	 * Pre-counts sentinel rows, runs the UPDATE, and requires the affected-row
+	 * count to match. A zero-row UPDATE against a non-zero sentinel population
+	 * is a silent-success trap (wrong sentinel literals, filtered query) and
+	 * must refuse the stamp so the next request retries.
+	 *
+	 * @return bool False when the UPDATE fails, the row counts disagree, or the environment cannot query.
+	 */
+	private function seed_assigned_at_from_created_at( string $members_table ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+
+		$fallback        = self::ASSIGNED_AT_FALLBACK_UTC;
+		$fallback_second = '1970-01-01 00:00:00';
+
+		$expected = $this->count_assigned_at_sentinel_rows( $members_table, $fallback, $fallback_second );
+		if ( null === $expected ) {
+			return false;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$result = null;
+
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
+			$sql = $wpdb->prepare(
+				'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+				$members_table,
+				$fallback,
+				$fallback_second
+			);
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+				$result = $wpdb->query( $sql );
+			}
+		}
+
+		if ( null === $result ) {
+			$result = $wpdb->query(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
+				"UPDATE `{$members_table}` SET assigned_at = created_at WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
+			);
+		}
+
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		// false = MySQL error; 0 = successful UPDATE that matched nothing. Distinct outcomes.
+		if ( false === $result || '' !== $error ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error ? $error : 'query returned false';
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: %s', $members_table, $message )
+			);
+			return false;
+		}
+
+		// Real wpdb returns int rows-affected on UPDATE success (never boolean true).
+		if ( ! is_int( $result ) ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema seed assigned_at failed for %s: UPDATE returned non-integer success (%s)',
+					$members_table,
+					get_debug_type( $result )
+				)
+			);
+			return false;
+		}
+
+		if ( $result !== $expected ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] schema seed assigned_at row-count mismatch for %s: expected %d, affected %d',
+					$members_table,
+					$expected,
+					$result
+				)
+			);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Count identity_members rows still holding an assigned_at sentinel.
+	 *
+	 * @return int|null Null when the COUNT cannot run or MySQL errors (fail the repair).
+	 */
+	private function count_assigned_at_sentinel_rows( string $members_table, string $fallback, string $fallback_second ): ?int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: wpdb get_var unavailable for sentinel pre-count', $members_table )
+			);
+			return null;
+		}
+
+		if ( property_exists( $wpdb, 'last_error' ) ) {
+			$wpdb->last_error = '';
+		}
+
+		$count = null;
+		if ( method_exists( $wpdb, 'prepare' ) ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder; constants only.
+			$sql = $wpdb->prepare(
+				'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+				$members_table,
+				$fallback,
+				$fallback_second
+			);
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+				$count = $wpdb->get_var( $sql );
+			}
+		}
+
+		if ( null === $count ) {
+			$count = $wpdb->get_var(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is plugin-owned; literals are constants.
+				"SELECT COUNT(*) FROM `{$members_table}` WHERE assigned_at = '{$fallback}' OR assigned_at = '{$fallback_second}'"
+			);
+		}
+
+		$error = property_exists( $wpdb, 'last_error' ) ? (string) $wpdb->last_error : '';
+		// Mirror PreparesSqlQueries::guard_query_error with null_is_failure for COUNT.
+		if ( '' !== $error || null === $count ) {
+			if ( property_exists( $wpdb, 'last_error' ) ) {
+				$wpdb->last_error = '';
+			}
+			$message = '' !== $error
+				? $error
+				: 'query did not execute (wpdb not ready or query filtered)';
+			Telemetry::log_line(
+				sprintf( '[acx] schema seed assigned_at failed for %s: sentinel pre-count: %s', $members_table, $message )
+			);
+			return null;
+		}
+
+		return max( 0, (int) $count );
 	}
 }

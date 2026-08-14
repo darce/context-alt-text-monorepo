@@ -7,8 +7,12 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { isHumanLabeledTarget } from './suggestionProjection';
 
 const resolveRepresentativeThumbUrl = (
   representative: TopUnlabeledCluster['representatives'][number],
@@ -20,10 +24,6 @@ const resolveRepresentativeThumbUrl = (
   return rawUrl;
 };
 
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
-};
-
 const resolveRepresentativeCrop = (
   representative: TopUnlabeledCluster['representatives'][number],
 ): { mediaUrl: string; bbox: BoundingBox } | null => {
@@ -33,21 +33,20 @@ const resolveRepresentativeCrop = (
     return null;
   }
 
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
+  const coerced: BoundingBox = {
+    x: Number(bbox.x),
+    y: Number(bbox.y),
+    width: Number(bbox.width),
+    height: Number(bbox.height),
+  };
 
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-  if (width <= 0 || height <= 0) {
+  if (!isCroppableBbox(coerced)) {
     return null;
   }
 
   return {
     mediaUrl,
-    bbox: { x, y, width, height },
+    bbox: coerced,
   };
 };
 
@@ -82,6 +81,13 @@ interface TopClusterCardProps {
   onDismiss?: (clusterId: string) => void;
   isConfirming?: boolean;
   isDismissing?: boolean;
+  /**
+   * BR-41: 1-based queue position. When BOTH `queuePosition` and `queueTotal` are
+   * valid integers >= 1, ordinal text folds into the group accname.
+   */
+  queuePosition?: number;
+  /** BR-41: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
 }
 
 export const TopClusterCard = ({
@@ -93,15 +99,17 @@ export const TopClusterCard = ({
   onDismiss,
   isConfirming = false,
   isDismissing = false,
+  queuePosition,
+  queueTotal,
 }: TopClusterCardProps): React.JSX.Element => {
   const gridSizePx = 80;
   const gapPx = 2;
   const maxThumbs = 4;
   const faceCount = cluster.identity_count;
+  const trimmedSuggested =
+    typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
   const suggestedLabel =
-    typeof cluster.suggested_label === 'string' && cluster.suggested_label.trim() !== ''
-      ? cluster.suggested_label.trim()
-      : null;
+    trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
   const title = suggestedLabel
     ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
     : __('Name this person', 'alt-context');
@@ -125,6 +133,7 @@ export const TopClusterCard = ({
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
   const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
+  const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
     if (!suggestedLabel || !onConfirmSuggestedLabel) {
@@ -142,7 +151,15 @@ export const TopClusterCard = ({
   };
 
   return (
-    <div className="acx-top-cluster-card">
+    <ReviewCardGroupShell
+      kind="cluster"
+      labelId={groupLabelId}
+      queuePosition={queuePosition}
+      queueTotal={queueTotal}
+      className="acx-top-cluster-card"
+      data-testid="acx-review-card"
+      data-review-kind="cluster"
+    >
       <div className="acx-top-cluster-card__faces">
         {reps.length > 0 ? (
           <div className={gridClassName} style={gridStyle}>
@@ -267,6 +284,6 @@ export const TopClusterCard = ({
           </button>
         )}
       </div>
-    </div>
+    </ReviewCardGroupShell>
   );
 };

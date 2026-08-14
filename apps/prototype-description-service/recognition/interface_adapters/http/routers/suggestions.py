@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     BulkAcceptResult,
@@ -35,6 +35,7 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
+from recognition.interface_adapters.http.face_box import representative_response_from_domain
 from recognition.interface_adapters.http.schemas.requests import BulkAcceptSuggestionsRequest, SuggestionActionRequest
 from recognition.interface_adapters.http.schemas.responses import (
     BulkAcceptResponse,
@@ -44,6 +45,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     IdentitySuggestionsResponse,
     MergeSuggestionResponse,
     NameSuggestionResponse,
+    RepresentativeResponse,
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
@@ -291,6 +293,8 @@ async def accept_name_suggestion(
         suggestion = await suggestion_extension_service.accept_name_suggestion(request.tenant_id, suggestion_id)
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
+    except ReservedClusterLabelError:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
 
@@ -540,6 +544,9 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
 
 def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
     """Convert a name suggestion to the API response model."""
+    representatives: list[RepresentativeResponse] = [
+        representative_response_from_domain(rep) for rep in (getattr(suggestion, "representatives", None) or [])
+    ]
     return NameSuggestionResponse(
         id=suggestion.id,
         cluster_id=suggestion.cluster_id,
@@ -551,13 +558,15 @@ def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
         created_at=suggestion.created_at,
         expires_at=suggestion.expires_at,
         resolved_at=suggestion.resolved_at,
+        representatives=representatives,
     )
 
 
 def _is_meaningful_label(label: str | None) -> bool:
-    if not label:
+    """Return whether a label is operator-meaningful (non-empty, non-reserved)."""
+    if label is None or not str(label).strip():
         return False
-    return not str(label).startswith("cluster-")
+    return not is_reserved_label_shape(label)
 
 
 def _suggestion_confidence(suggestion: object) -> float | None:
@@ -707,7 +716,10 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     source = cluster_b if target is cluster_a else cluster_a
     if not target.id or not source.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cluster identifiers missing")
-    return source.id, target.id, target.label
+    # Placeholder cluster-* labels must not enter merge's reserved-label guard;
+    # None falls back to preserving target.label in the use case.
+    selected_label = target.label if _is_meaningful_label(target.label) else None
+    return source.id, target.id, selected_label
 
 
 async def _resolve_accepted_merge_ids(

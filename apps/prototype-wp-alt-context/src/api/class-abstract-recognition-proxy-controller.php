@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/class-recognition-circuit-keys.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-recognition-proxy-policy.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/class-blob-url-rewriter.php';
+require_once __DIR__ . '/../support/class-recognition-transport.php';
 
+use AltContext\Support\RecognitionTransport;
 use Traversable;
 use WP_Error;
 use WP_REST_Response;
@@ -24,20 +27,31 @@ use function get_option;
 use function in_array;
 use function is_wp_error;
 use function md5;
-use function parse_url;
 use function set_transient;
 use function strtotime;
 use function strtolower;
 use function time;
 use function untrailingslashit;
 use function wp_json_encode;
-use function wp_remote_request;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
 use function trim;
 
 abstract class AbstractRecognitionProxyController implements RecognitionRouteControllerInterface {
+	/**
+	 * Proxy path refused a 3xx from the recognition service (redirection=0).
+	 * Classified by is_proxy_redirect_refused() as reachable-but-bad.
+	 */
+	public const ERROR_CODE_REDIRECT_REFUSED = 'recognition_unexpected_redirect';
+
+	/**
+	 * Blob path refused a 3xx. Same classification as ERROR_CODE_REDIRECT_REFUSED
+	 * (reachable-but-bad / not UNAVAILABLE), but keeps the blob-specific wire code
+	 * and status so blob response behaviour stays identical (R6L-BR-04 / [sr-007]).
+	 */
+	public const ERROR_CODE_BLOB_REDIRECT_REFUSED = 'recognition_blob_redirect_refused';
+
 	private ?RecognitionProxyPolicy $proxy_policy = null;
 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
 
@@ -142,6 +156,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			$encoded_body = ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null;
 		}
 
+		// BR-137: never-follow-redirects is enforced inside RecognitionTransport
+		// (redirection => 0 is forced there). A 3xx would re-send X-API-Key to
+		// whatever Location a compromised service advertises.
 		$options = array(
 			'headers' => $headers,
 			'timeout' => $policy['timeout_seconds'],
@@ -153,7 +170,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$last_error    = null;
 
 		for ( $attempt = 0; $attempt < $max_retries; $attempt++ ) {
-			$response = wp_remote_request( $url, array_merge( $options, array( 'method' => $method ) ) );
+			$response = RecognitionTransport::request( $url, array_merge( $options, array( 'method' => $method ) ) );
 
 			if ( is_wp_error( $response ) ) {
 				$last_error = $response;
@@ -166,7 +183,20 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				return $response;
 			}
 
-			$status = wp_remote_retrieve_response_code( $response );
+			$status = (int) wp_remote_retrieve_response_code( $response );
+			// BR-137: with redirection=0 a 3xx is the raw response. Surface it
+			// as an error so callers never treat an empty redirect body as OK.
+			// Count toward the circuit breaker — a persistently-redirecting
+			// (compromised) service must not stay invisible to backoff.
+			if ( $status >= 300 && $status < 400 ) {
+				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
+				return new WP_Error(
+					self::ERROR_CODE_REDIRECT_REFUSED,
+					sprintf( 'Recognition service returned unexpected redirect (%d).', $status ),
+					array( 'status' => 502 )
+				);
+			}
+
 			if ( $status >= 500 ) {
 				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
 			}
@@ -270,10 +300,32 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	/**
 	 * Transport-unreachable: the backend could not be reached at all (DNS,
 	 * connection, timeout). Honest provenance is UNAVAILABLE. Distinct from a
-	 * reachable-but-erroring backend, which is_proxy_endpoint_error() classifies.
+	 * reachable-but-erroring backend, which is_proxy_endpoint_error() classifies,
+	 * and from a redirect refusal (backend answered 3xx; see
+	 * is_proxy_redirect_refused()).
 	 */
 	protected function is_proxy_transport_unreachable( WP_REST_Response|WP_Error $response ): bool {
-		return is_wp_error( $response );
+		return is_wp_error( $response ) && ! $this->is_proxy_redirect_refused( $response );
+	}
+
+	/**
+	 * Redirect refused: the backend is reachable and answered with a 3xx that
+	 * RecognitionTransport refused to follow. Not UNAVAILABLE — the endpoint is
+	 * up; treat as endpoint error provenance for degraded UI paths.
+	 *
+	 * Recognises both the shared proxy code and the blob-specific refusal code
+	 * so BlobsController (which extends this class) is not invisible to the
+	 * shared degradation predicates (R6L-BR-04 / [sr-007]).
+	 */
+	protected function is_proxy_redirect_refused( WP_REST_Response|WP_Error $response ): bool {
+		if ( ! is_wp_error( $response ) ) {
+			return false;
+		}
+
+		$code = $response->get_error_code();
+
+		return self::ERROR_CODE_REDIRECT_REFUSED === $code
+			|| self::ERROR_CODE_BLOB_REDIRECT_REFUSED === $code;
 	}
 
 	/**

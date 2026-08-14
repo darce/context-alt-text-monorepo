@@ -13,6 +13,7 @@ Heuristics: TEST-06/TEST-08 (determinism), AGT-06 (name the skip).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -40,15 +41,33 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     load_verified_model,
+    numeric_runtime_fingerprint,
 )
 
 FIXTURE_DIR = Path(__file__).resolve().parent
 SEED = 20260715
 EMBED_SEED = 20260716
+GENERATOR_RELPATH = "recognition/tests/fixtures/face_pipeline/generate_goldens.py"
 
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def toolchain_provenance() -> dict[str, str]:
+    """Record which numeric-relevant runtimes produced the goldens (CVU-02V).
+
+    Delegates to ``numeric_runtime_fingerprint`` so stamps cover OpenCV,
+    onnxruntime, and numpy — the three packages that move embedding /
+    clustering comparability on this upgrade. ``generator`` is the script path.
+    """
+    fp = numeric_runtime_fingerprint()
+    return {
+        "opencv_version": fp.opencv_version,
+        "onnxruntime_version": fp.onnxruntime_version,
+        "numpy_version": fp.numpy_version,
+        "generator": GENERATOR_RELPATH,
+    }
 
 
 def synthetic_112_crop(seed: int = EMBED_SEED) -> np.ndarray:
@@ -90,17 +109,25 @@ def aligner_source_image(seed: int = SEED) -> tuple[np.ndarray, np.ndarray]:
     return img, landmarks
 
 
-def write_embedding_goldens() -> dict:
+def write_embedding_goldens(*, output_dir: Path | None = None) -> dict:
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
     crop = synthetic_112_crop()
-    crop_path = FIXTURE_DIR / "synthetic_112_crop.npy"
+    crop_path = out_dir / "synthetic_112_crop.npy"
     np.save(crop_path, crop)
 
     embedder = OpenCVSFaceEmbedder()
     batch = embedder.embed([crop])
     emb = batch.vectors
-    emb_path = FIXTURE_DIR / "synthetic_112_embedding.npy"
+    emb_path = out_dir / "synthetic_112_embedding.npy"
     np.save(emb_path, emb)
 
+    # cosine_min: N=50 OpenCVSFaceEmbedder runs on this deterministic synthetic
+    # 112×112 crop were bit-exact vs golden (vector maxabs=0; float64 unit-cosine
+    # ≈ 1-1e-12). Floor 0.99999999 is 10× above a 1e-9 slack band so same-host
+    # regen noise cannot greenwash a real embedder shift (CVUP1-LC-03).
+    # Not the corpus OpenCV 4→5 upgrade self-similarity (min 0.999524 / median
+    # 0.999933 over 83 faces — docs/tasks/fir/evidence/opencv-5-embedding-drift.md);
+    # that protocol measures cross-version match-band drift, not golden noise floor.
     meta = {
         "kind": "embedding_golden",
         "seed": EMBED_SEED,
@@ -111,8 +138,58 @@ def write_embedding_goldens() -> dict:
         "pre_norm_magnitude": float(batch.norms[0]),
         "model": MODEL_MANIFEST["sface"].file_name,
         "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        "cosine_min": 0.99999999,
+        **toolchain_provenance(),
     }
-    (FIXTURE_DIR / "embedding_meta.json").write_text(
+    (out_dir / "embedding_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return meta
+
+
+def write_composed_aligner_embedder_goldens(*, output_dir: Path | None = None) -> dict:
+    """Composed aligner→embedder golden (CVUP1-LC-03).
+
+    The synthetic_112_embedding path feeds a pre-baked crop that never passes
+    through cv2.warpAffine. This fixture starts from aligner_source_image +
+    landmarks, runs FivePointAligner.align, then embeds — the only path that
+    can catch aligner-driven embedding-space drift.
+    """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
+    img, landmarks = aligner_source_image()
+    # Prefer committed source fixtures when present so regen stays consistent
+    # with the aligner goldens already on disk.
+    src_path = FIXTURE_DIR / "aligner_source_image.npy"
+    lm_path = FIXTURE_DIR / "aligner_landmarks.npy"
+    if src_path.is_file() and lm_path.is_file():
+        img = np.load(src_path)
+        landmarks = np.load(lm_path)
+
+    crop = FivePointAligner().align(img, landmarks).crop
+    batch = OpenCVSFaceEmbedder().embed([crop])
+    emb = batch.vectors
+    emb_path = out_dir / "aligner_composed_embedding.npy"
+    np.save(emb_path, emb)
+
+    meta = {
+        "kind": "aligner_composed_embedding_golden",
+        "description": (
+            "Embedding of FivePointAligner.align(aligner_source_image, "
+            "aligner_landmarks).crop — composed aligner→embedder path so "
+            "warpAffine drift is visible at the embedding layer (CVUP1-LC-03)."
+        ),
+        "source_image": "aligner_source_image.npy",
+        "source_landmarks": "aligner_landmarks.npy",
+        "crop_sha256": _sha256_bytes(crop.tobytes()),
+        "embedding_shape": list(emb.shape),
+        "embedding_dim": int(emb.shape[1]),
+        "l2_norm": float(np.linalg.norm(emb[0])),
+        "pre_norm_magnitude": float(batch.norms[0]),
+        "model": MODEL_MANIFEST["sface"].file_name,
+        "model_sha256": MODEL_MANIFEST["sface"].sha256,
+        # N=50 composed runs: bit-exact. Same floor as synthetic golden.
+        "cosine_min": 0.99999999,
+        **toolchain_provenance(),
+    }
+    (out_dir / "aligner_composed_embedding_meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return meta
@@ -136,15 +213,16 @@ def oracle_align_crop(img: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
     return recognizer.alignCrop(img, face_box)
 
 
-def write_aligner_goldens() -> dict:
+def write_aligner_goldens(*, output_dir: Path | None = None) -> dict:
     """Write aligner goldens from FaceRecognizerSF.alignCrop (not FivePointAligner).
 
     Breaks circularity (TEST-06 / BR-01): fixtures come from the OpenCV oracle;
     unit tests check FivePointAligner against those fixtures and vs alignCrop.
     """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
     img, landmarks = aligner_source_image()
-    np.save(FIXTURE_DIR / "aligner_source_image.npy", img)
-    np.save(FIXTURE_DIR / "aligner_landmarks.npy", landmarks)
+    np.save(out_dir / "aligner_source_image.npy", img)
+    np.save(out_dir / "aligner_landmarks.npy", landmarks)
 
     oracle_crop = oracle_align_crop(img, landmarks)
     portable = FivePointAligner().align(img, landmarks)
@@ -155,8 +233,8 @@ def write_aligner_goldens() -> dict:
             "FivePointAligner crop diverges from FaceRecognizerSF.alignCrop oracle "
             f"(max abs pixel diff={max_diff}); refuse to write circular goldens"
         )
-    np.save(FIXTURE_DIR / "aligner_affine.npy", portable.affine)
-    np.save(FIXTURE_DIR / "aligner_crop.npy", oracle_crop)
+    np.save(out_dir / "aligner_affine.npy", portable.affine)
+    np.save(out_dir / "aligner_crop.npy", oracle_crop)
     crop_sha = _sha256_bytes(oracle_crop.tobytes())
     meta = {
         "kind": "aligner_golden",
@@ -168,8 +246,9 @@ def write_aligner_goldens() -> dict:
         "output_size": 112,
         "oracle": "cv2.FaceRecognizerSF.alignCrop",
         "oracle_model": MODEL_MANIFEST["sface"].file_name,
+        **toolchain_provenance(),
     }
-    (FIXTURE_DIR / "aligner_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out_dir / "aligner_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return meta
 
 
@@ -236,12 +315,13 @@ def cartoon_face_image(
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
 
-def write_detector_goldens() -> dict:
+def write_detector_goldens(*, output_dir: Path | None = None) -> dict:
     """Record detector bbox/landmarks/score golden if YuNet detects the cartoon.
 
     If detection fails under default thresholds, write a typed skip note instead
     of a fake always-passing golden (TEST-06, AGT-06).
     """
+    out_dir = FIXTURE_DIR if output_dir is None else Path(output_dir)
     procedure = {
         "size": 480,
         "seed": 19,
@@ -268,7 +348,7 @@ def write_detector_goldens() -> dict:
     )
     # Do not commit the full 480² RGB raster — rebuild from `procedure` in tests
     # (TEST-06 determinism; keep goldens small: .json only for detector).
-    image_npy = FIXTURE_DIR / "detector_cartoon_image.npy"
+    image_npy = out_dir / "detector_cartoon_image.npy"
     image_npy.unlink(missing_ok=True)
 
     det = OpenCVYuNetDetector(
@@ -276,8 +356,8 @@ def write_detector_goldens() -> dict:
         nms_threshold=DEFAULT_NMS_THRESHOLD,
     )
     detections = det.detect([img])[0]
-    skip_path = FIXTURE_DIR / "detector_golden_skip.json"
-    faces_path = FIXTURE_DIR / "detector_faces.json"
+    skip_path = out_dir / "detector_golden_skip.json"
+    faces_path = out_dir / "detector_faces.json"
 
     if not detections or detections[0].score < DEFAULT_SCORE_THRESHOLD:
         note = {
@@ -315,12 +395,27 @@ def write_detector_goldens() -> dict:
         "image_sha256": _sha256_bytes(img.tobytes()),
         "model": MODEL_MANIFEST["yunet"].file_name,
         "model_sha256": MODEL_MANIFEST["yunet"].sha256,
+        # Version-drift budgets (CVUP1-LC-03). Regenerated only when procedure/runtime
+        # changes; do not loosen without a fresh N-run noise-floor measurement.
+        # Measurement 2026-07-29, OpenCV 5.0.0, N=50 identical cartoon inputs:
+        #   max run-to-run | vs-golden abs: bbox=0, landmarks=0, score=0 (bit-exact).
+        # Noise floor = 0. Tolerance = 10 × float32 ULP @ ~300 px
+        #   ≈ 10*(300*2^-23) ≈ 3.6e-4 → 5e-4 px; score 10×ulp@1 ≈ 1e-5.
         "tolerances": {
-            "bbox_px": 2.0,
-            "landmarks_px": 2.0,
-            "score": 0.02,
+            "bbox_px": 5e-4,
+            "landmarks_px": 5e-4,
+            "score": 1e-5,
             # Absolute distance to drawn feature center (YuNet offset on soft blob).
             "landmark_nearest_px": 50.0,
+            "derivation": (
+                "N=50 identical-input OpenCVYuNetDetector runs (OpenCV 5.0.0, 2026-07-29): "
+                "max run-to-run and vs-golden abs were 0.0 for bbox_px, landmarks_px, and "
+                "score (bit-exact). Noise floor = 0. Tolerance = 10 × float32 ULP at "
+                "coordinate scale ~300 px ≈ 10*(300*2^-23) ≈ 3.6e-4, rounded to 5e-4 px "
+                "for bbox/landmarks; score = 10 × float32 ULP at ~1.0 ≈ 1.2e-6, rounded "
+                "to 1e-5. ~4000× tighter than the prior decorative 2.0 px / 0.02; a "
+                "1.9 px landmark shift fails."
+            ),
         },
         "procedure": procedure,
         "drawn_feature_coords": {k: [float(v[0]), float(v[1])] for k, v in drawn.items()},
@@ -330,26 +425,40 @@ def write_detector_goldens() -> dict:
             "landmarks_xy": d0.landmarks.astype(float).tolist(),
             "score": float(d0.score),
         },
+        **toolchain_provenance(),
     }
     skip_path.unlink(missing_ok=True)
     faces_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return payload
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for golden outputs (default: fixture dir next to this script).",
+    )
+    args = parser.parse_args(argv)
+    output_dir = FIXTURE_DIR if args.output_dir is None else Path(args.output_dir)
+
     # Prove models load before writing goldens that depend on them.
     load_verified_model("sface")
     load_verified_model("yunet")
-    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    emb_meta = write_embedding_goldens()
-    align_meta = write_aligner_goldens()
-    det_meta = write_detector_goldens()
+    emb_meta = write_embedding_goldens(output_dir=output_dir)
+    align_meta = write_aligner_goldens(output_dir=output_dir)
+    composed_meta = write_composed_aligner_embedder_goldens(output_dir=output_dir)
+    det_meta = write_detector_goldens(output_dir=output_dir)
 
     print("Wrote embedding goldens:", emb_meta["crop_sha256"][:12], "...")
     print("Wrote aligner goldens:", align_meta["crop_sha256"][:12], "...")
+    print("Wrote composed aligner→embedder goldens:", composed_meta["crop_sha256"][:12], "...")
     print("Detector golden:", det_meta.get("status"), det_meta.get("kind"))
     print("models_dir:", DEFAULT_MODELS_DIR)
+    print("output_dir:", output_dir)
     return 0
 
 

@@ -482,6 +482,11 @@ class LifecycleManagerTest extends TestCase
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'Projection tables should be created when version differs');
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint'),
+            'successful upgrade must stamp schema fingerprint'
+        );
     }
 
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
@@ -494,6 +499,10 @@ class LifecycleManagerTest extends TestCase
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'Projection tables should be created when version is missing');
         $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
     }
 
     public function testMaybeUpgradeOutboxSchemaCarriesRetryBackoffColumns(): void
@@ -519,20 +528,82 @@ class LifecycleManagerTest extends TestCase
         $this->assertMatchesRegularExpression('/^\s*first_failed_at datetime DEFAULT NULL,$/m', $outboxSql);
     }
 
-    public function testMaybeUpgradeIsStrictNoopWhenStoredVersionMatches(): void
+    /**
+     * DATA-03 / RLSE-05: fingerprint mismatch alone must re-run dbDelta even when
+     * ACX_VERSION is unchanged. This is the gate that would have landed assigned_at
+     * without a human version bump. Unlike string-vs-string parity tests, this
+     * assertion goes red against the pre-fix version-only early-return.
+     */
+    public function testMaybeUpgradeRunsWhenSchemaFingerprintDiffersWithMatchingVersion(): void
     {
         $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', 'stale-not-a-real-hash');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertNotEmpty(
+            $queries,
+            'fingerprint mismatch must trigger dbDelta even when version matches'
+        );
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $stamped = get_option('acx_schema_fingerprint');
+        $this->assertNotSame('stale-not-a-real-hash', $stamped);
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            $stamped,
+            'successful fingerprint-driven upgrade must stamp the current hash'
+        );
+        $this->assertSame(40, strlen((string) $stamped), 'fingerprint is sha1 hex');
+    }
+
+    public function testMaybeUpgradeIsStrictNoopWhenVersionAndFingerprintMatch(): void
+    {
+        // Stamp version + fingerprint via a successful upgrade first.
+        $this->manager->maybe_upgrade();
+        $GLOBALS['__ac_dbdelta_queries'] = [];
         $optionsBefore = $GLOBALS['__ac_options'];
 
         $this->manager->maybe_upgrade();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertSame([], $queries, 'Equal versions must not run dbDelta');
+        $this->assertSame([], $queries, 'matching version+fingerprint must not run dbDelta');
         $this->assertSame(
             $optionsBefore,
             $GLOBALS['__ac_options'],
-            'equal versions must not write options'
+            'matching version+fingerprint must not write options'
         );
+    }
+
+    public function testMembersSchemaCarriesAssignedAtDefaultForStrictModeAlter(): void
+    {
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $membersSql = '';
+        foreach ($queries as $sql) {
+            if (is_string($sql) && str_contains($sql, 'acx_identity_members')) {
+                $membersSql = $sql;
+                break;
+            }
+        }
+
+        $this->assertNotSame('', $membersSql, 'Expected identity_members CREATE TABLE on upgrade.');
+        $this->assertMatchesRegularExpression(
+            "/assigned_at datetime\\(6\\) NOT NULL DEFAULT '1970-01-01 00:00:00\\.000000'/",
+            $membersSql,
+            'STRICT_TRANS_TABLES / NO_ZERO_DATE requires an explicit DEFAULT on assigned_at'
+        );
+    }
+
+    public function testMaybeUpgradeSeedsAssignedAtFromCreatedAtForEpochDefault(): void
+    {
+        global $wpdb;
+
+        $this->manager->maybe_upgrade();
+
+        $backfill = $this->findQueryContaining($wpdb->queries, 'SET assigned_at = created_at');
+        $this->assertStringContainsString('1970-01-01 00:00:00.000000', $backfill);
     }
 
     public function testMaybeUpgradeDoesNotStampVersionWhenSchemaUpgradeIsSkipped(): void
@@ -554,6 +625,274 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'] ?? [], 'skipped upgrade must not run dbDelta');
         $this->assertFalse(get_option('acx_version'), 'skipped upgrade must not stamp acx_version');
+        $this->assertFalse(get_option('acx_schema_fingerprint'), 'skipped upgrade must not stamp fingerprint');
+    }
+
+    public function testUninstallRemovesSchemaFingerprintOption(): void
+    {
+        $this->setOption('acx_schema_fingerprint', 'some-hash');
+        $this->manager->uninstall();
+        $this->assertFalse(get_option('acx_schema_fingerprint'));
+    }
+
+    /**
+     * E21-14-BR-01 / RLSE-05 / OBS-08: dbDelta MySQL failure must not stamp version or
+     * fingerprint (that permanently suppresses retry). Next maybe_upgrade must re-run.
+     * TEST-15: goes red when maybe_create returns true after last_error.
+     */
+    public function testMaybeUpgradeDoesNotStampOnDbDeltaFailureAndRetries(): void
+    {
+        global $wpdb;
+
+        $mysqlError = "Invalid default value for 'assigned_at'";
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_dbdelta_fail_on_match'] = 'acx_identity_members';
+        $GLOBALS['__ac_dbdelta_fail_error'] = $mysqlError;
+        $GLOBALS['__ac_error_log'] = [];
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'failed schema apply must not stamp acx_version (would suppress retry)'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'failed schema apply must not stamp acx_schema_fingerprint'
+        );
+        $log = $this->getErrorLog();
+        $this->assertNotEmpty($log, 'schema apply failure must log via Telemetry (OBS-08)');
+        $joined = \implode("\n", $log);
+        $this->assertStringContainsString($mysqlError, $joined);
+        $this->assertSame('', $wpdb->last_error, 'last_error must be cleared so it is not attributed to later work');
+
+        // Clear the simulated failure; next request must retry the full apply.
+        unset($GLOBALS['__ac_dbdelta_fail_on_match'], $GLOBALS['__ac_dbdelta_fail_error']);
+        $GLOBALS['__ac_dbdelta_queries'] = [];
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $retryQueries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertNotEmpty($retryQueries, 'next maybe_upgrade must retry dbDelta after a failed apply');
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
+    }
+
+    public function testMaybeUpgradeDoesNotStampWhenDbDeltaSilentlyOmitsColumn(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_dbdelta_silent_skip_column'] = 'assigned_at';
+        $GLOBALS['__ac_error_log'] = [];
+
+        $this->manager->maybe_upgrade();
+        unset($GLOBALS['__ac_dbdelta_silent_skip_column']);
+
+        $this->assertSame('0.0.1-stale', get_option('acx_version'));
+        $this->assertFalse(get_option('acx_schema_fingerprint'));
+        $this->assertStringContainsString(
+            'wp_acx_identity_members',
+            \implode("\n", $this->getErrorLog())
+        );
+        $this->assertStringContainsString('assigned_at', \implode("\n", $this->getErrorLog()));
+    }
+
+    public function testMaybeUpgradeVerifiedSchemaStampsExactlyOnce(): void
+    {
+        $this->manager->maybe_upgrade();
+        $appliedCount = \count($GLOBALS['__ac_dbdelta_queries'] ?? []);
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+        $this->assertCount($appliedCount, $GLOBALS['__ac_dbdelta_queries'] ?? []);
+    }
+
+    /**
+     * E21-14-BR-01: seed backfill failure must also refuse to stamp (same permanent-success trap).
+     */
+    public function testMaybeUpgradeDoesNotStampWhenAssignedAtSeedFails(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($seedSql);
+        $wpdb->queryResults[trim((string) $seedSql)] = false;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'seed failure must not stamp acx_version'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'seed failure must not stamp fingerprint'
+        );
+    }
+
+    /**
+     * FIX-1 / OBS-08: a successful UPDATE that touches 0 rows while sentinels remain
+     * must refuse the fingerprint stamp (zero-row seed is not success).
+     * TEST-15: goes red when seed treats $wpdb->query() === 0 as success.
+     */
+    public function testMaybeUpgradeDoesNotStampWhenAssignedAtSeedTouchesZeroOfExpectedRows(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $countSql = $wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($countSql);
+        $this->assertIsString($seedSql);
+
+        // Pre-count reports sentinels exist; UPDATE "succeeds" but matches nothing.
+        $wpdb->queryResults[trim((string) $countSql)] = 60;
+        $wpdb->queryResults[trim((string) $seedSql)] = 0;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(
+            '0.0.1-stale',
+            get_option('acx_version'),
+            'zero-row seed against non-zero sentinel count must not stamp acx_version'
+        );
+        $this->assertFalse(
+            get_option('acx_schema_fingerprint'),
+            'zero-row seed against non-zero sentinel count must not stamp fingerprint'
+        );
+        $joined = \implode("\n", $this->getErrorLog());
+        $this->assertStringContainsString('row-count mismatch', $joined);
+        $this->assertStringContainsString('expected 60', $joined);
+        $this->assertStringContainsString('affected 0', $joined);
+    }
+
+    /**
+     * FIX-1 happy path: matching pre-count and affected rows still stamps.
+     */
+    public function testMaybeUpgradeStampsWhenAssignedAtSeedRowCountsMatch(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_version', '0.0.1-stale');
+        $GLOBALS['__ac_error_log'] = [];
+
+        $fallback = '1970-01-01 00:00:00.000000';
+        $fallbackSecond = '1970-01-01 00:00:00';
+        $countSql = $wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $seedSql = $wpdb->prepare(
+            'UPDATE %i SET assigned_at = created_at WHERE assigned_at = %s OR assigned_at = %s',
+            'wp_acx_identity_members',
+            $fallback,
+            $fallbackSecond
+        );
+        $this->assertIsString($countSql);
+        $this->assertIsString($seedSql);
+
+        $wpdb->queryResults[trim((string) $countSql)] = 3;
+        $wpdb->queryResults[trim((string) $seedSql)] = 3;
+        $wpdb->last_error = '';
+
+        $this->manager->maybe_upgrade();
+
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertSame(
+            $this->manager->compute_projection_schema_fingerprint(),
+            get_option('acx_schema_fingerprint')
+        );
+    }
+
+    /**
+     * E21-14-BR-02 / rg-005: every key in build_projection_schema_statements must be applied.
+     * Goes red if a table is added to the map but never passed to dbDelta.
+     */
+    public function testMaybeUpgradeAppliesEveryProjectionSchemaStatementKey(): void
+    {
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $this->assertNotEmpty($statements, 'schema statement map must not be empty');
+
+        $this->manager->maybe_upgrade();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertCount(
+            \count($statements),
+            $queries,
+            'dbDelta invocation count must equal statement map size (no orphan keys, no second list)'
+        );
+
+        $appliedSql = \implode("\n", $queries);
+        foreach (\array_keys($statements) as $key) {
+            $tableName = 'wp_' . $key;
+            $this->assertStringContainsString(
+                $tableName,
+                $appliedSql,
+                \sprintf('statement key "%s" must be applied via dbDelta (table %s)', $key, $tableName)
+            );
+        }
+    }
+
+    /**
+     * E21-14-BR-09: uninstall/reset owned-table list must include every schema map key
+     * (including acx_description_usage, previously omitted from OWNED_TABLE_SUFFIXES).
+     */
+    public function testUninstallDropsEveryProjectionSchemaTableIncludingDescriptionUsage(): void
+    {
+        global $wpdb;
+
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $this->manager->uninstall();
+
+        foreach (\array_keys($statements) as $key) {
+            $drop = 'DROP TABLE IF EXISTS `wp_' . $key . '`';
+            $this->assertContains(
+                $drop,
+                $wpdb->queries,
+                \sprintf('uninstall must drop schema table %s (single source of truth with statement map)', $key)
+            );
+        }
+
+        $this->assertContains(
+            'DROP TABLE IF EXISTS `wp_acx_description_usage`',
+            $wpdb->queries,
+            'acx_description_usage must not be orphaned on uninstall (BR-09)'
+        );
     }
 
     private function findQueryContaining(array $queries, string $needle): string

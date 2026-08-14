@@ -58,6 +58,13 @@ export function isCompleteFiniteBbox(bbox: BoundingBox | null | undefined): bbox
 }
 
 /**
+ * True when bbox is complete, finite, and has strictly positive extent — safe for cropTransformFor.
+ * Arrow form (unlike its siblings) so the file's func-style baseline does not grow.
+ */
+export const isCroppableBbox = (bbox: BoundingBox | null | undefined): bbox is BoundingBox =>
+  isCompleteFiniteBbox(bbox) && bbox.width > 0 && bbox.height > 0;
+
+/**
  * Scale/offset transform that crops `bbox` into a fixed square of `displaySize`.
  * Matches the pre-extraction FaceThumbnail math.
  */

@@ -6,9 +6,9 @@ import {
   SCAN_CONFLICTS_HREF,
   SCAN_DEAD_LETTER_HREF,
   buildWorkbenchOverlayHref,
-  parseMediaExpanded,
+  parsePanes,
   parseRunParam,
-  serializeMediaExpanded,
+  serializePanes,
   serializeRunParam,
   toDashboard,
   toDescriptionHistory,
@@ -17,6 +17,7 @@ import {
   toRoster,
   toRosterPerson,
   toWorkbench,
+  type PanesState,
 } from '../appLinks';
 
 /** Parse a contract href into path + URLSearchParams (round-trip helper). */
@@ -48,7 +49,6 @@ describe('appLinks builders', () => {
     expect(toWorkbench({ advanced: APP_LINK_VALUES.advancedOpen })).toBe(
       '#/workbench?advanced=open',
     );
-    expect(toWorkbench({ media: 'expanded' })).toBe('#/workbench?media=expanded');
     expect(toWorkbench({ tab: 'scan', panel: 'conflicts' })).toBe(
       '#/workbench?tab=scan&panel=conflicts',
     );
@@ -60,7 +60,6 @@ describe('appLinks builders', () => {
       panel: 'dead-letter',
       advanced: true,
       status: 'missing',
-      media: 'expanded',
     });
     const { path, params } = parseHref(href);
     expect(path).toBe('/workbench');
@@ -68,7 +67,6 @@ describe('appLinks builders', () => {
     expect(params.get(APP_LINK_PARAMS.panel)).toBe('dead-letter');
     expect(params.get(APP_LINK_PARAMS.advanced)).toBe(APP_LINK_VALUES.advancedOpen);
     expect(params.get(APP_LINK_PARAMS.status)).toBe('missing');
-    expect(params.get(APP_LINK_PARAMS.media)).toBe(APP_LINK_VALUES.mediaExpanded);
   });
 
   it('toRoster / toRosterPerson emit personFilter and person deep-links', () => {
@@ -139,29 +137,51 @@ describe('appLinks codecs', () => {
     expect(parseRunParam(serializeRunParam('  x  '))).toBe('x');
   });
 
-  it('parseMediaExpanded only treats expanded as true; never throws', () => {
-    expect(parseMediaExpanded(null)).toBe(false);
-    expect(parseMediaExpanded(undefined)).toBe(false);
-    expect(parseMediaExpanded('')).toBe(false);
-    expect(parseMediaExpanded('collapsed')).toBe(false);
-    expect(parseMediaExpanded('yes')).toBe(false);
-    expect(parseMediaExpanded(APP_LINK_VALUES.mediaExpanded)).toBe(true);
-  });
 
-  it('serializeMediaExpanded omits collapsed and round-trips expanded', () => {
-    expect(serializeMediaExpanded(false)).toBeNull();
-    expect(serializeMediaExpanded(true)).toBe(APP_LINK_VALUES.mediaExpanded);
-    expect(parseMediaExpanded(serializeMediaExpanded(true))).toBe(true);
-    expect(parseMediaExpanded(serializeMediaExpanded(false))).toBe(false);
-  });
 
-  it('builder + codec: media=expanded on workbench href parses true', () => {
-    const { params } = parseHref(toWorkbench({ media: 'expanded' }));
-    expect(parseMediaExpanded(params.get(APP_LINK_PARAMS.media))).toBe(true);
-  });
 
   it('builder + codec: run on history href parses back', () => {
     const { params } = parseHref(toDescriptionHistoryRun('batch-77'));
     expect(parseRunParam(params.get(APP_LINK_PARAMS.run))).toBe('batch-77');
+  });
+
+  // WBUX-5 Slice 1a — ?panes= codec [NAV-11]
+  it('parsePanes defaults missing/malformed to both; accepts valid states', () => {
+    expect(parsePanes(null)).toBe('both');
+    expect(parsePanes(undefined)).toBe('both');
+    expect(parsePanes('')).toBe('both');
+    expect(parsePanes('nonsense')).toBe('both');
+    expect(parsePanes(APP_LINK_VALUES.panesBoth)).toBe('both');
+    expect(parsePanes(APP_LINK_VALUES.panesControlCollapsed)).toBe('control-collapsed');
+    expect(parsePanes(APP_LINK_VALUES.panesLibraryCollapsed)).toBe('library-collapsed');
+  });
+
+  it('serializePanes omits both and round-trips collapsed states', () => {
+    expect(serializePanes('both')).toBeNull();
+    expect(serializePanes('control-collapsed')).toBe(APP_LINK_VALUES.panesControlCollapsed);
+    expect(serializePanes('library-collapsed')).toBe(APP_LINK_VALUES.panesLibraryCollapsed);
+
+    const states: PanesState[] = ['both', 'control-collapsed', 'library-collapsed'];
+    for (const state of states) {
+      const wire = serializePanes(state);
+      expect(parsePanes(wire)).toBe(state);
+    }
+  });
+
+  it('toWorkbench emits panes only for non-default collapsed states', () => {
+    expect(toWorkbench({ panes: 'both' })).toBe('#/workbench');
+    expect(toWorkbench({ panes: 'control-collapsed' })).toBe(
+      '#/workbench?panes=control-collapsed',
+    );
+    expect(toWorkbench({ tab: 'scan', panel: 'conflicts', panes: 'library-collapsed' })).toBe(
+      '#/workbench?tab=scan&panel=conflicts&panes=library-collapsed',
+    );
+
+    const { params } = parseHref(
+      toWorkbench({ panel: 'conflicts', panes: 'control-collapsed' }),
+    );
+    expect(params.get(APP_LINK_PARAMS.panel)).toBe('conflicts');
+    expect(params.get(APP_LINK_PARAMS.panes)).toBe('control-collapsed');
+    expect(parsePanes(params.get(APP_LINK_PARAMS.panes))).toBe('control-collapsed');
   });
 });

@@ -401,7 +401,7 @@ describe('RosterPage projection-aware workspace shell', () => {
                   identity_id: 'identity-1',
                   media_id: 101,
                   media_url: 'https://example.com/rep-alpha.jpg',
-                  bbox: [0.1, 0.2, 0.3, 0.4],
+                  bbox: { x: 10, y: 20, width: 30, height: 40 },
                   similarity: 0.97,
                 },
                 instances: [
@@ -409,14 +409,14 @@ describe('RosterPage projection-aware workspace shell', () => {
                     identity_id: 'identity-1',
                     media_id: 101,
                     media_url: 'https://example.com/instance-101.jpg',
-                    bbox: [0.1, 0.2, 0.3, 0.4],
+                    bbox: { x: 10, y: 20, width: 30, height: 40 },
                     similarity: 0.97,
                   },
                   {
                     identity_id: 'identity-2',
                     media_id: 102,
                     media_url: 'https://example.com/instance-102.jpg',
-                    bbox: [0.2, 0.3, 0.4, 0.5],
+                    bbox: { x: 20, y: 30, width: 40, height: 50 },
                     similarity: 0.89,
                   },
                 ],
@@ -437,53 +437,31 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
-    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster cluster-alpha' });
+    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster 1' });
 
     expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('src', 'https://example.com/rep-alpha.jpg');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('loading', 'lazy');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('width', '96');
-    expect(
-      within(clusterRegion).getByRole('img', { name: 'Representative face for cluster cluster-alpha' }),
-    ).toHaveAttribute('height', '96');
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'src',
-      'https://example.com/instance-101.jpg',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'loading',
-      'lazy',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'width',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 101 for cluster cluster-alpha' })).toHaveAttribute(
-      'height',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'src',
-      'https://example.com/instance-102.jpg',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'loading',
-      'lazy',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'width',
-      '96',
-    );
-    expect(within(clusterRegion).getByRole('img', { name: 'Instance 102 for cluster cluster-alpha' })).toHaveAttribute(
-      'height',
-      '96',
-    );
+    expect(within(evidenceSection).queryByText(/cluster-alpha/)).not.toBeInTheDocument();
+
+    const evidenceImages = [
+      { name: 'Representative face for Cluster 1', src: 'https://example.com/rep-alpha.jpg' },
+      { name: 'Instance 101 for Cluster 1', src: 'https://example.com/instance-101.jpg' },
+      { name: 'Instance 102 for Cluster 1', src: 'https://example.com/instance-102.jpg' },
+    ];
+    for (const { name, src } of evidenceImages) {
+      const image = within(clusterRegion).getByRole('img', { name });
+      expect(image).toHaveAttribute('src', src);
+      expect(image).toHaveAttribute('loading', 'lazy');
+      expect(image.closest('.acx-face-thumbnail')).not.toBeNull();
+      expect(image.closest('button')).not.toBeNull();
+      expect(image).not.toHaveAttribute('width', '96');
+    }
+
+    for (const role of ['img', 'button', 'region'] as const) {
+      expect(within(clusterRegion).queryByRole(role, { name: /cluster-alpha/i })).toBeNull();
+    }
+
+    expect(within(clusterRegion).getByText('Media 101')).toBeInTheDocument();
+    expect(within(clusterRegion).getByText('Media 102')).toBeInTheDocument();
   });
 
   it('[PAG-M5-S5] keeps evidence useful when only fallback similarity fields are available', () => {
@@ -498,7 +476,7 @@ describe('RosterPage projection-aware workspace shell', () => {
                 identity_id: 'identity-1',
                 media_id: 101,
                 media_url: 'https://example.com/rep-alpha.jpg',
-                bbox: [0.1, 0.2, 0.3, 0.4],
+                bbox: { x: 10, y: 20, width: 30, height: 40 },
                 similarity: 0.97,
               },
               instances: [
@@ -506,14 +484,14 @@ describe('RosterPage projection-aware workspace shell', () => {
                   identity_id: 'identity-1',
                   media_id: 101,
                   media_url: 'https://example.com/instance-101.jpg',
-                  bbox: [0.1, 0.2, 0.3, 0.4],
+                  bbox: { x: 10, y: 20, width: 30, height: 40 },
                   similarity: 0.89,
                 },
                 {
                   identity_id: 'identity-2',
                   media_id: 102,
                   media_url: null,
-                  bbox: [0.2, 0.3, 0.4, 0.5],
+                  bbox: { x: 20, y: 30, width: 40, height: 50 },
                   similarity: null,
                 },
               ],
@@ -541,7 +519,7 @@ describe('RosterPage projection-aware workspace shell', () => {
                 identity_id: 'identity-9',
                 media_id: 201,
                 media_url: 'https://example.com/rep-beta.jpg',
-                bbox: [0.2, 0.2, 0.5, 0.5],
+                bbox: { x: 20, y: 20, width: 50, height: 50 },
                 similarity: 0.91,
                 similarity_threshold: 0.85,
               },

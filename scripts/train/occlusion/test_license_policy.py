@@ -13530,6 +13530,20 @@ class TestF17UnderscoreNcSeedGluedException:
         pref = policy._package_denylist_hit("aabuffalo_l")
         assert pref is not None and pref.package_id == "buffalo_l"
         assert policy.audit_derived_from_model("aabuffalo_l").ok is True
+        # R20-07: A.4 door-only names that floor-hit via (c) / long-seed
+        # glue. A silent floor-miss here would keep the door admit.
+        for token, expected_pkg in (
+            ("antelope_v2x", "antelope_v2"),
+            ("buffalo_fp16x", "buffalo_fp16"),
+        ):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, (
+                f"{token!r} must stay floor-listed (R20-07)"
+            )
+            assert hit.package_id == expected_pkg, (
+                f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+            )
+            assert policy.audit_derived_from_model(token).ok is True
 
     def test_red_proof_mid_exception_unknown_rem_neuter_underscore(
         self, monkeypatch: pytest.MonkeyPatch

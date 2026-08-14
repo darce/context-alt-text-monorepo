@@ -172,21 +172,30 @@ def bootstrap_paired_delta(
     k = len(units)
     if k == 0:
         raise BenchError("bootstrap_empty_series", "no resampling units")
-    deltas: list[float] = []
+    defined: list[float] = []
+    n_undefined = 0
     for _ in range(B):
         picks = [units[rng.randrange(k)] for _ in range(k)]
         idxs = [i for unit in picks for i in unit]
         delta = _resample_delta(a, b, idxs, metric)
-        if delta is not None:
-            deltas.append(delta)
-    if not deltas:
+        if delta is None:
+            n_undefined += 1
+        else:
+            defined.append(delta)
+    if not defined:
         raise BenchError("bootstrap_undefined", "every resample had an undefined ratio")
+    # Sample space is all B draws. An undefined micro-ratio is treated as
+    # delta=0 (no evidence of a signed difference) so p and the percentile CI
+    # share that space. Zeros count in both tails (d<=0 and d>=0); a partial
+    # bootstrap can therefore only inflate two-sided p, never deflate it.
+    # n_used stays the defined-resample count; status "partial" when n_used<B
+    # so assign_tier can refuse CONFIRMATORY on an incomplete bootstrap.
+    deltas = defined + [0.0] * n_undefined
     lower = percentile_linear(deltas, 2.5)
     upper = percentile_linear(deltas, 97.5)
-    n_used = len(deltas)
+    n_used = len(defined)
     n_le = sum(1 for d in deltas if d <= 0.0)
     n_ge = sum(1 for d in deltas if d >= 0.0)
-    # Plan pin: p is over B, not the defined-resample subset.
     p_raw = 2.0 * min(n_le / B, n_ge / B)
     p_val = min(1.0, max(p_raw, 1.0 / (B + 1)))
     return BootstrapInterval(
@@ -275,8 +284,12 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
     if ctx.get("native_frame") or "frame_fir5_native" in str(cell):
         return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
     if ctx.get("primary"):
+        if str(ctx.get("bootstrap_status", "ok")) != "ok":
+            return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
         return CrossbenchTier.CONFIRMATORY, None
     if ctx.get("holm_significant", False):
+        if str(ctx.get("bootstrap_status", "ok")) != "ok":
+            return CrossbenchTier.DIRECTIONAL, "bootstrap_status"
         return CrossbenchTier.CONFIRMATORY, None
     return CrossbenchTier.DIRECTIONAL, "holm"
 
@@ -830,6 +843,14 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         interval = intervals.get(name)
         holm_info = holm.get(name)
         half_width: float | None = interval.ci_half_width if interval is not None else None
+        if interval is not None:
+            boot_status = interval.bootstrap_status
+        elif name in bootstrap_errors:
+            boot_status = bootstrap_errors[name].code
+        elif name in named:
+            boot_status = "not_computed"
+        else:
+            boot_status = "ok"
         ctx = {
             "named": name in named,
             "primary": name == pair.primary_endpoint,
@@ -842,6 +863,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             "exhaustiveness_ok": exhaustiveness_ok,
             "cluster_ok": True,
             "count_only": False,
+            "bootstrap_status": boot_status,
         }
         cell.pop("_is_detection", None)
         tier, reason = assign_tier(name, ctx)

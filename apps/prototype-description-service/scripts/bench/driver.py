@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,6 +148,9 @@ def run_cluster_phase(
             }
             (leg / "leg_outcome.json").write_text(json.dumps(outcome, indent=2), encoding="utf-8")
         return decision
+    latch = leg / "leg_outcome.json"
+    if latch.is_file():
+        latch.unlink()
     payload = client.clustering_job(tenant_id, mode="sync")
     (leg / "cluster_job.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return decision
@@ -187,9 +189,10 @@ def run_leg(
             if latest is not None and latest.get("outcome") == "ok":
                 outcomes.append(AnalyzeOutcome(entry.media_id, "ok", int(latest.get("attempt", 1)), True))
                 continue
-            prior = latest or store.latest(entry.media_id, "ingest")
-            attempt = int((prior or {}).get("attempt", 0)) + 1
-            if prior is not None and prior.get("outcome") == "failed" and attempt > pair.item_max_attempts:
+            # Analyze attempts are per-phase. An ingest-ok row must not seed
+            # the analyze counter (that burned the first analyze try).
+            attempt = int((latest or {}).get("attempt", 0)) + 1
+            if latest is not None and latest.get("outcome") == "failed" and attempt > pair.item_max_attempts:
                 outcomes.append(AnalyzeOutcome(entry.media_id, "failed", pair.item_max_attempts, True))
                 continue
             try:
@@ -321,7 +324,7 @@ def run_pair(
     images_dir: Path | str | None,
     out_dir: Path | str,
     clients: dict[str, Any] | None = None,
-    skip_preflight: bool = True,
+    skip_preflight: bool = False,
     preflight_transports: dict[str, Any] | None = None,
 ) -> Path:
     # Load without images_dir first so floor/superset fail before any media I/O.
@@ -337,12 +340,21 @@ def run_pair(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},
         )
+    preflight_results = None
     if not skip_preflight:
         from scripts.bench.preflight import preflight_pair
 
         keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
-        preflight_pair(pair, transports=preflight_transports, api_keys=keys)
+        # Abort before any media/run-dir writes; persist after init.
+        preflight_results = preflight_pair(pair, transports=preflight_transports, api_keys=keys)
     root = init_run_dir(out_dir, pair, manifest_path)
+    if preflight_results is not None:
+        from scripts.bench.preflight import write_preflight_json
+
+        for stack_id, result in preflight_results.items():
+            dest = root / "legs" / stack_id / "preflight.json"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            write_preflight_json(dest, result)
     if pair.baseline_manifest_path:
         _stamp_run_field(root, "baseline_superset_checked", True)
     deadline = time.monotonic() + pair.wall_clock_timeout_sec
@@ -419,13 +431,14 @@ def _analyze_job_failed(job: Any) -> bool:
 
 
 def _stack_media_id_from_job(job: Any, fallback: int) -> int:
+    del fallback  # never echo the manifest id into the join domain
     if not isinstance(job, dict):
-        return fallback
+        raise BenchError("stack_media_id_missing", "analyze job payload is not an object")
     for key in ("media_id", "stack_media_id"):
         value = job.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             return value
-    return fallback
+    raise BenchError("stack_media_id_missing", "analyze job payload has no media_id/stack_media_id")
 
 
 def _leg_complete(run_dir: Path, stack_id: str) -> bool:
@@ -489,7 +502,6 @@ def _package_sha(rel_path: str) -> str:
         )
         if sha:
             return sha
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        pass
-    print(f"warning: provenance sha unavailable for {tracked}; stamping unknown", file=sys.stderr)
-    return "unknown"
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+        raise BenchError("provenance_sha_unavailable", f"git sha unavailable for {tracked}") from exc
+    raise BenchError("provenance_sha_unavailable", f"git sha empty for {tracked}")

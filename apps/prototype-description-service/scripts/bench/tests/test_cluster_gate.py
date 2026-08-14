@@ -91,8 +91,9 @@ def test_export_aborts_when_cluster_job_missing(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     stack_id = "acx-dev-insightface"
     (run_dir / "legs" / stack_id).mkdir(parents=True)
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         require_cluster_success(run_dir, stack_id)
+    assert exc.value.code == "cluster_gate_refused"
 
 
 def test_refused_leg_does_not_mark_run_done(tmp_path: Path) -> None:
@@ -134,7 +135,50 @@ def test_export_aborts_when_cluster_job_non_success(tmp_path: Path) -> None:
     dest = run_dir / "legs" / stack_id
     dest.mkdir(parents=True)
     (dest / "cluster_job.json").write_text(json.dumps({"status": "failed"}), encoding="utf-8")
-    with pytest.raises(BenchError):
+    with pytest.raises(BenchError) as exc:
         require_cluster_success(run_dir, stack_id)
-    with pytest.raises(BenchError):
+    assert exc.value.code == "cluster_gate_refused"
+    with pytest.raises(BenchError) as exc:
         export_leg(FakeClient(), run_dir, stack_id)
+    assert exc.value.code == "cluster_gate_refused"
+
+
+def test_admit_clears_stale_refusal_latch(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    stack_id = "acx-dev-insightface"
+    items = run_dir / "legs" / stack_id / "items.jsonl"
+    items.parent.mkdir(parents=True)
+    items.write_text(json.dumps(_rec(1, outcome="ok", attempt=1)) + "\n", encoding="utf-8")
+    latch = run_dir / "legs" / stack_id / "leg_outcome.json"
+    latch.write_text(json.dumps({"error_code": "cluster_gate_refused"}), encoding="utf-8")
+    client = FakeClient()
+    decision = run_cluster_phase(run_dir, stack_id, client, tenant_id="t", item_max_attempts=2)
+    assert decision.admits is True
+    assert not latch.exists()
+    assert (run_dir / "legs" / stack_id / "cluster_job.json").is_file()
+
+
+def test_read_status_reports_failed_until_latch_cleared(tmp_path: Path) -> None:
+    from scripts.bench.driver import init_run_dir, read_status
+    from scripts.bench.stack_pair import load_stack_pair
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "status-run", pair, manifest)
+    stack_id = "acx-dev-insightface"
+    leg = out / "legs" / stack_id
+    (leg / "leg_outcome.json").write_text(
+        json.dumps({"error_code": "cluster_gate_refused"}), encoding="utf-8"
+    )
+    status = read_status(out)
+    assert status["legs"][stack_id]["phase"] == "failed"
+    (leg / "leg_outcome.json").unlink()
+    (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    exports = leg / "exports"
+    exports.mkdir()
+    for name in ("media_identities.json", "clusters.json", "cluster_members.json"):
+        (exports / name).write_text("[]", encoding="utf-8")
+    status2 = read_status(out)
+    assert status2["legs"][stack_id]["phase"] == "done"

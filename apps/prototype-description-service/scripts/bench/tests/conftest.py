@@ -226,6 +226,8 @@ def write_hashed_manifest(path: Path, images_dir: Path, media_ids: list[int]) ->
 class FakeClient:
     """In-memory RemoteSceneClient stand-in. Records analyze POSTs."""
 
+    STACK_ID_OFFSET = 10_000
+
     def __init__(self, *, analyze_ok: bool = True, cluster_status: str = "completed") -> None:
         self.analyze_calls: list[list[tuple[int, str, bytes]]] = []
         self.cluster_calls = 0
@@ -234,15 +236,21 @@ class FakeClient:
         self.identities: list[dict] = []
         self.cluster_list: list[dict] = [{"id": "cl1", "label": "Alice Q", "is_auto_label": False}]
         self.members: dict = {"members": []}
+        self._stack_ids: dict[int, int] = {}
 
     def analyze(self, images: list[tuple[int, str, bytes]]) -> str:
         self.analyze_calls.append(list(images))
         if not self.analyze_ok:
             raise RuntimeError("analyze failed")
+        for mid, _name, _data in images:
+            self._stack_ids[mid] = mid + self.STACK_ID_OFFSET
         return f"job-{len(self.analyze_calls)}"
 
     def wait_job(self, job_id: str) -> dict:
-        return {"status": "completed", "id": job_id}
+        last = self.analyze_calls[-1] if self.analyze_calls else []
+        mid = last[0][0] if last else 0
+        stack_mid = self._stack_ids.get(mid, mid + self.STACK_ID_OFFSET)
+        return {"status": "completed", "id": job_id, "media_id": stack_mid}
 
     def clustering_job(self, tenant_id: str, mode: str = "sync") -> dict:
         self.cluster_calls += 1

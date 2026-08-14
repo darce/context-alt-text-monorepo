@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import sys
 from pathlib import Path
 
@@ -192,6 +193,88 @@ def test_load_missing_opencv_major_is_unattested(tmp_path: Path) -> None:
     with pytest.raises(Exception) as exc:
         load_stack_pair(path)
     assert getattr(exc.value, "code", "") == "opencv_major_unattested"
+
+
+def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
+    from scripts.bench.driver import run_pair
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    with pytest.raises(PreflightError) as exc:
+        run_pair(
+            pair,
+            manifest_path=manifest,
+            images_dir=images,
+            out_dir=tmp_path / "out-default",
+            clients={
+                "acx-dev-insightface": FakeClient(),
+                "acx-dev-fir": FakeClient(),
+            },
+            preflight_transports={
+                "acx-dev-insightface": _transport(500, _health("insightface")),
+                "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
+            },
+        )
+    assert exc.value.code == "preflight_endpoint_missing"
+    assert not list((tmp_path / "out-default").rglob("items.jsonl"))
+
+
+def test_cli_run_fail_closed_aborts_before_media_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.bench import cross_stack_bench
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair_path = write_pair(tmp_path / "pair.yaml")
+    out = tmp_path / "cli-out"
+
+    def boom(*_a, **_k):
+        raise PreflightError("preflight_endpoint_missing", "cli seam")
+
+    monkeypatch.setattr("scripts.bench.preflight.preflight_pair", boom)
+    rc = cross_stack_bench.main(
+        ["run", "--config", str(pair_path), "--manifest", str(manifest), "--out", str(out)]
+    )
+    assert rc == 2
+    assert not (out / "run.json").exists()
+    assert not list(out.rglob("items.jsonl"))
+
+
+def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.driver import run_pair
+    from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = tmp_path / "out-prov"
+    run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients={
+            "acx-dev-insightface": FakeClient(),
+            "acx-dev-fir": FakeClient(),
+        },
+        preflight_transports={
+            "acx-dev-insightface": _transport(_ready(512), _health("insightface")),
+            "acx-dev-fir": _transport(_ready(128), _health("face_pipeline")),
+        },
+    )
+    for stack_id, dim, profile in (
+        ("acx-dev-insightface", 512, "insightface"),
+        ("acx-dev-fir", 128, "face_pipeline"),
+    ):
+        doc = json.loads((out / "legs" / stack_id / "preflight.json").read_text())
+        assert doc["opencv_major"] == 5
+        assert doc["opencv_major_source"] == "operator_attested"
+        assert doc["resolved_pgvector_dim"] == dim
+        assert doc["resolved_profile"] == profile
 
 
 def test_run_pair_preflights_when_not_skipped(tmp_path: Path) -> None:

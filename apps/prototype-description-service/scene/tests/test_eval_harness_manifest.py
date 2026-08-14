@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    AnnotationMode,
     GoldenEntry,
     GoldenManifest,
     ManifestError,
@@ -27,10 +28,28 @@ _MOCK_PROVENANCE = {
 }
 
 
+def _test_lineage(*, decision: str = "named", capture_session_id: str | None = "test-session") -> dict:
+    """Explicit test lineage — every field comes from this helper (rg-015)."""
+    return {
+        "labeler_id": "test-labeler",
+        "batch_id": "test-batch",
+        "capture_session_id": capture_session_id,
+        "pass_index": 0,
+        "labeled_at": "2026-08-14T00:00:00Z",
+        "tool_version": "test",
+        "saw_machine_proposals": False,
+        "label_source": "operator_blind",
+        "decision": decision,
+        "confidence": "high",
+        "arbitration_of": None,
+    }
+
+
 def _valid_manifest_dict() -> dict:
     img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
     return {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
         "roster": ["Alice Example", "Bob Example"],
         "entries": [
             {
@@ -208,11 +227,34 @@ def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
         load_manifest(_write_manifest(tmp_path, data))
 
 
-def test_face_count_below_labeled_rejected(tmp_path):  # HARM-04 / S3-01 schema
+def test_face_count_below_labeled_rejected(tmp_path):  # retired entry check re-expressed
+    """The retired _face_count_covers_labeled check is gone.
+
+    Re-expressed against the manifest-level coverage invariant: exhaustive
+    with face_count=3 and a single box fails boxes_cover_face_count.
+    """
     data = _valid_manifest_dict()
-    data["entries"][0]["face_count"] = 0  # but present_identities has 1 name
-    with pytest.raises(ManifestError, match="face_count"):
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 3
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(decision="named"),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    data["entries"][1]["face_boxes"] = []
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
 
 
 def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
@@ -333,7 +375,8 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
     assert not [w for w in caught if issubclass(w.category, RubricEmptyWarning)], (
         "seed corpus must define Must-Right/Easy-Wrong rubrics (RubricEmptyWarning fired)"
     )
-    assert manifest.manifest_version == 2
+    assert manifest.manifest_version == 3
+    assert manifest.annotation_mode.value == "roster_only"
     for entry in manifest.entries:
         pack = entry.context_pack
         assert pack.title or pack.caption or pack.description, f"{entry.path}: empty context_pack"
@@ -585,3 +628,170 @@ def test_valid_roster_cohorts_loads(tmp_path):
         "Bob Example": "cohort-b",
     }
     assert manifest.entries[0].demographic_cohort == "cohort-a"
+
+
+# --- FIR-11 Slice 2: annotation mode, coverage, lineage ----------------------
+
+
+def test_exhaustive_face_count_mismatch_fails_validation(tmp_path):
+    """Negative: exhaustive face_count=3 with one box fails coverage."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 3
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert "scene-001.jpg" in err.entry_path
+
+
+def test_roster_only_more_boxes_than_face_count_fails(tmp_path):
+    """roster_only allows fewer boxes than face_count, never more."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.2,
+            "y": 0.2,
+            "w": 0.1,
+            "h": 0.1,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        },
+        {
+            "x": 0.7,
+            "y": 0.7,
+            "w": 0.1,
+            "h": 0.1,
+            "name": None,
+            "source": "operator",
+            "lineage": _test_lineage(decision="stranger"),
+        },
+    ]
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "boxes_cover_face_count"
+    assert exc_info.value.entry_index == 0
+
+
+def test_box_without_lineage_fails_validation(tmp_path):
+    """Negative: a box without LabelLineage fails (PROV-01)."""
+    data = _valid_manifest_dict()
+    data["entries"][0]["face_boxes"] = [
+        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Alice Example", "source": "operator"}
+    ]
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "label_lineage_required"
+    assert err.entry_index == 0
+    assert "scene-001.jpg" in err.entry_path
+
+
+def test_exhaustive_box_missing_capture_session_id_fails(tmp_path):
+    """Negative: exhaustive box without capture_session_id fails."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(capture_session_id=None),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "capture_session_id_required"
+    assert err.entry_index == 0
+    assert "scene-001.jpg" in err.entry_path
+
+
+def test_missing_annotation_mode_fails(tmp_path):
+    data = _valid_manifest_dict()
+    del data["annotation_mode"]
+    with pytest.raises(ManifestError) as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "annotation_mode_required"
+
+
+def test_exhaustive_matching_boxes_loads(tmp_path):
+    """Positive pair: exhaustive with matching count and lineage+session loads."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    data["entries"][1]["face_boxes"] = []
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+    assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
+
+
+def test_retired_face_count_covers_labeled_is_gone():
+    """The retired GoldenEntry check must not exist (replaced, not composed)."""
+    assert not hasattr(GoldenEntry, "_face_count_covers_labeled")
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "scripts",
+        "eval_harness",
+        "manifest.py",
+    )
+    source = open(path, encoding="utf-8").read()
+    assert "_face_count_covers_labeled" not in source
+    assert "SUPPORTED_MANIFEST_VERSION = 3" in source
+
+
+def test_seed_corpus_is_roster_only():
+    manifest = _load_seed_manifest()
+    assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
+    assert manifest.manifest_version == 3
+
+
+def test_cli_gate_commands_do_not_reach_load_legacy_manifest():
+    """No cli.py gate command path imports or calls load_legacy_manifest."""
+    cli_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "scripts",
+        "eval_harness",
+        "cli.py",
+    )
+    source = open(cli_path, encoding="utf-8").read()
+    assert "load_legacy_manifest" not in source
+    assert "from .manifest import" in source
+    assert "load_manifest" in source

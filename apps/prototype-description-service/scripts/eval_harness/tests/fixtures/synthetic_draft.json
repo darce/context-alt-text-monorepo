@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
   "roster": [
     "Ada Example",
     "Bea Example",

@@ -178,6 +178,110 @@ def test_optimistic_native_maps_unlabeled_matched_cluster() -> None:
     assert e2e_opt.true_positives == 1
 
 
+def _optimistic_labeled_and_unlabeled_fixture() -> tuple:
+    """Unlabeled matched cluster + labeled row. bob_on_alice puts Bob on Alice's box."""
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q", "Bob Z"],
+        entries=[
+            GoldenEntry(
+                path="pair.jpg",
+                sha256="d" * 64,
+                media_id=4,
+                face_count=2,
+                present_identities=["Alice Q", "Bob Z"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[
+                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                ],
+            )
+        ],
+    )
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "unlabeled-alice",
+                "media_id": 40,
+                "cluster_id": "c-alice",
+                "cluster_label": "",
+                "is_auto_label": True,
+                "bbox": {"x": 200, "y": 200, "width": 200, "height": 200},
+            },
+            {
+                "identity_id": "labeled-bob",
+                "media_id": 40,
+                "cluster_id": "c-bob",
+                "cluster_label": "Bob Z",
+                "is_auto_label": False,
+                "bbox": {"x": 600, "y": 200, "width": 200, "height": 200},
+            },
+        ],
+        "clusters": [
+            {"id": "c-alice", "label": "", "is_auto_label": True},
+            {"id": "c-bob", "label": "Bob Z", "is_auto_label": False},
+        ],
+        "cluster_members": [],
+    }
+    join = {4: {"stack_media_id": 40, "image_width": 1000, "image_height": 1000}}
+    return manifest, export, join
+
+
+def test_optimistic_native_and_e2e_name_sets_agree() -> None:
+    from scripts.bench.export_map import map_cluster_labels_optimistic
+
+    manifest, export, join = _optimistic_labeled_and_unlabeled_fixture()
+    _det, id_n = to_face_metric_inputs(export, manifest, join, "optimistic", frame="native")
+    _det, id_e = to_face_metric_inputs(export, manifest, join, "optimistic", frame="e2e")
+    native_names = set(id_n[0].predicted)
+    e2e_names = set(id_e[0].predicted)
+    assert native_names == e2e_names == {"Alice Q", "Bob Z"}
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    assert set(mapped.get(40, [])) == {"Alice Q", "Bob Z"}
+
+
+def test_optimistic_native_does_not_override_labeled_row() -> None:
+    """A labeled pred keeps its primary name even when geometry maps to another GT."""
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q", "Bob Z"],
+        entries=[
+            GoldenEntry(
+                path="override.jpg",
+                sha256="e" * 64,
+                media_id=5,
+                face_count=1,
+                present_identities=["Alice Q"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+            )
+        ],
+    )
+    export = {
+        "media_identities": [
+            {
+                "identity_id": "labeled-bob",
+                "media_id": 50,
+                "cluster_id": "c-bob",
+                "cluster_label": "Bob Z",
+                "is_auto_label": False,
+                "bbox": {"x": 200, "y": 200, "width": 200, "height": 200},
+            }
+        ],
+        "clusters": [{"id": "c-bob", "label": "Bob Z", "is_auto_label": False}],
+        "cluster_members": [],
+    }
+    join = {5: {"stack_media_id": 50, "image_width": 1000, "image_height": 1000}}
+    _det, id_n = to_face_metric_inputs(export, manifest, join, "optimistic", frame="native")
+    assert id_n[0].predicted == ["Bob Z"]
+
+
 def test_optimistic_maps_unlabeled_cluster_by_overlap() -> None:
     from scripts.bench.export_map import map_cluster_labels_optimistic
 

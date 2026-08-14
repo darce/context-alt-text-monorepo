@@ -261,6 +261,58 @@ def _centre_in_box(cx: float, cy: float, box_tl: tuple[float, float, float, floa
     return x1 <= cx <= x1 + w and y1 <= cy <= y1 + h
 
 
+def _optimistic_names_by_pred_index(
+    entry: GoldenEntry,
+    rows: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> dict[int, str]:
+    """Hungarian + centre-in-box GT name per prediction index (optimistic only)."""
+    gt_named = [(b, gt_centre_to_tl(b.x, b.y, b.w, b.h)) for b in entry.face_boxes if b.name]
+    if not gt_named:
+        return {}
+    pred_tl: list[tuple[float, float, float, float]] = []
+    pred_idx: list[int] = []
+    for pi, row in enumerate(rows):
+        bbox = row.get("bbox") or {}
+        if set(bbox) != _PRED_KEYS:
+            continue
+        pred_tl.append(
+            pred_px_to_norm_tl(
+                float(bbox["x"]),
+                float(bbox["y"]),
+                float(bbox["width"]),
+                float(bbox["height"]),
+                width,
+                height,
+            )
+        )
+        pred_idx.append(pi)
+    if not pred_tl:
+        return {}
+    gt_only = [tl for _, tl in gt_named]
+    pairs, _ = hungarian_iou_matches(gt_only, pred_tl, threshold=IOU_MATCH_THRESHOLD)
+    assigned_gt: set[int] = {p[1] for p in pairs}
+    assigned_pred: set[int] = {p[0] for p in pairs}
+    out: dict[int, str] = {}
+    for pi, gi, _iou in pairs:
+        name = gt_named[gi][0].name
+        if name:
+            out[pred_idx[pi]] = name
+    for gi, (box, tl) in enumerate(gt_named):
+        if gi in assigned_gt or not box.name:
+            continue
+        cx, cy = box.x, box.y
+        for pi, ptl in enumerate(pred_tl):
+            if pi in assigned_pred:
+                continue
+            if _centre_in_box(cx, cy, ptl) or _centre_in_box(ptl[0] + ptl[2] / 2, ptl[1] + ptl[3] / 2, tl):
+                out[pred_idx[pi]] = box.name
+                assigned_pred.add(pi)
+                break
+    return out
+
+
 def map_cluster_labels_optimistic(
     export: Any,
     manifest: GoldenManifest,
@@ -405,10 +457,15 @@ def to_face_metric_inputs(
             matched_pred = set(match.matched_pred_indices)
             predicted_native: list[str] = []
             roster_for_row = roster or [n for e in manifest.entries for n in e.present_identities]
+            opt_by_pred: dict[int, str] = {}
+            if "optimistic" in label_map:
+                opt_by_pred = _optimistic_names_by_pred_index(entry, rows_sorted, width, height)
             for pi, row in enumerate(rows_sorted):
                 if pi not in matched_pred:
                     continue
                 name = _primary_name_for_row(row, roster_for_row)
+                if name is None:
+                    name = opt_by_pred.get(pi)
                 if name and name not in predicted_native:
                     predicted_native.append(name)
             matched_boxes = [

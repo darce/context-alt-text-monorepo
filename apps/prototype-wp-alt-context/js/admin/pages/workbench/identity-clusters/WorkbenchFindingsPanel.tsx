@@ -22,6 +22,7 @@ import {
   type WorkbenchFindingPreview,
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
+import { gatedClusterCopy, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
 /** Panel-level fallback chain (design B.2). First match wins. */
@@ -108,7 +109,7 @@ const FindingsPreviewMissing = (): React.JSX.Element => (
   <div
     className="acx-findings-panel__preview acx-findings-panel__preview--missing"
     role="img"
-    aria-label={__('Preview image unavailable', 'alt-context')}
+    aria-label={REPRESENTATIVE_VOCABULARY.imageUnavailable}
     style={{ width: FINDINGS_PREVIEW_SIZE_PX, height: FINDINGS_PREVIEW_SIZE_PX }}
   >
     <ImageOff aria-hidden="true" size={20} />
@@ -339,15 +340,7 @@ export const WorkbenchFindingsPanel = ({
             <>
               <p id="acx-findings-panel-repair-copy" className="acx-findings-panel__status">
                 <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-                {sprintf(
-                  _n(
-                    '%d group missing face data',
-                    '%d groups missing face data',
-                    zeroEvidenceClusterCount,
-                    'alt-context',
-                  ),
-                  zeroEvidenceClusterCount,
-                )}
+                {gatedClusterCopy(zeroEvidenceClusterCount)}
               </p>
               <p className="acx-findings-panel__hint">
                 {__('They are hidden from review until their faces sync.', 'alt-context')}

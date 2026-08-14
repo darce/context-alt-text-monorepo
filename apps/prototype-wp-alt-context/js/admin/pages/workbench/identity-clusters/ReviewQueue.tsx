@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
@@ -52,6 +52,7 @@ import {
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
+import { gatedClusterCopy } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
@@ -582,17 +583,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
         } else if (findings.zeroEvidenceClusterCount > 0) {
           // REV1-02 / B.3: S2-gated zeros leave the queue empty while work exists.
-          setLiveMessage(
-            sprintf(
-              _n(
-                '%d cluster needs face data resync',
-                '%d clusters need face data resync',
-                findings.zeroEvidenceClusterCount,
-                'alt-context',
-              ),
-              findings.zeroEvidenceClusterCount,
-            ),
-          );
+          setLiveMessage(gatedClusterCopy(findings.zeroEvidenceClusterCount));
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }
@@ -1231,15 +1222,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : findings.zeroEvidenceClusterCount > 0 ? (
                 <p className="acx-review-queue__empty" data-testid="acx-review-queue-repair">
-                  {sprintf(
-                    _n(
-                      '%d cluster needs face data resync',
-                      '%d clusters need face data resync',
-                      findings.zeroEvidenceClusterCount,
-                      'alt-context',
-                    ),
-                    findings.zeroEvidenceClusterCount,
-                  )}
+                  {gatedClusterCopy(findings.zeroEvidenceClusterCount)}
                 </p>
               ) : (
                 <p className="acx-review-queue__empty">

@@ -235,7 +235,17 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
     cluster2Rail.focus();
     await user.keyboard('{ArrowRight}');
-    expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-b2', CLUSTER_B));
+    expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-b1', CLUSTER_B));
+    expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('status', { name: 'Face selection announcements' })).toHaveTextContent(
+      'Selected face 1 of 2',
+    );
+    expect(screen.getByRole('status', { name: 'Face selection announcements' })).not.toHaveTextContent(
+      'Selected face 3 of 4',
+    );
     expect(cluster1Rail.getAttribute('aria-activedescendant')).toBeNull();
     expect(cluster2Rail.getAttribute('aria-activedescendant')).toBeTruthy();
   });
@@ -585,14 +595,20 @@ describe('PersonWorkspacePanel face scrubber', () => {
   });
 
   it('uses activedescendant listbox semantics with non-tabbable options', () => {
-    renderWorkspace();
+    renderWorkspace(twoClusterEntry());
 
-    const rail = screen.getByRole('listbox', { name: 'Face instances for Cluster 1' });
-    expect(rail).toHaveAttribute('tabIndex', '0');
-    const options = screen.getAllByRole('option');
-    expect(options.length).toBeGreaterThan(0);
-    for (const option of options) {
-      expect(option).toHaveAttribute('tabIndex', '-1');
+    const rails = [
+      screen.getByRole('listbox', { name: 'Face instances for Cluster 1' }),
+      screen.getByRole('listbox', { name: 'Face instances for Cluster 2' }),
+    ];
+    expect(rails).toHaveLength(2);
+    for (const rail of rails) {
+      expect(rail).toHaveAttribute('tabIndex', '0');
+      const options = within(rail).getAllByRole('option');
+      expect(options.length).toBeGreaterThan(0);
+      for (const option of options) {
+        expect(option).toHaveAttribute('tabIndex', '-1');
+      }
     }
     expect(screen.getByText('Selected')).toBeInTheDocument();
   });

@@ -193,17 +193,17 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   }, [selectedId, visibleIds]);
 
   const selectFace = React.useCallback(
-    (faceId: string) => {
+    (faceId: string, railFaceIds: readonly string[]) => {
       select(faceId);
       writeFace(faceId, personUuid);
-      const nextIndex = visibleIds.indexOf(faceId);
+      const nextIndex = railFaceIds.indexOf(faceId);
       if (nextIndex >= 0) {
         announce(
-          sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, visibleIds.length),
+          sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, railFaceIds.length),
         );
       }
     },
-    [announce, personUuid, select, visibleIds, writeFace],
+    [announce, personUuid, select, writeFace],
   );
 
   const canPin = Boolean(selectedFace && !selectedFace.isRepresentative && selectedFace.clusterId);

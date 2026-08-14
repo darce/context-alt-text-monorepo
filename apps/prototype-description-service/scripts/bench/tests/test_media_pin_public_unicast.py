@@ -190,6 +190,71 @@ def test_https_get_pinned_connects_to_pinned_ip(monkeypatch: pytest.MonkeyPatch)
     assert connects == [("203.0.113.10", 443)]
 
 
+def test_redirect_second_hop_connects_to_re_pinned_ip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Connect-level two-hop: second host is re-pinned, not reused from hop 1."""
+    from scripts.bench import corpus as corpus_mod
+
+    reset_media_host_pins()
+    url_map = tmp_path / "urls.json"
+    url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
+    connects: list[tuple[str, int]] = []
+
+    class FakeHTTPS:
+        def __init__(self, host: str, port: int = 443, timeout: float | None = None, context=None) -> None:
+            self.host = host
+            self.port = port
+            self.sock = None
+
+        def request(self, method: str, path: str, headers: dict | None = None) -> None:
+            if self.sock is None:
+                self.connect()
+
+        def getresponse(self):
+            host = self.host
+
+            class _Resp:
+                def __init__(self) -> None:
+                    if host == "media.example.com":
+                        self.status = 302
+                        self._headers = [("Location", "https://cdn.example.com/meta")]
+                        self._body = b""
+                    else:
+                        self.status = 200
+                        self._headers = []
+                        self._body = _JPEG
+
+                def read(self) -> bytes:
+                    return self._body
+
+                def getheaders(self) -> list:
+                    return self._headers
+
+            return _Resp()
+
+        def close(self) -> None:
+            return None
+
+    def fake_create_connection(address: tuple, timeout: object = None):
+        connects.append(address)
+        return object()
+
+    def resolver(host: str) -> list[str]:
+        return ["203.0.113.20"] if host == "cdn.example.com" else ["203.0.113.10"]
+
+    monkeypatch.setattr(corpus_mod, "HTTPSConnection", FakeHTTPS)
+    monkeypatch.setattr(corpus_mod.socket, "create_connection", fake_create_connection)
+    monkeypatch.setattr(corpus_mod.ssl.SSLContext, "wrap_socket", lambda self, sock, server_hostname=None: sock)
+    data = resolve_media_bytes(
+        _entry(),
+        images_dir=tmp_path / "missing",
+        url_map_path=url_map,
+        allow_private_source=True,
+        resolver=resolver,
+    )
+    assert data == _JPEG
+    assert connects == [("203.0.113.10", 443), ("203.0.113.20", 443)]
+
+
 def test_protocol_relative_redirect_is_re_pinned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     reset_media_host_pins()
     url_map = tmp_path / "urls.json"
@@ -241,10 +306,18 @@ def test_http_redirect_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_multi_a_pin_is_deterministic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """sorted()[0] vs next(iter(set)) — ReverseIterSet makes the revert red on every hash seed."""
     reset_media_host_pins()
     url_map = tmp_path / "urls.json"
     url_map.write_text('{"remote.jpg": "https://media.example.com/remote.jpg"}', encoding="utf-8")
     pinned_seen: list[str] = []
+
+    class ReverseIterSet(set):
+        def __iter__(self):
+            return iter(sorted(super().__iter__(), reverse=True))
+
+    def reverse_pin(host: str, addresses: set[str]) -> set[str]:
+        return ReverseIterSet(addresses)
 
     def fake_get(host: str, port: int, path: str, pinned_ip: str):
         pinned_seen.append(pinned_ip)
@@ -253,6 +326,7 @@ def test_multi_a_pin_is_deterministic(tmp_path: Path, monkeypatch: pytest.Monkey
     def resolver(_host: str) -> list[str]:
         return ["203.0.113.20", "203.0.113.10"]
 
+    monkeypatch.setattr("scripts.bench.corpus.pin_media_hosts", reverse_pin)
     monkeypatch.setattr("scripts.bench.corpus._https_get_pinned", fake_get)
     resolve_media_bytes(
         _entry(),

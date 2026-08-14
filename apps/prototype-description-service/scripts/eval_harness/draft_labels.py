@@ -91,9 +91,9 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "provenance": {
-                    "source": "operator",
-                    "license": "mock_entity",
-                    "note": "synthetic mock_images draft",
+                    "source": "fixture",
+                    "license": "fixture",
+                    "note": "vendored eval-corpus fixture",
                 },
             }
         )

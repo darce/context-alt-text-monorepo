@@ -62,6 +62,18 @@ def test_unmatched_tokens_flagged_for_operator_review(fixture_dirs):
     assert "glacier.jpg" in joined
 
 
+def test_draft_stamps_fixture_provenance(fixture_dirs):
+    """Draft default is fixture/fixture — not operator/mock_entity (PROV-01)."""
+    draft, _notes = generate_draft_manifest(str(fixture_dirs))
+    assert draft["entries"]
+    for entry in draft["entries"]:
+        assert entry["provenance"] == {
+            "source": "fixture",
+            "license": "fixture",
+            "note": "vendored eval-corpus fixture",
+        }
+
+
 def test_draft_passes_strict_schema(fixture_dirs, tmp_path):
     import json
 

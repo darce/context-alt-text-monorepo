@@ -4,7 +4,11 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as buildNamingOptionsModule from '../buildNamingOptions';
-import { namingOptionValue } from '../buildNamingOptions';
+import {
+  NAMING_GROUP_ALL_LABELS,
+  NAMING_GROUP_SUGGESTED,
+  namingOptionValue,
+} from '../buildNamingOptions';
 import {
   resolveClusterMatchFromOptions,
   selectClusterSuggestions,
@@ -46,9 +50,9 @@ describe('selectClusterSuggestions', () => {
     });
 
     expect(options.map((option) => ({ label: option.label, group: option.group, source: option.source }))).toEqual([
-      { label: 'Alice', group: 'Suggested', source: 'cluster' },
-      { label: 'alice', group: 'All Labels', source: 'person' },
-      { label: 'Bob', group: 'All Labels', source: 'cluster' },
+      { label: 'Alice', group: NAMING_GROUP_SUGGESTED, source: 'cluster' },
+      { label: 'alice', group: NAMING_GROUP_ALL_LABELS, source: 'person' },
+      { label: 'Bob', group: NAMING_GROUP_ALL_LABELS, source: 'cluster' },
     ]);
     expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c1'));
   });
@@ -70,8 +74,8 @@ describe('selectClusterSuggestions', () => {
     });
 
     expect(options).toHaveLength(2);
-    expect(options[0]).toMatchObject({ label: 'Alice', group: 'Suggested', source: 'cluster' });
-    expect(options[1]).toMatchObject({ label: 'Alice', group: 'All Labels', source: 'person' });
+    expect(options[0]).toMatchObject({ label: 'Alice', group: NAMING_GROUP_SUGGESTED, source: 'cluster' });
+    expect(options[1]).toMatchObject({ label: 'Alice', group: NAMING_GROUP_ALL_LABELS, source: 'person' });
   });
 
   it('dedupes cluster-vs-cluster only (All Labels cluster suppressed by Suggested)', () => {
@@ -170,6 +174,75 @@ describe('selectClusterSuggestions', () => {
     );
     expect(match).toEqual({ id: 'c-bob', label: 'Bob', identityCount: 2, suggestionId: undefined });
   });
+
+  it('BR-17: empty-label filter + section-2 search filter/dedupe with non-zero clusters', () => {
+    // Predicted first failure: empty/whitespace identity labels appear; All Labels includes
+    // search miss (Bob) or duplicate Alice cluster not suppressed by Suggested.
+    const options = selectClusterSuggestions({
+      identityProjection: [
+        {
+          identityId: 'i0',
+          clusterId: 'c-empty',
+          label: '',
+          similarity: 0.99,
+          identityCount: 1,
+        },
+        {
+          identityId: 'i1',
+          clusterId: 'c1',
+          label: 'Alice',
+          similarity: 0.9,
+          identityCount: 2,
+        },
+        {
+          identityId: 'i2',
+          clusterId: 'c-ws',
+          label: '   ',
+          similarity: 0.88,
+          identityCount: 1,
+        },
+        {
+          identityId: 'i3',
+          clusterId: 'c2',
+          label: 'Alicia',
+          similarity: 0.7,
+          identityCount: 3,
+        },
+      ],
+      namingOptions: [
+        {
+          value: namingOptionValue('cluster', 'c3'),
+          label: 'Alice',
+          source: 'cluster',
+          identityCount: 4,
+        },
+        {
+          value: namingOptionValue('cluster', 'c4'),
+          label: 'Albert',
+          source: 'cluster',
+          identityCount: 5,
+        },
+        {
+          value: namingOptionValue('cluster', 'c5'),
+          label: 'Bob',
+          source: 'cluster',
+          identityCount: 6,
+        },
+        { value: namingOptionValue('person', 1), label: 'Alana', source: 'person' },
+      ],
+      labelInput: 'Al',
+    });
+
+    expect(options.map((option) => ({ label: option.label, group: option.group, source: option.source }))).toEqual([
+      { label: 'Alice', group: NAMING_GROUP_SUGGESTED, source: 'cluster' },
+      { label: 'Alicia', group: NAMING_GROUP_SUGGESTED, source: 'cluster' },
+      { label: 'Albert', group: NAMING_GROUP_ALL_LABELS, source: 'cluster' },
+      { label: 'Alana', group: NAMING_GROUP_ALL_LABELS, source: 'person' },
+    ]);
+    expect(options.some((option) => option.label === 'Bob')).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c-empty'))).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c3'))).toBe(false);
+  });
 });
 
 describe('useClusterSuggestions', () => {
@@ -266,7 +339,7 @@ describe('useClusterSuggestions', () => {
     expect(result.current.options.map((option) => option.label)).toEqual(
       expect.arrayContaining(['Alice', 'Albert', 'Alana', 'Alicia']),
     );
-    expect(result.current.options[0].group).toBe('Suggested');
+    expect(result.current.options[0].group).toBe(NAMING_GROUP_SUGGESTED);
     expect(result.current.options[0].value).toBe(namingOptionValue('cluster', 'c1'));
     expect(result.current.options.some((option) => option.source === 'person' && option.label === 'Alicia')).toBe(true);
 
@@ -303,7 +376,7 @@ describe('useClusterSuggestions', () => {
 
     await waitFor(() => expect(result.current.options).toHaveLength(3));
     expect(result.current.options.map((option) => option.label)).toEqual(['Alicia', 'Alice', 'Alison']);
-    expect(result.current.options.every((option) => option.group === 'Suggested')).toBe(true);
+    expect(result.current.options.every((option) => option.group === NAMING_GROUP_SUGGESTED)).toBe(true);
 
     queryClient.clear();
   });

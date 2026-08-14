@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   cropTransformFor,
   isCompleteFiniteBbox,
+  isCroppableBbox,
   isUsableNaturalSize,
   overlayRectFor,
 } from '../faceGeometry';
@@ -135,5 +136,31 @@ describe('isUsableNaturalSize / isCompleteFiniteBbox', () => {
     expect(isCompleteFiniteBbox(null)).toBe(false);
     expect(isCompleteFiniteBbox({ x: 1, y: 2 } as unknown as BoundingBox)).toBe(false);
     expect(isCompleteFiniteBbox({ x: 1, y: 2, width: Number.NaN, height: 4 })).toBe(false);
+  });
+
+  it('isCompleteFiniteBbox accepts the PHP zero-extent placeholder {0,0,0,0}', () => {
+    // trait-maps-response-fields.php emits this when bbox_json is missing/undecodable.
+    expect(isCompleteFiniteBbox({ x: 0, y: 0, width: 0, height: 0 })).toBe(true);
+  });
+});
+
+describe('isCroppableBbox', () => {
+  it('accepts complete finite boxes with strictly positive extent', () => {
+    expect(isCroppableBbox({ x: 1, y: 2, width: 3, height: 4 })).toBe(true);
+  });
+
+  it('rejects null, incomplete, and non-finite boxes', () => {
+    expect(isCroppableBbox(null)).toBe(false);
+    expect(isCroppableBbox(undefined)).toBe(false);
+    expect(isCroppableBbox({ x: 1, y: 2, width: Number.NaN, height: 4 })).toBe(false);
+  });
+
+  it('rejects the PHP zero-extent placeholder {0,0,0,0} (cropTransformFor would paint a blank)', () => {
+    expect(isCroppableBbox({ x: 0, y: 0, width: 0, height: 0 })).toBe(false);
+  });
+
+  it('rejects zero width or zero height even when the other edge is positive', () => {
+    expect(isCroppableBbox({ x: 0, y: 0, width: 0, height: 10 })).toBe(false);
+    expect(isCroppableBbox({ x: 0, y: 0, width: 10, height: 0 })).toBe(false);
   });
 });

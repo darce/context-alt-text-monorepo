@@ -26,8 +26,8 @@ CONFIRM="${CONFIRM:-}"
 
 usage() {
   cat <<'EOF' >&2
-Usage: ENV=dev|staging CONFIRM=RESET scripts/deploy/db-reset-remote.sh [--dry-run]
-   or: make db-reset-remote ENV=dev|staging CONFIRM=RESET [DRY_RUN=1]
+Usage: ENV=dev|dev-fir|staging CONFIRM=RESET scripts/deploy/db-reset-remote.sh [--dry-run]
+   or: make db-reset-remote ENV=dev|dev-fir|staging CONFIRM=RESET [DRY_RUN=1]
 
 Hard refusals (exit 2): ENV=prod, unknown ENV, missing/incorrect CONFIRM=RESET.
 EOF
@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$ENV" ]]; then
-  refuse "ENV is required (dev|staging). Prod has no reset path."
+  refuse "ENV is required (dev|dev-fir|staging). Prod has no reset path."
 fi
 
 if [[ "$ENV" == "prod" ]]; then
@@ -70,6 +70,13 @@ case "$ENV" in
     PG_DB="alt_context_dev"
     HEALTH_URL="https://dev.api.altcontext.com/health"
     ;;
+  dev-fir)
+    PG_CONTAINER="acx-dev-fir-postgres-1"
+    API_CONTAINER="acx-dev-fir-api-1"
+    PG_USER="acx_dev_fir"
+    PG_DB="alt_context_dev_fir"
+    HEALTH_URL="https://fir.dev.api.altcontext.com/health"
+    ;;
   staging)
     PG_CONTAINER="acx-staging-postgres-1"
     API_CONTAINER="acx-staging-api-1"
@@ -78,7 +85,7 @@ case "$ENV" in
     HEALTH_URL="https://staging.api.altcontext.com/health"
     ;;
   *)
-    refuse "ENV must be dev|staging (got: $ENV). Prod has no reset path."
+    refuse "ENV must be dev|dev-fir|staging (got: $ENV). Prod has no reset path."
     ;;
 esac
 

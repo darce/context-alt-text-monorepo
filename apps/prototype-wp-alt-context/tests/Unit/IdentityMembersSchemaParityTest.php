@@ -7,18 +7,18 @@ namespace AltContext\Tests\Unit;
 use AltContext\Tests\TestCase;
 
 /**
- * rg-005: columns the identity-members repository SQL references must exist in
- * the identity_members / clusters / persons DDL. Two complementary checks:
+ * Narrow hand-maintained allowlist for the identity-members repository layer
+ * only (not a general SQL↔DDL scanner — that is ProjectionQueryColumnParityTest).
  *
- *  - Live parity: the DDL column sets are parsed live from
- *    class-life-cycle-manager.php and the identity_members write columns are
- *    parsed live from the repository-layer INSERT/upsert statements, so a
- *    fabricated or renamed *write* column is caught directly from the SQL
- *    (testSqlWriteColumnsExistInMembersDdl).
- *  - Allowlist: the MEMBERS_COLUMNS / CLUSTERS_COLUMNS / PERSONS_COLUMNS lists
- *    are hand-maintained secondary checks covering the read/join/where columns
- *    the SQL parser does not extract. They do not, on their own, prove the SQL
- *    matches the DDL.
+ * Asserts:
+ *  - MEMBERS_COLUMNS / CLUSTERS_COLUMNS / PERSONS_COLUMNS are subsets of the
+ *    matching CREATE TABLE blocks in class-life-cycle-manager.php
+ *  - each allowlisted name still appears somewhere in the identity-members
+ *    repository-layer sources
+ *  - identity_members INSERT/upsert write columns scraped from that layer
+ *    exist in the members DDL (live write-path check)
+ *
+ * Does not scan other repositories, derived tables, or $wpdb->insert maps.
  *
  * @coversNothing
  */

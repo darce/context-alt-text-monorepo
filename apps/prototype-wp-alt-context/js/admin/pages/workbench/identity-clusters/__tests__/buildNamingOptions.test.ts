@@ -104,8 +104,9 @@ describe('buildNamingOptions', () => {
     expect(uniqueClusterCollisionTarget(collisions)?.value).toBe(namingOptionValue('cluster', 'c-bob'));
   });
 
-  it('excludes auto cluster-* labels from options and collisions (BR-17 / UXP-3-BR-17)', () => {
-    // Predicted first failure: options include label 'cluster-1234' when human-label filter is missing
+  it('excludes auto cluster-* labels from options but registers collisions (BR-17 / BR-42)', () => {
+    // BR-17: machine labels never render as naming options.
+    // BR-42: collision detection uses raw equality — they still register in collisionsByLabel.
     const { options, collisionsByLabel } = buildNamingOptions({
       rosterEntries: [],
       labelMatches: [
@@ -117,8 +118,62 @@ describe('buildNamingOptions', () => {
 
     expect(options.map((option) => option.label)).toEqual(['Dana']);
     expect(options.every((option) => !option.label.startsWith('cluster-'))).toBe(true);
-    expect(findCollisionsForLabel(collisionsByLabel, 'cluster-1234')).toHaveLength(0);
+    expect(findCollisionsForLabel(collisionsByLabel, 'cluster-1234')).toHaveLength(1);
     expect(findCollisionsForLabel(collisionsByLabel, 'Dana')).toHaveLength(1);
+  });
+
+  it('registers collision for machine-shaped cluster-auto-1 without offering it as a candidate (BR-42)', () => {
+    // Predicted first failure: BR-17 human-gate continues before addCollision → collision set blind
+    const { options, collisionsByLabel } = buildNamingOptions({
+      rosterEntries: [],
+      labelMatches: [{ id: 'auto-machine', label: 'cluster-auto-1', identity_count: 2 }],
+      limit: null,
+    });
+
+    expect(options.map((option) => option.label)).toEqual([]);
+    expect(options.some((option) => option.label === 'cluster-auto-1')).toBe(false);
+    const collisions = findCollisionsForLabel(collisionsByLabel, 'cluster-auto-1');
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]).toMatchObject({
+      label: 'cluster-auto-1',
+      source: 'cluster',
+      value: namingOptionValue('cluster', 'auto-machine'),
+    });
+  });
+
+  // BR-48 dual-lock: collision registration vs candidate exclusion must be independently pinned.
+  it('registers a collision for a machine-labeled cluster row (BR-48 collision lock)', () => {
+    const { collisionsByLabel } = buildNamingOptions({
+      rosterEntries: [],
+      labelMatches: [{ id: 'br48-auto', label: 'cluster-1234', identity_count: 1 }],
+      limit: null,
+    });
+
+    const collisions = findCollisionsForLabel(collisionsByLabel, 'cluster-1234');
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]).toMatchObject({
+      label: 'cluster-1234',
+      source: 'cluster',
+      value: namingOptionValue('cluster', 'br48-auto'),
+    });
+  });
+
+  it('excludes a machine-labeled cluster row from clusterCandidates (BR-48 candidate lock)', () => {
+    // Human control row defeats vacuous-green (matchesPrefix starvation / fixture typo).
+    const { options } = buildNamingOptions({
+      rosterEntries: [],
+      labelMatches: [
+        { id: 'br48-auto', label: 'cluster-1234', identity_count: 1 },
+        { id: 'br48-human', label: 'Pat Rivera', identity_count: 4 },
+      ],
+      limit: null,
+    });
+
+    expect(options.some((option) => option.label === 'Pat Rivera')).toBe(true);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'br48-human'))).toBe(true);
+    expect(options.some((option) => option.label === 'cluster-1234')).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'br48-auto'))).toBe(false);
+    expect(options).toHaveLength(1);
   });
 
   it('excludes the editable cluster from options and collision cluster leg', () => {

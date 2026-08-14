@@ -13,6 +13,21 @@ if TYPE_CHECKING:
     from recognition.domain.representative import ClusterRepresentative
 
 
+class ReservedClusterLabelError(ValueError):
+    """Raised when an operator attempts to use a machine-reserved cluster label."""
+
+    def __init__(self, label: str | None) -> None:
+        super().__init__(f"Cluster label uses a reserved machine-label shape: {label!r}")
+        self.label = label
+
+
+def is_reserved_label_shape(label: str | None) -> bool:
+    """Return whether a label starts with the reserved ``cluster-``/``cluster_`` shape."""
+    if label is None:
+        return False
+    return label.strip().lower().startswith(("cluster-", "cluster_"))
+
+
 @dataclass
 class IdentityCluster:
     """Represents a cluster of identities that belong to the same subject."""

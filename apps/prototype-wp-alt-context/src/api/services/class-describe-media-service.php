@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../sovereign/class-projection-query-exception.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-repository.php';
 require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
@@ -18,6 +19,7 @@ use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescriptionWriteStatus;
 use AltContext\Api\DescribeHostInterface;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Support\Telemetry;
@@ -977,9 +979,26 @@ class DescribeMediaService {
 	private function build_identity_context( int $media_id ): array {
 		$tenant_id           = $this->host->get_tenant_id();
 		$person_naming       = $this->person_naming_policy_allows() ? 'allowed' : 'disabled';
-		$rows                = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
 		$confirmed_identities = array();
 		$machine_only_count  = 0;
+
+		try {
+			$rows = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
+		} catch ( ProjectionQueryException $exception ) {
+			// Identity context is enrichment, not a hard requirement (AGT-10 / E21-14-BR-05).
+			Telemetry::log_line(
+				sprintf(
+					'Describe identity context degraded for media %d: %s',
+					$media_id,
+					$exception->getMessage()
+				)
+			);
+			return array(
+				'policy'         => array( 'person_naming' => $person_naming ),
+				'identities'     => array(),
+				'review_reasons' => array(),
+			);
+		}
 
 		foreach ( $rows as $row ) {
 			if ( ! is_array( $row ) ) {

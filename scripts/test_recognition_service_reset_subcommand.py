@@ -80,6 +80,24 @@ def test_reset_dev_dry_run_with_confirmation_succeeds_and_summarizes_plan() -> N
     assert "https://dev.api.altcontext.com/ready" in out
 
 
+def test_reset_dev_fir_dry_run_with_confirmation_succeeds_and_summarizes_plan() -> None:
+    """FIR23-STACK: reset accepts dev-fir and maps unit/dir/ready URLs."""
+    result = _run(
+        ["reset", "dev-fir"],
+        env_overrides={
+            "CONFIRM_REMOTE_RESET": "RESET",
+            "ACX_RESET_DRY_RUN": "1",
+            "ACX_RESET_SITE_URL": "http://localhost:10010",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "DRY-RUN" in out or "dry-run" in out
+    assert "acx-dev-fir" in out
+    assert "/opt/acx-backend/dev-fir" in out
+    assert "https://fir.dev.api.altcontext.com/ready" in out
+
+
 def test_reset_prod_dry_run_with_both_confirmations_succeeds() -> None:
     result = _run(
         ["reset", "prod"],

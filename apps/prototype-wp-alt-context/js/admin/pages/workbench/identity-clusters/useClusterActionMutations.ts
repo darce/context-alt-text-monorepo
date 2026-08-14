@@ -3,9 +3,10 @@
  */
 
 import { __ } from '@wordpress/i18n';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
+  acceptSuggestion,
   createClusterForIdentity,
   fetchScanStatus,
   pinRepresentative,
@@ -17,6 +18,7 @@ import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemo
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import { delay, isAbortError } from './clusterMutationUtils';
+import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterActionMutationsOptions {
   clusterId: string | null;
@@ -56,6 +58,7 @@ export const useClusterActionMutations = ({
   onAbort,
   invalidateQueries,
 }: UseClusterActionMutationsOptions) => {
+  const queryClient = useQueryClient();
   // RES-15: gate split only — reassign/pin/reject stay live offline (outbox curation).
   const offline = useSyncOffline();
   const splitGate = useRemoteActionGate(offline);
@@ -87,15 +90,26 @@ export const useClusterActionMutations = ({
       identityId,
       targetClusterId,
       signal,
+      suggestionId,
     }: {
       identityId: string;
       targetClusterId: string;
       signal?: AbortSignal;
+      suggestionId?: string;
     }) => {
+      // BR-16: confirm with a suggestion id resolves by id (accept assigns + marks accepted).
+      if (suggestionId) {
+        await acceptSuggestion(suggestionId);
+        return;
+      }
       await reassignClusterIdentity({ identityId, targetClusterId }, signal);
     },
     retry: false,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // L1V-03: optimistically remove accepted suggestion before invalidate/refetch.
+      if (variables.suggestionId) {
+        removePendingSuggestionFromCache(queryClient, variables.suggestionId);
+      }
       invalidateQueries();
       onRenameSuccess?.('');
     },
@@ -213,8 +227,12 @@ export const useClusterActionMutations = ({
 
   return {
     reassign: reassignMutation.mutate,
-    assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) =>
-      assignToClusterMutation.mutate({ identityId, targetClusterId, signal }),
+    assignToCluster: (
+      identityId: string,
+      targetClusterId: string,
+      signal?: AbortSignal,
+      suggestionId?: string,
+    ) => assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
     createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) =>
       createClusterMutation.mutate({ identityId, label, signal }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.

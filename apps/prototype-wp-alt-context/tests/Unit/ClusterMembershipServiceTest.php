@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMembershipService;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
 use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
@@ -13,6 +14,7 @@ use AltContext\Tests\Support\ClusterMutationsRepositorySpy;
 use AltContext\Tests\Support\ClusterMutationsSyncStateSpy;
 use AltContext\Tests\Support\ClusterMutationsTopologyCommandSpy;
 use AltContext\Tests\TestCase;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -65,6 +67,42 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertSame(self::currentTenantId(), $this->syncStateRepository->lastTouchedTenantId);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    /**
+     * E21-14-BR-04: controller boundary must catch projection failures as WP_Error (not fatal).
+     * Failed projection probe hard-fails rather than proxying (split-brain risk).
+     */
+    public function testCreateClusterForIdentityReturnsTypedErrorOnProjectionProbeFailure(): void
+    {
+        $repository = new class() extends ClusterMutationsRepositorySpy {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                throw new ProjectionQueryException(
+                    'Projection query failed [clusters.has_projection_rows_for_tenant]: boom'
+                );
+            }
+        };
+        $members = new ClusterMutationsMembersSpy();
+        $sync = new ClusterMutationsSyncStateSpy();
+        $controller = new ClusterMutationsController(
+            $repository,
+            $sync,
+            $members,
+            null,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $controller->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response);
+        $this->assertSame('acx_projection_query_failed', $response->get_error_code());
+        $this->assertSame(500, (int) ($response->get_error_data()['status'] ?? 0));
+        $this->assertStringNotContainsString('boom', $response->get_error_message());
     }
 
     public function testCreateClusterForIdentityQueuesReplayInsideTransaction(): void

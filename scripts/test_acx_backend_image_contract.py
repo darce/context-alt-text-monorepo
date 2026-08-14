@@ -942,5 +942,45 @@ def test_d10_verify_image_mismatch_returns_not_exits(
     assert re.search(r"(?m)^MATCH$", out) is None, out
 
 
+def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
+    """FIR23-STACK: .env.fir.example is the operator template for acx-dev-fir.
+
+    Shares the :dev image (ACX_IMAGE_TAG=dev) but pins PGVECTOR_DIM=128 and
+    face_pipeline models dir so the three-way embedding guard can pass.
+    """
+    env_fir = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / ".env.fir.example"
+    )
+    assert env_fir.is_file(), f"expected {env_fir} to exist"
+    text = env_fir.read_text(encoding="utf-8")
+    assert "COMPOSE_PROJECT_NAME=acx-dev-fir" in text
+    assert "ACX_ENV=dev-fir" in text
+    assert "ACX_IMAGE_TAG=dev" in text
+    assert "PGVECTOR_DIM=128" in text
+    assert "RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline" in text
+    assert (
+        "RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline" in text
+    )
+    assert "POSTGRES_USER=acx_dev_fir" in text
+    assert "POSTGRES_DB=alt_context_dev_fir" in text
+    assert "RECOGNITION_AUTH_ENABLED=false" in text
+    assert "RECOGNITION_RUNTIME_MODE=production" in text
+    # DEV tier: no vault assignment keys (header may mention vault is unused).
+    assignments = [
+        line.split("#", 1)[0].strip()
+        for line in text.splitlines()
+        if "=" in line.split("#", 1)[0]
+    ]
+    assert not any(a.startswith("RECOGNITION_VAULT_SECRET_MAP=") for a in assignments)
+    assert not any(
+        a.startswith("RECOGNITION_SECRET_BACKEND=") and "oci_vault" in a
+        for a in assignments
+    )
+    assert "RECOGNITION_SECRET_BACKEND=env" in text
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

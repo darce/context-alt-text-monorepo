@@ -7,24 +7,25 @@
 #   - docker daemon not running (local build mode)
 #   - OCIR auth token missing/expired (local or remote)
 #   - SSH key not loaded / public-IP allowlist drift
-#   - HEAD diverged from origin/main (staging/prod only)
-#   - dirty working tree (warned for dev, blocked for staging/prod)
+#   - HEAD diverged from origin/main (staging/prod only; skipped for dev + dev-fir)
+#   - dirty working tree (warned for dev/dev-fir, blocked for staging/prod)
 #
 # Subcommands:
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
 #   build-remote   [tag]              Build :SHA + :tag on the OCI VM (no local docker).
 #   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
-#                                       'deploy prod' requires CONFIRM=PROMOTE.
+#                                       env = dev|dev-fir|staging|prod. 'deploy prod' requires CONFIRM=PROMOTE.
+#                                       dev-fir shares the :dev image tag with dev (isolated runtime, same image).
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
-#                                       promote staging dev (rollback path).
+#                                       promote staging dev (rollback path; also rolls back dev-fir — shared :dev tag).
 #   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
-#                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up.
+#                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
 #                                       standalone verify of a VLM deploy works without re-exporting
 #                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1
 #                                       downgrades a failed verify to a warning (does not exit).
-#   status                            Snapshot /health for dev, staging, prod.
+#   status                            Snapshot /health for dev, dev-fir, staging, prod.
 #   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
 #                                       back to the recognition default (${OCIR}/.../acx-backend).
 #                                       Use this to roll back sticky VLM/variant repo state after a
@@ -49,7 +50,7 @@
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
-#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev only)
+#   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev and dev-fir only)
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
@@ -59,6 +60,12 @@
 #   ACX_BOOT_SMOKE           default 1: 'deploy' boots the freshly-built :SHA in a throwaway
 #                              container (import smoke + /health probe) before promoting/restarting,
 #                              aborting on failure with prod untouched. Set 0 to bypass.
+#   ACX_EDGE_APPLY           default 0: when the shared Caddy edge has drifted, behaviour is
+#                              env-scoped — dev-fir fails closed (the edge IS fir's ingress);
+#                              any other env warns and skips edge convergence so that env's
+#                              own runtime still converges. Set 1 to explicitly allow the
+#                              edge ship + reload/recreate from any env (applying may
+#                              reload/recreate the prod-serving edge).
 #   ACX_BUILD_TARGET         optional docker build --target (e.g. runtime-vlm). Empty = last stage
 #                              (runtime). Charset-validated: ^[A-Za-z0-9_.-]+$ (empty allowed). Rejected
 #                              values never reach ssh/shell interpolation (D1). Remote build REFUSES any
@@ -350,29 +357,34 @@ remote_builder_prune() {
 #---------------------------------------------------------------- env mapping
 env_to_tag() {
   case "$1" in
-    dev)     echo "dev" ;;
-    staging) echo "staging" ;;
-    prod)    echo "latest" ;;
-    *)       fail "Unknown env: $1 (expected dev|staging|prod)" ;;
+    dev|dev-fir) echo "dev" ;;
+    staging)     echo "staging" ;;
+    prod)        echo "latest" ;;
+    *)           fail "Unknown env: $1 (expected dev|dev-fir|staging|prod)" ;;
   esac
 }
 env_to_unit() {
   case "$1" in
-    dev) echo "acx-dev" ;; staging) echo "acx-staging" ;; prod) echo "acx-prod" ;;
+    dev)     echo "acx-dev" ;;
+    dev-fir) echo "acx-dev-fir" ;;
+    staging) echo "acx-staging" ;;
+    prod)    echo "acx-prod" ;;
     *) fail "Unknown env: $1" ;;
   esac
 }
 env_to_remote_dir() {
   case "$1" in
-    dev) echo "/opt/acx-backend/dev" ;;
+    dev)     echo "/opt/acx-backend/dev" ;;
+    dev-fir) echo "/opt/acx-backend/dev-fir" ;;
     staging) echo "/opt/acx-backend/staging" ;;
-    prod) echo "/opt/acx-backend/prod" ;;
+    prod)    echo "/opt/acx-backend/prod" ;;
     *) fail "Unknown env: $1" ;;
   esac
 }
 env_to_health_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/health" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/health" ;;
     staging) echo "https://staging.api.altcontext.com/health" ;;
     prod)    echo "https://api.altcontext.com/health" ;;
     *) fail "Unknown env: $1" ;;
@@ -381,6 +393,7 @@ env_to_health_url() {
 env_to_ready_url() {
   case "$1" in
     dev)     echo "https://dev.api.altcontext.com/ready" ;;
+    dev-fir) echo "https://fir.dev.api.altcontext.com/ready" ;;
     staging) echo "https://staging.api.altcontext.com/ready" ;;
     prod)    echo "https://api.altcontext.com/ready" ;;
     *) fail "Unknown env: $1" ;;
@@ -424,13 +437,14 @@ preflight_rsync() {
 }
 preflight_git_clean() {
   local env="$1"
+  # dev-fir is a dev-tier env (feature-branch workflow): same dirty-tree policy as dev.
   if ! git -C "${REPO_ROOT}" diff --quiet HEAD -- 2>/dev/null \
      || [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
-    if [[ "$env" == "dev" && "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
-      warn "Working tree is dirty (ACX_ALLOW_DIRTY=1, continuing for dev)."
-    elif [[ "$env" == "dev" ]]; then
+    if [[ "$env" == "dev" || "$env" == "dev-fir" ]] && [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
+      warn "Working tree is dirty (ACX_ALLOW_DIRTY=1, continuing for ${env})."
+    elif [[ "$env" == "dev" || "$env" == "dev-fir" ]]; then
       warn "Working tree is dirty. Re-run with ACX_ALLOW_DIRTY=1 to override."
-      fail "dirty tree (dev)"
+      fail "dirty tree (${env})"
     else
       fail "Working tree must be clean for ${env} deploys."
     fi
@@ -438,7 +452,8 @@ preflight_git_clean() {
 }
 preflight_branch_synced() {
   local env="$1"
-  [[ "$env" == "dev" ]] && return 0
+  # dev + dev-fir are developed from feature branches; skip origin/main sync.
+  [[ "$env" == "dev" || "$env" == "dev-fir" ]] && return 0
   local head upstream
   head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   git -C "${REPO_ROOT}" fetch origin main >/dev/null 2>&1 || warn "git fetch failed; skew check may be stale"
@@ -446,6 +461,143 @@ preflight_branch_synced() {
   if [[ "$head" != "$upstream" ]]; then
     fail "HEAD (${head:0:8}) != origin/main (${upstream:0:8}). Pull/push first."
   fi
+}
+
+# FIR stack shares the :dev image and volume-mounts YuNet+SFace ONNX (not baked
+# in; rsync excludes them). Deploy/promote/reset must fail closed if the host
+# volume is empty or the bytes do not match the sha256 pins in
+# recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
+# Format: filename:sha256 (hex). Keep in lockstep with MODEL_MANIFEST.
+FACE_PIPELINE_ONNX_SHA256=(
+  "face_detection_yunet_2026may.onnx:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
+  "face_recognition_sface_2021dec.onnx:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+)
+
+# sha256 of a local file. sha256sum is Linux/macOS-15+; older macOS only has
+# shasum. verify_face_pipeline_models_dir inlines the same fallback on purpose —
+# it is shipped to the remote via declare -f and must stay self-contained.
+_local_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Host-local integrity check for face_pipeline ONNX weights (C-07 extractable body).
+# Args: models_dir. Prints OK on success; DIR_FAIL:/FILE_FAIL:/HASH_FAIL: + exit 1 otherwise.
+# Sourced by tests and shipped to the remote via declare -f for preflight.
+verify_face_pipeline_models_dir() {
+  local models_dir="${1:?models_dir required}"
+  local entry f expected actual
+  if [[ ! -d "${models_dir}" ]] || [[ ! -r "${models_dir}" ]]; then
+    echo "DIR_FAIL:${models_dir}"
+    return 1
+  fi
+  for entry in "${FACE_PIPELINE_ONNX_SHA256[@]}"; do
+    f="${entry%%:*}"
+    expected="${entry#*:}"
+    if [[ ! -f "${models_dir}/${f}" ]] || [[ ! -r "${models_dir}/${f}" ]]; then
+      echo "FILE_FAIL:${f}:${models_dir}"
+      return 1
+    fi
+    # Prefer sha256sum (Linux); fall back to shasum -a 256 (macOS).
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual="$(sha256sum "${models_dir}/${f}" | awk '{print $1}')"
+    else
+      actual="$(shasum -a 256 "${models_dir}/${f}" | awk '{print $1}')"
+    fi
+    if [[ "${actual}" != "${expected}" ]]; then
+      echo "HASH_FAIL:${f}:${models_dir}:expected=${expected}:actual=${actual}"
+      return 1
+    fi
+  done
+  echo OK
+  return 0
+}
+
+# Read KEY=VALUE from remote_dir/.env. Value is taken verbatim to end-of-line
+# after the first '=' (C-05); one matching pair of surrounding quotes is stripped.
+# Missing key → empty string (exit 0). SSH failure → fail closed (C-06).
+_remote_dotenv_value() {
+  local remote_dir="$1" key="$2" raw rc=0
+  # Remote `|| true` only covers a missing key / missing file (grep exit 1).
+  # Local ssh failure is NOT swallowed.
+  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
+  if (( rc != 0 )); then
+    fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
+  fi
+  # Strip one layer of surrounding double or single quotes only.
+  if [[ ${#raw} -ge 2 && "${raw}" == \"*\" ]]; then
+    raw="${raw:1:${#raw}-2}"
+  elif [[ ${#raw} -ge 2 && "${raw}" == \'*\' ]]; then
+    raw="${raw:1:${#raw}-2}"
+  fi
+  printf '%s' "$raw"
+}
+
+preflight_remote_face_pipeline_models() {
+  local env="$1"
+  # Only dev-fir uses the face_pipeline profile with host-mounted weights.
+  [[ "$env" == "dev-fir" ]] || return 0
+
+  local remote_dir models_dir_cfg models_path models_dir remote_out remote_rc=0
+  remote_dir="$(env_to_remote_dir "$env")"
+
+  # Authoritative models dir is RECOGNITION_FACE_PIPELINE_MODELS_DIR [sr-007] (C-10).
+  # When it is the in-container path under the compose mount
+  # (${ACX_MODELS_PATH}:/data/cache), map to the host volume root for the check.
+  models_dir_cfg="$(_remote_dotenv_value "$remote_dir" RECOGNITION_FACE_PIPELINE_MODELS_DIR)"
+  if [[ -z "${models_dir_cfg}" ]]; then
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
+  fi
+  if [[ "${models_dir_cfg}" == /data/cache || "${models_dir_cfg}" == /data/cache/* ]]; then
+    models_path="$(_remote_dotenv_value "$remote_dir" ACX_MODELS_PATH)"
+    if [[ -z "${models_path}" ]]; then
+      fail "ACX_MODELS_PATH missing or unreadable in ${remote_dir}/.env on ${SSH_TARGET}; cannot map RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} to host path"
+    fi
+    models_dir="${models_path}${models_dir_cfg#/data/cache}"
+  else
+    # The container only mounts ${ACX_MODELS_PATH}:/data/cache. A models dir
+    # outside /data/cache may verify fine on the host yet be invisible to the
+    # container at runtime — fail closed instead of green-lighting an
+    # unloadable config (gate r0811864a B-02).
+    fail "RECOGNITION_FACE_PIPELINE_MODELS_DIR=${models_dir_cfg} is outside the container mount /data/cache; the api container cannot load models from host-only paths. Set it to /data/cache[/subdir] in ${remote_dir}/.env"
+  fi
+
+  # Ship the extractable verify body to the remote and execute it (C-07/C-11).
+  # Capture stdout even when the remote check exits non-zero; do not swallow
+  # unrelated ssh failures with `|| true` (C-06).
+  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+    "bash -s" <<REMOTE
+set -euo pipefail
+$(declare -p FACE_PIPELINE_ONNX_SHA256)
+$(declare -f verify_face_pipeline_models_dir)
+verify_face_pipeline_models_dir $(printf '%q' "${models_dir}")
+REMOTE
+)" || remote_rc=$?
+
+  if [[ "${remote_out}" == "OK" && "${remote_rc}" -eq 0 ]]; then
+    log "face_pipeline ONNX weights present and sha256-verified under ${models_dir}"
+    return 0
+  fi
+  if [[ "${remote_out}" == DIR_FAIL:* ]]; then
+    fail "face_pipeline models directory missing or unreadable: ${remote_out#DIR_FAIL:} on ${SSH_TARGET}"
+  fi
+  if [[ "${remote_out}" == FILE_FAIL:* ]]; then
+    local miss_file miss_dir
+    miss_file="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f1)"
+    miss_dir="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f2-)"
+    fail "missing face_pipeline ONNX weight ${miss_file} under ${miss_dir} on ${SSH_TARGET}"
+  fi
+  if [[ "${remote_out}" == HASH_FAIL:* ]]; then
+    fail "face_pipeline ONNX integrity check failed (${remote_out}) on ${SSH_TARGET}"
+  fi
+  if (( remote_rc != 0 )); then
+    fail "face_pipeline models preflight ssh/remote failed for ${env} (exit ${remote_rc}, looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
+  fi
+  fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
 }
 
 #---------------------------------------------------------------- build
@@ -663,9 +815,9 @@ runtime_in_sync() {
 
 env_to_compose_files() {
   case "$1" in
-    prod)        echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
-    dev|staging) echo "-f docker-compose.env.yml" ;;
-    *)           fail "Unknown env: $1" ;;
+    prod)                 echo "-f docker-compose.env.yml -f docker-compose.admin.yml" ;;
+    dev|dev-fir|staging)  echo "-f docker-compose.env.yml" ;;
+    *)                    fail "Unknown env: $1" ;;
   esac
 }
 
@@ -725,17 +877,34 @@ clear_remote_image_repo_env() {
   log "clear-image-repo done for ${env}. Restart the unit (or re-deploy) to pick up the recognition default."
 }
 
-# Converge the deployed compose file(s) + systemd unit with the repo *before*
-# the image restart, so drift (missing volume/env/overlay) cannot reach a live
-# prod. Backs up the prior compose/unit on the VM first. The Caddy edge is
-# deliberately not reshipped here (E15-29 hazard: a Caddy restart can drop it
-# off acx-demo-net); it stays owned by sync-compose.sh / sync-demo.sh.
+# Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
+# the repo *before* the image restart, so drift (missing volume/env/overlay or a
+# stale Caddyfile) cannot reach a live env. Backs up the prior compose/unit/
+# edge on the VM first.
+#
+# Edge policy (C-08/C-12, FL30C-GATE-01/02):
+#   - Shared multi-env edge at /opt/acx-backend — shipping it is correct, but
+#     unbounded `compose up -d` recreates the container that serves prod on
+#     every env's converge. Bound it: checksum-compare deployed vs repo; no-op
+#     when both match; prefer `caddy reload` when only the Caddyfile changed;
+#     reserve `docker compose up -d` for compose-level changes (network joins).
+#   - acx-dev-fir-net is external:true on docker-compose.caddy.yml (must not be
+#     compose-owned — label collision with env stack's `backend` key). Ensure
+#     the network exists idempotently before any compose up so fir-absent
+#     demo/dev deploys still succeed. Labels match the fir stack's declaring
+#     key/project so a later fir `compose up` can adopt the pre-created net.
 converge_runtime() {
-  local env="$1" remote_dir unit
+  local env="$1" remote_dir unit edge_dir
+  local repo_caddy_sum repo_compose_sum remote_caddy_sum remote_compose_sum
+  local edge_caddy_drift=0 edge_compose_drift=0
+  local edge_apply_edge=0
+  # Must match ACX_NETWORK_NAME in .env.fir.example and the external network
+  # key on docker-compose.caddy.yml (shared edge hardcodes the name).
+  local fir_net="acx-dev-fir-net"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
-  log "Converging compose + unit for ${env} on ${SSH_TARGET} (edge proxy not reshipped)"
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
+  edge_dir="/opt/acx-backend"
+  log "Converging compose + unit + caddy edge for ${env} on ${SSH_TARGET}"
   # Ship via /tmp + sudo cp (same pattern as the unit file): the deployed
   # files can be root-owned (the E15-29 admin overlay was installed via sudo),
   # so a plain scp to the final path fails with Permission denied.
@@ -743,6 +912,67 @@ converge_runtime() {
     local src="$1" dest="$2" name; name="$(basename "$dest")"
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${name}' && sudo cp '/tmp/${name}' '${dest}' && rm -f '/tmp/${name}'" < "$src"
   }
+
+  # ---- Edge probes + gate FIRST (before any remote mutation) --------------
+  # Ordering invariant (gate r08117ab7 RB-02): an ACX_EDGE_APPLY refusal must
+  # leave zero partial remote state — no env compose ship, no unit ship, no
+  # daemon-reload. Probe checksums + membership and decide the gate before
+  # any file is written.
+  #
+  # Shared multi-env Caddy edge — mutate only when repo content differs.
+  # Local hashing must use the same Linux/macOS fallback as verify_model_hashes;
+  # sha256sum is absent on macOS before 15 and `set -e` would abort the deploy.
+  repo_caddy_sum="$(_local_sha256 "${SERVICE_DIR}/Caddyfile")"
+  repo_compose_sum="$(_local_sha256 "${SERVICE_DIR}/docker-compose.caddy.yml")"
+  # A transport failure must fail the converge, not read as drift: an empty
+  # checksum from ssh exit!=0 would flip edge_*_drift=1 and recreate the
+  # prod-serving edge off a network blip (gate r0811864a B-03). The remote
+  # command itself exits 0 even when the file is missing (awk terminates the
+  # pipe), so a nonzero rc here is ssh/transport, not "file absent".
+  local edge_sum_rc=0
+  remote_caddy_sum="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sha256sum '${edge_dir}/Caddyfile' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  if (( edge_sum_rc != 0 )); then
+    fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
+  fi
+  remote_compose_sum="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sha256sum '${edge_dir}/docker-compose.caddy.yml' 2>/dev/null | awk '{print \$1}'")" || edge_sum_rc=$?
+  if (( edge_sum_rc != 0 )); then
+    fail "cannot read remote edge checksums on ${SSH_TARGET} (ssh exit ${edge_sum_rc}); refusing to treat transport failure as edge drift"
+  fi
+  [[ "${remote_caddy_sum}" == "${repo_caddy_sum}" ]] || edge_caddy_drift=1
+  [[ "${remote_compose_sum}" == "${repo_compose_sum}" ]] || edge_compose_drift=1
+
+  # Checksum parity alone misses network-membership drift: `caddy reload` /
+  # matching compose files never attach newly-declared networks to a RUNNING
+  # container, so a caddy predating acx-dev-fir-net looks converged while
+  # fir.dev.api 502s (gate r0811864a G2-03). Inspect the live container and
+  # escalate a missing membership to compose-level drift (recreate path).
+  local edge_membership edge_member_rc=0
+  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  if (( edge_member_rc != 0 )); then
+    fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to converge edge blind"
+  fi
+  if [[ "${edge_membership}" != "MEMBER" ]]; then
+    log "caddy edge container is not attached to ${fir_net} (${edge_membership}); marking compose-level edge drift"
+    edge_compose_drift=1
+  fi
+
+  if (( edge_caddy_drift != 0 || edge_compose_drift != 0 )); then
+    # Scoping (gate r08117ab7 RA-02/RB-02):
+    #   - dev-fir: edge IS fir's ingress → fail-closed without ACX_EDGE_APPLY=1
+    #   - any other env: warn + skip edge so prod/staging hotfixes are not
+    #     coupled to FIR edge state; env runtime still converges
+    #   - ACX_EDGE_APPLY=1: any env may converge the edge
+    if [[ "${ACX_EDGE_APPLY:-0}" == "1" ]]; then
+      edge_apply_edge=1
+    elif [[ "$env" == "dev-fir" ]]; then
+      fail "caddy edge drift detected for ${env} (caddyfile_drift=${edge_caddy_drift} compose_drift=${edge_compose_drift} membership=${edge_membership}). Applying may reload/recreate the shared prod-serving edge. Re-run with ACX_EDGE_APPLY=1 to converge the edge, or ACX_CONVERGE_RUNTIME=0 to skip convergence entirely."
+    else
+      warn "edge drift present, skipping edge convergence; run deploy dev-fir with ACX_EDGE_APPLY=1 to converge"
+    fi
+  fi
+
+  # ---- Env runtime mutation (only after gate decision) --------------------
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' 2>/dev/null || true; sudo cp -f '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' 2>/dev/null || true"
   _ship_file "${SERVICE_DIR}/docker-compose.env.yml" "${remote_dir}/docker-compose.env.yml"
   if [[ "$env" == "prod" ]]; then
     # Back up the admin overlay too so a bad overlay is restorable from *.bak.
@@ -751,33 +981,146 @@ converge_runtime() {
   fi
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06) — not re-written here.
   render_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
-  log "Runtime converged for ${env} (compose + unit match repo)"
+
+  # ---- Edge mutation (only when gated in) ---------------------------------
+  if (( edge_apply_edge == 0 )); then
+    if (( edge_caddy_drift == 0 && edge_compose_drift == 0 )); then
+      log "Caddy edge already matches repo; skipping ship/reload for ${env}"
+      log "Runtime converged for ${env} (compose + unit match repo; edge unchanged)"
+    else
+      log "Runtime converged for ${env} (compose + unit match repo; edge skipped)"
+    fi
+    return 0
+  fi
+
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cp -f '${edge_dir}/Caddyfile' '${edge_dir}/Caddyfile.bak' 2>/dev/null || true; cp -f '${edge_dir}/docker-compose.caddy.yml' '${edge_dir}/docker-compose.caddy.yml.bak' 2>/dev/null || true"
+  if (( edge_caddy_drift )); then
+    _ship_file "${SERVICE_DIR}/Caddyfile" "${edge_dir}/Caddyfile"
+  fi
+  if (( edge_compose_drift )); then
+    _ship_file "${SERVICE_DIR}/docker-compose.caddy.yml" "${edge_dir}/docker-compose.caddy.yml"
+  fi
+  # Build only the apply path we need so a Caddyfile-only converge does not
+  # even mention `compose up -d` except as reload fallback (FL30C-GATE-02).
+  local edge_apply
+  if (( edge_compose_drift )); then
+    # Compose-level change (network membership etc.) needs container recreate.
+    edge_apply="docker compose -f docker-compose.caddy.yml up -d"
+  else
+    # Caddyfile-only: reload in-place; fall back to up -d if container is down.
+    edge_apply="docker compose -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose -f docker-compose.caddy.yml up -d"
+  fi
+  # Expand locals into the remote script (fir_net / edge_apply).
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<EDGE
+set -euo pipefail
+cd /opt/acx-backend
+# FL30C-GATE-01: acx-dev-fir-net is external on the shared compose; create it
+# if the fir stack has never stood it up. Labels match docker-compose.env.yml's
+# declaring key (backend) + COMPOSE_PROJECT_NAME=acx-dev-fir so fir can adopt.
+if ! docker network inspect '${fir_net}' >/dev/null 2>&1; then
+  docker network create \\
+    --label com.docker.compose.network=backend \\
+    --label com.docker.compose.project=acx-dev-fir \\
+    '${fir_net}'
+fi
+# Validate before applying (syntax-only; catch bad Caddyfile before reload/up).
+docker run --rm \\
+  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \\
+  caddy:2-alpine \\
+  caddy validate --config /etc/caddy/Caddyfile
+${edge_apply}
+EDGE
+  log "Runtime converged for ${env} (compose + unit + caddy edge match repo)"
 }
 
 # Read-only drift gate: diff the deployed compose/unit against the repo and exit
 # non-zero on any drift, without mutating the VM. Operator triage for `--check`.
+# Transport failures must never be misread as drift (gate r08117ab7 RA-03/RB-04):
+# each arm captures the ssh exit status before diffing; ssh rc=255 → fail with a
+# transport-error message. Missing remote files (cat exit 1) still count as drift.
 converge_check() {
   local env="$1" remote_dir unit drift=0 rendered
+  local remote_tmp ssh_rc fir_net="acx-dev-fir-net"
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   log "Checking runtime drift for ${env} on ${SSH_TARGET} (read-only)"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.env.yml' 2>/dev/null" \
-       | diff -u - "${SERVICE_DIR}/docker-compose.env.yml"; then
-    warn "drift: docker-compose.env.yml on ${env} differs from repo (or is missing)"; drift=1
-  fi
-  if [[ "$env" == "prod" ]]; then
-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_dir}/docker-compose.admin.yml' 2>/dev/null" \
-         | diff -u - "${SERVICE_DIR}/docker-compose.admin.yml"; then
-      warn "drift: docker-compose.admin.yml on ${env} differs from repo (or is missing)"; drift=1
+  remote_tmp="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '${remote_tmp}'" RETURN
+  # fail() calls `exit 1`, which does NOT run RETURN traps — every abort path
+  # must rm explicitly or --check leaks /tmp/tmp.* (gate r0811e5db V-02).
+  _cc_fail() {
+    rm -f "${remote_tmp}"
+    fail "$@"
+  }
+
+  _check_remote_file() {
+    # Fetch remote path into remote_tmp; compare to local. Sets drift on
+    # content/missing-file mismatch. Aborts on ssh transport failure.
+    local remote_path="$1" local_path="$2" label="$3"
+    ssh_rc=0
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '${remote_path}'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+    if (( ssh_rc == 255 )); then
+      _cc_fail "cannot read remote ${label} on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
     fi
+    if (( ssh_rc != 0 )); then
+      # Non-transport failure (typically cat exit 1 = missing file) → drift.
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"; drift=1
+      return 0
+    fi
+    if ! diff -u "${remote_tmp}" "${local_path}" >/dev/null; then
+      diff -u "${remote_tmp}" "${local_path}" || true
+      warn "drift: ${label} on ${env} differs from repo (or is missing)"; drift=1
+    fi
+  }
+
+  _check_remote_file \
+    "${remote_dir}/docker-compose.env.yml" \
+    "${SERVICE_DIR}/docker-compose.env.yml" \
+    "docker-compose.env.yml"
+  if [[ "$env" == "prod" ]]; then
+    _check_remote_file \
+      "${remote_dir}/docker-compose.admin.yml" \
+      "${SERVICE_DIR}/docker-compose.admin.yml" \
+      "docker-compose.admin.yml"
   fi
   rendered="$(render_unit "$env")"
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service' 2>/dev/null" \
-       | diff -u - <(printf '%s\n' "$rendered"); then
+  ssh_rc=0
+  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat '/etc/systemd/system/${unit}.service'" >"${remote_tmp}" 2>/dev/null || ssh_rc=$?
+  if (( ssh_rc == 255 )); then
+    _cc_fail "cannot read remote ${unit}.service on ${SSH_TARGET} (ssh exit ${ssh_rc}); refusing to treat transport failure as runtime drift"
+  elif (( ssh_rc != 0 )); then
+    warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
+  elif ! diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") >/dev/null; then
+    diff -u "${remote_tmp}" <(printf '%s\n' "$rendered") || true
     warn "drift: ${unit}.service on ${env} differs from repo template (or is missing)"; drift=1
   fi
+  # Edge drift arm: converge_runtime now owns the shared caddy edge, so the
+  # read-only gate must surface edge drift too or --check reports clean while
+  # FIR routing / caddy net membership is stale (gate r0811864a B-04).
+  local edge_dir="/opt/acx-backend"
+  _check_remote_file \
+    "${edge_dir}/Caddyfile" \
+    "${SERVICE_DIR}/Caddyfile" \
+    "shared edge Caddyfile"
+  _check_remote_file \
+    "${edge_dir}/docker-compose.caddy.yml" \
+    "${SERVICE_DIR}/docker-compose.caddy.yml" \
+    "shared edge docker-compose.caddy.yml"
+  # Membership probe (gate r08117ab7 RB-01/RC-01): matching Caddyfile + compose
+  # files never attach newly-declared networks to a RUNNING container. Mirror
+  # converge_runtime's MEMBER|MISSING|NOCADDY inspect so --check catches the
+  # fir-502 case (caddy never recreated onto acx-dev-fir-net).
+  local edge_membership edge_member_rc=0
+  edge_membership="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd '${edge_dir}' && cid=\$(docker compose -f docker-compose.caddy.yml ps -q caddy 2>/dev/null); if [ -z \"\$cid\" ]; then echo NOCADDY; elif docker inspect -f '{{json .NetworkSettings.Networks}}' \"\$cid\" | grep -q '\"${fir_net}\"'; then echo MEMBER; else echo MISSING; fi")" || edge_member_rc=$?
+  if (( edge_member_rc != 0 )); then
+    _cc_fail "cannot inspect caddy edge network membership on ${SSH_TARGET} (ssh exit ${edge_member_rc}); refusing to treat transport failure as runtime drift"
+  fi
+  if [[ "${edge_membership}" != "MEMBER" ]]; then
+    warn "drift: caddy edge container is not attached to ${fir_net} (${edge_membership})"; drift=1
+  fi
   if (( drift )); then
-    fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
+    _cc_fail "runtime drift detected for ${env}; run '$0 deploy ${env}' to converge"
   fi
   log "no runtime drift for ${env} (compose + unit match repo)"
 }
@@ -851,6 +1194,16 @@ env_file="${remote_dir}/.env"
 net="$(grep -E '^ACX_NETWORK_NAME=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' " || true)"
 net="${net:-acx-${env}-net}"
 models_path="$(grep -E '^ACX_MODELS_PATH=' "${env_file}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" || true)"
+# First-ever deploy of an env runs this smoke BEFORE converge_runtime's net
+# auto-create, so the env net may not exist yet (gate r0811864a A-01). Create
+# it idempotently with compose-parity labels so the later `compose up` adopts
+# it instead of refusing an unlabeled pre-existing net (A-02 pattern).
+if ! docker network inspect "$net" >/dev/null 2>&1; then
+  docker network create \
+    --label com.docker.compose.network=backend \
+    --label "com.docker.compose.project=acx-${env}" \
+    "$net"
+fi
 name="acx-smoke-${env}-$$"
 blob_vol="acx-smoke-blobs-${env}-$$"
 pg_name="acx-smoke-pg-${env}-$$"
@@ -1012,6 +1365,7 @@ do_deploy() {
   fi
 
   preflight_ssh
+  preflight_remote_face_pipeline_models "$env"
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
 
@@ -1053,11 +1407,23 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
+  # Fail closed: dev-fir shares the :dev image tag with acx-dev (env_to_tag maps
+  # both to "dev"). Promoting to dev-fir would retag the SHARED :dev image and
+  # only restart acx-dev-fir — blast radius onto acx-dev identity, incomplete
+  # apply (gate r08117ab7 RA-01/RB-03/RC-02). Mirror mk/deploy.mk's
+  # deploy-rollback-dev-fir refusal; name the real lever.
+  if [[ "$to_env" == "dev-fir" ]]; then
+    printf '%sxx%s %s\n' "${RED}" "${RESET}" \
+      "promote: refused. to_env=dev-fir shares the :dev image tag with acx-dev; a FIR-only image promote/retag does not exist. To retag the shared :dev image for BOTH stacks, run '$0 promote ${from_env} dev' or 'make deploy-rollback-dev' (and restart acx-dev-fir afterwards)." >&2
+    exit 2
+  fi
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
   to_tag="$(env_to_tag "$to_env")"
 
   preflight_ssh
+  # Face-pipeline weights must exist before we re-point the to_env runtime (C-02).
+  preflight_remote_face_pipeline_models "$to_env"
 
   if [[ "$to_env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
@@ -1315,7 +1681,7 @@ do_verify() {
 #---------------------------------------------------------------- status
 do_status() {
   local env url body sha
-  for env in dev staging prod; do
+  for env in dev dev-fir staging prod; do
     url="$(env_to_health_url "$env")"
     if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
       sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("commit_sha") or d.get("git_commit_sha") or "?")[:8])' 2>/dev/null || echo '?')"
@@ -1453,6 +1819,8 @@ do_reset() {
   fi
 
   preflight_ssh
+  # Face-pipeline weights must exist before reset restarts the runtime (C-02).
+  preflight_remote_face_pipeline_models "$env"
   log "Executing reset on ${SSH_TARGET}"
   ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<<"${remote_cmd}"
 
@@ -1500,11 +1868,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     build-remote) do_build_remote "${1:-dev}" ;;
     deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
     promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
-    reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|staging|prod)"; do_reset "$1" ;;
-    clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|staging|prod)"; clear_remote_image_repo_env "$1" ;;
+    reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
+    clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"; clear_remote_image_repo_env "$1" ;;
     verify)       do_verify "${1:-dev}" ;;
     status)       do_status ;;
-    ""|-h|--help|help) sed -n '2,95p' "$0" ;;
+    ""|-h|--help|help)
+      # Print the whole header comment block (line 2 until the first non-comment
+      # line) so ACX_EDGE_APPLY / reset docs stay visible as the header grows.
+      awk 'NR==1{next} /^#/{print; next} {exit}' "$0"
+      ;;
     *) fail "Unknown command: ${cmd}. Run '$0 help'." ;;
   esac
 fi

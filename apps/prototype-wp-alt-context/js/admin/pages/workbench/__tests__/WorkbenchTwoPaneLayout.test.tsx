@@ -121,8 +121,51 @@ describe('WorkbenchTwoPaneLayout', () => {
     expect(within(library).getByRole('heading', { name: 'Library' })).toBeTruthy();
     expect(within(control).getByRole('status')).toBeTruthy();
     expect(within(library).getByRole('status')).toBeTruthy();
-    expect(control.textContent).not.toBe('');
-    expect(library.textContent).not.toBe('');
+    // L2V-04: pin exact zero-state copy (not merely non-empty textContent).
+    expect(
+      within(control).getByText(
+        'Recognition and cluster controls will appear here. Run recognition when media is ready.',
+      ),
+    ).toBeTruthy();
+    expect(
+      within(library).getByText(
+        'Media library will appear here. Select or filter media to caption and describe.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('moves focus to the splitter when a pane collapses under keyboard focus [L2V-02]', async () => {
+    const user = userEvent.setup();
+    const onPanesChange = vi.fn<(next: WorkbenchPanesState) => void>();
+    const layoutFor = (panes: WorkbenchPanesState) => (
+      <WorkbenchTwoPaneLayout
+        control={
+          <button type="button" data-testid="control-focus-target">
+            Control action
+          </button>
+        }
+        library={<div>Library body</div>}
+        panes={panes}
+        onPanesChange={onPanesChange}
+      />
+    );
+    const { rerender } = render(layoutFor('both'));
+
+    const focusTarget = screen.getByTestId('control-focus-target');
+    focusTarget.focus();
+    expect(document.activeElement).toBe(focusTarget);
+
+    // Collapse control while focus is still inside the control pane.
+    rerender(layoutFor('control-collapsed'));
+
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('separator'));
+    });
+
+    // Keyboard collapse cycle still routes through onPanesChange.
+    screen.getByRole('separator').focus();
+    await user.keyboard('{Enter}');
+    expect(onPanesChange).toHaveBeenLastCalledWith('library-collapsed');
   });
 
   it('treats an array of empty children as an empty slot [isSlotEmpty array branch]', () => {

@@ -6,10 +6,8 @@ import {
   SCAN_CONFLICTS_HREF,
   SCAN_DEAD_LETTER_HREF,
   buildWorkbenchOverlayHref,
-  parseMediaExpanded,
   parsePanes,
   parseRunParam,
-  serializeMediaExpanded,
   serializePanes,
   serializeRunParam,
   toDashboard,
@@ -51,7 +49,6 @@ describe('appLinks builders', () => {
     expect(toWorkbench({ advanced: APP_LINK_VALUES.advancedOpen })).toBe(
       '#/workbench?advanced=open',
     );
-    expect(toWorkbench({ media: 'expanded' })).toBe('#/workbench?media=expanded');
     expect(toWorkbench({ tab: 'scan', panel: 'conflicts' })).toBe(
       '#/workbench?tab=scan&panel=conflicts',
     );
@@ -63,7 +60,6 @@ describe('appLinks builders', () => {
       panel: 'dead-letter',
       advanced: true,
       status: 'missing',
-      media: 'expanded',
     });
     const { path, params } = parseHref(href);
     expect(path).toBe('/workbench');
@@ -71,7 +67,6 @@ describe('appLinks builders', () => {
     expect(params.get(APP_LINK_PARAMS.panel)).toBe('dead-letter');
     expect(params.get(APP_LINK_PARAMS.advanced)).toBe(APP_LINK_VALUES.advancedOpen);
     expect(params.get(APP_LINK_PARAMS.status)).toBe('missing');
-    expect(params.get(APP_LINK_PARAMS.media)).toBe(APP_LINK_VALUES.mediaExpanded);
   });
 
   it('toRoster / toRosterPerson emit personFilter and person deep-links', () => {
@@ -142,26 +137,8 @@ describe('appLinks codecs', () => {
     expect(parseRunParam(serializeRunParam('  x  '))).toBe('x');
   });
 
-  it('parseMediaExpanded only treats expanded as true; never throws', () => {
-    expect(parseMediaExpanded(null)).toBe(false);
-    expect(parseMediaExpanded(undefined)).toBe(false);
-    expect(parseMediaExpanded('')).toBe(false);
-    expect(parseMediaExpanded('collapsed')).toBe(false);
-    expect(parseMediaExpanded('yes')).toBe(false);
-    expect(parseMediaExpanded(APP_LINK_VALUES.mediaExpanded)).toBe(true);
-  });
 
-  it('serializeMediaExpanded omits collapsed and round-trips expanded', () => {
-    expect(serializeMediaExpanded(false)).toBeNull();
-    expect(serializeMediaExpanded(true)).toBe(APP_LINK_VALUES.mediaExpanded);
-    expect(parseMediaExpanded(serializeMediaExpanded(true))).toBe(true);
-    expect(parseMediaExpanded(serializeMediaExpanded(false))).toBe(false);
-  });
 
-  it('builder + codec: media=expanded on workbench href parses true', () => {
-    const { params } = parseHref(toWorkbench({ media: 'expanded' }));
-    expect(parseMediaExpanded(params.get(APP_LINK_PARAMS.media))).toBe(true);
-  });
 
   it('builder + codec: run on history href parses back', () => {
     const { params } = parseHref(toDescriptionHistoryRun('batch-77'));

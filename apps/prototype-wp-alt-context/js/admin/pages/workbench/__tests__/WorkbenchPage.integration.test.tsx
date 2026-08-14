@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -296,11 +296,6 @@ describe('WorkbenchPage (integration-lite)', () => {
     renderWithClient(client);
 
     const user = userEvent.setup();
-    const showMediaTable = await screen.findByRole('button', { name: 'Show media table' });
-    if (showMediaTable) {
-      await user.click(showMediaTable);
-    }
-
     const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
@@ -316,7 +311,12 @@ describe('WorkbenchPage (integration-lite)', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
     });
 
-    expect(await screen.findByText(/Starting scan/i)).toBeInTheDocument();
+    // E21-18 S1: active job surfaces via compact strip chrome (Scanning… / Cancel),
+    // not the demoted panel's per-tick statusText live region.
+    const strip = await screen.findByTestId('active-job-strip');
+    expect(strip).toBeInTheDocument();
+    expect(strip.textContent).toMatch(/Scanning/i);
+    expect(within(strip).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
   it.each([
@@ -769,11 +769,6 @@ describe('WorkbenchPage (integration-lite)', () => {
     renderWithClient(client);
 
     const user = userEvent.setup();
-    // Media queue may already be expanded; only click the summary expand control if present.
-    const showMediaTable = screen.queryByRole('button', { name: 'Show media table' });
-    if (showMediaTable) {
-      await user.click(showMediaTable);
-    }
 
     // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
     // proves the gated analyze CTA reacts to the sync-health envelope flip.

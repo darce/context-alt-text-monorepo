@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
+use AltContext\Support\DetectsSystemDefinedLabels;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -32,6 +34,7 @@ use function trim;
 use function wp_generate_uuid4;
 
 class ClusterMergeService {
+	use DetectsSystemDefinedLabels;
 	use RunsTransactional;
 
 	private ClusterMutationHostInterface $host;
@@ -69,6 +72,10 @@ class ClusterMergeService {
 
 		if ( $source_id === $target_cluster_id ) {
 			return new WP_Error( 'invalid_target_cluster_id', 'Source and target cluster IDs must differ.', array( 'status' => 400 ) );
+		}
+
+		if ( '' !== $target_label && $this->is_reserved_label_shape( $target_label ) ) {
+			return new WP_Error( 'reserved_label', 'Labels beginning with cluster- or cluster_ are reserved.', array( 'status' => 400 ) );
 		}
 
 		if ( $this->host->should_proxy_mutation_to_backend( $tenant_id ) ) {

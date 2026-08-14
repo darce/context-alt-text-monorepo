@@ -17,7 +17,8 @@
           "identity_count",
           "member_ids",
           "representative_identity",
-          "sample_identities"
+          "sample_identities",
+          "person_uuid"
         ],
         "properties": {
           "id": {
@@ -121,6 +122,10 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "person_uuid": {
+            "type": ["string", "null"],
+            "description": "Person UUID bound via wp_acx_clusters.person_id → persons.person_uuid. Null when the cluster is not assigned to a person."
           }
         }
       }

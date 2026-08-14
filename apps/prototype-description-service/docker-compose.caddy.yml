@@ -19,6 +19,7 @@ services:
       - acx-prod-net
       - acx-staging-net
       - acx-dev-net
+      - acx-dev-fir-net
       - acx-demo-net
 
 networks:
@@ -27,6 +28,14 @@ networks:
   acx-staging-net:
     external: true
   acx-dev-net:
+    external: true
+  # Fir network MUST stay external (FL30C-GATE-01). docker-compose.env.yml owns
+  # the same name under key `backend` (name: ${ACX_NETWORK_NAME}=acx-dev-fir-net).
+  # A compose-created network here stamps com.docker.compose.network=acx-dev-fir-net
+  # and collides with the fir stack's expected label `backend` — whichever stack
+  # comes up second fails. Deploy path creates the network idempotently before
+  # `docker compose up` so fir-absent demo/dev converges still succeed.
+  acx-dev-fir-net:
     external: true
   acx-demo-net:
     external: true

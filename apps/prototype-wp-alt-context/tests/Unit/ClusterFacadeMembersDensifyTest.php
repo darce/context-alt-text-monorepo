@@ -39,7 +39,10 @@ class ClusterFacadeMembersDensifyTest extends TestCase {
 		$clusters_repo->method( 'count_top_unlabeled_singletons' )->willReturn( 0 );
 		$members_repo->expects( $this->once() )
 			->method( 'list_for_cluster_uuids' )
-			->with( [ 'uuid-with-members', 'uuid-empty' ], 4 )
+			->with(
+				[ 'uuid-with-members', 'uuid-empty' ],
+				IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+			)
 			->willReturn( $sparse );
 
 		$result = $facade->list_top_unlabeled( 'tenant-123', 10 );

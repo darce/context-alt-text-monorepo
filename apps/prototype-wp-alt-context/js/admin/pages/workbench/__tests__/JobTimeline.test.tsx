@@ -200,4 +200,17 @@ describe('JobTimeline', () => {
     render(<JobTimeline scanProgress={null} clusterProgress={null} phase="projecting" projectionSyncState="ready" />);
     expect(screen.getByText('Results ready for review')).toBeTruthy();
   });
+
+  it('applies compact layout class and omits detail text', () => {
+    const scan: JobProgress = { completed: 5, total: 10, phase: 'detecting', images_processed: 5 };
+    const { container } = render(
+      <JobTimeline compact scanProgress={scan} clusterProgress={null} phase="scanning" />,
+    );
+    const list = container.querySelector('.acx-job-timeline--compact');
+    expect(list).toBeTruthy();
+    expect(list?.getAttribute('data-compact')).toBe('true');
+    expect(screen.getByText('Scanning\u2026')).toBeTruthy();
+    // Compact mode suppresses the detail channel to keep the strip single-line.
+    expect(screen.queryByText(/images/i)).toBeNull();
+  });
 });

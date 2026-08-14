@@ -66,7 +66,15 @@ export const sharedSelectionLabel = (
   return normalized.every((l) => l === first) ? first : null;
 };
 
-export type BulkCommitPhase = 'idle' | 'holding' | 'committing' | 'partial_failed';
+/** Canonical bulk commit phases [sr-007]. */
+export const BULK_COMMIT_PHASE = {
+  IDLE: 'idle',
+  HOLDING: 'holding',
+  COMMITTING: 'committing',
+  PARTIAL_FAILED: 'partial_failed',
+} as const;
+
+export type BulkCommitPhase = (typeof BULK_COMMIT_PHASE)[keyof typeof BULK_COMMIT_PHASE];
 
 export interface BulkCommitItem {
   suggestionId: string;
@@ -194,7 +202,7 @@ export const useBulkReviewCommit = ({
   awaitBulkIdleOrFlushRef,
 }: UseBulkReviewCommitOptions): UseBulkReviewCommitResult => {
   const [bulk, setBulk] = React.useState<BulkCommitState>({
-    phase: 'idle',
+    phase: BULK_COMMIT_PHASE.IDLE,
     heldIds: [],
     holdCount: 0,
     partialFailure: null,
@@ -204,7 +212,7 @@ export const useBulkReviewCommit = ({
 
   const mountedRef = React.useRef(true);
   const heldBulkRef = React.useRef<HeldBulk | null>(null);
-  const phaseRef = React.useRef<BulkCommitPhase>('idle');
+  const phaseRef = React.useRef<BulkCommitPhase>(BULK_COMMIT_PHASE.IDLE);
   const sequencePromiseRef = React.useRef<Promise<void> | null>(null);
   const runningSequenceRef = React.useRef<RunningSequence | null>(null);
   const nextEntryIdRef = React.useRef(1);
@@ -235,7 +243,7 @@ export const useBulkReviewCommit = ({
   const setBulkSafe = React.useCallback(
     (next: BulkCommitState) => {
       phaseRef.current = next.phase;
-      isBulkActiveRef.current = next.phase === 'holding' || next.phase === 'committing';
+      isBulkActiveRef.current = next.phase === BULK_COMMIT_PHASE.HOLDING || next.phase === BULK_COMMIT_PHASE.COMMITTING;
       if (mountedRef.current) {
         setBulk(next);
       }
@@ -292,7 +300,7 @@ export const useBulkReviewCommit = ({
     [resolvedSelection.length, sharedLabel],
   );
 
-  const isBulkActive = bulk.phase === 'holding' || bulk.phase === 'committing';
+  const isBulkActive = bulk.phase === BULK_COMMIT_PHASE.HOLDING || bulk.phase === BULK_COMMIT_PHASE.COMMITTING;
 
   const isIdSelected = React.useCallback(
     (suggestionId: string) => selectedIds.has(suggestionId),
@@ -312,7 +320,7 @@ export const useBulkReviewCommit = ({
         return false;
       }
       // During bulk hold/commit, freeze selection toggles.
-      if (phaseRef.current === 'holding' || phaseRef.current === 'committing') {
+      if (phaseRef.current === BULK_COMMIT_PHASE.HOLDING || phaseRef.current === BULK_COMMIT_PHASE.COMMITTING) {
         return false;
       }
       return true;
@@ -374,7 +382,7 @@ export const useBulkReviewCommit = ({
     ): Promise<void> => {
       if (items.length === 0) {
         setBulkSafe({
-          phase: 'idle',
+          phase: BULK_COMMIT_PHASE.IDLE,
           heldIds: [],
           holdCount: 0,
           partialFailure: null,
@@ -393,7 +401,7 @@ export const useBulkReviewCommit = ({
       setBulkActionActiveRef.current(true);
       if (options.updateUi) {
         setBulkSafe({
-          phase: 'committing',
+          phase: BULK_COMMIT_PHASE.COMMITTING,
           heldIds: items.map((i) => i.suggestionId),
           holdCount: items.length,
           partialFailure: null,
@@ -438,7 +446,7 @@ export const useBulkReviewCommit = ({
       if (options.limitToFirstOnly || sequence.cancelled) {
         // Unmount cancel or hold-only first item: rest stay selected; idle chrome.
         setBulkSafe({
-          phase: 'idle',
+          phase: BULK_COMMIT_PHASE.IDLE,
           heldIds: [],
           holdCount: 0,
           partialFailure: null,
@@ -450,7 +458,7 @@ export const useBulkReviewCommit = ({
       if (failedIndex >= 0) {
         const notAttempted = total - failedIndex - 1;
         setBulkSafe({
-          phase: 'partial_failed',
+          phase: BULK_COMMIT_PHASE.PARTIAL_FAILED,
           heldIds: [],
           holdCount: 0,
           partialFailure: {
@@ -466,7 +474,7 @@ export const useBulkReviewCommit = ({
       }
 
       setBulkSafe({
-        phase: 'idle',
+        phase: BULK_COMMIT_PHASE.IDLE,
         heldIds: [],
         holdCount: 0,
         partialFailure: null,
@@ -541,7 +549,7 @@ export const useBulkReviewCommit = ({
       };
       heldBulkRef.current = entry;
       setBulkSafe({
-        phase: 'holding',
+        phase: BULK_COMMIT_PHASE.HOLDING,
         heldIds: items.map((i) => i.suggestionId),
         holdCount: items.length,
         partialFailure: null,
@@ -563,7 +571,7 @@ export const useBulkReviewCommit = ({
     if (bulkInitiateInFlightRef.current) {
       return;
     }
-    if (phaseRef.current === 'holding' || phaseRef.current === 'committing') {
+    if (phaseRef.current === BULK_COMMIT_PHASE.HOLDING || phaseRef.current === BULK_COMMIT_PHASE.COMMITTING) {
       return;
     }
     if (selectedIdsRef.current.size === 0) {
@@ -623,14 +631,14 @@ export const useBulkReviewCommit = ({
 
   const undoBulk = React.useCallback((): void => {
     const held = heldBulkRef.current;
-    if (!held || phaseRef.current !== 'holding') {
+    if (!held || phaseRef.current !== BULK_COMMIT_PHASE.HOLDING) {
       return;
     }
     clearHeldTimer();
     heldBulkRef.current = null;
     held.resolve();
     setBulkSafe({
-      phase: 'idle',
+      phase: BULK_COMMIT_PHASE.IDLE,
       heldIds: [],
       holdCount: 0,
       partialFailure: null,
@@ -641,7 +649,7 @@ export const useBulkReviewCommit = ({
   const setBulkHoldPaused = React.useCallback(
     (paused: boolean): void => {
       const held = heldBulkRef.current;
-      if (!held || phaseRef.current !== 'holding') {
+      if (!held || phaseRef.current !== BULK_COMMIT_PHASE.HOLDING) {
         return;
       }
       if (paused === held.paused) {
@@ -675,11 +683,11 @@ export const useBulkReviewCommit = ({
         // Initiation errored (no hold opened) — fall through; phase is idle → no-op.
       }
     }
-    if (phaseRef.current === 'holding' && heldBulkRef.current) {
+    if (phaseRef.current === BULK_COMMIT_PHASE.HOLDING && heldBulkRef.current) {
       await fireHeldBulk({ limitToFirstOnly: false, updateUi: true });
       return;
     }
-    if (phaseRef.current === 'committing' || sequencePromiseRef.current) {
+    if (phaseRef.current === BULK_COMMIT_PHASE.COMMITTING || sequencePromiseRef.current) {
       if (sequencePromiseRef.current) {
         await sequencePromiseRef.current;
         return;
@@ -693,8 +701,8 @@ export const useBulkReviewCommit = ({
   // Keep host ref current every render (scheduleCommit reads .current).
   awaitBulkIdleOrFlushRef.current = awaitBulkIdleOrFlush;
   isBulkActiveRef.current =
-    bulk.phase === 'holding' ||
-    bulk.phase === 'committing' ||
+    bulk.phase === BULK_COMMIT_PHASE.HOLDING ||
+    bulk.phase === BULK_COMMIT_PHASE.COMMITTING ||
     bulkInitiatePending;
 
   const retryBulk = React.useCallback(async (): Promise<void> => {
@@ -705,9 +713,9 @@ export const useBulkReviewCommit = ({
   }, [initiateBulk]);
 
   const clearPartialFailure = React.useCallback((): void => {
-    if (bulk.phase === 'partial_failed') {
+    if (bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED) {
       setBulkSafe({
-        phase: 'idle',
+        phase: BULK_COMMIT_PHASE.IDLE,
         heldIds: [],
         holdCount: 0,
         partialFailure: null,
@@ -751,9 +759,9 @@ export const useBulkReviewCommit = ({
   }, [clearHeldTimer]);
 
   const bulkHoldAnnounce =
-    bulk.phase === 'holding'
+    bulk.phase === BULK_COMMIT_PHASE.HOLDING
       ? bulkHoldStatusCopy(bulk.holdCount)
-      : bulk.phase === 'committing'
+      : bulk.phase === BULK_COMMIT_PHASE.COMMITTING
         ? bulkCommittingStatusCopy(bulk.holdCount)
         : '';
 

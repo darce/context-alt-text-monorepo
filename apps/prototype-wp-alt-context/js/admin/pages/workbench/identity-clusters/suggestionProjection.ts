@@ -1,10 +1,20 @@
 import type { QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
-import type { ClusterSuggestion, PendingSuggestion } from '../../../api/recognition';
+import type {
+  ClusterSuggestion,
+  IdentityBatchSuggestionsResponse,
+  PendingSuggestion,
+} from '../../../api/recognition';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
 export const PROJECTION_TOP_K = 5;
+
+/**
+ * Shared staleTime for every identityBatch query (inline multi-id + single-id loader).
+ * BR-10: divergent TTLs let two cache entries for the same identity disagree mid-window.
+ */
+export const IDENTITY_BATCH_STALE_MS = 60_000;
 
 /** Canonical auto-label prefix; human-format labels must not start with this. */
 export const AUTO_LABEL_PREFIX = 'cluster-' as const;
@@ -234,10 +244,102 @@ export const projectReviewQueue = (rows: readonly PendingSuggestion[]): Projecte
 export const identityBatchIdsKey = (identityIds: readonly string[]): string =>
   [...new Set(identityIds)].sort().join(',');
 
+/**
+ * Seed per-identity projection entries from a multi-id batch response (BR-10).
+ * Single-id loaders (`useClusterSuggestionsLoader`) read these keys so one
+ * invalidation/stale window covers inline batch + dropdown without dual fetches.
+ *
+ * Only seeds ids the server actually returned in `matches` (L1R-04 / rg-015).
+ * Omitted keys are not written as authoritative empty results.
+ */
+export const seedIdentityBatchSingles = (
+  queryClient: QueryClient,
+  response: IdentityBatchSuggestionsResponse,
+  identityIds: readonly string[],
+): void => {
+  for (const id of identityIds) {
+    if (!Object.prototype.hasOwnProperty.call(response.matches, id)) {
+      continue;
+    }
+    const singleResponse: IdentityBatchSuggestionsResponse = {
+      matches: { [id]: response.matches[id] ?? [] },
+    };
+    queryClient.setQueryData(
+      queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([id])),
+      singleResponse,
+    );
+  }
+};
+
+/**
+ * Read a single identity's matches + the matching entry's dataUpdatedAt (BR-10 / L1R-03).
+ * Prefers the canonical single-id key, then the first multi-id batch that includes the id.
+ * Data and timestamp always come from the same cache entry so stale data cannot be
+ * stamped with a fresher sibling batch's updatedAt.
+ */
+export const readIdentityBatchCacheEntry = (
+  queryClient: QueryClient,
+  identityId: string,
+): { data: IdentityBatchSuggestionsResponse; dataUpdatedAt: number | undefined } | undefined => {
+  const singleKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey([identityId]));
+  const single = queryClient.getQueryData<IdentityBatchSuggestionsResponse>(singleKey);
+  if (single?.matches && Object.prototype.hasOwnProperty.call(single.matches, identityId)) {
+    return {
+      data: { matches: { [identityId]: single.matches[identityId] ?? [] } },
+      dataUpdatedAt: queryClient.getQueryState(singleKey)?.dataUpdatedAt,
+    };
+  }
+
+  const batches = queryClient.getQueriesData<IdentityBatchSuggestionsResponse>({
+    queryKey: [...queryKeys.suggestions.projection.all, 'identity-batch'],
+  });
+  for (const [key, data] of batches) {
+    if (!data?.matches || !Object.prototype.hasOwnProperty.call(data.matches, identityId)) {
+      continue;
+    }
+    return {
+      data: { matches: { [identityId]: data.matches[identityId] ?? [] } },
+      dataUpdatedAt: queryClient.getQueryState(key)?.dataUpdatedAt,
+    };
+  }
+  return undefined;
+};
+
+export const readIdentityFromBatchCache = (
+  queryClient: QueryClient,
+  identityId: string,
+): IdentityBatchSuggestionsResponse | undefined => readIdentityBatchCacheEntry(queryClient, identityId)?.data;
+
+export const readIdentityBatchUpdatedAt = (queryClient: QueryClient, identityId: string): number | undefined =>
+  readIdentityBatchCacheEntry(queryClient, identityId)?.dataUpdatedAt;
+
 export const invalidateSuggestionProjection = (queryClient: QueryClient): Promise<void> =>
   queryClient.invalidateQueries({
     queryKey: queryKeys.suggestions.projection.all,
   });
+
+/**
+ * Optimistically drop an accepted/rejected assignment suggestion from the review-page cache
+ * so the pending list updates before projection invalidation refetches (L1V-03).
+ * Shape matches SuggestionReviewPage without importing the query module (cycle-safe).
+ */
+export const removePendingSuggestionFromCache = (queryClient: QueryClient, suggestionId: string): void => {
+  const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+  queryClient.setQueryData<{ items: ProjectedSuggestion[]; dataSource?: unknown } | undefined>(
+    reviewPageKey,
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.items.filter((item) => item.suggestionId !== suggestionId);
+      if (filtered.length === current.items.length) {
+        return current;
+      }
+      // COR-3 (rg-015): no envelope total to decrement; loaded count follows items.
+      return { ...current, items: filtered };
+    },
+  );
+};
 
 /**
  * Invalidation event map (D4) as data for UXP-5 wiring.

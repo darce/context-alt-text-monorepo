@@ -36,11 +36,12 @@ class ClusterReadService {
 	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
 	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
 	/**
-	 * Per-cluster sample size for list / top-unlabeled cards. Single source for
-	 * both the members fetch and the mapper preview_limit so truncation logic
-	 * cannot desynchronise (sr-007).
+	 * Per-cluster sample size for list / top-unlabeled cards. Canonical value
+	 * lives on the repository interface (PREVIEW_IDENTITIES_PER_CLUSTER); do not
+	 * re-state the magnitude — facade fetch and mapper both consume that const
+	 * (sr-007, E21-14-R3-COORDINATOR-02).
 	 */
-	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
+	private const PREVIEW_IDENTITIES_PER_CLUSTER = IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER;
 	/**
 	 * Cluster detail member page size. Canonical value lives on the repository
 	 * interface (DEFAULT_CLUSTER_MEMBER_LIMIT); do not re-state the magnitude.
@@ -85,6 +86,11 @@ class ClusterReadService {
 			}
 		}
 
+		/*
+		 * WHY: Remote recognition payloads have no person binding. person_uuid
+		 * is intentionally absent (honest null per rg-015). Do not fabricate a
+		 * fallback — FE renders Unresolved until the local projection path is used.
+		 */
 		$query = array(
 			'tenant_id' => $tenant_id,
 			'limit'     => $limit,

@@ -848,6 +848,16 @@ describe('WorkbenchPage', () => {
       expect(library).toContainElement(mediaRegions[0] as HTMLElement);
     });
 
+    it('does not put aria-live on the control panel host [L2V-01]', () => {
+      setupScanMutation('success');
+      renderWorkbench();
+
+      const panelHost = document.querySelector('.acx-workbench__panel');
+      expect(panelHost).not.toBeNull();
+      // Nested narrow live regions may exist; the panel host itself must not re-announce.
+      expect(panelHost).not.toHaveAttribute('aria-live');
+    });
+
     it('restores ?panes=library-collapsed independently of the ?panel= overlay [NAV-11]', () => {
       setupScanMutation('success');
       renderWorkbench(undefined, ['/workbench?panes=library-collapsed&panel=conflicts']);

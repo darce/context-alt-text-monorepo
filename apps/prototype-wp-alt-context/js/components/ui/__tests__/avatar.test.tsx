@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AVATAR_STATES, Avatar } from '../avatar';
+import { AVATAR_STATES, Avatar, resolveAvatarRenderState } from '../avatar';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -123,5 +123,35 @@ describe('Avatar four-state contract', () => {
     expect(container.querySelector('.acx-avatar__warning-icon')).not.toBeNull();
     expect(container.querySelector('.acx-avatar__broken-icon')).not.toBeNull();
     expect(screen.queryByText('No image')).not.toBeInTheDocument();
+  });
+
+  // E21-20-REV1-05 / TEST-15: passing the previous identity's loadStatus
+  // through resolveAvatarState would yield real/error against the new src.
+  // resolveAvatarRenderState must force idle on src change so the swap frame
+  // is fallback-visible (loading), not the stale terminal state.
+  it('swap frame: new src does not keep data-avatar-state=real from the previous identity', () => {
+    const swapFrame = resolveAvatarRenderState(
+      'https://example.com/b.jpg',
+      'https://example.com/a.jpg',
+      'loaded',
+    );
+
+    expect(['loading', 'idle', 'fallback-visible']).toContain(swapFrame);
+    expect(swapFrame).toBe(AVATAR_STATES.loading);
+    expect(swapFrame).not.toBe(AVATAR_STATES.real);
+    expect(swapFrame).not.toBe(AVATAR_STATES.error);
+  });
+
+  it('swap frame: new src does not keep data-avatar-state=error from the previous identity', () => {
+    const swapFrame = resolveAvatarRenderState(
+      'https://example.com/b.jpg',
+      'https://example.com/a.jpg',
+      'error',
+    );
+
+    expect(['loading', 'idle', 'fallback-visible']).toContain(swapFrame);
+    expect(swapFrame).toBe(AVATAR_STATES.loading);
+    expect(swapFrame).not.toBe(AVATAR_STATES.error);
+    expect(swapFrame).not.toBe(AVATAR_STATES.real);
   });
 });

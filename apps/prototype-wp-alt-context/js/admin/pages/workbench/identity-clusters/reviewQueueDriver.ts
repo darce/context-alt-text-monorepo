@@ -12,6 +12,30 @@ import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { SuggestionReviewItem } from './suggestionReviewItems';
 
+/** Cluster evidence gate (E21-18 S2 / sr-007). Zero-evidence rows never enter the queue. */
+export const CLUSTER_EVIDENCE = {
+  ZERO: 'zero',
+  PRESENT: 'present',
+} as const;
+
+export type ClusterEvidence = (typeof CLUSTER_EVIDENCE)[keyof typeof CLUSTER_EVIDENCE];
+
+type ClusterEvidenceInput = Pick<TopUnlabeledCluster, 'identity_count'> & {
+  representatives?: readonly unknown[] | null;
+};
+
+/**
+ * A cluster is zero-evidence iff identity_count === 0 OR representatives is empty/absent.
+ * Either alone already breaks the card: no meta count or no thumbs.
+ */
+export const isZeroEvidenceCluster = (cluster: ClusterEvidenceInput): boolean =>
+  cluster.identity_count === 0 ||
+  !Array.isArray(cluster.representatives) ||
+  cluster.representatives.length === 0;
+
+export const clusterEvidence = (cluster: ClusterEvidenceInput): ClusterEvidence =>
+  isZeroEvidenceCluster(cluster) ? CLUSTER_EVIDENCE.ZERO : CLUSTER_EVIDENCE.PRESENT;
+
 export const NEXT_ACTION_KIND = {
   ASSIGNMENT: 'assignment',
   MERGE: 'merge',
@@ -318,10 +342,12 @@ export const buildReviewQueue = (
     suggestionId: name.id,
     clusterId: name.cluster_id,
   }));
-  const clusters: ReviewQueueItem[] = sources.sortedClusters.map((cluster) => ({
-    kind: NEXT_ACTION_KIND.CLUSTER,
-    clusterId: cluster.id,
-  }));
+  const clusters: ReviewQueueItem[] = sources.sortedClusters
+    .filter((cluster) => clusterEvidence(cluster) === CLUSTER_EVIDENCE.PRESENT)
+    .map((cluster) => ({
+      kind: NEXT_ACTION_KIND.CLUSTER,
+      clusterId: cluster.id,
+    }));
 
   return filterReviewQueueComposite(
     [...assignments, ...merges, ...names, ...clusters],

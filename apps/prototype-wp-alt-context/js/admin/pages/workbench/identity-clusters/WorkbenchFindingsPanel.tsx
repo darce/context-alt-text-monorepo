@@ -16,6 +16,7 @@ import { Avatar } from '../../../../components/ui/avatar';
 import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import {
+  CLUSTER_EVIDENCE,
   NEXT_ACTION_KIND,
   useWorkbenchFindings,
   type WorkbenchFindingPreview,
@@ -175,6 +176,7 @@ export const WorkbenchFindingsPanel = ({
   const {
     counts,
     previews,
+    zeroEvidenceClusterCount,
     hasFindings,
     isLoading,
     isError,
@@ -327,9 +329,42 @@ export const WorkbenchFindingsPanel = ({
         </div>
       )}
 
+      {zeroEvidenceClusterCount > 0 && (
+        <div
+          className="acx-findings-panel__repair"
+          role="status"
+          aria-live="polite"
+          data-cluster-evidence={CLUSTER_EVIDENCE.ZERO}
+        >
+          <p className="acx-findings-panel__status">
+            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+            {sprintf(
+              _n(
+                '%d group missing preview data',
+                '%d groups missing preview data',
+                zeroEvidenceClusterCount,
+                'alt-context',
+              ),
+              zeroEvidenceClusterCount,
+            )}
+          </p>
+          <p className="acx-findings-panel__hint">
+            {__('They are hidden from review until their faces sync.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary acx-button--small"
+            onClick={handleRetryTopUnlabeled}
+          >
+            {__('Resync', 'alt-context')}
+          </button>
+        </div>
+      )}
+
       {/* UI-04: empty drain copy is only for a successful zero — every failure
-          mode (including a zero-total top-unlabeled outage) returns above. */}
-      {!hasFindings && (
+          mode (including a zero-total top-unlabeled outage) returns above.
+          A zero-evidence-only backlog is a repair state, not "all caught up". */}
+      {!hasFindings && zeroEvidenceClusterCount === 0 && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>

@@ -361,7 +361,11 @@ class GoldenEntry(BaseModel):
     # All curated face boxes incl. anonymous strangers (name=None) — detection ground
     # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
     face_boxes: list[FaceBox] = Field(default_factory=list)
-    provenance: Provenance | None = None
+    # FIR-11 Slice 1: provenance is required and fail-closed. A missing key is
+    # rejected by load_manifest with every offending path named (aggregate, not
+    # fail-first). Mis-attestation is worse than absence (PROV-01); this field
+    # being optional is what let 6 golden150 entries load unsigned.
+    provenance: Provenance
     # FIR-5 S1: bake-off image-slice tags (additive; legacy entries omit → []).
     tags: list[SliceTag] = Field(default_factory=list)
     # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
@@ -425,10 +429,12 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, empty corpus, duplicate media_id/path,
-    identities outside the roster, roster_cohorts keys outside the roster, and (when ``images_dir`` is given) missing
-    image files or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus
-    defines no Must-Right/Easy-Wrong entries — the caption hard gate is then
-    vacuous but that is surfaced, not silent (S1-02).
+    identities outside the roster, roster_cohorts keys outside the roster,
+    any entry missing ``provenance`` (FIR-11 Slice 1 — required, fail-closed;
+    every offending path is named in one error), and (when ``images_dir`` is
+    given) missing image files or sha256 mismatches. Emits ``RubricEmptyWarning``
+    if the corpus defines no Must-Right/Easy-Wrong entries — the caption hard
+    gate is then vacuous but that is surfaced, not silent (S1-02).
     """
     manifest_path = Path(path)
     if not manifest_path.is_file():
@@ -460,6 +466,31 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
                     f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
                     f"use empty string when not applicable, or set base_caption_optional=true"
                 )
+
+    # FIR-11 Slice 1: provenance is required. Aggregate every missing/null
+    # entry into one ManifestError naming every offending path — fail-closed
+    # and not fail-first, so a junior operator sees the full hole list.
+    if isinstance(raw, dict):
+        missing_provenance: list[str] = []
+        for raw_entry in raw.get("entries") or []:
+            if not isinstance(raw_entry, dict):
+                continue
+            if raw_entry.get("provenance") is None:
+                path = raw_entry.get("path")
+                media_id = raw_entry.get("media_id")
+                if isinstance(path, str) and path:
+                    label = path
+                    if media_id is not None:
+                        label = f"{path} (media_id={media_id})"
+                else:
+                    label = f"media_id={media_id!r}"
+                missing_provenance.append(label)
+        if missing_provenance:
+            listed = ", ".join(missing_provenance)
+            raise ManifestError(
+                f"provenance is required (fail-closed); missing on "
+                f"{len(missing_provenance)} entries: {listed}"
+            )
 
     try:
         manifest = GoldenManifest.model_validate(raw)

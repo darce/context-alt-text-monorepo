@@ -2054,6 +2054,53 @@ def _segment_is_exception_family_identity(seg: str) -> bool:
     return False
 
 
+def _iter_exception_compact_spellings() -> list[tuple[str, str, str]]:
+    """``(seed_c, seed_k, spelling)`` for each exception seed and compact tag.
+
+    Longest spelling first so ``yoloxs`` wins over ``yolox`` at the same
+    offset. Shared by mid-adjacency and door-promotion occurrence tests
+    (F14-4 / F13-3).
+    """
+    out: list[tuple[str, str, str]] = []
+    for seed_c, seed_k, _entry in _iter_family_seeds(
+        PACKAGE_EXCEPTION_ALLOWLIST
+    ):
+        if not seed_k:
+            continue
+        out.append((seed_c, seed_k, seed_k))
+        for tag in _EXCEPTION_FAMILY_COMPACT_TAGS.get(seed_c, frozenset()):
+            if tag:
+                out.append((seed_c, seed_k, seed_k + tag))
+        for tag in _EXCEPTION_FAMILY_COMPACT_GLUE_ALLOWLIST.get(
+            seed_c, frozenset()
+        ):
+            if tag:
+                out.append((seed_c, seed_k, seed_k + tag))
+    out.sort(key=lambda item: -len(item[2]))
+    return out
+
+
+def _compact_has_mid_exception_family(part: str) -> bool:
+    """True when an exception seed/spelling sits at compact offset > 0.
+
+    F14-4 occurrence predicate (TEST-15). Offset 0 is owned by prefix
+    match / F12-1 steal. Shared with
+    :func:`_compact_mid_exception_deny_adjacency`.
+    """
+    if not part:
+        return False
+    compact = _compact_canonical(part)
+    if not compact:
+        return False
+    for _seed_c, _seed_k, spelling in _iter_exception_compact_spellings():
+        idx = compact.find(spelling)
+        while idx >= 0:
+            if idx > 0:
+                return True
+            idx = compact.find(spelling, idx + 1)
+    return False
+
+
 def _compact_component_has_exception_tail(part: str) -> bool:
     """True when compact ``part`` ends with an exception seed or spelling.
 
@@ -2092,6 +2139,10 @@ def _token_has_non_prefix_exception_family(part: str) -> bool:
     for seg in part.split("_"):
         if _segment_is_exception_family_identity(seg):
             return True
+    # F14-4: exception-family structure anywhere in the compact token
+    # (xyoloxinsightface), not only a trailing exact spelling.
+    if _compact_has_mid_exception_family(part):
+        return True
     return _compact_component_has_exception_tail(part)
 
 
@@ -2102,11 +2153,13 @@ def _token_has_exception_family(token: str) -> bool:
     ``yoloxinsightface`` is visible to NC door promotion — structural
     strip alone misses those forms and dropped a known scanner NC hit.
 
-    F13-2 / R15-L-1: also true when any ``_``-segment is exact/compact
-    exception identity, or the compact component ends with an exception
-    seed (``insightface_yolox`` / ``insightfaceyolox``). BR-28
-    floor-only controls (``myarcface`` / ``not-insightface``) have no
-    exception segment and stay False.
+    F13-2 / R15-L-1 / F14-4: also true when any ``_``-segment is
+    exact/compact exception identity, the compact component ends with
+    an exception seed, **or** an exception seed/spelling occurs at a
+    mid-token compact offset (``xyoloxinsightface``). BR-28 floor-only
+    controls (``myarcface`` / ``not-insightface``) and bare junk+NC
+    without an exception segment (``aabuffalo_l`` / ``aainsightface`` /
+    ``aaayolonas``) have no exception occurrence and stay False.
     """
     c = canonical(token) if token else None
     if not c:
@@ -4267,26 +4320,18 @@ def _compact_mid_exception_deny_adjacency(
     compact = _compact_canonical(token)
     if not compact:
         return None
-    seeds = sorted(
-        (
-            (seed_k, seed_c)
-            for seed_c, seed_k, _entry in _iter_family_seeds(
-                PACKAGE_EXCEPTION_ALLOWLIST
-            )
-            if seed_k
-        ),
-        key=lambda item: -len(item[0]),
-    )
-    for seed_k, _seed_c in seeds:
+    # F14-4: share the occurrence predicate (seed + compact-tag spellings,
+    # offset > 0) with ``_compact_has_mid_exception_family``.
+    for _seed_c, _seed_k, spelling in _iter_exception_compact_spellings():
         start = 0
         while True:
-            idx = compact.find(seed_k, start)
+            idx = compact.find(spelling, start)
             if idx < 0:
                 break
             if idx == 0:
                 start = idx + 1
                 continue
-            rem = compact[idx + len(seed_k) :]
+            rem = compact[idx + len(spelling) :]
             if rem:
                 deny = _deny_folded_ab_hit(rem)
                 if deny is None:
@@ -4912,11 +4957,14 @@ def _door_package_floor_promotion(
     nc = _whole_component_nc_package_hit(value)
     if nc is not None:
         return nc
-    # F12-3 / R14-G1-4: fail closed when the uniform scanner already
-    # found NC but whole-component promotion missed (unbounded exception
-    # compact + NC residual). Restricted to exception-family tokens so
-    # BR-28 door-precision (``myarcface`` / ``not-insightface``) stays
-    # floor-only.
+    # F12-3 / R14-G1-4 / F14-4: fail closed when the uniform scanner
+    # already found NC but whole-component promotion missed. Promote
+    # whenever exception-family structure is witnessed *anywhere* in
+    # the compact token (prefix, trailing segment, or mid-token
+    # ``xyoloxinsightface``). BR-28 door-precision (``myarcface`` /
+    # ``not-insightface``) and bare junk+NC without an exception
+    # segment (``aabuffalo_l`` / ``aainsightface`` / ``aaayolonas``)
+    # stay floor-only — deliberate asymmetry, not a scanner miss.
     if _token_has_exception_family(value):
         scanned_nc = _package_denylist_hit(
             value, reasons=frozenset({RejectionReason.NC_MODEL_DERIVED})

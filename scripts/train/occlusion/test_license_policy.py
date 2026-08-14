@@ -11116,6 +11116,115 @@ class TestF14PpYoloTitlePathMerge:
         assert policy.audit_derived_from_model("pp_x").ok is True
 
 
+class TestF14DoorPromotionMidException:
+    """F14-4 / R16-G1-5 / R16-CDX-2: door promotion sees mid-token exception.
+
+    Scanner already hits NC on ``xyoloxinsightface`` (mid-adjacency rem).
+    Door promotion previously required a prefix or trailing-segment
+    exception, so junk+exception+NC door-passed. Promote whenever the
+    occurrence predicate witnesses exception-family structure anywhere.
+
+    Bare junk+NC without an exception segment (``aabuffalo_l`` /
+    ``aainsightface`` / ``aaayolonas``) stays BR-28 floor-only — that
+    asymmetry is deliberate (no exception occurrence to promote).
+    """
+
+    DOOR_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("xyoloxinsightface", "insightface"),
+        ("myyoloxinsightface", "insightface"),
+        ("abcyoloxinsightface", "insightface"),
+        ("xyoloxarcface", "arcface"),
+        ("xyoloxsarcface", "arcface"),
+        ("xyoloxantelopev2", "antelopev2"),
+    )
+    EXISTING_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloxinsightface", "insightface"),
+        ("insightface_yolox", "insightface"),
+    )
+    FLOOR_ONLY_DOOR_PASS: ClassVar[tuple[str, ...]] = (
+        "myarcface",
+        "not-insightface",
+        "aabuffalo_l",
+        "aainsightface",
+        "aaayolonas",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", DOOR_DENY)
+    def test_mid_exception_nc_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        assert policy._token_has_exception_family(token) is True, (
+            f"{token!r} must expose mid-token exception-family structure"
+        )
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must scanner-NC-HIT"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, (
+                f"door must deny {token!r} (mid-exception promotion)"
+            )
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            pattern = _door_nc_pattern_id(result.detail)
+            entry = _door_entry_package_id(result.detail)
+            assert pattern == expected_pkg or entry == expected_pkg, (
+                f"{token!r}: door must name {expected_pkg!r}; "
+                f"got pattern={pattern!r} entry={entry!r} detail={result.detail!r}"
+            )
+
+    @pytest.mark.parametrize("token,expected_pkg", EXISTING_DENY)
+    def test_prefix_and_trailing_exception_still_deny(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        pattern = _door_nc_pattern_id(result.detail)
+        entry = _door_entry_package_id(result.detail)
+        assert pattern == expected_pkg or entry == expected_pkg
+
+    @pytest.mark.parametrize("token", FLOOR_ONLY_DOOR_PASS)
+    def test_junk_nc_without_exception_stays_floor_only(
+        self, token: str
+    ) -> None:
+        assert policy._token_has_exception_family(token) is False, (
+            f"{token!r} must not grow an exception occurrence"
+        )
+        assert policy.audit_derived_from_model(token).ok is True, (
+            f"{token!r} must stay door-pass (BR-28 / no exception segment)"
+        )
+
+    def test_red_proof_mid_exception_occurrence_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_compact_has_mid_exception_family``.
+
+        Mid-token junk+exception+NC compounds door-admit; F13-2 trailing
+        ``insightface_yolox`` and F12-3 prefix ``yoloxinsightface`` still
+        deny. BR-28 / bare junk+NC stay door-pass.
+        """
+        for token, _pkg in self.DOOR_DENY:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"precondition: {token!r} must door-deny"
+            )
+        monkeypatch.setattr(
+            policy, "_compact_has_mid_exception_family", lambda _p: False
+        )
+        for token, _pkg in self.DOOR_DENY:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with mid-occurrence off, {token!r} must door-admit"
+            )
+        assert policy.audit_derived_from_model("yoloxinsightface").ok is False
+        assert policy.audit_derived_from_model("insightface_yolox").ok is False
+        assert policy.audit_derived_from_model("myarcface").ok is True
+        assert policy.audit_derived_from_model("not-insightface").ok is True
+        assert policy.audit_derived_from_model("aainsightface").ok is True
+
+
 class TestF13NcDoorPromotionTrailingException:
     """F13-2 / R15-L-1: exception after the NC head must reach doors.
 

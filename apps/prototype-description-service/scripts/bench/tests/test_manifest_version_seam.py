@@ -52,7 +52,6 @@ def test_detection_cell_directional_when_non_exhaustive_dropped() -> None:
             "head_to_head_delta": 0.10,
             "holm_significant": True,
             "exhaustiveness_ok": False,
-            "cluster_ok": True,
             "count_only": False,
         },
     )
@@ -73,7 +72,6 @@ def test_identification_cell_directional_when_non_exhaustive() -> None:
             "head_to_head_delta": 0.10,
             "holm_significant": True,
             "exhaustiveness_ok": False,
-            "cluster_ok": True,
             "count_only": False,
         },
     )

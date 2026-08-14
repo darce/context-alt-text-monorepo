@@ -3881,12 +3881,10 @@ MUTATIONS: list[Mutation] = [
             "test_agpl_head_or_mid_plus_residual_denies",
             "test_agpl_head_exception_rem_denies_honest",
             "test_junk_prefix_exception_deny_denies_honest",
-            # F17/F18 door-reason pins (honest NC / AGPL reason).
-            "test_representative_seed_junk_spelling_denies",
-            "test_variant_shapes_deny",
-            "test_full_cross_product_sweep_denies",
+            # F17/F18/F19 door-reason pins that emit via floor.reason
+            # (AUDIT-08: NC-membership pins that never reach the swap
+            # were padding and are not listed — FIR-7 R21-02).
             "test_a3_must_stay_deny_fence",
-            "test_rem_tail_glued_axes_deny",
             "test_listed_rem_tail_gadgets_deny",
             # Wave F19 R21-01: listed multi-seg rem includes AGPL fastsam row.
             "test_listed_multi_segment_rem_tail_gadgets_deny",
@@ -3894,11 +3892,8 @@ MUTATIONS: list[Mutation] = [
             "test_yolobuffalo_l_is_yolo_head_plus_known_rem",
             "test_deny_seed_plus_pd_extension_still_denies",
             "test_agpl_stem_junk_infix_exception_denies",
-            "test_nc_stem_junk_infix_exception_denies",
             "test_non_vendor_pp_yoloe_still_denies",
             "test_steal_names_fastsam_residual_honest",
-            "test_known_nas_residual_is_deci_nc",
-            "test_exact_pp_yolo_nas_is_deci_via_compact",
         ),
     ),
     Mutation(

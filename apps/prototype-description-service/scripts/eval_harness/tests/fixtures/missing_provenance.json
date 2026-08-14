@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "roster": ["Ada Example", "Bea Example"],
+  "entries": [
+    {
+      "path": "fixtures/ada_example_101.jpg",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "media_id": 101,
+      "face_count": 1,
+      "present_identities": ["Ada Example"],
+      "base_caption": "Ada looks at the camera.",
+      "must_right": ["Ada Example"],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "face_boxes": [
+        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Ada Example", "source": "operator"}
+      ],
+      "tags": [],
+      "provenance": {
+        "source": "operator",
+        "license": "consented",
+        "note": "synthetic fixture; this entry is provenanced"
+      }
+    },
+    {
+      "path": "fixtures/bea_example_102.jpg",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "media_id": 102,
+      "face_count": 1,
+      "present_identities": ["Bea Example"],
+      "base_caption": "Bea looks at the camera.",
+      "must_right": ["Bea Example"],
+      "easy_wrong": [],
+      "policy": {"recognition_enabled": true},
+      "face_boxes": [
+        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Bea Example", "source": "operator"}
+      ],
+      "tags": []
+    }
+  ]
+}

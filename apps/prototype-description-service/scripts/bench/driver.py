@@ -455,8 +455,8 @@ def _terminal_leg_refusal(path: Path) -> bool:
         return False
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BenchError("leg_outcome_unreadable", f"unreadable leg_outcome.json: {path}") from exc
     return doc.get("error_code") == "cluster_gate_refused"
 
 

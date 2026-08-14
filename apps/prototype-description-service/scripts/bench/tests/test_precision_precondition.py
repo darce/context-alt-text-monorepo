@@ -150,16 +150,115 @@ def test_assign_tier_primary_name_does_not_bypass_flag() -> None:
 
 
 def test_bootstrap_p_uses_B_not_n_used() -> None:
-    from scripts.bench.score_report import ImageCounts
+    """Replaces the R2-07 vacuous all-same-sign red-proof (FIR-8 R3-01).
 
-    # One image has a defined recall (tp+fn>0); two have denom 0. Some resamples drop.
-    a = [ImageCounts(1, 0, 0), ImageCounts(0, 0, 0), ImageCounts(0, 0, 0)]
-    b = [ImageCounts(0, 0, 1), ImageCounts(0, 0, 0), ImageCounts(0, 0, 0)]
-    interval = bootstrap_paired_delta(a, b, seed=7, metric="micro_recall", B=50)
-    assert interval.n_used < 50
+    Mixed-sign defined deltas plus dropped draws. Exact p must fail under
+    `/n_used` AND under numerators that ignore undefined-as-zero.
+    """
+    import random
+
+    from scripts.bench.score_report import ImageCounts, _resample_delta
+
+    # 2 +1 images, 1 -1 image, 4 zero-denom (undefined when exclusively picked).
+    a = [
+        ImageCounts(1, 0, 0),
+        ImageCounts(1, 0, 0),
+        ImageCounts(0, 0, 1),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+    ]
+    b = [
+        ImageCounts(0, 0, 1),
+        ImageCounts(0, 0, 1),
+        ImageCounts(1, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+        ImageCounts(0, 0, 0),
+    ]
+    B = 80
+    seed = 7
+    interval = bootstrap_paired_delta(a, b, seed=seed, metric="micro_recall", B=B)
+
+    rng = random.Random(seed)
+    n = len(a)
+    n_le = n_ge = n_undef = 0
+    n_defined_neg = n_defined_pos = 0
+    for _ in range(B):
+        picks = [rng.randrange(n) for _ in range(n)]
+        delta = _resample_delta(a, b, picks, "micro_recall")
+        if delta is None:
+            n_undef += 1
+            n_le += 1
+            n_ge += 1
+        else:
+            if delta <= 0.0:
+                n_le += 1
+            if delta >= 0.0:
+                n_ge += 1
+            if delta < 0.0:
+                n_defined_neg += 1
+            if delta > 0.0:
+                n_defined_pos += 1
+    n_used = B - n_undef
+    assert n_used < B
+    assert n_undef > 0
+    assert n_defined_neg > 0 and n_defined_pos > 0
+    assert interval.n_used == n_used
     assert interval.bootstrap_status == "partial"
-    assert interval.p_value is not None
-    assert interval.p_value >= 1.0 / 51
+    p_raw = 2.0 * min(n_le / B, n_ge / B)
+    p_expected = min(1.0, max(p_raw, 1.0 / (B + 1)))
+    assert interval.p_value == p_expected
+    # Mutations that must not collide with p_expected:
+    p_over_n_used = min(1.0, max(2.0 * min(n_le / n_used, n_ge / n_used), 1.0 / (B + 1)))
+    p_unadjusted = min(
+        1.0,
+        max(2.0 * min((n_le - n_undef) / B, (n_ge - n_undef) / B), 1.0 / (B + 1)),
+    )
+    assert p_over_n_used != p_expected
+    assert p_unadjusted != p_expected
+
+
+def test_assign_tier_partial_bootstrap_demotes_primary() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+        "bootstrap_status": "partial",
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "bootstrap_status"
+
+
+def test_assign_tier_partial_bootstrap_demotes_holm_secondary() -> None:
+    ctx = {
+        "named": True,
+        "primary": False,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": True,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+        "bootstrap_status": "bootstrap_series_mismatch",
+    }
+    tier, reason = assign_tier("detection_precision@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "bootstrap_status"
 
 
 def test_empty_series_raises() -> None:

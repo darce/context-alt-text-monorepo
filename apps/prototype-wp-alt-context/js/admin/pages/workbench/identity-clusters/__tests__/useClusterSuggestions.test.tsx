@@ -754,4 +754,180 @@ describe('useClusterSuggestions', () => {
     buildSpy.mockRestore();
     queryClient.clear();
   });
+
+  describe('TEST-15 at-rest labelled clusters (E21-16)', () => {
+    const baseCluster = {
+      member_ids: [],
+      representative_identity: {
+        media_id: null,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      },
+      sample_identities: [],
+    };
+
+    const mockEmptySuggestions = () => {
+      vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mockResolvedValue({
+        matches: { 'identity-1': [] },
+      });
+    };
+
+    it('renders a labelled cluster at rest with no matching roster person', async () => {
+      // Predicted first failure (pre-fix): Tory Guzman absent — labelled search
+      // is disabled until 2+ chars, so at-rest union is suggestions + roster only.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      listRecognitionClustersMock.mockResolvedValue({
+        clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+        limit: 50,
+        total: 1,
+        truncated: false,
+      });
+
+      const { result } = renderHook(
+        () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: '', debounceMs: 0 }),
+        { wrapper },
+      );
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+      );
+      expect(result.current.options.some((option) => option.source === 'person' && option.label === 'Tory Guzman')).toBe(
+        false,
+      );
+      expect(
+        result.current.options.some(
+          (option) => option.value === namingOptionValue('cluster', 'cluster-tory') && option.group === NAMING_GROUP_ALL_LABELS,
+        ),
+      ).toBe(true);
+      expect(listRecognitionClustersMock).toHaveBeenCalledWith({
+        limit: 50,
+        offset: 0,
+        labeled_only: true,
+      });
+
+      queryClient.clear();
+    });
+
+    it('does not render auto cluster-* labels from the at-rest labelled list', async () => {
+      // Predicted first failure (pre-fix): human-labelled sibling missing at rest;
+      // after an unfiltered at-rest fetch, cluster-1234 would also leak.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      listRecognitionClustersMock.mockResolvedValue({
+        clusters: [
+          { ...baseCluster, id: 'auto-1', label: 'cluster-1234', identity_count: 1 },
+          { ...baseCluster, id: 'human-1', label: 'Dana Ruiz', identity_count: 2 },
+        ],
+        limit: 50,
+        total: 2,
+        truncated: false,
+      });
+
+      const { result } = renderHook(
+        () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: '', debounceMs: 0 }),
+        { wrapper },
+      );
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Dana Ruiz')).toBe(true),
+      );
+      expect(result.current.options.every((option) => !String(option.label).startsWith('cluster-'))).toBe(true);
+      expect(result.current.options.some((option) => option.value === namingOptionValue('cluster', 'auto-1'))).toBe(
+        false,
+      );
+
+      queryClient.clear();
+    });
+
+    it('still triggers the >=2-char search query and merges those hits', async () => {
+      // Predicted first failure (pre-fix): at-rest Tory never appears. Search path
+      // must keep firing with the typed term so totals beyond the at-rest page merge.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      listRecognitionClustersMock.mockImplementation(async (params) => {
+        if (params?.search && params.search.length >= 2) {
+          return {
+            clusters: [{ ...baseCluster, id: 'cluster-maya', label: 'Maya Chen', identity_count: 3 }],
+            limit: 20,
+            total: 1,
+            truncated: false,
+          };
+        }
+        return {
+          clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+          limit: 50,
+          total: 1,
+          truncated: false,
+        };
+      });
+
+      const { result, rerender } = renderHook(
+        ({ labelInput }: { labelInput: string }) =>
+          useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput, debounceMs: 0 }),
+        { wrapper, initialProps: { labelInput: '' } },
+      );
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+      );
+
+      rerender({ labelInput: 'Ma' });
+
+      await waitFor(() =>
+        expect(listRecognitionClustersMock).toHaveBeenCalledWith({
+          limit: 20,
+          offset: 0,
+          labeled_only: true,
+          search: 'Ma',
+        }),
+      );
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Maya Chen')).toBe(true),
+      );
+
+      queryClient.clear();
+    });
+
+    it('excludes editableClusterId from the at-rest labelled list', async () => {
+      // Predicted first failure (pre-fix): neither at-rest row appears. After the
+      // at-rest fetch, the editable cluster must stay out of the assign dropdown.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      listRecognitionClustersMock.mockResolvedValue({
+        clusters: [
+          { ...baseCluster, id: 'cluster-self', label: 'Tory Guzman', identity_count: 4 },
+          { ...baseCluster, id: 'cluster-other', label: 'Pat Nguyen', identity_count: 6 },
+        ],
+        limit: 50,
+        total: 2,
+        truncated: false,
+      });
+
+      const { result } = renderHook(
+        () =>
+          useClusterSuggestions({
+            identityId: 'identity-1',
+            enabled: true,
+            labelInput: '',
+            debounceMs: 0,
+            editableClusterId: 'cluster-self',
+          }),
+        { wrapper },
+      );
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Pat Nguyen')).toBe(true),
+      );
+      expect(result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-self'))).toBe(
+        false,
+      );
+      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+
+      queryClient.clear();
+    });
+  });
 });

@@ -413,8 +413,11 @@ def test_partial_bootstrap_score_path_demotes_would_be_confirmatory(tmp_path: Pa
     """Real partial bootstrap on a Holm-significant secondary (FIR-8 R4-01, R4-04).
 
     3 exhaustive hit/miss images plus 1 zero-pred image. Detection precision
-    is Holm-significant with ci_half_width=0, so the cell would be CONFIRMATORY
-    if bootstrap_status were fail-open or the ctx stamp were dropped.
+    is Holm-significant with ci_half_width=0. The cell would be CONFIRMATORY
+    if the !=ok demotion in assign_tier were removed, or if score_head_to_head
+    dropped the ctx bootstrap_status stamp. The missing-key fail-open-default
+    seam is pinned by test_assign_tier_missing_bootstrap_status_is_fail_closed,
+    not this integration test.
     """
     from scripts.bench.score_report import BOOTSTRAP_RESAMPLES
 
@@ -440,6 +443,7 @@ def test_partial_bootstrap_score_path_demotes_would_be_confirmatory(tmp_path: Pa
         assert "ci_lower" in cell and cell["ci_lower"] is None
         assert "ci_upper" in cell and cell["ci_upper"] is None
         assert "ci_half_width" in cell and cell["ci_half_width"] is None
+        assert "ci_level" in cell and cell["ci_level"] is None
 
 
 def test_score_refuses_invalid_preflight_json(tmp_path: Path) -> None:
@@ -459,6 +463,56 @@ def test_score_refuses_invalid_preflight_json(tmp_path: Path) -> None:
         assert exc.code == "preflight_invalid"
     else:
         raise AssertionError("empty-object preflight.json must refuse")
+
+
+def test_score_refuses_non_utf8_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    (run_dir / "legs" / A_STACK / "preflight.json").write_bytes(b"\xff\xfe\x00\x01\x9c")
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_invalid"
+    else:
+        raise AssertionError("non-UTF-8 preflight.json must refuse")
+
+
+def test_score_refuses_non_object_preflight_json(tmp_path: Path) -> None:
+    from scripts.bench.score_report import PROV01_PREFLIGHT_KEYS
+    from scripts.bench.stack_pair import BenchError
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    (run_dir / "legs" / B_STACK / "preflight.json").write_text("[]", encoding="utf-8")
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_invalid"
+    else:
+        raise AssertionError("list preflight.json must refuse")
+    # A list of the 11 key names would pass key-presence (`key in list`)
+    # if the isinstance(dict) guard were dropped.
+    (run_dir / "legs" / B_STACK / "preflight.json").write_text(
+        json.dumps(list(PROV01_PREFLIGHT_KEYS)), encoding="utf-8"
+    )
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "preflight_invalid"
+    else:
+        raise AssertionError("key-name-list preflight.json must refuse")
 
 
 def test_score_refuses_unparseable_preflight_json(tmp_path: Path) -> None:

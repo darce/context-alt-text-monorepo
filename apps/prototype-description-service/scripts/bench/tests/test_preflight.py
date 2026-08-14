@@ -163,6 +163,24 @@ def test_fir_leg_expects_128_face_pipeline() -> None:
     assert result.resolved_profile == "face_pipeline"
 
 
+def test_write_preflight_json_round_trips_prov01_keys(tmp_path: Path) -> None:
+    from dataclasses import fields
+
+    from scripts.bench.preflight import PreflightResult
+    from scripts.bench.score_report import PROV01_PREFLIGHT_KEYS, _require_prov01_preflights
+
+    assert tuple(f.name for f in fields(PreflightResult)) == PROV01_PREFLIGHT_KEYS
+    result = preflight_stack(
+        _insightface_endpoint(),
+        transport=_transport(_ready(512), _health("insightface")),
+        api_key="k",
+    )
+    dest = tmp_path / "legs" / result.stack_id / "preflight.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    write_preflight_json(dest, result)
+    assert _require_prov01_preflights(tmp_path, [result.stack_id]) is True
+
+
 def test_missing_opencv_major_raises_and_writes_no_preflight_json(tmp_path: Path) -> None:
     dest = tmp_path / "preflight.json"
     endpoint = _insightface_endpoint()

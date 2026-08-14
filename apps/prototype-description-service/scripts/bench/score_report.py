@@ -33,7 +33,11 @@ LABEL_MAP_OPTIMISTIC = "label_map_optimistic"
 HOLM_NOT_COMPUTED = "not_computed"
 
 # Persist contract for legs/<stack_id>/preflight.json (PROV-01). Score refuses
-# a file that is missing, unreadable, or lacks these keys.
+# a file that is missing, unreadable (including non-UTF-8 bytes), not a JSON
+# object, or lacks these keys. Validation is key-presence only: values are
+# not re-checked at score time (null opencv_major or expected≠resolved still
+# pass if every key is present). The honest writer cannot emit those
+# artifacts; they are reachable only via a tampered or hand-written file.
 PROV01_PREFLIGHT_KEYS = (
     "stack_id",
     "base_url",
@@ -301,7 +305,7 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
     if confirmatory_eligible:
         if "bootstrap_status" not in ctx:
             raise BenchError(
-                "bootstrap_status",
+                "bootstrap_status_missing",
                 "named confirmatory-eligible cell missing bootstrap_status",
             )
         if str(ctx["bootstrap_status"]) != "ok":
@@ -643,7 +647,7 @@ def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
         path = root / "legs" / stack_id / "preflight.json"
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise BenchError(
                 "preflight_invalid",
                 f"{stack_id} preflight.json is not valid JSON",
@@ -906,6 +910,8 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         elif name in named:
             boot_status = "not_computed"
         else:
+            # Unnamed cells exit DIAGNOSTIC at assign_tier's named-check
+            # before bootstrap_status is consulted; this stamp is inert.
             boot_status = "ok"
         ctx = {
             "named": name in named,
@@ -940,7 +946,10 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                 cell["ci_upper"] = interval.ci_upper
                 cell["ci_half_width"] = interval.ci_half_width
             else:
-                cell["ci_level"] = interval.ci_level
+                # Partial/errored: no published interval. Floor/p used the
+                # padded B-draw space via ctx; do not stamp a real ci_level
+                # beside null CI bounds.
+                cell["ci_level"] = None
                 cell["ci_lower"] = None
                 cell["ci_upper"] = None
                 cell["ci_half_width"] = None
@@ -964,9 +973,9 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             else:
                 cell["holm_significant"] = False
                 cell["holm_status"] = HOLM_NOT_COMPUTED
-        elif name in pair.secondary_endpoints:
-            cell["holm_significant"] = False
-            cell["holm_status"] = HOLM_NOT_COMPUTED
+        # holm_bonferroni pads every declared secondary, so holm_info is
+        # never None for one. No elif fallback.
+
 
     frames = {
         "license_banner": LICENSE_BANNER,
@@ -986,6 +995,8 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         "ci_level": CI_LEVEL,
         "resampling_unit": "image",
         "pr_cells_emitted": True,
+        # present-and-structurally-valid (keys present). Not a mere existence
+        # flag; _require_prov01_preflights only returns True or raises.
         "preflight_present": preflight_present,
     }
     frames_path = root / "score" / "frames.json"

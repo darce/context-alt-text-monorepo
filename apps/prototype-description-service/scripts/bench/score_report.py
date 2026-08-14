@@ -57,6 +57,9 @@ class BootstrapInterval:
     resampling_unit: str = "image"
     partial_occasions: int = 0
     p_value: float | None = None
+    n_used: int = 0
+    bootstrap_status: str = "ok"
+    bootstrap_error: str | None = None
 
 
 @dataclass
@@ -183,8 +186,9 @@ def bootstrap_paired_delta(
     n_used = len(deltas)
     n_le = sum(1 for d in deltas if d <= 0.0)
     n_ge = sum(1 for d in deltas if d >= 0.0)
-    p_raw = 2.0 * min(n_le / n_used, n_ge / n_used)
-    p_val = min(1.0, max(p_raw, 1.0 / (n_used + 1)))
+    # Plan pin: p is over B, not the defined-resample subset.
+    p_raw = 2.0 * min(n_le / B, n_ge / B)
+    p_val = min(1.0, max(p_raw, 1.0 / (B + 1)))
     return BootstrapInterval(
         ci_lower=lower,
         ci_upper=upper,
@@ -194,6 +198,8 @@ def bootstrap_paired_delta(
         resampling_unit=resampling_unit,
         partial_occasions=partial,
         p_value=p_val,
+        n_used=n_used,
+        bootstrap_status="ok" if n_used == B else "partial",
     )
 
 
@@ -219,10 +225,17 @@ def _micro_ratio(counts: list[ImageCounts], metric: str) -> float | None:
     return tp / denom
 
 
-def holm_bonferroni(pairs: list[tuple[str, float]], alpha: float = 0.05) -> dict[str, dict[str, Any]]:
-    m = len(pairs)
-    if m == 0:
+def holm_bonferroni(
+    pairs: list[tuple[str, float]],
+    alpha: float = 0.05,
+    *,
+    family_size: int | None = None,
+) -> dict[str, dict[str, Any]]:
+    m = len(pairs) if family_size is None else int(family_size)
+    if m <= 0:
         return {}
+    if family_size is not None and family_size < len(pairs):
+        raise BenchError("config_invalid", "family_size must be >= number of Holm pairs")
     ordered = sorted(pairs, key=lambda t: t[1])
     out: dict[str, dict[str, Any]] = {}
     prefix_ok = True
@@ -250,18 +263,18 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
         return CrossbenchTier.DIAGNOSTIC, None
     if not ctx.get("named", False):
         return CrossbenchTier.DIAGNOSTIC, None
-    if str(cell).startswith("detection_") and not ctx.get("exhaustiveness_ok", True):
+    if not ctx.get("exhaustiveness_ok", True):
         return CrossbenchTier.DIRECTIONAL, "detection_exhaustiveness_unasserted"
     if not ctx.get("floor_ok", True):
         return CrossbenchTier.DIRECTIONAL, "accepted_set_below_floor"
     delta = float(ctx.get("head_to_head_delta", 0.0))
-    if float(ctx.get("ci_half_width", 0.0)) > delta / 2.0:
+    if float(ctx.get("ci_half_width", math.inf)) > delta / 2.0:
         return CrossbenchTier.DIRECTIONAL, "ci_half_width_above_precision_floor"
     if ctx.get("optimistic") or "label_map_optimistic" in str(cell):
         return CrossbenchTier.DIRECTIONAL, None
     if ctx.get("native_frame") or "frame_fir5_native" in str(cell):
         return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
-    if ctx.get("primary") or cell == "detection_recall@frame_e2e/label_map_primary":
+    if ctx.get("primary"):
         return CrossbenchTier.CONFIRMATORY, None
     if ctx.get("holm_significant", False):
         return CrossbenchTier.CONFIRMATORY, None
@@ -385,11 +398,9 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         join_by[stack_id] = join
 
     accepted: list[GoldenEntry] = []
-    one_sided: dict[str, set[int]] = {s: set() for s in stacks}
     attrition_ia = 0
     attrition_join = 0
     ingest_asym = 0
-    all_ids = [e.media_id for e in manifest.entries]
     for entry in manifest.entries:
         mid = entry.media_id
         ok_both = True
@@ -408,8 +419,6 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
             if not in_roster:
                 join_fail = True
                 ok_both = False
-            if ingest_ok and analyze is not None and in_roster:
-                one_sided[stack_id].add(mid)
         if present.count(True) == 1:
             ingest_asym += 1
         if ok_both:
@@ -434,7 +443,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
 
     # export rows not in roster → fail closed (stack_media_id domain only)
     for stack_id in stacks:
-        export = load_leg_exports(root, stack_id)
+        export = exports_by[stack_id]
         rows = _unwrap_rows(export.media_identities, keys=("data",), what="media_identities")
         roster_stack_ids = {
             rec.get("stack_media_id")
@@ -636,7 +645,14 @@ def score_head_to_head(run_dir: Path | str) -> Path:
     floor_ok = accepted.accepted_set_size >= accepted.resolved_floor_count
     named = {pair.primary_endpoint, *pair.secondary_endpoints}
 
-    path_to_mid = {e.path: e.media_id for e in manifest.entries}
+    path_to_mid: dict[str, int] = {}
+    for entry in manifest.entries:
+        if entry.path in path_to_mid and path_to_mid[entry.path] != entry.media_id:
+            raise BenchError(
+                "duplicate_manifest_path",
+                f"manifest path {entry.path!r} maps to multiple media_ids",
+            )
+        path_to_mid[entry.path] = entry.media_id
     counts_by: dict[str, dict[str, list[ImageCounts]]] = {cell: {s: [] for s in stacks} for cell in named}
     cells: list[dict[str, Any]] = []
 
@@ -698,8 +714,24 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     ]
                 )
                 ident_pr = identification_pr(ident)
-                det_by_mid = {path_to_mid.get(d.image, -1): d for d in det}
-                ident_by_mid = {path_to_mid.get(row.image, -1): row for row in ident}
+                det_by_mid: dict[int, Any] = {}
+                for det_row in det:
+                    mid = path_to_mid.get(det_row.image)
+                    if mid is None:
+                        raise BenchError(
+                            "join_row_missing",
+                            f"detection row path {det_row.image!r} is not in the manifest",
+                        )
+                    det_by_mid[mid] = det_row
+                ident_by_mid: dict[int, Any] = {}
+                for ident_row in ident:
+                    mid = path_to_mid.get(ident_row.image)
+                    if mid is None:
+                        raise BenchError(
+                            "join_row_missing",
+                            f"identification row path {ident_row.image!r} is not in the manifest",
+                        )
+                    ident_by_mid[mid] = ident_row
                 for metric, result, population in (
                     ("detection_recall", det_matched, detection_entries),
                     ("detection_precision", det_matched, detection_entries),
@@ -712,10 +744,20 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         for entry in population:
                             if metric.startswith("detection"):
                                 row = det_by_mid.get(entry.media_id)
-                                series.append(_detection_counts(row) if row is not None else ImageCounts(0, 0, 0))
+                                if row is None:
+                                    raise BenchError(
+                                        "join_row_missing",
+                                        f"detection population media_id={entry.media_id} has no metric row",
+                                    )
+                                series.append(_detection_counts(row))
                             else:
                                 row = ident_by_mid.get(entry.media_id)
-                                counted = _ident_counts(row) if row is not None else ImageCounts(0, 0, 0)
+                                if row is None:
+                                    raise BenchError(
+                                        "join_row_missing",
+                                        f"identification population media_id={entry.media_id} has no metric row",
+                                    )
+                                counted = _ident_counts(row)
                                 if counted is not None:
                                     series.append(counted)
                         counts_by[cell][stack_id] = series
@@ -744,11 +786,17 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                 )
 
     intervals: dict[str, BootstrapInterval] = {}
+    bootstrap_errors: dict[str, BenchError] = {}
     if len(stacks) == 2:
         for cell_name, by_stack in counts_by.items():
             series_a = by_stack.get(stacks[0]) or []
             series_b = by_stack.get(stacks[1]) or []
             if not series_a or not series_b or len(series_a) != len(series_b):
+                if cell_name in named:
+                    bootstrap_errors[cell_name] = BenchError(
+                        "bootstrap_series_mismatch",
+                        f"{cell_name} series missing or length-mismatched",
+                    )
                 continue
             boot_metric = "micro_recall" if cell_name.startswith("identification_recall") or cell_name.startswith("detection_recall") else "micro_precision"
             try:
@@ -758,13 +806,22 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     seed=pair.bootstrap_seed,
                     metric=boot_metric,
                 )
-            except BenchError:
-                continue
+            except BenchError as exc:
+                bootstrap_errors[cell_name] = exc
 
     holm: dict[str, dict[str, Any]] = {}
-    holm_family = [(c, intervals[c].p_value) for c in pair.secondary_endpoints if c in intervals and intervals[c].p_value is not None]
-    if holm_family:
-        holm = holm_bonferroni([(c, float(p)) for c, p in holm_family])
+    declared_secondaries = list(pair.secondary_endpoints)
+    holm_missing: set[str] = set()
+    if declared_secondaries:
+        padded: list[tuple[str, float]] = []
+        for cell_name in declared_secondaries:
+            interval = intervals.get(cell_name)
+            if interval is None or interval.p_value is None:
+                padded.append((cell_name, 1.0))
+                holm_missing.add(cell_name)
+            else:
+                padded.append((cell_name, float(interval.p_value)))
+        holm = holm_bonferroni(padded, family_size=len(declared_secondaries))
 
     for cell in cells:
         if cell.get("count_only"):
@@ -781,11 +838,12 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             "floor_ok": floor_ok,
             "ci_half_width": half_width if half_width is not None else math.inf,
             "head_to_head_delta": pair.head_to_head_delta,
-            "holm_significant": bool(holm_info["holm_significant"]) if holm_info else False,
-            "exhaustiveness_ok": exhaustiveness_ok or not cell.pop("_is_detection"),
+            "holm_significant": bool(holm_info["holm_significant"]) if holm_info and name not in holm_missing else False,
+            "exhaustiveness_ok": exhaustiveness_ok,
             "cluster_ok": True,
             "count_only": False,
         }
+        cell.pop("_is_detection", None)
         tier, reason = assign_tier(name, ctx)
         cell["tier"] = tier.value
         cell["reason"] = reason
@@ -799,6 +857,8 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             cell["resampling_unit"] = interval.resampling_unit
             cell["p_value"] = interval.p_value
             cell["partial_occasions"] = interval.partial_occasions
+            cell["bootstrap_status"] = interval.bootstrap_status
+            cell["bootstrap_n_used"] = interval.n_used
         else:
             cell["ci_level"] = None
             cell["ci_lower"] = None
@@ -806,7 +866,14 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             cell["ci_half_width"] = None
             cell["bootstrap_resamples"] = None
             cell["p_value"] = None
-        if holm_info:
+            err = bootstrap_errors.get(name)
+            if err is not None:
+                cell["bootstrap_status"] = err.code
+                cell["bootstrap_error"] = str(err)
+            elif name in named:
+                cell["bootstrap_status"] = "not_computed"
+        if holm_info and name not in holm_missing:
+            cell["holm_p_value"] = holm_info["p_value"]
             cell.update({k: holm_info[k] for k in ("holm_rank", "holm_threshold", "holm_significant")})
         elif name in pair.secondary_endpoints:
             cell["holm_significant"] = None

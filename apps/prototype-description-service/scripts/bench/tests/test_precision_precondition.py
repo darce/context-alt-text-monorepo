@@ -87,6 +87,16 @@ def test_holm_on_secondaries() -> None:
     assert empty == {}
 
 
+def test_holm_family_size_does_not_shrink() -> None:
+    # One computed p in a declared family of 3 must use threshold 0.05/3.
+    result = holm_bonferroni([("s1", 0.04)], alpha=0.05, family_size=3)
+    assert result["s1"]["holm_threshold"] == 0.05 / 3
+    assert result["s1"]["holm_significant"] is False
+    shrunk = holm_bonferroni([("s1", 0.04)], alpha=0.05)
+    assert shrunk["s1"]["holm_threshold"] == 0.05
+    assert shrunk["s1"]["holm_significant"] is True
+
+
 def test_bootstrap_resamples_pinned() -> None:
     assert BOOTSTRAP_RESAMPLES == 2000
 
@@ -100,6 +110,56 @@ def test_unknown_metric_raises() -> None:
         assert exc.code == "config_invalid"
     else:
         raise AssertionError("unknown metric must fail closed")
+
+
+def test_assign_tier_missing_half_width_is_fail_closed() -> None:
+    ctx = {
+        "named": True,
+        "primary": True,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "ci_half_width_above_precision_floor"
+
+
+def test_assign_tier_primary_name_does_not_bypass_flag() -> None:
+    ctx = {
+        "named": True,
+        "primary": False,
+        "optimistic": False,
+        "native_frame": False,
+        "floor_ok": True,
+        "ci_half_width": 0.0,
+        "head_to_head_delta": 0.10,
+        "holm_significant": False,
+        "exhaustiveness_ok": True,
+        "cluster_ok": True,
+        "count_only": False,
+    }
+    tier, reason = assign_tier("detection_recall@frame_e2e/label_map_primary", ctx)
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "holm"
+
+
+def test_bootstrap_p_uses_B_not_n_used() -> None:
+    from scripts.bench.score_report import ImageCounts
+
+    # One image has a defined recall (tp+fn>0); two have denom 0. Some resamples drop.
+    a = [ImageCounts(1, 0, 0), ImageCounts(0, 0, 0), ImageCounts(0, 0, 0)]
+    b = [ImageCounts(0, 0, 1), ImageCounts(0, 0, 0), ImageCounts(0, 0, 0)]
+    interval = bootstrap_paired_delta(a, b, seed=7, metric="micro_recall", B=50)
+    assert interval.n_used < 50
+    assert interval.bootstrap_status == "partial"
+    assert interval.p_value is not None
+    assert interval.p_value >= 1.0 / 51
 
 
 def test_empty_series_raises() -> None:

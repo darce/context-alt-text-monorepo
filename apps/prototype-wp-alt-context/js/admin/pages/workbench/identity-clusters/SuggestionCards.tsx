@@ -46,9 +46,9 @@ interface SuggestionCardProps {
   queueTotal?: number;
 }
 
-/** buildSuggestionReviewItems only emits human-labeled targets (truthy label). */
+/** buildSuggestionReviewItems only emits human-labeled targets (truthy trimmed label). */
 function assertTruthyLabel(label: string | null | undefined): asserts label is string {
-  if (typeof label !== 'string' || label.length === 0) {
+  if (typeof label !== 'string' || label.trim().length === 0) {
     throw new Error('SuggestionCard requires a truthy suggestion.label');
   }
 }

@@ -975,7 +975,7 @@ def _safe_model_slug(model_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model_id).strip("_") or "model"
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bakeoff",
         description=__doc__,
@@ -1061,7 +1061,11 @@ def main(argv: list[str] | None = None) -> None:
             "cell. GOLDEN_IMAGES_DIR is not required; incompatible with --two-pass/--dual-length."
         ),
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
 
     if args.weave_bench is not None and (args.two_pass or args.dual_length):
         sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")

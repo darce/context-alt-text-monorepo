@@ -272,7 +272,7 @@ def build(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Build a self-contained bake-off HTML report.")
     ap.add_argument("--manifest", required=True)
     ap.add_argument(
@@ -289,6 +289,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="total run cost in USD; report renders total + cost-per-image")
     ap.add_argument("--hourly-rate", type=float, default=None,
                     help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
     for _name, _val in (("--hourly-rate", args.hourly_rate), ("--cost-total", args.cost_total)):
         if _val is not None and _val < 0:

@@ -29,6 +29,7 @@ DEFAULT_MANIFEST = "scripts/eval_harness/corpus646-interleave-manifest-20260716.
 DEFAULT_OUT_DIR = "out"
 DEFAULT_MODELS_DIR = "/opt/models"
 MMPROJ_ESTIMATE_GB = 1.0
+REPORT_LIMIT = 646
 READY_ATTEMPTS = 40
 READY_SLEEP_S = 15
 _CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
@@ -50,6 +51,10 @@ class UnknownCandidateError(Exception):
 
 class NotCompetingError(Exception):
     """``--only`` named a known id that is not a competing candidate."""
+
+
+class UnknownIncumbentError(Exception):
+    """``--incumbent-run`` named an id that is not a registry incumbent."""
 
 
 @dataclass(frozen=True)
@@ -136,17 +141,23 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         'kill "${_serve_pid}" 2>/dev/null || true; '
         'wait "${_serve_pid}" 2>/dev/null || true; fi\' EXIT',
         "",
+        "_fail=0",
+        "_total=0",
+        "",
     ]
     for plan in plans:
         local_dir = f"{plan.models_dir.rstrip('/')}/{plan.candidate_id}"
+        gguf = _argv_flag(plan.serve_argv, "--model").rsplit("/", 1)[-1]
+        mmproj = _argv_flag(plan.serve_argv, "--mmproj").rsplit("/", 1)[-1]
         hint = (
             f"huggingface-cli download {plan.repo} --revision {plan.revision} "
-            f"--local-dir {local_dir}"
+            f"--include {gguf} --include {mmproj} --local-dir {local_dir}"
         )
         endpoint = _argv_flag(plan.run_argv, "--endpoint")
         models_url = f"{endpoint.rstrip('/')}/v1/models"
         lines.append(f"# candidate: {plan.candidate_id}")
         lines.append(f"# download: {hint}")
+        lines.append("_total=$((_total + 1))")
         lines.append(f"{shlex.join(plan.serve_argv)} &")
         lines.append("_serve_pid=$!")
         lines.append("_ready=0")
@@ -155,15 +166,17 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append("    _ready=1")
         lines.append("    break")
         lines.append("  fi")
+        lines.append('  kill -0 "$_serve_pid" 2>/dev/null || break')
         lines.append(f"  sleep {READY_SLEEP_S}")
         lines.append("done")
         lines.append('if [ "${_ready}" -ne 1 ]; then')
         lines.append(f'  echo "candidate {plan.candidate_id} never became ready" >&2')
+        lines.append("  _fail=$((_fail + 1))")
         lines.append("else")
-        lines.append(
-            f"  {shlex.join(plan.run_argv)} || "
-            f'echo "candidate {plan.candidate_id} fetch FAILED" >&2'
-        )
+        lines.append(f"  if ! {shlex.join(plan.run_argv)}; then")
+        lines.append(f'    echo "candidate {plan.candidate_id} fetch FAILED" >&2')
+        lines.append("    _fail=$((_fail + 1))")
+        lines.append("  fi")
         lines.append("fi")
         lines.append('kill "${_serve_pid}" 2>/dev/null || true')
         lines.append('wait "${_serve_pid}" 2>/dev/null || true')
@@ -171,6 +184,10 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append("")
 
     lines.extend(_emit_report_lines(plans, incumbent_runs))
+    lines.append('if [ "${_total}" -gt 0 ] && [ "${_fail}" -eq "${_total}" ]; then')
+    lines.append('  echo "all ${_total} candidates failed" >&2')
+    lines.append("  exit 1")
+    lines.append("fi")
     lines.append("")
     return "\n".join(lines)
 
@@ -191,12 +208,20 @@ def main(argv: list[str] | None = None) -> int:
         help="restrict the plan to these competing candidate ids",
     )
     parser.add_argument("--emit-shell", default=None, metavar="PATH")
+    parser.add_argument(
+        "--incumbent-run",
+        action="append",
+        default=None,
+        metavar="ID=PATH",
+        help="repeatable; incumbent registry id = existing run-record path",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     try:
         registry = load_bakeoff_candidates()
         only = _parse_only(args.only)
+        incumbent_runs = _parse_incumbent_runs(registry, args.incumbent_run)
         plans = build_plans(
             registry,
             endpoint=args.endpoint,
@@ -210,16 +235,15 @@ def main(argv: list[str] | None = None) -> int:
         VramBudgetError,
         UnknownCandidateError,
         NotCompetingError,
+        UnknownIncumbentError,
     ) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if only is None:
+        _emit_skip_notes(registry, plans)
+
     if args.emit_shell:
-        incumbent_runs = {
-            entry.id: _run_out_path(args.out_dir, entry.id)
-            for entry in registry.entries
-            if entry.role is CandidateRole.INCUMBENT
-        }
         with open(args.emit_shell, "w", encoding="utf-8") as handle:
             handle.write(emit_shell(plans, incumbent_runs=incumbent_runs))
 
@@ -281,7 +305,14 @@ def _plan_candidate(
             "pin both filenames in the registry recipe."
         )
 
-    mmproj_gb = MMPROJ_ESTIMATE_GB if entry.recipe.mmproj else 0.0
+    if entry.recipe.mmproj:
+        mmproj_gb = (
+            entry.recipe.mmproj_gb
+            if entry.recipe.mmproj_gb is not None
+            else MMPROJ_ESTIMATE_GB
+        )
+    else:
+        mmproj_gb = 0.0
     total_gb = float(entry.artifact_gb) + mmproj_gb
     if total_gb > budget_gb:
         raise VramBudgetError(
@@ -392,7 +423,21 @@ def _report_base_argv(plans: Sequence[CandidatePlan]) -> list[str]:
         manifest,
         "--out",
         f"{out_dir.rstrip('/')}/bakeoff-report.html",
+        "--limit",
+        str(REPORT_LIMIT),
     ]
+
+
+def _report_argv(
+    plans: Sequence[CandidatePlan],
+    incumbent_runs: Mapping[str, str],
+) -> list[str]:
+    argv = _report_base_argv(plans)
+    for plan in plans:
+        argv.extend(["--run", f"{plan.candidate_id}={plan.out_path}"])
+    for incumbent_id, run_path in sorted(incumbent_runs.items()):
+        argv.extend(["--run", f"{incumbent_id}={run_path}"])
+    return argv
 
 
 def _emit_report_lines(
@@ -428,6 +473,52 @@ def _plan_json(plan: CandidatePlan) -> dict[str, Any]:
     payload["serve_argv"] = list(plan.serve_argv)
     payload["run_argv"] = list(plan.run_argv)
     return payload
+
+
+def _parse_incumbent_runs(
+    registry: BakeoffCandidateRegistry,
+    specs: Sequence[str] | None,
+) -> dict[str, str]:
+    if not specs:
+        return {}
+    incumbents = {
+        entry.id: entry
+        for entry in registry.entries
+        if entry.role is CandidateRole.INCUMBENT
+    }
+    parsed: dict[str, str] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise UnknownIncumbentError(
+                f"--incumbent-run must be ID=PATH, got {spec!r}"
+            )
+        incumbent_id, run_path = spec.split("=", 1)
+        if incumbent_id not in incumbents:
+            known = ", ".join(sorted(incumbents))
+            raise UnknownIncumbentError(
+                f"--incumbent-run id {incumbent_id!r} is not a registry incumbent; "
+                f"incumbent ids: {known}"
+            )
+        parsed[incumbent_id] = run_path
+    return parsed
+
+
+def _emit_skip_notes(
+    registry: BakeoffCandidateRegistry,
+    plans: Sequence[CandidatePlan],
+) -> None:
+    planned = {plan.candidate_id for plan in plans}
+    candidates = [entry for entry in registry.entries if entry.role is CandidateRole.CANDIDATE]
+    skipped = [entry for entry in candidates if entry.id not in planned]
+    for entry in registry.entries:
+        if entry.recipe.stack is ServingStack.LLAMA_CPP:
+            continue
+        print(f"skip {entry.id} ({entry.recipe.stack.value})", file=sys.stderr)
+    print(
+        f"skipped {len(skipped)} of {len(candidates)} candidates "
+        "(stack not supported by this planner)",
+        file=sys.stderr,
+    )
 
 
 def _print_table(plans: Sequence[CandidatePlan]) -> None:

@@ -138,6 +138,7 @@ entries:
       extra_flags: ["--no-think"]
       gguf: Kimi-VL-A3B-Instruct.Q4_K_M.gguf
       mmproj: Kimi-VL-A3B-Instruct.mmproj-f16.gguf
+      mmproj_gb: 0.91
 
   - id: gemma-4-12b
     role: candidate
@@ -160,6 +161,7 @@ entries:
       parallel: 1
       gguf: gemma-4-12b-it-qat-q4_0.gguf
       mmproj: mmproj-gemma-4-12b-it-qat-q4_0.gguf
+      mmproj_gb: 0.18
 
   - id: glm-41v-9b
     role: candidate

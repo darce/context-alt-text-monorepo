@@ -56,7 +56,10 @@ class ClusterFacade {
 			// "not fetched" (UI-01 / LO-01).
 			$members_by_cluster = self::densify_members_by_cluster(
 				$cluster_uuids,
-				$this->members_repo->list_for_cluster_uuids( $cluster_uuids, 4 )
+				$this->members_repo->list_for_cluster_uuids(
+					$cluster_uuids,
+					IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+				)
 			);
 		}
 

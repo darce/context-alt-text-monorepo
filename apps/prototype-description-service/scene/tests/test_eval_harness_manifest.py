@@ -20,6 +20,13 @@ from scripts.eval_harness.manifest import (
 )
 
 
+_MOCK_PROVENANCE = {
+    "source": "operator",
+    "license": "mock_entity",
+    "note": "synthetic mock fixture",
+}
+
+
 def _valid_manifest_dict() -> dict:
     img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
     return {
@@ -37,6 +44,7 @@ def _valid_manifest_dict() -> dict:
                 "must_right": ["Alice Example"],
                 "easy_wrong": ["Bob Example"],
                 "policy": {"recognition_enabled": True},
+                "provenance": dict(_MOCK_PROVENANCE),
             },
             {
                 "path": "mock_images/scene-002.jpg",
@@ -49,6 +57,7 @@ def _valid_manifest_dict() -> dict:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": dict(_MOCK_PROVENANCE),
             },
         ],
     }
@@ -404,7 +413,10 @@ def test_legacy_entry_defaults_additive_fields(tmp_path):
     manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()))
     e = manifest.entries[0]
     assert e.difficulty is None and e.domain is None
-    assert e.reference_facts == [] and e.spatial_facts == [] and e.provenance is None
+    assert e.reference_facts == [] and e.spatial_facts == []
+    # provenance is required (FIR-11 Slice 1); remaining Golden-100 fields still default.
+    assert e.provenance.source.value == "operator"
+    assert e.provenance.license.value == "mock_entity"
     # FIR-5 S1 / DATA-03: scalar domain + no tags/demographic_cohort still loads.
     assert e.tags == [] and e.demographic_cohort is None
     assert manifest.roster_cohorts == {}
@@ -481,6 +493,7 @@ def test_multi_tag_roundtrip():
         "easy_wrong": [],
         "policy": {"recognition_enabled": True},
         "tags": [SliceTag.MASKED, SliceTag.SUNGLASSES],
+        "provenance": dict(_MOCK_PROVENANCE),
     }
     entry = GoldenEntry.model_validate(payload)
     assert entry.tags == [SliceTag.MASKED, SliceTag.SUNGLASSES]
@@ -523,6 +536,7 @@ def test_unknown_tag_string_rejected_by_slicetag_enum():
         "easy_wrong": [],
         "policy": {"recognition_enabled": True},
         "tags": ["wearing_hat"],  # not a SliceTag member
+        "provenance": dict(_MOCK_PROVENANCE),
     }
     with pytest.raises(ValidationError) as exc_info:
         GoldenEntry.model_validate(payload)

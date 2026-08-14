@@ -182,6 +182,7 @@ def _tiny_manifest(n: int, tmp_path: Path) -> GoldenManifest:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "operator", "license": "mock_entity"},
             }
         )
     # Distinct sha per entry

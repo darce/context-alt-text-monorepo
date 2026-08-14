@@ -236,6 +236,7 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
                     "must_right": ["Caitlin Weaver"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "operator", "license": "mock_entity"},
                 }
             ],
         }
@@ -318,6 +319,7 @@ def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: P
                     "must_right": ["Caitlin Weaver"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "operator", "license": "mock_entity"},
                 }
             ],
         }
@@ -348,6 +350,7 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "operator", "license": "mock_entity"},
             }
         )
     manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries})

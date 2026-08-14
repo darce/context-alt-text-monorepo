@@ -89,3 +89,35 @@ Recorded so a hash change forces a re-derivation pass, not a merge. `golden150-d
 | `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` | `b02417683814e546720d418580e8add9dad4bf13a4e97c68573d42b3b1afecd3` |
 | `benchmarks/manifests/corpus-manifest-v3.json` | `5432bbda8abb163abcc034162fdb8c332a2ff7451e915144f632ed801ef98152` |
 | `benchmarks/manifests/golden150-draft-20260723.json` | `4ae541dc0060ca37b8b2f37383b96175f0f3b9120295a30452453f421b61671e` |
+
+## corpus-manifest-v3r freeze (Slice 1)
+
+Edit-then-freeze (plan L413 / checklist L696). Slice 1 emits `corpus-manifest-v3r-20260814.json` with the 8 unsubstantiated identity claims removed (named identity, zero named boxes). **The original `corpus-manifest-v3.json` stays byte-identical** as the measurement source for every population / strata / probe-supply figure in this note; those figures remain conditional on the v3 pool. The remediated copy is the frozen consumer artifact. A hash change on either file forces a re-derivation pass, not a merge.
+
+Per **[AUDIT-08]**: any later interval or claim that consumes v3r is conditional on this named post-drop pool, not on the v3 measurement source.
+
+| Path | sha256 | Role |
+| --- | --- | --- |
+| `benchmarks/manifests/corpus-manifest-v3.json` | `5432bbda8abb163abcc034162fdb8c332a2ff7451e915144f632ed801ef98152` | measurement source (unchanged) |
+| `benchmarks/manifests/corpus-manifest-v3r-20260814.json` | `076ea8c3574367a50ad7e4946e64c2391a14adaa28de6fe97624c8ab6de8a8eb` | Slice 1 remediated freeze |
+
+Identity-appearance counts shift by the 8 dropped claims in every v3r consumer: identities **137 → 130** (seven identities had no remaining appearance; Audrey Hepburn remains via media 16), unlabeled images **108 → 116**, `flags.identity_from_filename_only` **8 → 0**. Image entries and boxes were not deleted.
+
+Dropped identity claims (media_id + reason — all eight share the same Slice-1-legal reason: named identity, zero named boxes; claim unsubstantiated):
+
+| media_id | path | dropped name |
+| --- | --- | --- |
+| 11 | `celebs/anne_hathaway_11.jpg` | Anne Hathaway |
+| 12 | `celebs/antonio_banderas_12.avif` | Antonio Banderas |
+| 13 | `celebs/ariana_grande_13.jpg` | Ariana Grande |
+| 14 | `celebs/arnold_schwarzenegger_14.jpg` | Arnold Schwarzenegger |
+| 15 | `celebs/audrey_hepburn_15.jpg` | Audrey Hepburn |
+| 375 | `personal/alicia_graff_375.jpg` | Alicia Graff |
+| 438 | `personal/barbara_fransen_438.jpg` | Barbara Fransen |
+| 484 | `personal/erika_lind_484.jpg` | Erika Lind |
+
+Emit command (reproducible; trailing newline + `json.dumps(..., indent=1, ensure_ascii=False)`):
+
+```
+cd apps/prototype-description-service && uv run python -m scripts.eval_harness.remediation emit-v3r
+```

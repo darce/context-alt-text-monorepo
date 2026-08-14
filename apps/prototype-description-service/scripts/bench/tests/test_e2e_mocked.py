@@ -20,15 +20,21 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
         "acx-dev-insightface": FakeClient(),
         "acx-dev-fir": FakeClient(),
     }
-    run_pair(pair, manifest_path=manifest, images_dir=images, out_dir=out, clients=clients)
+    run_pair(
+        pair,
+        manifest_path=manifest,
+        images_dir=images,
+        out_dir=out,
+        clients=clients,
+        skip_preflight=True,
+    )
     report = score_head_to_head(out)
     assert report.exists()
     accepted = json.loads((out / "score" / "accepted_set.json").read_text())
-    assert "accepted_set_size" in accepted
-    assert "resolved_floor_count" in accepted
+    assert accepted["accepted_set_size"] == 2
+    assert accepted["resolved_floor_count"] == 2
     frames = json.loads((out / "score" / "frames.json").read_text())
     assert "license_banner" in frames or LICENSE_BANNER in json.dumps(frames)
-    # Both legs × both frames × both label maps present.
     cells = frames.get("cells")
     assert isinstance(cells, list) and cells
     encoded = json.dumps(frames)
@@ -42,6 +48,17 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
     assert "INTERNAL BENCH ONLY" in html
     tiers = {c.get("tier") for c in cells if isinstance(c, dict) and "tier" in c}
     assert tiers & {"CONFIRMATORY", "DIRECTIONAL", "DIAGNOSTIC"}
+    primary = [
+        c for c in cells if c.get("cell") == "detection_recall@frame_e2e/label_map_primary"
+    ]
+    assert primary
+    for cell in primary:
+        assert cell["value"] == 1.0
+        assert cell["true_positives"] == 2
+        assert cell["false_negatives"] == 0
+        assert cell["precision"] == 1.0
+        assert cell["ci_half_width"] == 0.0
+        assert cell["p_value"] == 1.0
     native_id = [
         c
         for c in cells

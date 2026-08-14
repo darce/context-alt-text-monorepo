@@ -23,13 +23,15 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-const { faceThumbnailSpy, avatarSpy, refetchAssignment, refetchMerge, refetchTopUnlabeled } = vi.hoisted(() => ({
-  faceThumbnailSpy: vi.fn(),
-  avatarSpy: vi.fn(),
-  refetchAssignment: vi.fn(() => Promise.resolve()),
-  refetchMerge: vi.fn(() => Promise.resolve()),
-  refetchTopUnlabeled: vi.fn(() => Promise.resolve()),
-}));
+const { faceThumbnailSpy, avatarSpy, refetchAssignment, refetchMerge, refetchName, refetchTopUnlabeled } =
+  vi.hoisted(() => ({
+    faceThumbnailSpy: vi.fn(),
+    avatarSpy: vi.fn(),
+    refetchAssignment: vi.fn(() => Promise.resolve()),
+    refetchMerge: vi.fn(() => Promise.resolve()),
+    refetchName: vi.fn(() => Promise.resolve()),
+    refetchTopUnlabeled: vi.fn(() => Promise.resolve()),
+  }));
 
 // Radix Avatar's Image uses Image.onload which never fires in JSDOM.
 vi.mock('@radix-ui/react-avatar', async () => {
@@ -93,6 +95,7 @@ vi.mock('../useSuggestionReviewQueries', () => ({
   useSuggestionReviewQueries: vi.fn(() => ({
     assignmentQuery: { refetch: refetchAssignment },
     mergeQuery: { refetch: refetchMerge },
+    nameQuery: { refetch: refetchName },
     topUnlabeledQuery: { refetch: refetchTopUnlabeled },
   })),
 }));
@@ -114,6 +117,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,
@@ -212,6 +216,50 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
   });
 
+  // REV2-01 / TEST-15: an assignment-only outage keeps hasAnyData true, so the
+  // hook's isError stays false and the panel used to render the all-clear over a
+  // dead primary queue. Reverting the isAssignmentError branch in
+  // WorkbenchFindingsPanel turns this red on the queryByText line.
+  it('REV2-01: assignment-only outage shows an outage notice, not "No findings yet"', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).toBeInTheDocument();
+
+    // The outage must be recoverable, and the control must sit outside the
+    // live region that announces it (REV2-03 treatment).
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchName).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('REV2-01: a genuine empty backlog still announces the all-clear', () => {
+    // Pins the other side of the branch: without this, hiding the empty copy
+    // unconditionally would satisfy the outage test above.
+    vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel({ isAssignmentError: false }));
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('disables the primary action when server totals are positive but no queue items loaded', () => {
     // Guards the nextAction-based gate: counts.total > 0 must not enable a no-op button.
     vi.mocked(useWorkbenchFindings).mockReturnValue(
@@ -299,6 +347,7 @@ describe('WorkbenchFindingsPanel', () => {
       makeViewModel({
         isError: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
     );
@@ -317,6 +366,7 @@ describe('WorkbenchFindingsPanel', () => {
       makeViewModel({
         isError: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
     );
@@ -348,6 +398,7 @@ describe('WorkbenchFindingsPanel', () => {
         counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
         hasFindings: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: {
           kind: NEXT_ACTION_KIND.ASSIGNMENT,
           suggestionId: 's1',
@@ -798,6 +849,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -856,6 +908,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -912,6 +965,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -944,6 +998,9 @@ describe('WorkbenchFindingsPanel', () => {
     await waitFor(() => {
       expect(refetchAssignment).toHaveBeenCalledTimes(1);
       expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
       expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
     });
   });
@@ -969,6 +1026,9 @@ describe('WorkbenchFindingsPanel', () => {
     await waitFor(() => {
       expect(refetchAssignment).toHaveBeenCalledTimes(1);
       expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
       expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
     });
   });
@@ -997,6 +1057,7 @@ describe('WorkbenchFindingsPanel', () => {
         counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
         hasFindings: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: {
           kind: NEXT_ACTION_KIND.ASSIGNMENT,
           suggestionId: 's1',
@@ -1013,6 +1074,9 @@ describe('WorkbenchFindingsPanel', () => {
     await waitFor(() => {
       expect(refetchAssignment).toHaveBeenCalledTimes(1);
       expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
       expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
     });
   });
@@ -1178,6 +1242,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );

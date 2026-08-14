@@ -11225,6 +11225,84 @@ class TestF14DoorPromotionMidException:
         assert policy.audit_derived_from_model("aainsightface").ok is True
 
 
+class TestF14FourCharHeadExceptionRem:
+    """F14-5 / R16-G1-6: 4-char ``yolo`` head + exact exception rem.
+
+    ``_deny_head_known_rem_glue`` refused seeds shorter than 5, so
+    ``yoloyolox`` / ``yoloyoloxs`` admitted. Accept a length-4 head iff
+    the entire rem is an exception-family spelling. ``yolodummy`` rem
+    is not an exception spelling and stays admitted.
+    """
+
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yoloyolox", "yolo"),
+        ("yoloyoloxs", "yolo"),
+    )
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolodummy",
+        "myyolo",
+    )
+    UNCHANGED_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolo", "yolo"),
+        ("yolov8yolox", "yolov8"),
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_yolo_head_exception_rem_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (F14-5 4-char head)"
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_non_exception_rem_and_suffix_yolo_still_admit(
+        self, token: str
+    ) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token,expected_pkg", UNCHANGED_DENY)
+    def test_existing_yolo_and_yolov8_landings_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    def test_red_proof_four_char_head_min_len_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore the min-len-5 refusal.
+
+        Neuter: ``_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN`` → ``5``.
+        ``yoloyolox`` / ``yoloyoloxs`` admit; ``yolov8yolox`` and bare
+        ``yolo`` stay denied.
+        """
+        for token, _pkg in self.DENY:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_DENY_HEAD_KNOWN_REM_MIN_SEED_LEN", 5)
+        for token, _pkg in self.DENY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: with min-len-5 restored, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("yolov8yolox") is not None
+        assert policy._package_denylist_hit("yolo") is not None
+        assert policy._package_denylist_hit("yolodummy") is None
+        assert policy._package_denylist_hit("yoloxyolo") is not None
+
+
 class TestF13NcDoorPromotionTrailingException:
     """F13-2 / R15-L-1: exception after the NC head must reach doors.
 

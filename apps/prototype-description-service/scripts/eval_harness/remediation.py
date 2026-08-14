@@ -451,6 +451,7 @@ def emit_remediated_manifest(
     result = RemediationResult(
         manifest=GoldenManifest(
             manifest_version=draft.manifest_version,
+            annotation_mode=draft.annotation_mode,
             roster=list(draft.roster),
             entries=survivors,
             roster_cohorts=dict(draft.roster_cohorts),

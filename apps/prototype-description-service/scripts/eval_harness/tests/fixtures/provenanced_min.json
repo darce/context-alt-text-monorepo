@@ -1,19 +1,48 @@
 {
-  "manifest_version": 2,
-  "roster": ["Ada Example", "Bea Example"],
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
+  "roster": [
+    "Ada Example",
+    "Bea Example"
+  ],
   "entries": [
     {
       "path": "fixtures/ada_example_101.jpg",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "media_id": 101,
       "face_count": 1,
-      "present_identities": ["Ada Example"],
+      "present_identities": [
+        "Ada Example"
+      ],
       "base_caption": "Ada looks at the camera.",
-      "must_right": ["Ada Example"],
+      "must_right": [
+        "Ada Example"
+      ],
       "easy_wrong": [],
-      "policy": {"recognition_enabled": true},
+      "policy": {
+        "recognition_enabled": true
+      },
       "face_boxes": [
-        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Ada Example", "source": "operator"}
+        {
+          "x": 0.5,
+          "y": 0.4,
+          "w": 0.2,
+          "h": 0.3,
+          "name": "Ada Example",
+          "source": "operator",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
       ],
       "tags": [],
       "provenance": {
@@ -27,13 +56,38 @@
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "media_id": 102,
       "face_count": 1,
-      "present_identities": ["Bea Example"],
+      "present_identities": [
+        "Bea Example"
+      ],
       "base_caption": "Bea looks at the camera.",
-      "must_right": ["Bea Example"],
+      "must_right": [
+        "Bea Example"
+      ],
       "easy_wrong": [],
-      "policy": {"recognition_enabled": true},
+      "policy": {
+        "recognition_enabled": true
+      },
       "face_boxes": [
-        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Bea Example", "source": "operator"}
+        {
+          "x": 0.5,
+          "y": 0.4,
+          "w": 0.2,
+          "h": 0.3,
+          "name": "Bea Example",
+          "source": "operator",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
       ],
       "tags": [],
       "provenance": {

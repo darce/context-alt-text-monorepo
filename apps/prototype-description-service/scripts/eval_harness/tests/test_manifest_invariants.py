@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.eval_harness.manifest import ManifestError, load_manifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    ManifestError,
+    load_legacy_manifest,
+    load_manifest,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PROVENANCED = FIXTURES / "provenanced_min.json"
@@ -76,18 +81,23 @@ def test_missing_provenance_key_raises_manifest_error() -> None:
 
 
 def test_golden150_draft_fails_naming_all_six_unprovenanced_paths() -> None:
-    """Real-data proof: unmodified golden150-draft fails and names all 6 paths."""
+    """v3 gate loader rejects frozen v2 golden150 by version (GF-10).
+
+    Slice 1 named the six unprovenanced paths; after the version bump the
+    gate loader must fail closed on version before re-checking provenance.
+    ``load_legacy_manifest`` is the only legal reader and must succeed.
+    """
     path = _golden150_path()
     assert path.is_file()
-    with pytest.raises(ManifestError, match="provenance is required") as exc_info:
+    with pytest.raises(ManifestError, match="manifest_version") as exc_info:
         load_manifest(str(path))
     message = str(exc_info.value)
-    for rel_path, media_id in zip(
-        GOLDEN150_UNPROVENANCED_PATHS, GOLDEN150_UNPROVENANCED_MEDIA_IDS, strict=True
-    ):
-        assert rel_path in message, f"missing path {rel_path} in: {message}"
-        assert f"media_id={media_id}" in message, f"missing media_id {media_id} in: {message}"
-    assert "6 entries" in message
+    assert "provenance is required" not in message
+    # Frozen bytes stay v2 — the legacy reader is the audit-arm path.
+    legacy = load_legacy_manifest(str(path))
+    assert legacy.manifest_version == 2
+    assert legacy.annotation_mode is AnnotationMode.ROSTER_ONLY
+    assert len(legacy.entries) == 150
 
 
 def test_null_provenance_is_treated_as_missing(tmp_path: Path) -> None:
@@ -205,7 +215,8 @@ def test_malformed_entries_structure_reported_before_missing_provenance(
 ) -> None:
     """entries-not-a-list is ManifestError (not TypeError), not a provenance hole."""
     doc = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
         "roster": [],
         "entries": 1,
     }
@@ -220,7 +231,8 @@ def test_malformed_entries_structure_reported_before_missing_provenance(
 def test_non_object_entry_is_manifest_error(tmp_path: Path) -> None:
     """An entry that is not an object is a structural ManifestError."""
     doc = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
         "roster": ["Ada Example"],
         "entries": ["not-a-dict"],
     }
@@ -236,3 +248,73 @@ def test_manifest_module_does_not_import_ingest_checks() -> None:
         Path(__file__).resolve().parents[1] / "manifest.py"
     ).read_text(encoding="utf-8")
     assert "ingest_checks" not in source
+
+
+# --- FIR-11 Slice 2 ----------------------------------------------------------
+
+
+def test_v2_rejected_by_gate_loader(tmp_path: Path) -> None:
+    """Gate loader understands version 3 only."""
+    doc = _load_json(PROVENANCED)
+    doc["manifest_version"] = 2
+    path = _write_manifest(tmp_path, doc)
+    with pytest.raises(ManifestError, match="manifest_version"):
+        load_manifest(str(path))
+
+
+def test_load_legacy_manifest_rejects_v3() -> None:
+    """Legacy reader is v2-only — a v3 fixture must not slip through it."""
+    with pytest.raises(ManifestError, match="legacy loader understands version 2"):
+        load_legacy_manifest(str(PROVENANCED))
+
+
+def test_provenanced_fixture_is_v3_roster_only() -> None:
+    manifest = load_manifest(str(PROVENANCED))
+    assert manifest.manifest_version == 3
+    assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
+    assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
+
+
+def test_cli_py_does_not_reference_load_legacy_manifest() -> None:
+    """Gate command path cannot reach the legacy loader (source-level)."""
+    cli_src = (Path(__file__).resolve().parents[1] / "cli.py").read_text(encoding="utf-8")
+    assert "load_legacy_manifest" not in cli_src
+
+
+def test_calibrate_strata_fixture_is_not_a_golden_manifest() -> None:
+    """golden_manifest_strata.v1.json is a calibrate join fixture, not GoldenManifest.
+
+    It is consumed by validate_golden_manifest (calibrate_face_thresholds), not
+    load_manifest. Exercising it through load_legacy_manifest would require
+    inventing provenance, base_caption, and legal SliceTags — rg-015 forbids
+    that. This test pins the disposition.
+    """
+    strata = FIXTURES / "golden_manifest_strata.v1.json"
+    assert strata.is_file()
+    with pytest.raises(ManifestError):
+        load_manifest(str(strata))
+    with pytest.raises(ManifestError):
+        load_legacy_manifest(str(strata))
+
+
+def test_v3_min_fixture_is_bench_family_not_golden_manifest() -> None:
+    """v3_min.json is the corpus-manifest-v3 bench family, not GoldenManifest."""
+    v3_min = FIXTURES / "v3_min.json"
+    assert v3_min.is_file()
+    with pytest.raises(ManifestError):
+        load_manifest(str(v3_min))
+
+
+def test_corpus646_retag_loads_as_roster_only() -> None:
+    """Regression: retagged corpus646 loads clean under the v3 gate loader."""
+    path = Path(__file__).resolve().parents[1] / "corpus646-interleave-manifest-20260716.json"
+    assert path.is_file()
+    manifest = load_manifest(str(path))
+    assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
+    assert manifest.manifest_version == 3
+    assert len(manifest.entries) == 646
+    for entry in manifest.entries:
+        assert len(entry.face_boxes) <= entry.face_count
+        for box in entry.face_boxes:
+            assert box.lineage is not None
+            assert box.lineage.label_source.value == "legacy_import"

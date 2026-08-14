@@ -147,10 +147,10 @@ def enrich_entry(entry: dict, image_bytes: bytes) -> dict:
     updated = dict(entry)
     if not updated.get("present_identities"):
         updated["present_identities"] = gt.present_identities
-    # face_count must cover the labeled identities (manifest's _face_count_covers_labeled
-    # invariant): take the max of any existing value, the freshly-detected count, and the
-    # identity count, so a curated entry whose image carries no embedded XMP can never land
-    # below its own present_identities list and raise a ManifestError far downstream.
+    # face_count is an operator count-first figure (never derived from boxes).
+    # Take the max of any existing value, the freshly-detected count, and the
+    # identity count so a curated entry whose image carries no embedded XMP
+    # cannot land below its own present_identities list.
     updated["face_count"] = max(
         int(updated.get("face_count") or 0), gt.face_count, len(updated.get("present_identities") or [])
     )

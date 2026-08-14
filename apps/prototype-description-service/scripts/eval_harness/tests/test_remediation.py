@@ -82,7 +82,8 @@ def _entry(
 
 def _draft(tmp_path: Path, media_ids: list[int], roster: list[str] | None = None) -> Path:
     doc = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+            "annotation_mode": "roster_only",
         "roster": roster or ["Ada Example"],
         "entries": [_entry(mid) for mid in media_ids],
     }
@@ -411,11 +412,11 @@ def test_fixed_disposition_constants_match_plan() -> None:
 
 
 def test_emitter_does_not_run_against_real_golden150() -> None:
-    """Guard: the real draft is still unprovenanced; we must not emit from it."""
+    """Guard: the real draft is frozen v2; the v3 gate loader must not accept it."""
     real = (
         _repo_root() / "benchmarks" / "manifests" / "golden150-draft-20260723.json"
     )
-    with pytest.raises(ManifestError, match="provenance is required"):
+    with pytest.raises(ManifestError, match="manifest_version"):
         load_manifest(str(real))
     # No real attestation artifact was authored.
     manifests = _repo_root() / "benchmarks" / "manifests"

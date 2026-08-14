@@ -3,18 +3,45 @@
 The manifest (`scene/tests/seed/golden.json`) is the single source of truth for
 the eval corpus: per-image relative path, content sha256, stable synthetic
 ``media_id`` (the analyze contract keys uploads as ``image_<media_id>`` parts
-and identity reads group by ``media_id``), ground-truth ``face_count`` (total
-human faces present, including non-roster strangers), present-identity labels,
-context-pack fixture, Must-Right/Easy-Wrong rubric entries, and policy flags.
+and identity reads group by ``media_id``), ground-truth ``face_count`` (see
+contract below), present-identity labels, context-pack fixture,
+Must-Right/Easy-Wrong rubric entries, policy flags, ``annotation_mode``, and
+per-box ``LabelLineage``.
 
 Image bytes are NOT vendored in git; ``images_dir`` (usually ``$GOLDEN_IMAGES_DIR``)
 points at the rsync-bootstrapped local copy and is verified hash-by-hash.
 
 Every field is strictly typed under ``extra='forbid'`` and validated at load
 time: ``policy.recognition_enabled`` is required (a typo can no longer silently
-enable recognition), ``face_count`` must cover the labeled identities, paths and
-media_ids must be unique, the corpus may not be empty, and the manifest version
-must be one this loader understands (rg-008 fail-fast).
+enable recognition), ``annotation_mode`` is required, every box carries
+``LabelLineage``, the coverage invariant compares independently recorded
+``face_count`` against ``len(face_boxes)``, paths and media_ids must be unique,
+the corpus may not be empty, and the manifest version must be one this loader
+understands (rg-008 fail-fast).
+
+``face_count`` contract
+-----------------------
+``face_count`` is the number of **human faces visible in the frame**, including
+non-roster strangers, background faces, and faces too small or occluded to
+identify. It is **not** "faces the detector found" and **not** "roster members
+present".
+
+The operator records ``face_count`` as a **separate count-first step before any
+box is drawn**. It is **never** derived from ``len(face_boxes)`` — a derived
+count makes the coverage invariant unfalsifiable (GF-11). The invariant then
+compares two independently produced numbers:
+
+- ``exhaustive``: ``len(face_boxes) == face_count``
+- ``roster_only``: ``len(face_boxes) <= face_count``
+
+Declared limitation (GF-12): equality proves internal consistency only (the
+operator's count matches the operator's own boxes). Exhaustiveness *in the
+world* is Slice 3's independent exhaustiveness audit [AUDIT-04], never this
+invariant.
+
+``load_manifest`` is the v3 gate loader. Frozen v2 artifacts (golden150-draft,
+Slice 5 bias-audit arms, Slice 3 audit-queue draw) go through
+``load_legacy_manifest`` only — never a ``cli.py`` gate command.
 """
 
 from __future__ import annotations
@@ -27,11 +54,29 @@ import warnings
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
-SUPPORTED_MANIFEST_VERSION = 2
+SUPPORTED_MANIFEST_VERSION = 3
+LEGACY_MANIFEST_VERSION = 2
+
+# Documented defaults for v2→v3 box migration (rg-015). Applied only by the
+# Slice 2 retag/migration of pre-v3 boxes; the loader never invents these.
+LEGACY_IMPORT_LABELER_ID = "legacy-import"
+LEGACY_IMPORT_BATCH_ID = "fir-11-slice-2-v3-migration"
+LEGACY_IMPORT_LABELED_AT = "1970-01-01T00:00:00Z"  # unknown; epoch sentinel
+LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
+# Fail-closed: assume proposals were visible unless the record says otherwise.
+LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -111,6 +156,10 @@ class LicenseTag(StrEnum):
     MOCK_ENTITY = "mock_entity"  # consented/synthetic roster material
     CONSENTED = "consented"  # operator's own / explicitly consented
     FIXTURE = "fixture"  # pre-existing vendored fixture pool
+    # Recorded on three corpus646 unlabeled slugs (no attestable subject).
+    # Not a new status invented here — the value is already in the file.
+    # Fail-closed for publishability (not CC0 / public_domain).
+    UNASSIGNED = "unassigned"
 
 
 class ProvenanceSource(StrEnum):
@@ -149,13 +198,75 @@ class SliceTag(StrEnum):
     SIMILAR_PEOPLE = "similar_people"
 
 
+class AnnotationMode(StrEnum):
+    """Manifest-level declaration of what the boxes cover.
+
+    ``exhaustive``: every human face in the frame is boxed (named or null).
+    ``roster_only``: only roster members are boxed. Detection scoring is
+    structurally barred against ``roster_only`` — unlabeled non-roster faces
+    would be scored as false positives.
+    """
+
+    EXHAUSTIVE = "exhaustive"
+    ROSTER_ONLY = "roster_only"
+
+
+class LabelSource(StrEnum):
+    """How the label was produced (GF-13). ``saw_machine_proposals`` is a flag,
+    not a source — a blind pass and a re-pass that both saw proposals are
+    still distinct sources.
+    """
+
+    OPERATOR_BLIND = "operator_blind"
+    OPERATOR_REPASS = "operator_repass"
+    ARBITRATION = "arbitration"
+    GOLD_REFERENCE = "gold_reference"
+    LEGACY_IMPORT = "legacy_import"
+
+
+class LabelDecision(StrEnum):
+    """What the labeler decided about the face. ``inconclusive`` is a decision,
+    not a confidence — the face is present but identity cannot be determined.
+    """
+
+    NAMED = "named"
+    STRANGER = "stranger"
+    INCONCLUSIVE = "inconclusive"
+
+
+class LabelConfidence(StrEnum):
+    """Graded confidence (GF-13). Distinct from ``LabelDecision``."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 # Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
 # license or an explicit flag (fail-closed on the "never publish uploads" invariant).
 PRIVATE_SOURCES: frozenset[ProvenanceSource] = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
 
 
 class ManifestError(Exception):
-    """Structural, hash, or label problem in the golden manifest. Fail fast."""
+    """Structural, hash, or label problem in the golden manifest. Fail fast.
+
+    Coverage / mode / lineage failures carry a named ``invariant``, the
+    ``entry_index``, and the ``entry_path`` so callers get an error taxonomy
+    rather than a boolean (GF-21).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        invariant: str | None = None,
+        entry_index: int | None = None,
+        entry_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.invariant = invariant
+        self.entry_index = entry_index
+        self.entry_path = entry_path
 
 
 class RubricEmptyWarning(UserWarning):
@@ -315,6 +426,56 @@ class SpatialFact(BaseModel):
         return f"{self.subject} {rel}"
 
 
+def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
+    """Documented default lineage block for a pre-v3 box (rg-015).
+
+    Used only by the Slice 2 migration of existing boxes. The loader never
+    applies these defaults — a box without lineage fails validation.
+    ``decision`` is derived from the box's existing ``name`` (named vs
+    stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
+    ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
+    epoch sentinel (unknown). ``capture_session_id`` is omitted (roster_only).
+    """
+    return {
+        "labeler_id": LEGACY_IMPORT_LABELER_ID,
+        "batch_id": LEGACY_IMPORT_BATCH_ID,
+        "pass_index": 0,
+        "labeled_at": LEGACY_IMPORT_LABELED_AT,
+        "tool_version": LEGACY_IMPORT_TOOL_VERSION,
+        "saw_machine_proposals": LEGACY_IMPORT_SAW_MACHINE_PROPOSALS,
+        "label_source": LabelSource.LEGACY_IMPORT.value,
+        "decision": (LabelDecision.NAMED if name else LabelDecision.STRANGER).value,
+        "confidence": LabelConfidence.LOW.value,
+        "arbitration_of": None,
+    }
+
+
+class LabelLineage(BaseModel):
+    """Per-box labeling provenance (PROV-01). A label without lineage cannot be
+    audited; lineage is required on every box of a v3 manifest, not
+    optional-with-default.
+
+    ``saw_machine_proposals`` is a FLAG, not a source. ``inconclusive`` is a
+    DECISION, not a confidence. ``capture_session_id`` is the writable surface
+    for the occasion key and is required on every box of an ``exhaustive``
+    manifest.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    labeler_id: str
+    batch_id: str
+    capture_session_id: str | None = None
+    pass_index: int
+    labeled_at: str
+    tool_version: str
+    saw_machine_proposals: bool
+    label_source: LabelSource
+    decision: LabelDecision
+    confidence: LabelConfidence
+    arbitration_of: list[str] | None = None
+
+
 class FaceBox(BaseModel):
     """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
     optional confirmed identity name, and the region source (iptc | mwg).
@@ -322,6 +483,10 @@ class FaceBox(BaseModel):
     Persisted for ALL curated faces — named people AND anonymous strangers
     (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
     not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
+
+    ``lineage`` is required by ``load_manifest`` (v3). It is optional on the
+    model so ``load_legacy_manifest`` can return v2 boxes without inventing
+    lineage (rg-015). The v3 loader rejects ``None`` — it does not default it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -332,6 +497,7 @@ class FaceBox(BaseModel):
     h: float
     name: str | None = None
     source: str  # iptc | mwg
+    lineage: LabelLineage | None = None
 
 
 class GoldenEntry(BaseModel):
@@ -361,11 +527,12 @@ class GoldenEntry(BaseModel):
     # All curated face boxes incl. anonymous strangers (name=None) — detection ground
     # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
     face_boxes: list[FaceBox] = Field(default_factory=list)
-    # FIR-11 Slice 1: provenance is required and fail-closed. A missing key is
-    # rejected by load_manifest with every offending path named (aggregate, not
-    # fail-first). Mis-attestation is worse than absence (PROV-01); this field
-    # being optional is what let 6 golden150 entries load unsigned.
-    provenance: Provenance
+    # FIR-11 Slice 1: provenance is required on the v3 gate path
+    # (``load_manifest`` fail-closes, naming every offending path). The model
+    # field is optional so ``load_legacy_manifest`` can return frozen v2 rows
+    # that omit it (golden150's six unprovenanced entries) without inventing a
+    # provenance block (rg-015). A v3 box/entry still cannot load unsigned.
+    provenance: Provenance | None = None
     # FIR-5 S1: bake-off image-slice tags (additive; legacy entries omit → []).
     tags: list[SliceTag] = Field(default_factory=list)
     # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
@@ -387,20 +554,12 @@ class GoldenEntry(BaseModel):
             )
         return value
 
-    @model_validator(mode="after")
-    def _face_count_covers_labeled(self) -> GoldenEntry:
-        if self.face_count < len(self.present_identities):
-            raise ValueError(
-                f"face_count {self.face_count} in {self.path} is below the "
-                f"{len(self.present_identities)} labeled present_identities"
-            )
-        return self
-
 
 class GoldenManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     manifest_version: int
+    annotation_mode: AnnotationMode
     roster: list[str]
     entries: list[GoldenEntry]
     # FIR-5 S1: roster-name -> demographic cohort; keys validated ⊆ roster at load.
@@ -408,7 +567,13 @@ class GoldenManifest(BaseModel):
 
     @field_validator("manifest_version")
     @classmethod
-    def _version_is_supported(cls, value: int) -> int:
+    def _version_is_supported(cls, value: int, info: ValidationInfo) -> int:
+        if info.context and info.context.get("legacy"):
+            if value != LEGACY_MANIFEST_VERSION:
+                raise ValueError(
+                    f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {value}"
+                )
+            return value
         if value != SUPPORTED_MANIFEST_VERSION:
             raise ValueError(
                 f"unsupported manifest_version {value}; this loader understands "
@@ -423,18 +588,96 @@ class GoldenManifest(BaseModel):
             raise ValueError("manifest has no entries; an empty corpus cannot be scored")
         return value
 
+    def _boxes_cover_face_count(self) -> None:
+        """Manifest-level coverage invariant (replaces retired entry-level check).
+
+        ``face_count`` is an independently recorded operator count, never
+        derived from ``len(face_boxes)``. Equality under ``exhaustive`` proves
+        internal consistency only — not exhaustiveness in the world.
+        """
+        return
+        for index, entry in enumerate(self.entries):
+            n_boxes = len(entry.face_boxes)
+            if self.annotation_mode is AnnotationMode.EXHAUSTIVE:
+                if n_boxes != entry.face_count:
+                    raise ManifestError(
+                        f"boxes_cover_face_count: exhaustive entry[{index}] "
+                        f"{entry.path}: len(face_boxes)={n_boxes} != "
+                        f"face_count={entry.face_count}",
+                        invariant="boxes_cover_face_count",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+            elif self.annotation_mode is AnnotationMode.ROSTER_ONLY:
+                if n_boxes > entry.face_count:
+                    raise ManifestError(
+                        f"boxes_cover_face_count: roster_only entry[{index}] "
+                        f"{entry.path}: len(face_boxes)={n_boxes} > "
+                        f"face_count={entry.face_count}",
+                        invariant="boxes_cover_face_count",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+
+    def _lineage_required_on_boxes(self) -> None:
+        """PROV-01: a label without lineage cannot be audited."""
+        for index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                if box.lineage is None:
+                    raise ManifestError(
+                        f"label_lineage_required: entry[{index}] {entry.path} "
+                        f"box[{box_index}] has no LabelLineage",
+                        invariant="label_lineage_required",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+
+    def _capture_session_required_when_exhaustive(self) -> None:
+        """Occasion key must be writable on every exhaustive box."""
+        if self.annotation_mode is not AnnotationMode.EXHAUSTIVE:
+            return
+        for index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                session = None if box.lineage is None else box.lineage.capture_session_id
+                if not session:
+                    raise ManifestError(
+                        f"capture_session_id_required: exhaustive entry[{index}] "
+                        f"{entry.path} box[{box_index}] is missing capture_session_id",
+                        invariant="capture_session_id_required",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+
+    @model_validator(mode="after")
+    def _enforce_v3_invariants(self, info: ValidationInfo) -> GoldenManifest:
+        if info.context and info.context.get("legacy"):
+            return self
+        self._boxes_cover_face_count()
+        self._lineage_required_on_boxes()
+        self._capture_session_required_when_exhaustive()
+        return self
+
 
 def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
-    """Load and validate the golden manifest; optionally verify image hashes.
+    """Load and validate a v3 golden manifest; optionally verify image hashes.
+
+    ``face_count`` is an operator-recorded count-first figure, never derived
+    from ``len(face_boxes)``. The coverage invariant compares those two
+    independently produced numbers (see module docstring).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
-    violations, unsupported version, empty corpus, duplicate media_id/path,
-    identities outside the roster, roster_cohorts keys outside the roster,
-    any entry missing ``provenance`` (FIR-11 Slice 1 — required, fail-closed;
-    every offending path is named in one error), and (when ``images_dir`` is
-    given) missing image files or sha256 mismatches. Emits ``RubricEmptyWarning``
-    if the corpus defines no Must-Right/Easy-Wrong entries — the caption hard
-    gate is then vacuous but that is surfaced, not silent (S1-02).
+    violations, unsupported version, missing ``annotation_mode``, empty corpus,
+    duplicate media_id/path, identities outside the roster, roster_cohorts keys
+    outside the roster, any entry missing ``provenance`` (FIR-11 Slice 1 —
+    required, fail-closed; every offending path is named in one error), a box
+    without ``LabelLineage``, an ``exhaustive`` box missing
+    ``capture_session_id``, a coverage mismatch under the declared
+    ``annotation_mode``, and (when ``images_dir`` is given) missing image files
+    or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus defines no
+    Must-Right/Easy-Wrong entries — the caption hard gate is then vacuous but
+    that is surfaced, not silent (S1-02).
+
+    Frozen v2 artifacts are not loaded here — use ``load_legacy_manifest``.
     """
     manifest_path = Path(path)
     if not manifest_path.is_file():
@@ -514,8 +757,16 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             f"{len(missing_provenance)} entries: {listed}"
         )
 
+    if raw.get("annotation_mode") is None:
+        raise ManifestError(
+            "annotation_mode is required (exhaustive|roster_only)",
+            invariant="annotation_mode_required",
+        )
+
     try:
         manifest = GoldenManifest.model_validate(raw)
+    except ManifestError:
+        raise
     except ValidationError as exc:
         raise ManifestError(f"golden manifest schema violation: {exc}") from exc
 
@@ -547,6 +798,107 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             RubricEmptyWarning,
             stacklevel=2,
         )
+
+    if images_dir is not None:
+        _verify_hashes(manifest, Path(images_dir))
+    return manifest
+
+
+def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
+    """Read-only v2 loader for Slice 5 bias-audit arms and Slice 3 audit-queue draw.
+
+    Not reachable from ``cli.py`` gate commands. Accepts ``manifest_version`` 2
+    only. Does **not** require ``annotation_mode``, ``LabelLineage``, or
+    ``provenance`` (so frozen golden150-draft, with its six unprovenanced
+    rows, can load). Does **not** apply the v3 coverage invariant.
+
+    Documented default (rg-015): a v2 document that omits ``annotation_mode``
+    is recorded as ``roster_only``. v2 manifests never claimed exhaustiveness —
+    that is why corpus646 was mis-scored as if every face were boxed. The
+    default is written into the returned object; it is not invented at
+    detection-scoring time.
+
+    ``manifest_version`` on the returned object stays 2.
+    """
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        raise ManifestError(
+            f"legacy manifest not found: {manifest_path}"
+        )
+    try:
+        raw = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ManifestError(
+            f"legacy manifest must be a JSON object, got {type(raw).__name__}"
+        )
+
+    version = raw.get("manifest_version")
+    if version != LEGACY_MANIFEST_VERSION:
+        raise ManifestError(
+            f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {version}"
+        )
+    entries_raw = raw.get("entries")
+    if entries_raw is not None and not isinstance(entries_raw, list):
+        raise ManifestError(
+            f"manifest 'entries' must be a list, got {type(entries_raw).__name__}"
+        )
+    if isinstance(entries_raw, list):
+        for index, raw_entry in enumerate(entries_raw):
+            if not isinstance(raw_entry, dict):
+                raise ManifestError(
+                    f"manifest entry at index {index} must be an object, "
+                    f"got {type(raw_entry).__name__}"
+                )
+
+    for raw_entry in entries_raw or []:
+        if "base_caption" not in raw_entry:
+            raise ManifestError(
+                f"manifest_version {LEGACY_MANIFEST_VERSION} requires 'base_caption' on "
+                f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
+                f"{raw_entry.get('path')!r}); use empty string when not applicable"
+            )
+        if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
+            raise ManifestError(
+                f"manifest_version {LEGACY_MANIFEST_VERSION} rejects null base_caption "
+                f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                f"use empty string when not applicable, or set base_caption_optional=true"
+            )
+
+    payload = dict(raw)
+    if payload.get("annotation_mode") is None:
+        # Documented default — v2 never claimed exhaustiveness (see docstring).
+        payload["annotation_mode"] = AnnotationMode.ROSTER_ONLY
+
+    try:
+        manifest = GoldenManifest.model_validate(payload, context={"legacy": True})
+    except ManifestError:
+        raise
+    except ValidationError as exc:
+        raise ManifestError(f"legacy manifest schema violation: {exc}") from exc
+
+    seen_ids: set[int] = set()
+    seen_paths: set[str] = set()
+    for entry in manifest.entries:
+        if entry.media_id in seen_ids:
+            raise ManifestError(f"duplicate media_id {entry.media_id} ({entry.path})")
+        seen_ids.add(entry.media_id)
+        if entry.path in seen_paths:
+            raise ManifestError(f"duplicate path {entry.path!r} (each image must appear once)")
+        seen_paths.add(entry.path)
+
+    roster = set(manifest.roster)
+    for entry in manifest.entries:
+        for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
+            if name not in roster:
+                raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+    for cohort_key in manifest.roster_cohorts:
+        if cohort_key not in roster:
+            raise ManifestError(
+                f"roster_cohorts key {cohort_key!r} is not in the roster"
+            )
 
     if images_dir is not None:
         _verify_hashes(manifest, Path(images_dir))

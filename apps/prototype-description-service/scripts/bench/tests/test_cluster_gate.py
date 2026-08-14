@@ -184,6 +184,28 @@ def test_read_status_reports_failed_until_latch_cleared(tmp_path: Path) -> None:
     assert status2["legs"][stack_id]["phase"] == "done"
 
 
+def test_retryable_clears_stale_refusal_latch(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    stack_id = "acx-dev-insightface"
+    items = run_dir / "legs" / stack_id / "items.jsonl"
+    items.parent.mkdir(parents=True)
+    items.write_text(
+        json.dumps(_rec(1, outcome="ok", attempt=1))
+        + "\n"
+        + json.dumps(_rec(2, outcome="failed", attempt=1))
+        + "\n",
+        encoding="utf-8",
+    )
+    latch = run_dir / "legs" / stack_id / "leg_outcome.json"
+    latch.write_text(json.dumps({"error_code": "cluster_gate_refused"}), encoding="utf-8")
+    client = FakeClient()
+    decision = run_cluster_phase(run_dir, stack_id, client, tenant_id="t", item_max_attempts=2)
+    assert decision.admits is False
+    assert decision.reason is None
+    assert not latch.exists()
+    assert client.cluster_calls == 0
+
+
 def test_read_status_latch_precedes_exports(tmp_path: Path) -> None:
     from scripts.bench.driver import init_run_dir, read_status
     from scripts.bench.stack_pair import load_stack_pair

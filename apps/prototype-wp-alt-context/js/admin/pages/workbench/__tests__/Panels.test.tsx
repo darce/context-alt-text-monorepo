@@ -135,7 +135,11 @@ describe('ScanActionPanel', () => {
     const announce = screen.getByTestId('scan-status-announce');
     expect(announce.getAttribute('role')).toBe('status');
     expect(announce.textContent).toBe('Job job-1: Detecting');
-    expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 1/10 images');
+    const visual = screen.getByTestId('scan-status-visual');
+    expect(visual.textContent).toBe('Job job-1: Processed 1/10 images');
+    // L3V-02: visual status must not be a live region (mutation: re-add role=status on <p>).
+    expect(visual.getAttribute('role')).toBeNull();
+    expect(visual.getAttribute('aria-live')).toBeNull();
 
     // Per-tick count change: visual updates, live region does not.
     rerender(
@@ -184,6 +188,58 @@ describe('ScanActionPanel', () => {
         progressPhase: null,
       }),
     ).toBe('Job j1: completed');
+  });
+
+  it('L3V-03: countdown statusText ticks do not change the announce region when phase is null', () => {
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Clustering queued — starting in 5s',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Clustering queued — starting in 4s',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+
+    const { rerender } = render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          statusText: 'Clustering queued — starting in 5s',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe(
+      'Job job-1: Clustering queued — starting in 5s',
+    );
+
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          statusText: 'Clustering queued — starting in 4s',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    // Announce region stays absent/stable; only visual countdown advances.
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe(
+      'Job job-1: Clustering queued — starting in 4s',
+    );
   });
 
   it('L3R-07: stall Cancel is suppressed when suppressPrimaryChrome is set', () => {

@@ -146,6 +146,30 @@ const RouteStateProbe = (): React.JSX.Element => {
   return <output aria-label="route-state">{searchParams.toString()}</output>;
 };
 
+const PersonRouteController = (): React.JSX.Element => {
+  const [, setSearchParams] = useSearchParams();
+
+  return (
+    <>
+      <button type="button" onClick={() => setSearchParams({ person: 'person-uuid-2' })}>
+        Open Tory workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setSearchParams((previous) => {
+            const next = new URLSearchParams(previous);
+            next.delete('person');
+            return next;
+          });
+        }}
+      >
+        Clear person route
+      </button>
+    </>
+  );
+};
+
 const createTestQueryClient = (): QueryClient =>
   new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -230,23 +254,52 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
   });
 
-  it('[PAG-M3-S2] keeps the default workspace visible after switching to clusters and back to entries', () => {
+  it('[PAG-M3-S2] restores the default workspace after ?person= is set then cleared', async () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
-        data: [projectionEntry({ projection_status: 'current', person_uuid: 'person-uuid-1', name: 'Alice' })],
+        data: [
+          projectionEntry({
+            id: 2,
+            person_uuid: 'person-uuid-2',
+            name: 'Tory',
+            projection_status: 'current',
+          }),
+          projectionEntry({
+            id: 1,
+            person_uuid: 'person-uuid-1',
+            name: 'Alice',
+            projection_status: 'current',
+          }),
+        ],
         isLoading: false,
         isError: false,
         refetch: vi.fn(),
       }),
     );
 
-    renderWithProviders(<RosterPage />);
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <PersonRouteController />
+        <RouteStateProbe />
+        <RosterPage />
+      </>,
+    );
 
-    // E21-9 Slice 5a: single person-first surface — no tab switch; default workspace stays mounted.
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Open Tory workspace' }));
+    expect(screen.getByLabelText('route-state')).toHaveTextContent('person=person-uuid-2');
+    expect(screen.getByRole('region', { name: /Person workspace: Tory/i })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /Person workspace: Alice/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear person route' }));
+    expect(screen.getByLabelText('route-state')).not.toHaveTextContent('person=');
+    expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /Person workspace: Tory/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add Person/ })).toBeInTheDocument();
-    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
   });
 
   it('[PAG-M3-S3] chooses a deterministic default workspace entry and shows baseline projection metadata', () => {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   MemoryRouter,
@@ -410,6 +410,19 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
     expect(screen.queryByText(/No people match/)).not.toBeInTheDocument();
   });
 
+  // The harness renders a <output data-testid="location-search"> (implicit
+  // role=status), so bare getByRole('status') is ambiguous — scope to the
+  // section's filter region.
+  const getSearchStatus = (): HTMLElement => {
+    const region = screen
+      .getAllByRole('status')
+      .find((el) => el.classList.contains('acx-roster-section__filter'));
+    if (!region) {
+      throw new Error('roster search status region not found');
+    }
+    return region;
+  };
+
   /**
    * [ROSTER-W-03] [WBUX-5-R2-S6-BR-04] [TEST-15]
    * Filter the table immediately, but do not rewrite the role=status search
@@ -446,8 +459,69 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
       act(() => {
         vi.advanceTimersByTime(1);
       });
-      expect(screen.getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('announces a zero-match search immediately through role=status [E21-19-REV1-03]', () => {
+    vi.useFakeTimers();
+    try {
+      renderSection(readyQuery());
+      const search = screen.getByRole('searchbox', { name: /search people/i });
+
+      fireEvent.change(search, { target: { value: 'Sarah' } });
+      act(() => {
+        vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS);
+      });
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+
+      fireEvent.change(search, { target: { value: 'Sarahzzz' } });
+      // Goes red if empty outcome waits for debounce or lives outside status.
+      const status = getSearchStatus();
+      expect(within(status).queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
+      expect(within(status).getByText('No people match “Sarahzzz”.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the settled matching count immediately when Clear search is clicked [E21-19-REV1-03]', () => {
+    vi.useFakeTimers();
+    try {
+      renderSection(readyQuery());
+      const search = screen.getByRole('searchbox', { name: /search people/i });
+
+      fireEvent.change(search, { target: { value: 'Sarah' } });
+      act(() => {
+        vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS);
+      });
+      expect(within(getSearchStatus()).getByText('Showing 1 matching “Sarah”.')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+      // Goes red if the stale count stays announced for the 300ms window.
+      expect(screen.queryByText(/Showing \d+ matching/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not warn or set state after unmount mid-status debounce [E21-19-REV1-03]', () => {
+    vi.useFakeTimers();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { unmount } = renderSection(readyQuery());
+      fireEvent.change(screen.getByRole('searchbox', { name: /search people/i }), {
+        target: { value: 'S' },
+      });
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(SEARCH_STATUS_DEBOUNCE_MS);
+      });
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
       vi.useRealTimers();
     }
   });

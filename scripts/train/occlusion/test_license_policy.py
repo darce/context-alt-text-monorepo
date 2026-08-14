@@ -11196,6 +11196,9 @@ class TestF14DoorPromotionMidException:
         assert policy._token_has_exception_family(token) is False, (
             f"{token!r} must not grow an exception occurrence"
         )
+        assert policy._package_denylist_hit(token) is not None, (
+            f"{token!r} must floor-deny (F15-6; vacuous pin closed)"
+        )
         assert policy.audit_derived_from_model(token).ok is True, (
             f"{token!r} must stay door-pass (BR-28 / no exception segment)"
         )
@@ -11409,6 +11412,9 @@ class TestF14SuffixTolerantGlue:
                 f"precondition: {token!r} must deny"
             )
         monkeypatch.setattr(policy, "_SUFFIX_TOLERANT_GLUE_ENABLED", False)
+        # F15-5 independently fail-closes junk+exception+unknown rem
+        # (xyoloxyoloextra); neuter it so this pin stays sole-path.
+        monkeypatch.setattr(policy, "_MID_EXCEPTION_UNKNOWN_REM_ENABLED", False)
         for token in exact_only:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: with exact rem only, {token!r} must admit"
@@ -12072,6 +12078,9 @@ class TestF15JunkMultiSegmentNcFloor:
     @pytest.mark.parametrize("token", FLOOR_ONLY_DOOR_PASS)
     def test_no_exception_stays_door_pass(self, token: str) -> None:
         assert policy._token_has_exception_family(token) is False
+        assert policy._package_denylist_hit(token) is not None, (
+            f"{token!r} must floor-deny (F15-6; vacuous pin closed)"
+        )
         assert policy.audit_derived_from_model(token).ok is True, (
             f"{token!r} must stay door-pass (no exception witness)"
         )
@@ -12419,4 +12428,344 @@ class TestF13StealRankingAndMultiStack:
         assert hit2.package_id == "yolox_unknown_residual", (
             "red-proof: without residual recurse, yoloxyoloxyolo must "
             f"land unknown; got {hit2.package_id!r}"
+        )
+
+
+class TestF15EmptyCanonicalIdentity:
+    """F15-4 / R17-CDX-3: empty-canonical nonblank identities fail closed.
+
+    ``:latest`` / ``...:latest`` / ``/`` / ``///`` / ``/:latest`` are
+    nonblank but canonicalise to empty or slash-only. Doors previously
+    only checked ``c is None``. Blank / whitespace-only input keeps its
+    existing empty-field behaviour.
+    """
+
+    EMPTY_IDENTITY: ClassVar[tuple[str, ...]] = (
+        ":latest",
+        "...:latest",
+        "/",
+        "///",
+        "/:latest",
+    )
+
+    @pytest.mark.parametrize("token", EMPTY_IDENTITY)
+    def test_empty_canonical_identity_is_invalid_row(self, token: str) -> None:
+        c = policy.canonical(token)
+        assert policy._canonical_lacks_identity(c) is True, (
+            f"{token!r}: canonical {c!r} must lack an identity token"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must reject {token!r}"
+            assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_whitespace_only_keeps_existing_empty_field_behaviour(self) -> None:
+        assert policy.audit_derived_from_model("   ").ok is True
+        src = policy.audit_source("   ")
+        assert src.ok is False
+        assert src.reason is policy.RejectionReason.UNKNOWN_SOURCE
+
+    def test_red_proof_empty_canonical_identity_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED``.
+
+        ``:latest`` / ``/`` door-admit again; C0 / non-ASCII still
+        invalid_row via canonical-None.
+        """
+        for token in self.EMPTY_IDENTITY:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"precondition: {token!r} must invalid_row"
+            )
+        monkeypatch.setattr(
+            policy, "_EMPTY_CANONICAL_IDENTITY_FAIL_CLOSED", False
+        )
+        for token in self.EMPTY_IDENTITY:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: without empty-identity gate, {token!r} must admit"
+            )
+        assert (
+            policy.audit_derived_from_model("yolo\x00v8").reason
+            is policy.RejectionReason.INVALID_ROW
+        )
+
+
+class TestF15MidExceptionUnknownRem:
+    """F15-5 / R17-L-3: junk prefix must not launder unknown residual.
+
+    ``yoloxsextra`` denies ``yolox_unknown_residual`` but ``xyoloxsextra``
+    admitted: mid-scanner found ``yoloxs`` and only denied deny/NC rem.
+    Unknown non-tag rem after a mid-token exception spelling fail-closes
+    the same way as offset-0 steal. ``ayoloxs`` / ``xyoloxs`` stay admit.
+    """
+
+    DENY: ClassVar[tuple[str, ...]] = (
+        "xyoloxsextra",
+        "myyoloxsextra",
+    )
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "ayoloxs",
+        "xyoloxs",
+    )
+
+    @pytest.mark.parametrize("token", DENY)
+    def test_mid_exception_unknown_rem_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (F15-5 mid-exception unknown rem)"
+        )
+        assert hit.package_id == "yolox_unknown_residual"
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == "yolox_unknown_residual"
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_mid_exception_legit_tag_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_offset0_unknown_still_denies(self) -> None:
+        hit = policy._package_denylist_hit("yoloxsextra")
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+
+    def test_red_proof_mid_exception_unknown_rem_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED``.
+
+        ``xyoloxsextra`` admits; offset-0 ``yoloxsextra`` still denies.
+        """
+        for token in self.DENY:
+            assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(policy, "_MID_EXCEPTION_UNKNOWN_REM_ENABLED", False)
+        for token in self.DENY:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without mid unknown-rem, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("yoloxsextra") is not None
+        assert policy._package_denylist_hit("xyoloxs") is None
+
+
+class TestF15PaddleModelFileExtensions:
+    """F15-7 / R17-G2-2: strip ``.pdparams`` / ``.pdmodel`` before fold."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyoloe_plus_crn_s_80e_coco.pdparams",
+        "ppyoloe_plus_crn_s_80e_coco.pdmodel",
+        "weights/ppyoloe_plus_crn_s_80e_coco.pdparams",
+        "ppyolo_r50vd_dcn_1x_coco.pdparams",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_pdparams_pdmodel_strip_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT after Paddle extension strip (F15-7)"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_compact_glue_controls_stay_deny(self) -> None:
+        for token in ("ppyoloes", "ppyoloer"):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"compact glue {token!r} must stay DENY"
+
+    def test_red_proof_pd_extensions_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop ``.pdparams`` from the extension tuple."""
+        token = "ppyoloe_plus_crn_s_80e_coco.pdparams"
+        assert policy._package_denylist_hit(token) is None
+        monkeypatch.setattr(
+            policy,
+            "_MODEL_FILE_EXTENSIONS",
+            tuple(
+                e
+                for e in policy._MODEL_FILE_EXTENSIONS
+                if e not in {".pdparams", ".pdmodel"}
+            ),
+        )
+        assert policy._package_denylist_hit(token) is not None, (
+            "red-proof: without .pdparams strip, token must DENY"
+        )
+
+
+class TestF15PpYoloeRRotateFamily:
+    """F15-8 / R17-G2-3: PP-YOLOE-R rotate-family separator tags."""
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "PP-YOLOE-R",
+        "ppyoloe_r_crn_s_3x_dota",
+        "ppyoloe_r_crn_l_3x_dota",
+        "ppyoloe_r_crn_x_3x_dota",
+    )
+    COMPACT_DENY: ClassVar[tuple[str, ...]] = (
+        "ppyoloer",
+        "ppyolodota",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_ppyoloe_r_catalog_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT (F15-8 PP-YOLOE-R tags)"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token", COMPACT_DENY)
+    def test_compact_glue_stays_deny(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is not None, (
+            f"compact glue {token!r} must stay DENY"
+        )
+
+    def test_yolox_dota_does_not_leak(self) -> None:
+        assert policy._package_denylist_hit("yolox_dota") is not None
+
+    def test_yolof_3x_stays_native_admit(self) -> None:
+        assert policy._package_denylist_hit("yolof_3x") is None
+
+    def test_red_proof_dota_tag_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: drop ``dota`` from ppyolo separator-only tags."""
+        witness = "ppyoloe_r_crn_s_3x_dota"
+        assert policy._package_denylist_hit(witness) is None
+        current = policy._EXCEPTION_FAMILY_SEPARATOR_ONLY_TAGS["ppyolo"]
+        _retag_separator_inventory(
+            monkeypatch,
+            "ppyolo",
+            frozenset(t for t in current if t != "dota"),
+        )
+        assert policy._package_denylist_hit(witness) is not None, (
+            f"red-proof: without dota in ppyolo tags, {witness!r} must DENY"
+        )
+        assert policy._package_denylist_hit("PP-YOLOE-R") is None
+        assert policy._package_denylist_hit("ppyoloer") is not None
+
+
+class TestF15AsciiWhitespaceAndControlDetail:
+    """F15-9 / R17-G2-4: mid-token ASCII whitespace + honest C0 detail."""
+
+    def test_tab_and_lf_fold_as_separators(self) -> None:
+        for token in ("yolox\ts", "yolox\ns", "yolox\rs", "yolox s"):
+            assert policy.canonical(token) == "yolox_s", (
+                f"{token!r} must fold to yolox_s; got {policy.canonical(token)!r}"
+            )
+            assert policy._package_denylist_hit(token) is None
+            assert policy.audit_derived_from_model(token).ok is True
+
+    def test_nul_invalid_row_names_control_character(self) -> None:
+        token = "yolo\x00v8"
+        assert policy.canonical(token) is None
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+        detail_cf = result.detail.casefold()
+        assert "control" in detail_cf, (
+            f"NUL detail must name a control character; got {result.detail!r}"
+        )
+        assert "confusable" not in detail_cf, (
+            f"NUL detail must not use confusable-scripts text; got {result.detail!r}"
+        )
+
+    def test_red_proof_whitespace_fold_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_ASCII_WHITESPACE_AS_SEPARATOR_ENABLED``.
+
+        Mid-token TAB is C0 again → invalid_row; space still folds via
+        the total punct class.
+        """
+        token = "yolox\ts"
+        assert policy.audit_derived_from_model(token).ok is True
+        monkeypatch.setattr(
+            policy, "_ASCII_WHITESPACE_AS_SEPARATOR_ENABLED", False
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+        assert policy.audit_derived_from_model("yolox s").ok is True
+
+
+class TestF15DenyReasonHonesty:
+    """F15-10 / R17-L-4 / R17-L-5: honest deny reasons, fail-closed stays."""
+
+    def test_yoloppyoloe_is_yolo_plus_exception_spelling(self) -> None:
+        token = "yoloppyoloe"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == "yolo", (
+            f"{token!r}: expected structural yolo+ppyoloe, got {hit.package_id!r}"
+        )
+
+    def test_pp_yolo_nas_is_deci_nc_not_ppyolo_residual(self) -> None:
+        token = "pp_yolo_nas"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected NC axis, got {hit.reason} ({hit.package_id})"
+        )
+        assert "nas" in hit.package_id
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        detail_cf = result.detail.casefold()
+        assert (
+            "deci" in detail_cf
+            or "yolo-nas" in detail_cf
+            or "yolo_nas" in detail_cf
+        )
+
+    def test_paddlepaddle_pp_yoloe_admits_via_vendor_merge(self) -> None:
+        token = "paddlepaddle_pp_yoloe"
+        assert policy.canonical(token) == "paddlepaddle_ppyoloe"
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT after Paddle vendor pp merge (F15-10c)"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_pp_yolo_and_pp_yolov8_unchanged(self) -> None:
+        assert policy._package_denylist_hit("pp_yolo") is None
+        hit = policy._package_denylist_hit("pp_yolov8")
+        assert hit is not None
+        assert hit.package_id == "ppyolo_unknown_residual"
+
+    def test_red_proof_exception_spelling_glue_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_deny_head_is_exception_spelling_glue``.
+
+        ``yoloppyoloe`` falls back to yolop_unknown_residual.
+        """
+        token = "yoloppyoloe"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None and hit.package_id == "yolo"
+        monkeypatch.setattr(
+            policy, "_deny_head_is_exception_spelling_glue", lambda _t: False
+        )
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "yolop_unknown_residual", (
+            f"red-proof: without spelling-glue, {token!r} must land "
+            f"yolop residual; got {hit2.package_id!r}"
+        )
+
+    def test_red_proof_ppyolo_nas_residual_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_PPYOLO_NAS_RESIDUAL_NC_ENABLED``.
+
+        ``pp_yolo_nas`` falls back to generic ppyolo unknown residual.
+        """
+        token = "pp_yolo_nas"
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        monkeypatch.setattr(policy, "_PPYOLO_NAS_RESIDUAL_NC_ENABLED", False)
+        hit2 = policy._package_denylist_hit(token)
+        assert hit2 is not None
+        assert hit2.package_id == "ppyolo_unknown_residual", (
+            f"red-proof: without nas-residual NC, {token!r} must land "
+            f"ppyolo residual; got {hit2.package_id!r}"
         )

@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2351  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2364  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1870,6 +1870,17 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_full_cross_product_sweep_denies',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_full_rem_tail_cross_product_sweep_denies',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_glued_rem_stays_unknown_residual',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_l2xyolox_onnx_tiny-buffalo_l2-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_extra_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_onnx_tiny-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_onnx_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_tiny_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_v8-3-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_v8.3-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_v8_onnx-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_lxyolox_v8_tiny-buffalo_l-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[buffalo_scxyolox_v8-3-buffalo_sc-nc]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_multi_segment_rem_tail_gadgets_deny[fastsamxyolox_v8-3-fastsam-agpl]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lx_yolox_tiny-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox:v8-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_extra-buffalo_l-nc]',
@@ -1878,8 +1889,10 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalo_lxyolox_v8-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[buffalolxyolox:v8-buffalo_l-nc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_listed_rem_tail_gadgets_deny[fastsamxyolox:v8-fastsam-agpl]',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_multi_segment_rem_tail_cross_product_sweep_denies',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_punct_led_remainder_is_not_glued_owner',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_mid_exception_unknown_rem_neuter_underscore',
+    'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_multi_segment_rem_owner_neuter',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_separate_rem_owner_neuter',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_red_proof_underscore_glued_owner_neuter',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_rem_tail_glued_axes_deny[antelope_v2-abc-yolox-:v8]',
@@ -3787,6 +3800,10 @@ MUTATIONS: list[Mutation] = [
             "test_full_rem_tail_cross_product_sweep_denies",
             "test_glued_rem_stays_unknown_residual",
             "test_red_proof_separate_rem_owner_neuter",
+            # Wave F19 R21-01: multi-segment rem-tail pins die when hit misses.
+            "test_listed_multi_segment_rem_tail_gadgets_deny",
+            "test_multi_segment_rem_tail_cross_product_sweep_denies",
+            "test_red_proof_multi_segment_rem_owner_neuter",
             # Wave F18 R20-02: F17 red-proofs / floor-miss contrast plus
             # two pre-F17 red-proofs that also die when hit always misses.
             "test_four_plus_suffix_junk_without_exception_is_floor_miss",
@@ -3871,6 +3888,8 @@ MUTATIONS: list[Mutation] = [
             "test_a3_must_stay_deny_fence",
             "test_rem_tail_glued_axes_deny",
             "test_listed_rem_tail_gadgets_deny",
+            # Wave F19 R21-01: listed multi-seg rem includes AGPL fastsam row.
+            "test_listed_multi_segment_rem_tail_gadgets_deny",
             "test_fastsam_stacked_exception_names_stem",
             "test_yolobuffalo_l_is_yolo_head_plus_known_rem",
             "test_deny_seed_plus_pd_extension_still_denies",
@@ -4056,6 +4075,8 @@ MUTATIONS: list[Mutation] = [
             # red-proof preconditions on that classify-owned deny.
             "test_glued_rem_stays_unknown_residual",
             "test_red_proof_separate_rem_owner_neuter",
+            # Wave F19 R21-01: multi-seg rem red-proof also pins glued rem.
+            "test_red_proof_multi_segment_rem_owner_neuter",
         ),
     ),
     Mutation(
@@ -4185,6 +4206,8 @@ MUTATIONS: list[Mutation] = [
             # R20-01: glued rem / rem-tail red-proof are classify-owned.
             "test_glued_rem_stays_unknown_residual",
             "test_red_proof_separate_rem_owner_neuter",
+            # Wave F19 R21-01: multi-seg rem red-proof also pins glued rem.
+            "test_red_proof_multi_segment_rem_owner_neuter",
         ),
     ),
     Mutation(

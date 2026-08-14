@@ -46,6 +46,13 @@ interface SuggestionCardProps {
   queueTotal?: number;
 }
 
+/** buildSuggestionReviewItems only emits human-labeled targets (truthy trimmed label). */
+function assertTruthyLabel(label: string | null | undefined): asserts label is string {
+  if (typeof label !== 'string' || label.trim().length === 0) {
+    throw new Error('SuggestionCard requires a truthy suggestion.label');
+  }
+}
+
 const FaceCropControl = ({
   mediaUrl,
   bbox,
@@ -102,8 +109,9 @@ export const SuggestionCard = ({
   queuePosition,
   queueTotal,
 }: SuggestionCardProps): React.JSX.Element => {
-  // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
-  const displayLabel = suggestion.label ?? '';
+  // BR-22: no empty-label / Unnamed / suggestedLabel-badge / !hasLabel branches — label is required.
+  assertTruthyLabel(suggestion.label);
+  const displayLabel = suggestion.label;
   const matchPercent = Math.round(suggestion.similarity * 100);
   const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
   const identityFace =
@@ -159,14 +167,14 @@ export const SuggestionCard = ({
             <FaceCropControl
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}
-              alt={displayLabel || __('Cluster representative', 'alt-context')}
+              alt={displayLabel}
               onOpen={onOpenOriginal}
             />
           ) : representativeThumbUrl ? (
             <Avatar
               src={representativeThumbUrl}
               size="lg"
-              alt={__('Cluster representative', 'alt-context')}
+              alt={displayLabel}
               className="acx-suggestion-card__thumb"
             />
           ) : (

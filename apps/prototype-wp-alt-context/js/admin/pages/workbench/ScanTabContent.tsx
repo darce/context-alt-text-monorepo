@@ -235,10 +235,7 @@ export const ScanTabContent = (): React.JSX.Element => {
       {/* (c) Findings demoted below the queue — named region (L3R-04 / design B.1) */}
       <section className="acx-workbench-control-findings" aria-labelledby="acx-workbench-findings-heading">
         <ErrorBoundary>
-          <WorkbenchFindingsPanel
-            onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-            onTargetFindings={handleTargetFindings}
-          />
+          <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
         </ErrorBoundary>
       </section>
 

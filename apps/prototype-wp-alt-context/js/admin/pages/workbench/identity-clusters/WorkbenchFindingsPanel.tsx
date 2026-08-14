@@ -22,8 +22,6 @@ import {
 } from './useWorkbenchFindings';
 
 interface WorkbenchFindingsPanelProps {
-  /** Opens the existing cluster labeling drawer. */
-  onLabel: (clusterId: string) => void;
   /** Scrolls/focuses the detailed findings queues below the panel. */
   onTargetFindings?: () => void;
 }

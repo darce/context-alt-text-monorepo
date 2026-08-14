@@ -4261,11 +4261,75 @@ def _deny_has_folded_ab_claim(token: str) -> bool:
     return False
 
 
+def _exception_spelling_plus_residual(
+    rem: str,
+) -> tuple[str, str, str] | None:
+    """Return ``(seed_c, seed_k, residual)`` when rem is spelling + leftover.
+
+    Longest exception compact spelling wins (``yoloxs`` over ``yolox``).
+    """
+    if not rem:
+        return None
+    rem_k = _compact_canonical(rem)
+    if not rem_k:
+        return None
+    best: tuple[str, str, str] | None = None
+    best_len = -1
+    for seed_c, seed_k, spelling in _iter_exception_compact_spellings():
+        if rem_k.startswith(spelling) and len(rem_k) > len(spelling):
+            residual = rem_k[len(spelling) :]
+            if residual and residual.isalnum() and len(spelling) > best_len:
+                best_len = len(spelling)
+                best = (seed_c, seed_k, residual)
+    return best
+
+
+def _classify_exception_plus_residual(
+    rem: str,
+) -> PackageDenylistEntry | None:
+    """Fail-closed entry when rem is exception-spelling + non-legit residual."""
+    if not _SUFFIX_TOLERANT_GLUE_ENABLED:
+        return None
+    matched = _exception_spelling_plus_residual(rem)
+    if matched is None:
+        return None
+    seed_c, seed_k, residual = matched
+    outcome, entry = _classify_exception_residual(
+        seed_c, seed_k, residual, compact_glue=True
+    )
+    if outcome == _RESIDUAL_LEGITIMATE:
+        return None
+    return entry
+
+
+def _deny_prefix_plus_residual_hit(rem: str) -> PackageDenylistEntry | None:
+    """Longest deny/NC seed that is a proper prefix of compact rem + leftover."""
+    if not rem or not _SUFFIX_TOLERANT_GLUE_ENABLED:
+        return None
+    rem_k = _compact_canonical(rem)
+    if not rem_k:
+        return None
+    best: PackageDenylistEntry | None = None
+    best_len = -1
+    for _seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if not seed_k or not rem_k.startswith(seed_k):
+            continue
+        leftover = rem_k[len(seed_k) :]
+        if leftover and leftover.isalnum() and len(seed_k) > best_len:
+            best_len = len(seed_k)
+            best = entry  # type: ignore[assignment]
+    return best
+
+
 def _rem_is_known_family_or_seed(rem: str) -> bool:
     """True when compact rem is an exception spelling or any known seed.
 
     F13-3 / R15-L-2 remainder predicate: ``yolox`` / ``yoloxs`` (exception
     family) and exact deny/NC identities (``yolo`` / ``yolov8``).
+
+    F14-6: also true when rem is exception-spelling (or deny-seed) + a
+    residual that residual-classify does not treat as legitimate
+    (``yoloxextra`` / ``yoloxcoco``). Exact membership is unchanged.
     """
     if not rem:
         return False
@@ -4283,12 +4347,20 @@ def _rem_is_known_family_or_seed(rem: str) -> bool:
                 or rem_k == seed_c
             ):
                 return True
+    if _classify_exception_plus_residual(rem) is not None:
+        return True
+    if _deny_prefix_plus_residual_hit(rem) is not None:
+        return True
     return False
 
 
 # F14-5: 4-char deny heads (``yolo``) accept an exact exception-family rem.
 # Restore ``5`` to revert to the F13-3 min-len-5 refusal (TEST-15).
 _DENY_HEAD_KNOWN_REM_MIN_SEED_LEN: int = 4
+# F14-6: head glue / mid-adjacency accept exception-or-deny spelling +
+# residual (classify residual fail-closed). False restores exact-membership
+# remainder (TEST-15).
+_SUFFIX_TOLERANT_GLUE_ENABLED: bool = True
 
 
 def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
@@ -4354,6 +4426,11 @@ def _compact_mid_exception_deny_adjacency(
                     deny = _best_family_hit(
                         rem, PACKAGE_DENYLIST, for_deny=True
                     )
+                # F14-6: rem is exception/deny spelling + residual.
+                if deny is None:
+                    deny = _classify_exception_plus_residual(rem)
+                if deny is None:
+                    deny = _deny_prefix_plus_residual_hit(rem)
                 if deny is not None:
                     return deny
             start = idx + 1

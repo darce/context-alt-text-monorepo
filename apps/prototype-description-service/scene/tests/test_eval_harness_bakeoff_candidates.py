@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -20,10 +22,12 @@ from scripts.eval_harness.bakeoff_candidates import (
     BakeoffTier,
     CandidateRole,
     RegistryError,
+    RevisionVerifyError,
     ServingStack,
     default_registry_path,
     load_bakeoff_candidates,
     main,
+    verify_revisions,
 )
 
 REGISTRY_PATH = default_registry_path()
@@ -172,3 +176,158 @@ def test_restoring_qwen36_row_fails(tmp_path: Path, raw_registry: dict[str, Any]
     row["id"] = RETIRED_QWEN36_ROW_ID
     with pytest.raises(RegistryError, match="retired"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+# llama.cpp rows whose vision floor is unpublished in
+# infra/oci/incidents/a10-multimodel-bakeoff.sh:11-14 (rg-015: do not invent).
+_MIN_RUNTIME_BUILD_EXCEPTIONS = frozenset(
+    {
+        "minicpm-v-45",
+        "minicpm-v-46",
+        "kimi-vl-a3b",
+        "gemma-4-12b",
+    }
+)
+
+
+def test_llama_cpp_min_runtime_build_or_documented_exception(registry) -> None:
+    llama_ids: set[str] = set()
+    for entry in registry.entries:
+        if entry.recipe.stack is not ServingStack.LLAMA_CPP:
+            assert entry.recipe.min_runtime_build is None
+            continue
+        llama_ids.add(entry.id)
+        if entry.recipe.min_runtime_build is None:
+            assert entry.id in _MIN_RUNTIME_BUILD_EXCEPTIONS
+            continue
+        pin = entry.recipe.min_runtime_build.lower()
+        assert "todo" not in pin
+        assert "tbd" not in pin
+    assert llama_ids >= _MIN_RUNTIME_BUILD_EXCEPTIONS
+
+
+def test_qwen_min_runtime_build_matches_incident_source(registry) -> None:
+    qwen_vl = next(e for e in registry.entries if e.id == "qwen3-vl-30b-a3b")
+    assert qwen_vl.recipe.min_runtime_build == "b6887"
+    qwen38 = next(e for e in registry.entries if e.id == QWEN38_ROW_ID)
+    assert qwen38.recipe.min_runtime_build == "newer than b6887"
+
+
+def test_min_runtime_build_todo_rejected(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    row = next(e for e in payload["entries"] if e["id"] == "qwen3-vl-30b-a3b")
+    row["recipe"]["min_runtime_build"] = "TODO-b6887"
+    with pytest.raises(RegistryError, match="TODO placeholder"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_min_runtime_build_tbd_rejected(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    row = next(e for e in payload["entries"] if e["id"] == "qwen3-vl-30b-a3b")
+    row["recipe"]["min_runtime_build"] = "tbd"
+    with pytest.raises(RegistryError, match="TODO placeholder"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_default_load_does_not_import_huggingface_hub() -> None:
+    sys.modules.pop("huggingface_hub", None)
+    load_bakeoff_candidates()
+    assert "huggingface_hub" not in sys.modules
+    assert main([]) == 0
+    assert "huggingface_hub" not in sys.modules
+
+
+def test_cli_help_includes_verify_revisions(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+    assert exc_info.value.code == 0
+    assert "--verify-revisions" in capsys.readouterr().out
+
+
+def test_verify_revisions_accepts_sibling_artifacts(registry) -> None:
+    def list_files(repo: str, revision: str) -> list[str]:
+        entry = next(e for e in registry.entries if e.repo == repo and e.revision == revision)
+        names = ["config.json"]
+        if entry.recipe.gguf:
+            names.append(f"weights/{entry.recipe.gguf}")
+        if entry.recipe.mmproj:
+            names.append(f"weights/{entry.recipe.mmproj}")
+        return names
+
+    results = verify_revisions(registry, list_files=list_files)
+    assert [entry_id for entry_id, _ok, _detail in results] == [e.id for e in registry.entries]
+    assert all(ok for _entry_id, ok, _detail in results)
+
+
+def test_verify_revisions_rejects_missing_or_split_artifacts(registry) -> None:
+    def list_files(repo: str, revision: str) -> list[str]:
+        entry = next(e for e in registry.entries if e.repo == repo and e.revision == revision)
+        if entry.recipe.gguf and entry.recipe.mmproj:
+            return [entry.recipe.gguf, f"other/{entry.recipe.mmproj}"]
+        return []
+
+    results = {entry_id: (ok, detail) for entry_id, ok, detail in verify_revisions(registry, list_files=list_files)}
+    llama = next(e for e in registry.entries if e.recipe.stack is ServingStack.LLAMA_CPP)
+    ok, detail = results[llama.id]
+    assert ok is False
+    assert "missing sibling artifacts" in detail
+    non_llama = next(e for e in registry.entries if e.recipe.stack is not ServingStack.LLAMA_CPP)
+    assert results[non_llama.id][0] is True
+
+
+def test_verify_revisions_reports_unresolved_revision(registry) -> None:
+    def list_files(repo: str, revision: str) -> list[str]:
+        raise RuntimeError("revision not found")
+
+    results = verify_revisions(registry, list_files=list_files)
+    assert results
+    assert all(ok is False for _entry_id, ok, _detail in results)
+    assert all("unresolved" in detail for _entry_id, _ok, detail in results)
+
+
+def test_verify_revisions_requires_huggingface_hub(registry, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import = __import__
+
+    def blocked_import(name: str, *args: Any, **kwargs: Any):
+        if name == "huggingface_hub" or name.startswith("huggingface_hub."):
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", blocked_import)
+    with pytest.raises(RevisionVerifyError, match="huggingface_hub"):
+        verify_revisions(registry)
+
+
+def test_cli_verify_revisions_exit_status(
+    registry, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def list_files(repo: str, revision: str) -> list[str]:
+        entry = next(e for e in registry.entries if e.repo == repo and e.revision == revision)
+        names: list[str] = []
+        if entry.recipe.gguf:
+            names.append(entry.recipe.gguf)
+        if entry.recipe.mmproj:
+            names.append(entry.recipe.mmproj)
+        return names
+
+    monkeypatch.setattr(
+        "scripts.eval_harness.bakeoff_candidates._hf_list_repo_files",
+        list_files,
+    )
+    assert main(["--verify-revisions"]) == 0
+    out = capsys.readouterr().out
+    for entry in registry.entries:
+        assert entry.id in out
+        assert out.count(f"ok {entry.id} ") == 1
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ACX_BAKEOFF_VERIFY_REVISIONS"),
+    reason="opt-in network; set ACX_BAKEOFF_VERIFY_REVISIONS=1",
+)
+def test_live_verify_revisions_hits_huggingface() -> None:
+    assert main(["--verify-revisions"]) == 0

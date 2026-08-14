@@ -57,6 +57,15 @@ class UnknownIncumbentError(Exception):
     """``--incumbent-run`` named an id that is not a registry incumbent."""
 
 
+class SkipNotesInconsistentError(Exception):
+    """An unplanned entry has no skip reason; planner and notes disagree."""
+
+
+SKIP_REASON_STACK = "stack not supported"
+SKIP_REASON_VRAM = "vram budget"
+SKIP_REASON_NOT_COMPETING = "not competing"
+
+
 @dataclass(frozen=True)
 class CandidatePlan:
     """One competing candidate's serve + run plan."""
@@ -305,15 +314,7 @@ def _plan_candidate(
             "pin both filenames in the registry recipe."
         )
 
-    if entry.recipe.mmproj:
-        mmproj_gb = (
-            entry.recipe.mmproj_gb
-            if entry.recipe.mmproj_gb is not None
-            else MMPROJ_ESTIMATE_GB
-        )
-    else:
-        mmproj_gb = 0.0
-    total_gb = float(entry.artifact_gb) + mmproj_gb
+    total_gb = _entry_total_gb(entry)
     if total_gb > budget_gb:
         raise VramBudgetError(
             f"candidate {entry.id!r} total_gb={total_gb} exceeds "
@@ -503,20 +504,54 @@ def _parse_incumbent_runs(
     return parsed
 
 
+def _mmproj_gb(entry: CandidateEntry) -> float:
+    if not entry.recipe.mmproj:
+        return 0.0
+    if entry.recipe.mmproj_gb is not None:
+        return float(entry.recipe.mmproj_gb)
+    return MMPROJ_ESTIMATE_GB
+
+
+def _entry_total_gb(entry: CandidateEntry) -> float:
+    return float(entry.artifact_gb) + _mmproj_gb(entry)
+
+
+def _skip_reason(
+    entry: CandidateEntry,
+    planned: set[str],
+    budget_gb: float,
+) -> str | None:
+    """Return why ``entry`` is absent from the plan, or None if planned."""
+    if entry.id in planned:
+        return None
+    if not entry.competing:
+        return SKIP_REASON_NOT_COMPETING
+    if entry.recipe.stack is not ServingStack.LLAMA_CPP:
+        return SKIP_REASON_STACK
+    if _entry_total_gb(entry) > budget_gb:
+        return SKIP_REASON_VRAM
+    raise SkipNotesInconsistentError(
+        f"candidate {entry.id!r} is not planned but has no skip reason; "
+        "planner and skip notes disagree"
+    )
+
+
 def _emit_skip_notes(
     registry: BakeoffCandidateRegistry,
     plans: Sequence[CandidatePlan],
 ) -> None:
     planned = {plan.candidate_id for plan in plans}
-    candidates = [entry for entry in registry.entries if entry.role is CandidateRole.CANDIDATE]
-    skipped = [entry for entry in candidates if entry.id not in planned]
-    for entry in registry.entries:
-        if entry.recipe.stack is ServingStack.LLAMA_CPP:
-            continue
-        print(f"skip {entry.id} ({entry.recipe.stack.value})", file=sys.stderr)
+    budget_gb = float(registry.hardware_target.usable_vram_budget_gb)
+    roster = list(registry.entries)
+    skipped = [
+        (entry, reason)
+        for entry in roster
+        if (reason := _skip_reason(entry, planned, budget_gb)) is not None
+    ]
+    for entry, reason in skipped:
+        print(f"skip {entry.id} ({reason})", file=sys.stderr)
     print(
-        f"skipped {len(skipped)} of {len(candidates)} candidates "
-        "(stack not supported by this planner)",
+        f"skipped {len(skipped)} of {len(roster)} registry entries",
         file=sys.stderr,
     )
 

@@ -69,7 +69,10 @@ split. ``_`` runs collapse; edges strip. Before fold, one trailing
 registry tag ``:latest`` / ``:v0.3.0`` is stripped from the last path
 component (``yolox:latest`` / ``megvii/yolox:latest`` / ``yolox:v0.3.0``
 admit as the bare family; ``yolo:latest`` strips then denies ``yolo``;
-``yolox:s`` is not a registry tag and folds to ``yolox_s``). After fold,
+``yolox:s`` is not a registry tag and folds to ``yolox_s``). A bare
+single-number tag (``:v8`` / ``:8`` / ``:v2``) is **not** stripped
+(F15-3) — it folds to ``_v8`` / ``_8`` / ``_v2`` and fail-closes as
+unknown residual, matching the compact twin ``yoloxv8``. After fold,
 a leading ``pp`` segment immediately followed by a ``yolo*`` segment
 merges to ``ppyolo*`` (``PP-YOLOE+`` / ``PaddlePaddle/PP-YOLOE+`` →
 ``ppyoloe`` admit; ``pp_yolo`` → ``ppyolo`` admits; ``pp_yolov8`` →
@@ -1462,7 +1465,7 @@ _UNOFFICIAL_SEPARATOR_CHARS: str = "+=:@|#"
 # False / empty the regex to restore ``yolox:latest`` → ``yolox_latest``.
 _STRIP_REGISTRY_TRAILING_TAG: bool = True
 _REGISTRY_TRAILING_TAG_RE = re.compile(
-    r":(latest|v?[0-9]+(?:[._-][0-9]+){0,3})$"
+    r":(latest|v?[0-9]+(?:[._-][0-9]+){1,3})$"
 )
 # F14-3: after fold, merge a leading ``pp`` segment + following ``yolo*``
 # segment (``pp_yoloe`` → ``ppyoloe``). Scoped to the ppyolo family only.
@@ -1476,12 +1479,17 @@ def _has_c0_c1_control(text: str) -> bool:
 
 
 def _strip_trailing_registry_tag(text: str) -> str:
-    """Strip one ``:latest`` / ``:v0.3.0`` tag from the last path component.
+    """Strip one ``:latest`` / dotted multi-group version from the last path component.
 
     Applied before punct fold so ``yolox:latest`` becomes ``yolox`` rather
     than ``yolox_latest``. Does not match official size tags (``:s``).
     A deny seed plus a registry tag (``yolo:latest``) still denies after
     the strip — the strip must never launder a deny.
+
+    F15-3: only ``latest`` and ≥ 2 numeric groups (``:v0.3.0`` /
+    ``:0.3.0`` / ``:v2.1``) strip. A bare single-number tag (``:v8`` /
+    ``:8`` / ``:v2``) is left for the fold so it fail-closes like the
+    compact twin (``yoloxv8`` → ``yolox_unknown_residual``).
     """
     if not text or not _STRIP_REGISTRY_TRAILING_TAG or _REGISTRY_TRAILING_TAG_RE is None:
         return text

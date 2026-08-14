@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
@@ -30,6 +31,9 @@ const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 /** URL key for directory text search — same short `s` convention as workbench. */
 const SEARCH_PARAM = 's';
+
+/** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
+export const SEARCH_STATUS_DEBOUNCE_MS = 300;
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -176,9 +180,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 
   /**
    * Extend the existing filter status surface with a search result summary so
-   * SR users hear one status region (no second live region / A11Y-21). The
-   * summary only appears when search is active and the list is non-empty —
-   * empty-search copy is a separate, distinct message below.
+   * SR users hear one status region (no second live region / A11Y-21). Match
+   * counts debounce; empty-search / empty-filter copy joins the same region
+   * immediately [E21-19-REV1-02].
    */
   const searchStatus =
     hasActiveSearch && visibleEntries.length > 0
@@ -189,8 +193,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           trimmedSearch,
         )
       : null;
-
-  const statusLines = [activeFilterStatus, searchStatus].filter((line): line is string => line !== null);
+  // Filter/table stay live; only non-null status-region rewrites are delayed
+  // [ROSTER-W-03]. Transition to null flushes immediately [E21-19-REV1-01].
+  const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
 
   const emptySearchMessage = hasActiveSearch
     ? hasCategoricalFilter
@@ -311,6 +316,16 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     emptyFilterMessage !== null &&
     visibleEntries.length === 0 &&
     !hasActiveSearch;
+
+  const immediateEmptyStatus =
+    isEmptySearchResult && emptySearchMessage !== null
+      ? emptySearchMessage
+      : isEmptyFilterResult
+        ? emptyFilterMessage
+        : null;
+  const statusLines = [activeFilterStatus, announcedSearchStatus, immediateEmptyStatus].filter(
+    (line): line is string => line !== null,
+  );
 
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
@@ -488,7 +503,6 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           </div>
         ) : isEmptySearchResult && emptySearchMessage !== null ? (
           <div className="acx-roster-section__filter" data-testid="roster-search-empty">
-            <p>{emptySearchMessage}</p>
             <button type="button" className="acx-link-button" onClick={clearSearch}>
               {__('Clear search', 'alt-context')}
             </button>
@@ -498,9 +512,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               </button>
             )}
           </div>
-        ) : isEmptyFilterResult ? (
-          <p>{emptyFilterMessage}</p>
-        ) : (
+        ) : isEmptyFilterResult ? null : (
           <RosterEntriesTable entries={visibleEntries} />
         ))}
     </div>

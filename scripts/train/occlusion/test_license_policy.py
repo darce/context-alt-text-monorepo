@@ -10970,6 +10970,152 @@ class TestF14TotalAsciiPunctFold:
         assert policy.audit_derived_from_model("yolodummy").ok is True
 
 
+class TestF14RegistryTrailingTagStrip:
+    """F14-2 / R16-G2-3: strip ``:latest`` / ``:v0.3.0`` before fold.
+
+    ``yolox:s`` is not a registry tag — the fold still yields ``yolox_s``.
+    ``yolo:latest`` strips then matches ``yolo`` — the strip must never
+    launder a deny.
+    """
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "yolox:latest",
+        "megvii/yolox:latest",
+        "yolox:v0.3.0",
+        "ppyoloe:latest",
+    )
+    DENY_AFTER_STRIP: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolo:latest", "yolo"),
+    )
+    FOLD_UNCHANGED: ClassVar[tuple[str, ...]] = (
+        "yolox:s",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_registry_tag_strips_to_family_admit(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT after registry-tag strip (F14-2)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY_AFTER_STRIP)
+    def test_registry_tag_strip_does_not_launder_deny(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must still DENY after strip"
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", FOLD_UNCHANGED)
+    def test_official_size_tag_is_not_a_registry_tag(self, token: str) -> None:
+        assert policy.canonical(token) == "yolox_s"
+        assert policy._package_denylist_hit(token) is None
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_red_proof_registry_tag_strip_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove the strip regex — ``yolox:latest`` denies again.
+
+        Neuter: ``_STRIP_REGISTRY_TRAILING_TAG`` → ``False``. Fold then
+        sees ``yolox_latest`` (unknown residual). ``yolo:latest`` still
+        denies (yolo_latest is still a yolo (b) hit).
+        """
+        for token in self.ADMIT:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"precondition: {token!r} must admit"
+            )
+        monkeypatch.setattr(policy, "_STRIP_REGISTRY_TRAILING_TAG", False)
+        for token in self.ADMIT:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"red-proof: without registry-tag strip, {token!r} must DENY"
+            )
+        result = policy.audit_derived_from_model("yolo:latest")
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == "yolo"
+        assert policy.audit_derived_from_model("yolox:s").ok is True
+
+
+class TestF14PpYoloTitlePathMerge:
+    """F14-3 / R16-G2-1: ``PP-YOLOE+`` title path merges to ``ppyoloe``.
+
+    After fold ``PP-YOLOE+`` is ``pp_yoloe``. A leading ``pp`` segment
+    immediately followed by a ``yolo*`` segment merges to ``ppyolo*``.
+    Scoped to the ppyolo family only — not a generic segment-merge.
+    """
+
+    ADMIT: ClassVar[tuple[str, ...]] = (
+        "PP-YOLOE+",
+        "pp-yoloe+",
+        "PaddlePaddle/PP-YOLOE+",
+        "PP-YOLOE+_crn_s_80e_coco",
+        "pp_yolo",
+    )
+    DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("pp_yolov8", "ppyolo_unknown_residual"),
+    )
+    UNAFFECTED_ADMIT: ClassVar[tuple[str, ...]] = (
+        "pp",
+        "pp_x",
+    )
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_pp_yolo_title_path_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must ADMIT after pp+yolo merge (F14-3)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", DENY)
+    def test_pp_yolov8_fail_closed(self, token: str, expected_pkg: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (merges to ppyolov8, unknown residual)"
+        )
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    @pytest.mark.parametrize("token", UNAFFECTED_ADMIT)
+    def test_pp_without_yolo_segment_unaffected(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None
+        assert policy.audit_derived_from_model(token).ok is True
+
+    def test_red_proof_pp_yolo_merge_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: remove the merge — ``PP-YOLOE+`` denies as yolo again.
+
+        Neuter: ``_PP_YOLO_SEGMENT_MERGE_ENABLED`` → ``False``. Folded
+        ``pp_yoloe`` is a yolo suffix hit. Compact ``ppyoloe+`` still
+        admits (no merge needed).
+        """
+        for token in ("PP-YOLOE+", "pp-yoloe+", "pp_yolo"):
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"precondition: {token!r} must admit"
+            )
+        monkeypatch.setattr(policy, "_PP_YOLO_SEGMENT_MERGE_ENABLED", False)
+        for token in ("PP-YOLOE+", "pp-yoloe+", "pp_yolo"):
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"red-proof: without pp+yolo merge, {token!r} must DENY"
+            )
+        assert policy.audit_derived_from_model("ppyoloe+").ok is True
+        assert policy.audit_derived_from_model("pp").ok is True
+        assert policy.audit_derived_from_model("pp_x").ok is True
+
+
 class TestF13NcDoorPromotionTrailingException:
     """F13-2 / R15-L-1: exception after the NC head must reach doors.
 

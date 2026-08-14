@@ -100,6 +100,17 @@ def test_family_a_o_suffix_fires() -> None:
     assert warn_scrape_signature("foo_123456_12345_n.jpg") is ScrapeSignatureFamily.A
 
 
+def test_family_a_digit_floors() -> None:
+    """Boundary: family A needs 6+ then 5+ digits; one-below stems stay silent.
+
+    Kills `{6,}`→`{5,}` (5-digit first group) and `{5,}`→`{4,}` (4-digit
+    second group). The firing 6/5-digit shape is the positive pair (TEST-15).
+    """
+    assert warn_scrape_signature("foo_123456_12345_n.jpg") is ScrapeSignatureFamily.A
+    assert warn_scrape_signature("foo_12345_12345_n.jpg") is None
+    assert warn_scrape_signature("foo_123456_1234_n.jpg") is None
+
+
 def test_camera_roll_exclusion_covers_dsc_pxl_screen_shot_family_b_shapes() -> None:
     """DSC/PXL/Screen Shot names that would fire family B stay silent."""
     assert warn_scrape_signature("DSC_123456789012345.jpg") is None

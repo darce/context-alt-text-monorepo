@@ -319,6 +319,29 @@ export const invalidateSuggestionProjection = (queryClient: QueryClient): Promis
   });
 
 /**
+ * Optimistically drop an accepted/rejected assignment suggestion from the review-page cache
+ * so the pending list updates before projection invalidation refetches (L1V-03).
+ * Shape matches SuggestionReviewPage without importing the query module (cycle-safe).
+ */
+export const removePendingSuggestionFromCache = (queryClient: QueryClient, suggestionId: string): void => {
+  const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+  queryClient.setQueryData<{ items: ProjectedSuggestion[]; dataSource?: unknown } | undefined>(
+    reviewPageKey,
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.items.filter((item) => item.suggestionId !== suggestionId);
+      if (filtered.length === current.items.length) {
+        return current;
+      }
+      // COR-3 (rg-015): no envelope total to decrement; loaded count follows items.
+      return { ...current, items: filtered };
+    },
+  );
+};
+
+/**
  * Invalidation event map (D4) as data for UXP-5 wiring.
  * `keptCrossFamilyTargets` is the verified live inventory (2026-07-17 code audit), not a
  * copy of the plan table — 0b-4/UXP-5 must preserve these calls; tests assert presence,

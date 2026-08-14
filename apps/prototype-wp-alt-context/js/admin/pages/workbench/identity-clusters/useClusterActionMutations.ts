@@ -3,7 +3,7 @@
  */
 
 import { __ } from '@wordpress/i18n';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
   acceptSuggestion,
@@ -18,6 +18,7 @@ import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemo
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import { delay, isAbortError } from './clusterMutationUtils';
+import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterActionMutationsOptions {
   clusterId: string | null;
@@ -57,6 +58,7 @@ export const useClusterActionMutations = ({
   onAbort,
   invalidateQueries,
 }: UseClusterActionMutationsOptions) => {
+  const queryClient = useQueryClient();
   // RES-15: gate split only — reassign/pin/reject stay live offline (outbox curation).
   const offline = useSyncOffline();
   const splitGate = useRemoteActionGate(offline);
@@ -103,7 +105,11 @@ export const useClusterActionMutations = ({
       await reassignClusterIdentity({ identityId, targetClusterId }, signal);
     },
     retry: false,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // L1V-03: optimistically remove accepted suggestion before invalidate/refetch.
+      if (variables.suggestionId) {
+        removePendingSuggestionFromCache(queryClient, variables.suggestionId);
+      }
       invalidateQueries();
       onRenameSuccess?.('');
     },

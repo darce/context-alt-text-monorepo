@@ -7,6 +7,7 @@ import { __ } from '@wordpress/i18n';
 
 import type { DetectedIdentity } from '../../../api/recognition';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 
 interface ClusterPreviewProps {
   /** First member to show as representative thumbnail */
@@ -24,7 +25,7 @@ export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewPr
   const mediaUrl = representative?.media_url;
   const bbox = representative?.bbox;
   const hasValidThumbnail = Boolean(mediaUrl && bbox);
-  const unavailableImageLabel = __('Representative image unavailable', 'alt-context');
+  const unavailableImageLabel = REPRESENTATIVE_VOCABULARY.imageUnavailable;
 
   return (
     <div className="acx-identity-cluster__preview">

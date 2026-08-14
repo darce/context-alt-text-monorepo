@@ -100,6 +100,15 @@ describe('Avatar four-state contract', () => {
     expect(container.querySelector('.lucide-image-off')).not.toBeNull();
   });
 
+  it('data-missing: missingLabel overrides the accessible name without changing visible text', () => {
+    render(<Avatar missingLabel="Representative image unavailable" />);
+
+    const named = screen.getByRole('img', { name: 'Representative image unavailable' });
+    expect(named).toHaveAccessibleName('Representative image unavailable');
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
+  });
+
   it('data-missing: empty src is the explicit no-src branch, not error', () => {
     const { container } = render(<Avatar src="" alt="unused" />);
 

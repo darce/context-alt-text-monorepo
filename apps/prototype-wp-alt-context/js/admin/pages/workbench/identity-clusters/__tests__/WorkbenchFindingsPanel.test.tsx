@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -930,7 +930,7 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   // S3 / TEST-15: kills the dead <p> error with no Retry / no refetch.
-  it('S3: error Retry fires assignment+merge refetch', async () => {
+  it('S3: error Retry fires assignment+merge+top-unlabeled refetch', async () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         isError: true,
@@ -944,6 +944,32 @@ describe('WorkbenchFindingsPanel', () => {
     await waitFor(() => {
       expect(refetchAssignment).toHaveBeenCalledTimes(1);
       expect(refetchMerge).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // E21-20-REV1-03 / TEST-15: chained .then() skips merge when assignment rejects.
+  it('REV1-03: error Retry still refetches merge and top-unlabeled when assignment rejects', async () => {
+    refetchAssignment.mockImplementationOnce(() => {
+      const assignmentFailure = Promise.reject(new Error('assignment refetch failed'));
+      void assignmentFailure.catch(() => undefined);
+      return assignmentFailure;
+    });
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -964,7 +990,8 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   // S3 / TEST-15: kills copy-only unlabeled outage with no retry action.
-  it('S3: degraded unlabeled chip Retry refetches top-unlabeled', async () => {
+  // REV1-03: every error-state Retry uses the shared Promise.all handler.
+  it('S3: degraded unlabeled chip Retry refetches all findings queries', async () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
@@ -983,9 +1010,11 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
-    expect(refetchAssignment).not.toHaveBeenCalled();
-    expect(refetchMerge).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    });
   });
 
   // S3 / TEST-15: kills Avatar src="" terminal branch.
@@ -1038,7 +1067,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
     expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
@@ -1058,7 +1087,7 @@ describe('WorkbenchFindingsPanel', () => {
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
-    expect(screen.getByText('3 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
     expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
   });
@@ -1080,7 +1109,7 @@ describe('WorkbenchFindingsPanel', () => {
       'repair',
     );
     expect(container.querySelector('[data-findings-state="empty"]')).toBeNull();
-    expect(screen.getByText('3 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
   });
 
   it('S2: counts and previews exclude gated zero-evidence clusters [TEST-15]', () => {
@@ -1164,7 +1193,41 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('3 unlabeled groups')).toBeInTheDocument();
-    expect(screen.getByText('2 groups missing preview data')).toBeInTheDocument();
+    expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.queryByText('1 unlabeled group')).not.toBeInTheDocument();
+  });
+
+  // E21-20-REV1-04 / TEST-15: repair copy lives in the counts status region;
+  // Resync stays outside any live region and is described by the sentence.
+  it('REV1-04: repair sentence shares the counts live region and Resync is described outside it', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 2,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(liveRegions[0]).toHaveTextContent('2 groups missing face data');
+    expect(liveRegions[0]).toHaveTextContent('1 to review');
+    expect(within(liveRegions[0]).queryByRole('button', { name: 'Resync' })).not.toBeInTheDocument();
+
+    const resync = screen.getByRole('button', { name: 'Resync' });
+    expect(resync.closest('[role="status"]')).toBeNull();
+    expect(resync).toHaveAttribute('aria-describedby', 'acx-findings-panel-repair-copy');
+    const described = document.getElementById('acx-findings-panel-repair-copy');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('2 groups missing face data');
+    expect(resync.getAttribute('aria-describedby')).toBe(described?.id);
   });
 });

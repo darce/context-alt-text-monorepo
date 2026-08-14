@@ -188,7 +188,11 @@ export const WorkbenchFindingsPanel = ({
   } = findings;
 
   const handleRetryFindings = (): void => {
-    void assignmentQuery.refetch().then(() => mergeQuery.refetch());
+    void Promise.all([
+      assignmentQuery.refetch(),
+      mergeQuery.refetch(),
+      topUnlabeledQuery.refetch(),
+    ]).catch(() => undefined);
   };
 
   const handleRetryTopUnlabeled = (): void => {
@@ -290,41 +294,62 @@ export const WorkbenchFindingsPanel = ({
         </p>
       )}
 
-      {/* Live region: announces findings appearing/updating after a scan without a reload.
-          Hidden when empty so only the empty-state region announces the zero state. */}
-      {hasFindings && (
+      {/* One live region for counts + repair copy. Hidden on true empty so only
+          the empty-state region announces the zero state. Resync stays outside. */}
+      {(hasFindings || zeroEvidenceClusterCount > 0) && (
         <div role="status" aria-live="polite">
-          <ul className="acx-findings-panel__counts">
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d to review', '%d to review', counts.assignments, 'alt-context'), counts.assignments)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d merge candidate', '%d merge candidates', counts.merges, 'alt-context'), counts.merges)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {isTopUnlabeledError ? (
-                <span className="acx-findings-panel__degraded-chip">
-                  <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={14} />
-                  {__('Unlabeled groups unavailable', 'alt-context')}
-                  <button
-                    type="button"
-                    className="acx-button acx-button--secondary acx-button--small"
-                    onClick={handleRetryTopUnlabeled}
-                  >
-                    {__('Retry', 'alt-context')}
-                  </button>
-                </span>
-              ) : (
-                sprintf(
-                  _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
-                  counts.unlabeledClusters,
-                )
-              )}
-            </li>
-          </ul>
+          {hasFindings && (
+            <ul className="acx-findings-panel__counts">
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d to review', '%d to review', counts.assignments, 'alt-context'), counts.assignments)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d merge candidate', '%d merge candidates', counts.merges, 'alt-context'), counts.merges)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {isTopUnlabeledError ? (
+                  <span className="acx-findings-panel__degraded-chip">
+                    <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={14} />
+                    {__('Unlabeled groups unavailable', 'alt-context')}
+                    <button
+                      type="button"
+                      className="acx-button acx-button--secondary acx-button--small"
+                      onClick={handleRetryFindings}
+                    >
+                      {__('Retry', 'alt-context')}
+                    </button>
+                  </span>
+                ) : (
+                  sprintf(
+                    _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
+                    counts.unlabeledClusters,
+                  )
+                )}
+              </li>
+            </ul>
+          )}
+          {zeroEvidenceClusterCount > 0 && (
+            <>
+              <p id="acx-findings-panel-repair-copy" className="acx-findings-panel__status">
+                <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+                {sprintf(
+                  _n(
+                    '%d group missing face data',
+                    '%d groups missing face data',
+                    zeroEvidenceClusterCount,
+                    'alt-context',
+                  ),
+                  zeroEvidenceClusterCount,
+                )}
+              </p>
+              <p className="acx-findings-panel__hint">
+                {__('They are hidden from review until their faces sync.', 'alt-context')}
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -337,31 +362,12 @@ export const WorkbenchFindingsPanel = ({
       )}
 
       {zeroEvidenceClusterCount > 0 && (
-        <div
-          className="acx-findings-panel__repair"
-          role="status"
-          aria-live="polite"
-          data-cluster-evidence={CLUSTER_EVIDENCE.ZERO}
-        >
-          <p className="acx-findings-panel__status">
-            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-            {sprintf(
-              _n(
-                '%d group missing preview data',
-                '%d groups missing preview data',
-                zeroEvidenceClusterCount,
-                'alt-context',
-              ),
-              zeroEvidenceClusterCount,
-            )}
-          </p>
-          <p className="acx-findings-panel__hint">
-            {__('They are hidden from review until their faces sync.', 'alt-context')}
-          </p>
+        <div className="acx-findings-panel__repair" data-cluster-evidence={CLUSTER_EVIDENCE.ZERO}>
           <button
             type="button"
             className="acx-button acx-button--secondary acx-button--small"
             onClick={handleRetryTopUnlabeled}
+            aria-describedby="acx-findings-panel-repair-copy"
           >
             {__('Resync', 'alt-context')}
           </button>

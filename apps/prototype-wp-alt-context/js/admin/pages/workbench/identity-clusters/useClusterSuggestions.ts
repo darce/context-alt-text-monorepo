@@ -137,8 +137,14 @@ export const resolveClusterMatchFromOptions = (
   }
 
   const identityCount = typeof fromOptions.identityCount === 'number' ? fromOptions.identityCount : undefined;
+  // L1V-01: free-type Save uses this resolver; map option.suggestion_id so accept-by-id
+  // threads the same way as the click/confirm path (BR-16 residual).
+  const suggestionId =
+    typeof fromOptions.suggestion_id === 'string' && fromOptions.suggestion_id.length > 0
+      ? fromOptions.suggestion_id
+      : undefined;
 
-  return { id, label: fromOptions.label, identityCount };
+  return { id, label: fromOptions.label, identityCount, suggestionId };
 };
 
 /**

@@ -1,7 +1,7 @@
 /**
  * L1R-07 / BR-16: merge mutationFn's accept-by-id hop must be red-capable.
- * Reverting only `if (suggestionId) await acceptSuggestion(suggestionId)` leaves
- * intermediate confirm-chain tests green while re-breaking end-to-end resolution.
+ * L1V-02: hop-2 accept failure still invalidates (merge may have committed).
+ * L1V-03: onSuccess removes accepted suggestion from pending review cache.
  */
 
 import type { ReactNode } from 'react';
@@ -9,8 +9,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
 import { useClusterLabelMutations } from '../useClusterLabelMutations';
+import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -31,6 +33,22 @@ const mergeResponse = {
   identities_moved: 1,
   moved_identity_ids: ['id-1'],
   target_identity_count: 2,
+};
+
+const reviewPageKey = queryKeys.suggestions.projection.reviewPage(0);
+
+const seedReviewPage = (queryClient: QueryClient, suggestionIds: string[]): void => {
+  const page: SuggestionReviewPage = {
+    items: suggestionIds.map((suggestionId) => ({
+      suggestionId,
+      identityId: `id-${suggestionId}`,
+      clusterId: 'target-c',
+      label: 'Target',
+      similarity: 0.9,
+    })),
+    dataSource: undefined,
+  };
+  queryClient.setQueryData(reviewPageKey, page);
 };
 
 const renderLabelMutations = () => {
@@ -59,7 +77,7 @@ const renderLabelMutations = () => {
     { wrapper },
   );
 
-  return { result, invalidateQueries, onMergeSuccess, onError };
+  return { result, invalidateQueries, onMergeSuccess, onError, queryClient };
 };
 
 describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
@@ -102,5 +120,32 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     expect(recognitionApi.mergeCluster).toHaveBeenCalled();
     expect(recognitionApi.acceptSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('invalidates queries when acceptSuggestion rejects after merge landed (L1V-02)', async () => {
+    // Predicted first failure: onError only surfaces message — invalidateQueries never called
+    // while hop-1 merge already committed, leaving pre-merge cluster UI.
+    vi.mocked(recognitionApi.acceptSuggestion).mockRejectedValue(new Error('accept hop failed'));
+    const { result, invalidateQueries, onError, onMergeSuccess } = renderLabelMutations();
+
+    result.current.merge('target-c', 'Target', undefined, 'sug-merge-1');
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    expect(recognitionApi.mergeCluster).toHaveBeenCalled();
+    expect(recognitionApi.acceptSuggestion).toHaveBeenCalledWith('sug-merge-1');
+    expect(invalidateQueries).toHaveBeenCalled();
+    expect(onMergeSuccess).not.toHaveBeenCalled();
+  });
+
+  it('removes accepted suggestion from pending review cache on merge success (L1V-03)', async () => {
+    // Predicted first failure: review page still contains sug-merge-1 until refetch.
+    const { result, invalidateQueries, queryClient } = renderLabelMutations();
+    seedReviewPage(queryClient, ['sug-merge-1', 'sug-other']);
+
+    result.current.merge('target-c', 'Target', undefined, 'sug-merge-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    const page = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
+    expect(page?.items.map((item) => item.suggestionId)).toEqual(['sug-other']);
   });
 });

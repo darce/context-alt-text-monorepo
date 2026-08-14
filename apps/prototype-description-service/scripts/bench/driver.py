@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,8 +83,8 @@ def init_run_dir(run_dir: Path | str, pair: StackPairConfig, manifest_path: Path
     stamp = root.name
     run_doc = {
         "run_stamp": stamp,
-        "cli_sha": _git_sha(),
-        "harness_sha": _git_sha(),
+        "cli_sha": _package_sha("scripts/bench"),
+        "harness_sha": _package_sha("scripts/eval_harness"),
         "license_banner": LICENSE_BANNER,
         "wall_clock_timeout_sec": pair.wall_clock_timeout_sec,
         "job_poll_timeout_sec": pair.job_poll_timeout_sec,
@@ -256,16 +257,17 @@ def run_leg(
                 )
                 outcomes.append(AnalyzeOutcome(entry.media_id, "ok", attempt, True))
             except BenchError as exc:
+                ingest_failed = exc.code in {"media_unresolvable", "image_decode_failed"}
                 store.append(
                     {
                         "manifest_media_id": entry.media_id,
                         "manifest_path": entry.path,
                         "content_sha256": entry.sha256,
-                        "phase": "ingest" if exc.code in {"media_unresolvable", "image_decode_failed"} else "analyze",
+                        "phase": "ingest" if ingest_failed else "analyze",
                         "outcome": "failed",
                         "error_code": exc.code,
                         "attempt": attempt,
-                        "terminal_ingest_outcome": exc.code,
+                        "terminal_ingest_outcome": exc.code if ingest_failed else "success",
                     }
                 )
                 terminal = attempt >= pair.item_max_attempts
@@ -280,7 +282,7 @@ def run_leg(
                         "outcome": "failed",
                         "error_code": "analyze_failed",
                         "attempt": attempt,
-                        "terminal_ingest_outcome": "analyze_failed",
+                        "terminal_ingest_outcome": "success",
                     }
                 )
                 terminal = attempt >= pair.item_max_attempts
@@ -470,12 +472,22 @@ def _set_phase(run_dir: Path, phase: str) -> None:
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
-def _git_sha() -> str:
+def _package_sha(rel_path: str) -> str:
+    repo = Path(__file__).resolve().parents[4]
+    tracked = f"apps/prototype-description-service/{rel_path}"
     try:
-        return (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+        sha = (
+            subprocess.check_output(
+                ["git", "log", "-1", "--format=%H", "--", tracked],
+                cwd=repo,
+                stderr=subprocess.DEVNULL,
+            )
             .decode()
             .strip()
         )
+        if sha:
+            return sha
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return "unknown"
+        pass
+    print(f"warning: provenance sha unavailable for {tracked}; stamping unknown", file=sys.stderr)
+    return "unknown"

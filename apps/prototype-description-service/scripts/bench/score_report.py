@@ -277,15 +277,27 @@ def _latest_by_phase(records: list[dict[str, Any]], media_id: int, phase: str) -
 
 
 def _terminal_ingest_ok(records: list[dict[str, Any]], media_id: int) -> bool:
-    analyze = _latest_by_phase(records, media_id, "analyze")
     ingest = _latest_by_phase(records, media_id, "ingest")
-    rec = analyze or ingest
+    analyze = _latest_by_phase(records, media_id, "analyze")
+    # Condition (i) is the explicit terminal ingest field. Prefer the ingest
+    # row so an analyze-phase error cannot invert ingest provenance.
+    rec = ingest or analyze
     if rec is None:
+        return False
+    if ingest is None and analyze is not None and analyze.get("outcome") != "ok":
         return False
     outcome = rec.get("terminal_ingest_outcome")
     if outcome is None:
         return False
     return outcome == "success"
+
+
+def _ingest_roster(records: list[dict[str, Any]]) -> set[int]:
+    return {
+        int(r["manifest_media_id"])
+        for r in records
+        if r.get("phase") == "ingest" and "manifest_media_id" in r
+    }
 
 
 def _analyze_ok(records: list[dict[str, Any]], media_id: int) -> dict[str, Any] | None:
@@ -296,6 +308,18 @@ def _analyze_ok(records: list[dict[str, Any]], media_id: int) -> dict[str, Any] 
     if not isinstance(mid, int):
         return None
     return rec
+
+
+def _baseline_superset_checked(root: Path, pair: StackPairConfig) -> bool:
+    run_path = root / "run.json"
+    if run_path.is_file():
+        try:
+            run_doc = json.loads(run_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            run_doc = {}
+        if "baseline_superset_checked" in run_doc:
+            return bool(run_doc["baseline_superset_checked"])
+    return False
 
 
 def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
@@ -343,7 +367,11 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         store = ItemOutcomeStore(root / "legs" / stack_id / "items.jsonl")
         recs = store.read_all()
         records_by[stack_id] = recs
-        roster_by[stack_id] = {int(r["manifest_media_id"]) for r in recs if "manifest_media_id" in r}
+        roster_by[stack_id] = {
+            int(r["manifest_media_id"])
+            for r in recs
+            if r.get("phase") == "ingest" and "manifest_media_id" in r
+        }
         join: dict[int, dict[str, Any]] = {}
         for entry in manifest.entries:
             rec = _analyze_ok(recs, entry.media_id)
@@ -436,7 +464,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         ingest_asymmetric_media=ingest_asym,
         attrition_ingest_analyze=attrition_ia,
         attrition_join=attrition_join,
-        baseline_superset_checked=bool(pair.baseline_manifest_path),
+        baseline_superset_checked=_baseline_superset_checked(root, pair),
         computed_at=datetime.now(timezone.utc).isoformat(),
         join_by_stack=join_by,
     )
@@ -480,7 +508,12 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
             if _analyze_ok(recs, entry.media_id) is None:
                 phase = "analyze"
                 break
-            if entry.media_id not in {int(r["manifest_media_id"]) for r in recs if "manifest_media_id" in r}:
+            ingest_roster = {
+                int(r["manifest_media_id"])
+                for r in recs
+                if r.get("phase") == "ingest" and "manifest_media_id" in r
+            }
+            if entry.media_id not in ingest_roster:
                 phase = "roster"
                 break
         missing.append({"manifest_media_id": entry.media_id, "phase": phase})
@@ -491,7 +524,7 @@ def write_attrition(run_dir: Path, accepted: AcceptedSet, manifest: GoldenManife
             if (
                 _terminal_ingest_ok(recs, entry.media_id)
                 and _analyze_ok(recs, entry.media_id) is not None
-                and entry.media_id in {int(r["manifest_media_id"]) for r in recs if "manifest_media_id" in r}
+                and entry.media_id in _ingest_roster(recs)
                 and entry.media_id not in accepted_ids
             ):
                 ids.append(entry.media_id)
@@ -578,7 +611,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             ok = (
                 _terminal_ingest_ok(recs, entry.media_id)
                 and _analyze_ok(recs, entry.media_id) is not None
-                and entry.media_id in {int(r["manifest_media_id"]) for r in recs if "manifest_media_id" in r}
+                and entry.media_id in _ingest_roster(recs)
                 and entry.media_id not in accepted.manifest_media_ids
             )
             if ok:

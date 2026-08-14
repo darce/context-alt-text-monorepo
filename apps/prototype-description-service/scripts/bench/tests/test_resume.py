@@ -72,6 +72,20 @@ def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:
     assert 2 in posted_ids
 
 
+def test_cli_and_harness_shas_are_distinct_or_explicit(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "out-sha", pair, manifest)
+    run_doc = json.loads((out / "run.json").read_text())
+    assert run_doc["cli_sha"] != "unknown"
+    assert run_doc["harness_sha"] != "unknown"
+    # Distinct trees may share a commit; they must not be the same helper echo
+    # of a silent unknown fallback.
+    assert isinstance(run_doc["cli_sha"], str) and len(run_doc["cli_sha"]) >= 7
+    assert isinstance(run_doc["harness_sha"], str) and len(run_doc["harness_sha"]) >= 7
+
+
 def test_stack_media_id_prefers_job_payload(tmp_path: Path) -> None:
     images = tmp_path / "images"
     manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])

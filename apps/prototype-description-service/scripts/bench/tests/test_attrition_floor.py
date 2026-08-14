@@ -41,6 +41,79 @@ def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> No
     assert report_dir.exists()
 
 
+def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    # Mark media 2 analyze-failed on both legs after a successful ingest row.
+    for stack in ("acx-dev-insightface", "acx-dev-fir"):
+        path = run_dir / "legs" / stack / "items.jsonl"
+        recs = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        recs = [r for r in recs if not (r.get("manifest_media_id") == 2 and r.get("phase") == "analyze")]
+        recs.append(
+            {
+                "manifest_media_id": 2,
+                "phase": "analyze",
+                "outcome": "failed",
+                "attempt": 2,
+                "terminal_ingest_outcome": "success",
+                "error_code": "analyze_failed",
+            }
+        )
+        path.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+        export_path = run_dir / "legs" / stack / "exports" / "media_identities.json"
+        rows = [r for r in json.loads(export_path.read_text()) if r.get("media_id") != 2]
+        export_path.write_text(json.dumps(rows), encoding="utf-8")
+    accepted = compute_accepted_set(run_dir)
+    assert 2 not in accepted.manifest_media_ids
+    assert accepted.attrition_ingest_analyze >= 1
+    attrition = json.loads((run_dir / "score" / "attrition.json").read_text()) if (run_dir / "score" / "attrition.json").is_file() else None
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(run_dir / "manifest.json", None)
+    records_by = {
+        p.name: ItemOutcomeStore(p / "items.jsonl").read_all() for p in (run_dir / "legs").iterdir() if p.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    payload = json.loads((run_dir / "score" / "attrition.json").read_text())
+    missing = {row["manifest_media_id"]: row["phase"] for row in payload["missing"]}
+    assert missing.get(2) == "analyze"
+    _ = attrition
+
+
+def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    for stack in ("acx-dev-insightface", "acx-dev-fir"):
+        path = run_dir / "legs" / stack / "items.jsonl"
+        recs = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        recs = [r for r in recs if not (r.get("manifest_media_id") == 2 and r.get("phase") == "ingest")]
+        path.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+    accepted = compute_accepted_set(run_dir)
+    assert 2 not in accepted.manifest_media_ids
+    assert accepted.attrition_join >= 1
+    from scripts.bench.score_report import write_attrition
+    from scripts.bench.corpus import ItemOutcomeStore, load_bench_manifest
+
+    manifest = load_bench_manifest(run_dir / "manifest.json", None)
+    records_by = {
+        p.name: ItemOutcomeStore(p / "items.jsonl").read_all() for p in (run_dir / "legs").iterdir() if p.is_dir()
+    }
+    write_attrition(run_dir, accepted, manifest, records_by)
+    payload = json.loads((run_dir / "score" / "attrition.json").read_text())
+    missing = {row["manifest_media_id"]: row["phase"] for row in payload["missing"]}
+    assert missing.get(2) == "roster"
+
+
+def test_baseline_superset_checked_false_unless_run_asserted(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    accepted = compute_accepted_set(run_dir)
+    assert accepted.baseline_superset_checked is False
+    run_doc = json.loads((run_dir / "run.json").read_text())
+    run_doc["baseline_superset_checked"] = True
+    (run_dir / "run.json").write_text(json.dumps(run_doc), encoding="utf-8")
+    accepted2 = compute_accepted_set(run_dir)
+    assert accepted2.baseline_superset_checked is True
+
+
 def test_export_media_not_in_roster_fail_closed(tmp_path: Path) -> None:
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
     foreign = {

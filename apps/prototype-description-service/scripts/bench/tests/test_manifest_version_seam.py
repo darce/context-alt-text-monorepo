@@ -60,6 +60,27 @@ def test_detection_cell_directional_when_non_exhaustive_dropped() -> None:
     assert reason == "detection_exhaustiveness_unasserted"
 
 
+def test_identification_cell_directional_when_non_exhaustive() -> None:
+    tier, reason = assign_tier(
+        "identification_recall@frame_e2e/label_map_primary",
+        {
+            "named": True,
+            "primary": False,
+            "optimistic": False,
+            "native_frame": False,
+            "floor_ok": True,
+            "ci_half_width": 0.0,
+            "head_to_head_delta": 0.10,
+            "holm_significant": True,
+            "exhaustiveness_ok": False,
+            "cluster_ok": True,
+            "count_only": False,
+        },
+    )
+    assert tier is CrossbenchTier.DIRECTIONAL
+    assert reason == "detection_exhaustiveness_unasserted"
+
+
 def test_no_present_identities_subtraction_in_bench_package() -> None:
     root = Path(__file__).resolve().parents[1]
     offenders: list[str] = []

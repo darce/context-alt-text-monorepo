@@ -102,7 +102,7 @@ def test_unnamed_cell_has_null_ci_not_fabricated_zero(tmp_path: Path) -> None:
         assert cell.get("bootstrap_resamples") is None
 
 
-def test_primary_discordant_ci_not_zero_width(tmp_path: Path) -> None:
+def test_primary_fully_discordant_ci_is_zero_width(tmp_path: Path) -> None:
     mids = [1, 2, 3, 4, 5, 6]
     entries = [
         golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in mids
@@ -139,6 +139,10 @@ def test_secondary_holm_uses_real_bootstrap_p(tmp_path: Path) -> None:
     for cell in prec:
         assert cell.get("p_value") is not None
         assert cell["p_value"] < 0.01
+        assert cell["holm_significant"] is True
+        assert cell["holm_p_value"] == cell["p_value"]
+        assert cell["holm_threshold"] is not None
+        assert cell["p_value"] <= cell["holm_threshold"]
         assert "holm_rank" in cell
         assert cell.get("holm_status") != "not_computed"
 
@@ -198,3 +202,67 @@ def test_identical_legs_primary_half_width_zero_when_populated(tmp_path: Path) -
         assert cell["ci_lower"] == 0.0
         assert cell["ci_upper"] == 0.0
         assert cell["p_value"] == 1.0
+
+
+def test_holm_family_uses_declared_secondary_size(tmp_path: Path) -> None:
+    """Detection-only corpus must Holm-correct at m=|declared|, not m=1."""
+    mids = [1, 2, 3, 4, 5, 6]
+    entries = []
+    for i in mids:
+        entry = golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()])
+        entry["policy"] = {"recognition_enabled": False}
+        entries.append(entry)
+    run_dir = _init(tmp_path, mids, entries)
+    _write_leg(run_dir, A_STACK, [_pred(i) for i in mids], mids)
+    _write_leg(run_dir, B_STACK, [_pred(i, miss=True) for i in mids], mids)
+    score_head_to_head(run_dir)
+    prec = _cells(run_dir, SECONDARY_PREC)
+    assert prec
+    for cell in prec:
+        assert cell["holm_threshold"] == 0.05 / 3
+        assert cell.get("holm_status") != "not_computed"
+    id_cells = _cells(run_dir, "identification_recall@frame_e2e/label_map_primary")
+    assert id_cells
+    for cell in id_cells:
+        assert cell.get("holm_status") == "not_computed"
+        assert cell.get("tier") != "CONFIRMATORY"
+
+
+def test_join_hole_raises_instead_of_zero_pad(tmp_path: Path, monkeypatch) -> None:
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    from scripts.bench.export_map import to_face_metric_inputs
+    from scripts.bench.stack_pair import BenchError
+
+    orig = to_face_metric_inputs
+
+    def drop_first(*args, **kwargs):
+        det, ident = orig(*args, **kwargs)
+        return det[1:], ident[1:]
+
+    monkeypatch.setattr("scripts.bench.score_report.to_face_metric_inputs", drop_first)
+    try:
+        score_head_to_head(run_dir)
+    except BenchError as exc:
+        assert exc.code == "join_row_missing"
+    else:
+        raise AssertionError("missing metric row must fail closed")
+
+
+def test_identification_boxless_corpus_is_directional(tmp_path: Path) -> None:
+    entries = [golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[]) for i in (1, 2)]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    score_head_to_head(run_dir)
+    id_recall = _cells(run_dir, "identification_recall@frame_e2e/label_map_primary")
+    assert id_recall
+    for cell in id_recall:
+        assert cell["tier"] == "DIRECTIONAL"
+        assert cell["reason"] == "detection_exhaustiveness_unasserted"

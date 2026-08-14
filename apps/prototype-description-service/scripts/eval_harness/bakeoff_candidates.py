@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,10 @@ DEFAULT_REGISTRY = Path(__file__).with_name("bakeoff_candidates.yaml")
 
 class RegistryError(Exception):
     """Committed or supplied candidate registry failed fail-fast validation."""
+
+
+class RevisionVerifyError(Exception):
+    """Opt-in ``--verify-revisions`` cannot run (missing Hugging Face client)."""
 
 
 class CandidateRole(StrEnum):
@@ -89,6 +95,17 @@ class ServingRecipe(BaseModel):
     gguf: str | None = None
     mmproj: str | None = None
     mmproj_gb: float | None = None
+    min_runtime_build: str | None = None
+
+    @field_validator("min_runtime_build")
+    @classmethod
+    def _min_runtime_build_no_todo(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = _nonempty_no_todo(value)
+        if "tbd" in text.lower():
+            raise ValueError(f"TODO placeholder is not a pin: {value!r}")
+        return text
 
     @model_validator(mode="after")
     def _llama_cpp_needs_artifacts(self) -> ServingRecipe:
@@ -121,12 +138,7 @@ class CandidateEntry(BaseModel):
     @field_validator("id", "model_id", "repo", "quant", "artifact", "license")
     @classmethod
     def _nonempty_no_todo(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("field must be non-empty")
-        if _TODO_RE.search(text):
-            raise ValueError(f"TODO placeholder is not a pin: {value!r}")
-        return text
+        return _nonempty_no_todo(value)
 
     @field_validator("revision")
     @classmethod
@@ -174,6 +186,15 @@ class BakeoffCandidateRegistry(BaseModel):
         if value != SCHEMA:
             raise ValueError(f"unsupported schema {value!r}; expected {SCHEMA}")
         return value
+
+
+def _nonempty_no_todo(value: str) -> str:
+    text = value.strip()
+    if not text:
+        raise ValueError("field must be non-empty")
+    if _TODO_RE.search(text):
+        raise ValueError(f"TODO placeholder is not a pin: {value!r}")
+    return text
 
 
 def default_registry_path() -> Path:
@@ -265,16 +286,124 @@ def _assert_qwen38_swap(registry: BakeoffCandidateRegistry) -> None:
         )
 
 
+def _hf_list_repo_files(repo: str, revision: str) -> list[str]:
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:
+        raise RevisionVerifyError(
+            "huggingface_hub is required for --verify-revisions; "
+            "install it or omit the flag. Default load path stays offline."
+        ) from exc
+    return list(HfApi().list_repo_files(repo_id=repo, revision=revision))
+
+
+def _declared_artifacts(entry: CandidateEntry) -> list[str]:
+    names: list[str] = []
+    if entry.recipe.gguf:
+        names.append(entry.recipe.gguf)
+    if entry.recipe.mmproj:
+        names.append(entry.recipe.mmproj)
+    return names
+
+
+def _artifacts_are_siblings(files: Sequence[str], required: Sequence[str]) -> bool:
+    if not required:
+        return True
+    by_dir: dict[str, set[str]] = defaultdict(set)
+    for path in files:
+        parent, _, name = path.rpartition("/")
+        by_dir[parent].add(name)
+    needed = set(required)
+    return any(needed <= names for names in by_dir.values())
+
+
+def _verify_one_revision(
+    entry: CandidateEntry,
+    files: Sequence[str],
+) -> tuple[bool, str]:
+    required = _declared_artifacts(entry)
+    pin = f"{entry.repo}@{entry.revision}"
+    if required and not _artifacts_are_siblings(files, required):
+        missing = ", ".join(required)
+        return False, f"{pin} missing sibling artifacts: {missing}"
+    return True, f"{pin} ok"
+
+
+def verify_revisions(
+    registry: BakeoffCandidateRegistry,
+    *,
+    list_files: Callable[[str, str], Sequence[str]] | None = None,
+) -> list[tuple[str, bool, str]]:
+    """Confirm each ``repo@revision`` resolves and declared artifacts exist.
+
+    The default ``list_files`` calls the Hugging Face Hub. Tests inject a
+    lister so this function makes no network calls unless asked.
+
+    Args:
+        registry: Validated roster.
+        list_files: Optional ``(repo, revision) -> file paths`` callback.
+
+    Returns:
+        One ``(id, ok, detail)`` tuple per registry entry, in roster order.
+
+    Raises:
+        RevisionVerifyError: The Hugging Face client is missing and no
+            ``list_files`` callback was supplied.
+    """
+    lister = list_files if list_files is not None else _hf_list_repo_files
+    results: list[tuple[str, bool, str]] = []
+    for entry in registry.entries:
+        try:
+            files = lister(entry.repo, entry.revision)
+        except RevisionVerifyError:
+            raise
+        except Exception as exc:
+            results.append((entry.id, False, f"{entry.repo}@{entry.revision} unresolved: {exc}"))
+            continue
+        ok, detail = _verify_one_revision(entry, files)
+        results.append((entry.id, ok, detail))
+    return results
+
+
+def _print_revision_verification(
+    registry: BakeoffCandidateRegistry,
+    *,
+    list_files: Callable[[str, str], Sequence[str]] | None = None,
+) -> int:
+    try:
+        results = verify_revisions(registry, list_files=list_files)
+    except RevisionVerifyError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    failed = 0
+    for entry_id, ok, detail in results:
+        status = "ok" if ok else "FAIL"
+        print(f"{status} {entry_id} {detail}")
+        if not ok:
+            failed += 1
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Validate a registry file and print sealed counts. Returns process status."""
     parser = argparse.ArgumentParser(description="Validate VLM-6 bakeoff_candidates.yaml")
     parser.add_argument("path", nargs="?", type=Path, default=default_registry_path())
+    parser.add_argument(
+        "--verify-revisions",
+        action="store_true",
+        help=(
+            "opt-in: resolve each repo@revision on Hugging Face and confirm "
+            "declared gguf/mmproj filenames are siblings at that pin"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         registry = load_bakeoff_candidates(args.path)
     except RegistryError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
+    if args.verify_revisions:
+        return _print_revision_verification(registry)
     n_cand = sum(1 for e in registry.entries if e.role is CandidateRole.CANDIDATE)
     n_inc = sum(1 for e in registry.entries if e.role is CandidateRole.INCUMBENT)
     print(f"ok: {n_cand} candidates + {n_inc} incumbent anchors")

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from typing import Any
 
 import pytest
 
-from scripts.eval_harness import bakeoff
-from scripts.eval_harness import build_bakeoff_report
+from scripts.eval_harness import bakeoff, build_bakeoff_report
 from scripts.eval_harness.bakeoff_candidates import (
     BakeoffCandidateRegistry,
     BakeoffTier,
@@ -20,11 +20,17 @@ from scripts.eval_harness.bakeoff_candidates import (
     load_bakeoff_candidates,
 )
 from scripts.eval_harness.bakeoff_runner import (
+    SKIP_REASON_NOT_COMPETING,
+    SKIP_REASON_STACK,
+    SKIP_REASON_VRAM,
     NotCompetingError,
+    SkipNotesInconsistentError,
     UnknownCandidateError,
     UnsupportedStackError,
     VramBudgetError,
+    _emit_skip_notes,
     _report_argv,
+    _skip_reason,
     build_plans,
     emit_shell,
     main,
@@ -362,16 +368,54 @@ def test_cli_emits_skip_notes_for_unsupported_stacks(
     assert main(["--json"]) == 0
     err = capsys.readouterr().err
     registry = load_bakeoff_candidates()
-    non_llama = [
-        entry
-        for entry in registry.entries
-        if entry.recipe.stack is not ServingStack.LLAMA_CPP
-    ]
-    assert non_llama
-    for entry in non_llama:
-        assert entry.id in err
-        assert f"skip {entry.id} ({entry.recipe.stack.value})" in err
-    assert "skipped 8 of 13 candidates (stack not supported by this planner)" in err
+    planned = {plan.candidate_id for plan in build_plans(registry, **_PLAN_KW)}
+    expected = [entry for entry in registry.entries if entry.id not in planned]
+    skip_lines = [line for line in err.splitlines() if line.startswith("skip ")]
+    summary = next(line for line in err.splitlines() if line.startswith("skipped "))
+    parsed = re.fullmatch(r"skipped (\d+) of (\d+) registry entries", summary)
+    assert parsed is not None
+    assert int(parsed.group(1)) == len(skip_lines) == len(expected)
+    assert int(parsed.group(2)) == len(registry.entries)
+    for entry in expected:
+        if not entry.competing:
+            assert f"skip {entry.id} ({SKIP_REASON_NOT_COMPETING})" in err
+        elif entry.recipe.stack is not ServingStack.LLAMA_CPP:
+            assert f"skip {entry.id} ({SKIP_REASON_STACK})" in err
+        else:
+            assert f"skip {entry.id} ({SKIP_REASON_VRAM})" in err
+
+
+def test_skip_notes_name_vram_and_not_competing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    vllm = _recipe(stack=ServingStack.VLLM, gguf=None, mmproj=None, extra_flags=[])
+    registry = _registry(
+        [
+            _entry("ok"),
+            _entry("huge", artifact_gb=25.0),
+            _entry("ref", competing=False),
+            _entry("vllm-one", recipe=vllm),
+        ]
+    )
+    plans = build_plans(_registry([_entry("ok")]), **_PLAN_KW)
+    _emit_skip_notes(registry, plans)
+    err = capsys.readouterr().err
+    skip_lines = [line for line in err.splitlines() if line.startswith("skip ")]
+    summary = next(line for line in err.splitlines() if line.startswith("skipped "))
+    parsed = re.fullmatch(r"skipped (\d+) of (\d+) registry entries", summary)
+    assert parsed is not None
+    assert int(parsed.group(1)) == len(skip_lines) == 3
+    assert int(parsed.group(2)) == 4
+    assert f"skip huge ({SKIP_REASON_VRAM})" in err
+    assert f"skip ref ({SKIP_REASON_NOT_COMPETING})" in err
+    assert f"skip vllm-one ({SKIP_REASON_STACK})" in err
+    assert "skip ok " not in err
+
+
+def test_skip_reason_raises_when_planner_and_notes_disagree() -> None:
+    entry = _entry("ghost")
+    with pytest.raises(SkipNotesInconsistentError, match="ghost"):
+        _skip_reason(entry, planned=set(), budget_gb=20.0)
 
 
 def test_cli_does_not_invent_incumbent_paths(tmp_path) -> None:

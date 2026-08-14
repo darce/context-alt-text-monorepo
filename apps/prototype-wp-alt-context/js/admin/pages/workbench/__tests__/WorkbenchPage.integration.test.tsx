@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -311,7 +311,12 @@ describe('WorkbenchPage (integration-lite)', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
     });
 
-    expect(await screen.findByText(/Starting scan/i)).toBeInTheDocument();
+    // E21-18 S1: active job surfaces via compact strip chrome (Scanning… / Cancel),
+    // not the demoted panel's per-tick statusText live region.
+    const strip = await screen.findByTestId('active-job-strip');
+    expect(strip).toBeInTheDocument();
+    expect(strip.textContent).toMatch(/Scanning/i);
+    expect(within(strip).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
   it.each([

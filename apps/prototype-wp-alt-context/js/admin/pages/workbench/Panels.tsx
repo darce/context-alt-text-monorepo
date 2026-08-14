@@ -21,6 +21,34 @@ const SCAN_REGION_DESCRIPTION = __(
 );
 
 /**
+ * Coarse AT announcement for the job live region (L3R-01 residual).
+ * Prefer progress phase labels (stable across SSE ticks). Fall back to statusText
+ * only when it has no N/M count pattern — per-tick "Processed N/M" stays visual-only.
+ */
+export const buildCoarseJobAnnouncement = ({
+  jobId,
+  statusText,
+  progressPhase,
+}: {
+  jobId?: string | null;
+  statusText?: string;
+  progressPhase?: JobProgress['phase'] | null;
+}): string | null => {
+  if (!statusText && !progressPhase) {
+    return null;
+  }
+  const jobLabel = jobId ?? __('pending', 'alt-context');
+  if (progressPhase) {
+    return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, formatSyncJobPhase(progressPhase));
+  }
+  // No phase: announce non-count status only (terminal words, "Starting scan…", etc.).
+  if (statusText && !/\d+\s*\/\s*\d+/.test(statusText)) {
+    return sprintf(__('Job %s: %s', 'alt-context'), jobLabel, statusText);
+  }
+  return null;
+};
+
+/**
  * Compact strip leading verb from pipeline phase (L3R-06). Falls back to job
  * progress phase, then the generic scanning headline.
  */
@@ -93,6 +121,13 @@ export const ScanActionPanel = ({
     ? JOB_PHASE_PRESENTATION[progress.phase]
     : JOB_PHASE_PRESENTATION.detecting;
 
+  // L3R-01 residual: live region text is phase/terminal only; statusText stays visual.
+  const coarseAnnouncement = buildCoarseJobAnnouncement({
+    jobId,
+    statusText,
+    progressPhase: progress?.phase,
+  });
+
   if (variant === 'compact') {
     // Strip keeps progress/phase/cancel only — full panel retains backend job messages
     // so operators still see a single source for statusText (no duplicate live regions).
@@ -149,9 +184,20 @@ export const ScanActionPanel = ({
       {!isScanning && !statusText && !errorMessage && !(progress && progress.total > 0) && !batchRunStatus && (
         <p className="acx-apply-panel__status">{SCAN_REGION_DESCRIPTION}</p>
       )}
+      {/* Visual status updates every tick; live region is phase-stable (L3R-01 residual). */}
       {statusText && (
-        <p className="acx-apply-panel__status" role="status" aria-live="polite">
+        <p className="acx-apply-panel__status" data-testid="scan-status-visual">
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
+        </p>
+      )}
+      {coarseAnnouncement && (
+        <p
+          className="screen-reader-text"
+          role="status"
+          aria-live="polite"
+          data-testid="scan-status-announce"
+        >
+          {coarseAnnouncement}
         </p>
       )}
       {typeof stallSeconds === 'number' && (
@@ -161,7 +207,8 @@ export const ScanActionPanel = ({
             <button type="button" className="acx-link-button" onClick={onRetryStream} disabled={!onRetryStream}>
               {__('Retry', 'alt-context')}
             </button>
-            {onCancelScan && isScanning && (
+            {/* L3R-07: strip owns Cancel while suppressPrimaryChrome — avoid dual Cancel. */}
+            {onCancelScan && isScanning && !suppressPrimaryChrome && (
               <button
                 type="button"
                 className="acx-link-button"

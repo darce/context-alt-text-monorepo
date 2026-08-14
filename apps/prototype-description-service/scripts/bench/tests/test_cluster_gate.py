@@ -182,3 +182,52 @@ def test_read_status_reports_failed_until_latch_cleared(tmp_path: Path) -> None:
         (exports / name).write_text("[]", encoding="utf-8")
     status2 = read_status(out)
     assert status2["legs"][stack_id]["phase"] == "done"
+
+
+def test_read_status_latch_precedes_exports(tmp_path: Path) -> None:
+    from scripts.bench.driver import init_run_dir, read_status
+    from scripts.bench.stack_pair import load_stack_pair
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "status-latch-export", pair, manifest)
+    stack_id = "acx-dev-insightface"
+    leg = out / "legs" / stack_id
+    (leg / "leg_outcome.json").write_text(
+        json.dumps({"error_code": "cluster_gate_refused"}), encoding="utf-8"
+    )
+    (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    exports = leg / "exports"
+    exports.mkdir()
+    for name in ("media_identities.json", "clusters.json", "cluster_members.json"):
+        (exports / name).write_text("[]", encoding="utf-8")
+    status = read_status(out)
+    assert status["legs"][stack_id]["phase"] == "failed"
+    assert status["legs"][stack_id]["exports"] is True
+
+
+def test_unreadable_latch_is_fail_closed(tmp_path: Path) -> None:
+    from scripts.bench.driver import _leg_complete, init_run_dir, read_status
+    from scripts.bench.stack_pair import BenchError, load_stack_pair
+    from scripts.bench.tests.conftest import write_hashed_manifest, write_pair
+
+    images = tmp_path / "images"
+    manifest = write_hashed_manifest(tmp_path / "manifest.json", images, [1])
+    pair = load_stack_pair(write_pair(tmp_path / "pair.yaml"))
+    out = init_run_dir(tmp_path / "status-corrupt", pair, manifest)
+    stack_id = "acx-dev-insightface"
+    leg = out / "legs" / stack_id
+    (leg / "leg_outcome.json").write_text("{not-json", encoding="utf-8")
+    (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    exports = leg / "exports"
+    exports.mkdir()
+    for name in ("media_identities.json", "clusters.json", "cluster_members.json"):
+        (exports / name).write_text("[]", encoding="utf-8")
+    with pytest.raises(BenchError) as exc:
+        read_status(out)
+    assert exc.value.code == "leg_outcome_unreadable"
+    with pytest.raises(BenchError) as exc:
+        _leg_complete(out, stack_id)
+    assert exc.value.code == "leg_outcome_unreadable"

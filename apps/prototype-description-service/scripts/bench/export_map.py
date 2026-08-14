@@ -129,6 +129,7 @@ class DetectionMatchResult:
     pred_count: int
     gt_count: int
     matched_gt_indices: list[int] = field(default_factory=list)
+    matched_pred_indices: list[int] = field(default_factory=list)
 
 
 def normalize_label(value: str) -> str:
@@ -152,8 +153,9 @@ def match_detection_boxes(
     if not isinstance(image_width, int) or not isinstance(image_height, int) or image_width <= 0 or image_height <= 0:
         raise BenchError("image_dimensions_missing", "image_width/image_height missing or non-positive")
     gt_tl: list[tuple[float, float, float, float]] = []
+    gt_orig: list[int] = []
     dropped = 0
-    for box in gt_boxes:
+    for orig_i, box in enumerate(gt_boxes):
         if isinstance(box, FaceBox):
             x, y, w, h = box.x, box.y, box.w, box.h
         else:
@@ -164,8 +166,10 @@ def match_detection_boxes(
             dropped += 1
             continue
         gt_tl.append(tl)
+        gt_orig.append(orig_i)
     pred_tl: list[tuple[float, float, float, float]] = []
-    for pred in predictions:
+    pred_orig: list[int] = []
+    for orig_i, pred in enumerate(predictions):
         keys = set(pred)
         if keys != _PRED_KEYS:
             raise BenchError("box_convention_unknown", f"prediction bbox keys {sorted(keys)} != {{x,y,width,height}}")
@@ -182,6 +186,7 @@ def match_detection_boxes(
             dropped += 1
             continue
         pred_tl.append(tl)
+        pred_orig.append(orig_i)
     pairs, _pairwise = hungarian_iou_matches(gt_tl, pred_tl, threshold=IOU_MATCH_THRESHOLD)
     iou_values = [p[2] for p in pairs]
     return DetectionMatchResult(
@@ -190,25 +195,21 @@ def match_detection_boxes(
         degenerate_box_dropped=dropped,
         pred_count=len(pred_tl),
         gt_count=len(gt_tl),
-        matched_gt_indices=[p[1] for p in pairs],
+        matched_gt_indices=[gt_orig[p[1]] for p in pairs],
+        matched_pred_indices=[pred_orig[p[0]] for p in pairs],
     )
 
 
 def _unwrap_rows(raw: Any, *, keys: tuple[str, ...], what: str) -> list[dict[str, Any]]:
+    # Live stack routes return a JSON array. Object envelopes are a second
+    # shape and are rejected so a mid-series change cannot pass silently.
+    del keys
     if isinstance(raw, list):
         return [row for row in raw if isinstance(row, dict)]
-    if isinstance(raw, dict):
-        present = [key for key in keys if key in raw]
-        if len(present) != 1:
-            raise BenchError(
-                "export_envelope_invalid",
-                f"{what} envelope must be a list or object with exactly one of {keys}; got {present}",
-            )
-        rows = raw[present[0]]
-        if not isinstance(rows, list):
-            raise BenchError("export_envelope_invalid", f"{what}.{present[0]} must be a list")
-        return [row for row in rows if isinstance(row, dict)]
-    raise BenchError("export_envelope_invalid", f"{what} must be a list or object, got {type(raw).__name__}")
+    raise BenchError(
+        "export_envelope_invalid",
+        f"{what} must be a JSON array (bare list); got {type(raw).__name__}",
+    )
 
 
 def _identities_list(export: Any) -> list[dict[str, Any]]:
@@ -227,23 +228,27 @@ def _clusters_list(export: Any) -> list[dict[str, Any]]:
     return _unwrap_rows(raw, keys=("clusters",), what="clusters")
 
 
+def _primary_name_for_row(row: dict[str, Any], roster: Sequence[str]) -> str | None:
+    canon = {normalize_label(n): n for n in roster}
+    label = str(row.get("cluster_label") or "")
+    auto = bool(row.get("is_auto_label"))
+    if auto and _looks_auto_id(label):
+        return None
+    if not label:
+        return None
+    return canon.get(normalize_label(label))
+
+
 def map_cluster_labels_primary(
     export: Any,
     roster: Sequence[str],
 ) -> dict[int, list[str]]:
-    canon = {normalize_label(n): n for n in roster}
     by_media: dict[int, list[str]] = {}
     for row in _identities_list(export):
         mid = row.get("media_id")
         if not isinstance(mid, int):
             continue
-        label = str(row.get("cluster_label") or "")
-        auto = bool(row.get("is_auto_label"))
-        if auto and _looks_auto_id(label):
-            continue
-        if not label:
-            continue
-        mapped = canon.get(normalize_label(label))
+        mapped = _primary_name_for_row(row, roster)
         if mapped:
             by_media.setdefault(mid, [])
             if mapped not in by_media[mid]:
@@ -388,7 +393,7 @@ def to_face_metric_inputs(
         labeled_full = list(entry.present_identities)
         if frame == "native":
             # Per-face native rule: drop GT names whose *box* got no proposed
-            # detection (IoU match). Mapper-hit is not a detection proposal.
+            # detection (IoU match). Predictions come only from matched faces.
             matched_idx = set(match.matched_gt_indices)
             labeled_native: list[str] = []
             for gi, box in enumerate(entry.face_boxes):
@@ -397,16 +402,32 @@ def to_face_metric_inputs(
                 name = box.name if isinstance(box, FaceBox) else box.get("name")
                 if name and name not in labeled_native:
                     labeled_native.append(name)
-            predicted_native = list(predicted) if rows else []
+            matched_pred = set(match.matched_pred_indices)
+            predicted_native: list[str] = []
+            roster_for_row = roster or [n for e in manifest.entries for n in e.present_identities]
+            for pi, row in enumerate(rows_sorted):
+                if pi not in matched_pred:
+                    continue
+                name = _primary_name_for_row(row, roster_for_row)
+                if name and name not in predicted_native:
+                    predicted_native.append(name)
+            matched_boxes = [
+                entry.face_boxes[i]
+                for i in match.matched_gt_indices
+                if 0 <= i < len(entry.face_boxes)
+            ]
+            stranger_native = (
+                sum(1 for b in matched_boxes if (b.name if isinstance(b, FaceBox) else b.get("name")) is None)
+                if entry.face_count == len(entry.face_boxes)
+                else 0
+            )
             id_rows.append(
                 ImageIdentities(
                     image=entry.path,
                     predicted=predicted_native,
                     labeled=labeled_native,
                     recognition_enabled=entry.policy.recognition_enabled,
-                    stranger_faces=sum(1 for b in entry.face_boxes if b.name is None)
-                    if entry.face_count == len(entry.face_boxes)
-                    else 0,
+                    stranger_faces=stranger_native,
                 )
             )
         else:

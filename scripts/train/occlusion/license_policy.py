@@ -238,10 +238,15 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
      occurrence — F14-4), promote a package-floor
      ``nc_model_derived`` hit so residual NC compounds
      (``yolox_s_buffalo_l`` / ``yoloxinsightface`` / ``yoloxyolo_nas`` /
-     ``xyoloxinsightface``) reject on the derived door too. BR-28
-     door-precision (``myarcface`` / ``not-insightface``) and bare
-     junk+NC without an exception segment (``aabuffalo_l`` /
-     ``aainsightface``) stay floor-only.
+     ``xyoloxinsightface`` / ``aabuffalo_l_yolox``) reject on the derived
+     door too. Junk glued onto a multi-segment NC seed (``aabuffalo_l`` /
+     ``aayolo_nas_l`` / ``aaantelope_v2``) and both-sides compact NC
+     (``aainsightfaceaa`` / ``aaarcfaceaa``) now floor-deny via compact-
+     joined rule (e) / mid-occurrence NC (F15-1). Doors still follow the
+     exception-promotion rule, so BR-28 precision (``myarcface`` /
+     ``not-insightface``) and junk+NC without an exception segment stay
+     door-pass. Bare ``buffalo`` exclusions (``aabuffalo`` /
+     ``buffalo_bill_detector`` / ``buffalo_lakes``) still admit.
   4. **Multi-axis door promotion** (FIR-7-A10-01 / B11-02): doors consider
      **all** floor hits in a compound, not just the ranked winner. If any
      suffix/component hits an AGPL/``denylisted_package`` entry, reject
@@ -2180,9 +2185,10 @@ def _token_has_exception_family(token: str) -> bool:
     exact/compact exception identity, the compact component ends with
     an exception seed, **or** an exception seed/spelling occurs at a
     mid-token compact offset (``xyoloxinsightface``). BR-28 floor-only
-    controls (``myarcface`` / ``not-insightface``) and bare junk+NC
-    without an exception segment (``aabuffalo_l`` / ``aainsightface`` /
-    ``aaayolonas``) have no exception occurrence and stay False.
+    controls (``myarcface`` / ``not-insightface``) and junk+NC without
+    an exception segment (``aabuffalo_l`` / ``aainsightface`` /
+    ``aaayolonas``) have no exception occurrence and stay False — they
+    floor-deny (F15-1) but do not grow an exception witness.
     """
     c = canonical(token) if token else None
     if not c:
@@ -4399,6 +4405,14 @@ _DENY_HEAD_KNOWN_REM_MIN_SEED_LEN: int = 4
 # residual (classify residual fail-closed). False restores exact-membership
 # remainder (TEST-15).
 _SUFFIX_TOLERANT_GLUE_ENABLED: bool = True
+# F15-1: when the separator-aligned walk misses, run rule (e) on the
+# compact-joined component so junk+multi-segment NC seeds (``aabuffalo_l``)
+# hit compact denylist keys (``buffalol``). TEST-15: False restores admit.
+_COMPACT_JOINED_RULE_E_ENABLED: bool = True
+# F15-1: compact mid-occurrence NC — seed at offset > 0 with leftover
+# after the seed (junk on both sides: ``aainsightfaceaa``). TEST-15:
+# False restores both-sides-junk admit.
+_COMPACT_MID_NC_OCCURRENCE_ENABLED: bool = True
 
 
 def _deny_head_known_rem_glue(token_compact: str, seed_k: str) -> bool:
@@ -4473,6 +4487,84 @@ def _compact_mid_exception_deny_adjacency(
                     return deny
             start = idx + 1
     return None
+
+
+def _compact_joined_rule_e_hit(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """F15-1: rule (e) on the compact-joined component.
+
+    Per-segment (e) misses when junk is glued to the head of a
+    multi-segment NC seed (``aabuffalo`` + ``_l``): the seed splits
+    across ``_`` and bare ``buffalo`` is BR-28-excluded. Compact
+    denylist keys (``buffalol`` / ``buffalos`` / ``buffalosc`` /
+    ``buffalol2`` / ``yolonasl`` / ``antelopev2`` / ``buffalotrt``)
+    already catch the glued spelling when (e) runs on
+    ``_compact_canonical(component)``. Single-segment tokens are a
+    no-op (compact == token; the walk already tested (e)). Bare
+    ``buffalo`` stays excluded so ``aabuffalo`` / ``buffalo_lakes`` /
+    ``buffalo_bill_detector`` admit.
+    """
+    if not token or not _COMPACT_JOINED_RULE_E_ENABLED:
+        return None
+    if "_" not in token:
+        return None
+    compact = _compact_canonical(token)
+    if not compact or compact == token:
+        return None
+    # NC-axis only (F15-1). A general compact (e) on the joined form
+    # would also own ``yolox_s_ultralytics`` / ``yoloxyolo_v8`` and
+    # steal the suffix-walk / steal-flag red-proofs.
+    nc_map = {
+        k: e
+        for k, e in PACKAGE_DENYLIST.items()
+        if e.reason is RejectionReason.NC_MODEL_DERIVED
+    }
+    return _best_family_hit(
+        compact, nc_map, for_deny=True, allow_rule_c=False
+    )
+
+
+def _compact_mid_nc_occurrence(
+    token: str,
+) -> PackageDenylistEntry | None:
+    """F15-1: NC seed occurs mid-compact with junk on both sides.
+
+    Rule (e) is endswith-only and (c) is startswith-only, so
+    ``aainsightfaceaa`` / ``aaarcfaceaa`` admitted everywhere. Mirror
+    the F14-4 mid-exception scanner: an NC compact key of ≥
+    ``_COMPACT_SUFFIX_MIN_SEED_LEN`` at offset > 0 with a non-empty
+    remainder after the seed is a floor hit. Bare ``buffalo`` is
+    excluded. Longest compact key wins.
+    """
+    if not token or not _COMPACT_MID_NC_OCCURRENCE_ENABLED:
+        return None
+    compact = _compact_canonical(token)
+    if not compact:
+        return None
+    best: PackageDenylistEntry | None = None
+    best_len = -1
+    for seed_c, seed_k, entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if entry.reason is not RejectionReason.NC_MODEL_DERIVED:
+            continue
+        if not seed_k or len(seed_k) < _COMPACT_SUFFIX_MIN_SEED_LEN:
+            continue
+        if (
+            seed_c in _NC_PACKAGE_FLOOR_EXCLUSIONS
+            or seed_k in _NC_PACKAGE_FLOOR_EXCLUSIONS
+        ):
+            continue
+        start = 0
+        while True:
+            idx = compact.find(seed_k, start)
+            if idx < 0:
+                break
+            if idx > 0 and idx + len(seed_k) < len(compact):
+                if len(seed_k) > best_len:
+                    best_len = len(seed_k)
+                    best = entry  # type: ignore[assignment]
+            start = idx + 1
+    return best
 
 
 def _deny_folded_ab_hit(token: str) -> PackageDenylistEntry | None:
@@ -4827,6 +4919,21 @@ def _uniform_component_scan(
             stack.append(queued)
             continue
         # No deny on any suffix and no residual to continue → current clean.
+    # F15-1: separator-aligned walk missed. Compact-joined (e) catches
+    # junk+multi-segment NC seeds — only after a real suffix walk, so
+    # disabling the walk still admits ``yolox_s_buffalo_l`` (red-proof).
+    # Mid-occurrence NC is independent (both-sides junk on one compact
+    # token; no suffix needed). Reasons filter honoured for multi-axis
+    # door collection.
+    if _EXCEPTION_RESIDUAL_SUFFIX_SCAN_ENABLED:
+        joined = _compact_joined_rule_e_hit(token)
+        if joined is not None and (
+            reasons is None or joined.reason in reasons
+        ):
+            return joined
+    mid_nc = _compact_mid_nc_occurrence(token)
+    if mid_nc is not None and (reasons is None or mid_nc.reason in reasons):
+        return mid_nc
     return None
 
 
@@ -5085,14 +5192,17 @@ def _door_package_floor_promotion(
     nc = _whole_component_nc_package_hit(value)
     if nc is not None:
         return nc
-    # F12-3 / R14-G1-4 / F14-4: fail closed when the uniform scanner
-    # already found NC but whole-component promotion missed. Promote
-    # whenever exception-family structure is witnessed *anywhere* in
-    # the compact token (prefix, trailing segment, or mid-token
-    # ``xyoloxinsightface``). BR-28 door-precision (``myarcface`` /
-    # ``not-insightface``) and bare junk+NC without an exception
-    # segment (``aabuffalo_l`` / ``aainsightface`` / ``aaayolonas``)
-    # stay floor-only — deliberate asymmetry, not a scanner miss.
+    # F12-3 / R14-G1-4 / F14-4 / F15-1: fail closed when the uniform
+    # scanner already found NC but whole-component promotion missed.
+    # Promote whenever exception-family structure is witnessed
+    # *anywhere* in the compact token (prefix, trailing segment, or
+    # mid-token ``xyoloxinsightface`` / ``aabuffalo_l_yolox``). BR-28
+    # door-precision (``myarcface`` / ``not-insightface``) and junk+NC
+    # without an exception segment (``aabuffalo_l`` / ``aainsightface``
+    # / ``aaayolonas``) stay door-pass — deliberate asymmetry, not a
+    # scanner miss. Those junk+NC forms now floor-deny (F15-1 compact-
+    # joined (e) / mid-occurrence NC); the door still requires an
+    # exception witness to promote.
     if _token_has_exception_family(value):
         scanned_nc = _package_denylist_hit(
             value, reasons=frozenset({RejectionReason.NC_MODEL_DERIVED})

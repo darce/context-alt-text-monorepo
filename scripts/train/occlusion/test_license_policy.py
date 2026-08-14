@@ -11124,9 +11124,11 @@ class TestF14DoorPromotionMidException:
     exception, so junk+exception+NC door-passed. Promote whenever the
     occurrence predicate witnesses exception-family structure anywhere.
 
-    Bare junk+NC without an exception segment (``aabuffalo_l`` /
-    ``aainsightface`` / ``aaayolonas``) stays BR-28 floor-only — that
+    Junk+NC without an exception segment (``aabuffalo_l`` /
+    ``aainsightface`` / ``aaayolonas``) stays door-pass — that
     asymmetry is deliberate (no exception occurrence to promote).
+    F15-1 makes those forms floor-deny via compact-joined (e); the
+    door still requires an exception witness (``aabuffalo_l_yolox``).
     """
 
     DOOR_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
@@ -11969,6 +11971,165 @@ class TestF13EplusHeadPeel:
         assert policy._package_denylist_hit("ppyoloes") is not None
         # Separator twin does not need the compact-glue allowlist.
         assert policy._package_denylist_hit("ppyoloe_plus_trt") is None
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F15 — occlusion licensing gate (round-17 findings)
+# ---------------------------------------------------------------------------
+
+
+class TestF15JunkMultiSegmentNcFloor:
+    """F15-1 / R17-PRE-1: junk+multi-segment NC seeds + both-sides junk.
+
+    Per-segment (e) splits ``aabuffalo`` + ``_l`` so the floor missed;
+    (e) endswith + (c) startswith also missed ``aainsightfaceaa``.
+    Compact-joined (e) + mid-occurrence NC close both. Door landing
+    follows existing exception-promotion rules.
+    """
+
+    MULTI_SEG_FLOOR: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("aabuffalo_l", "buffalo_l"),
+        ("mybuffalo_l", "buffalo_l"),
+        ("xbuffalo_l", "buffalo_l"),
+        ("aabuffalo_s", "buffalo_s"),
+        ("aabuffalo_sc", "buffalo_sc"),
+        ("aabuffalo_l2", "buffalo_l2"),
+        ("aabuffalo_trt", "buffalo_trt"),
+        ("aabuffalo_onnx", "buffalo_onnx"),
+        ("aabuffalo_fp16", "buffalo_fp16"),
+        ("aabuffalo_int8", "buffalo_int8"),
+        ("aabuffalo_pt", "buffalo_pt"),
+        ("aayolo_nas", "yolo_nas"),
+        ("aayolo_nas_s", "yolo_nas_s"),
+        ("aayolo_nas_l", "yolo_nas_l"),
+        ("xyolo_nas_pose_l", "yolo_nas_pose_l"),
+        ("aaantelope_v2", "antelope_v2"),
+        ("xantelope_v2", "antelope_v2"),
+        ("yolobuffalo_l", "buffalo_l"),
+    )
+    BOTH_SIDES_FLOOR: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("aainsightfaceaa", "insightface"),
+        ("aaarcfaceaa", "arcface"),
+    )
+    DOOR_PROMOTE: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("aabuffalo_l_yolox", "buffalo_l"),
+    )
+    STILL_ADMIT: ClassVar[tuple[str, ...]] = (
+        "buffalo_bill_detector",
+        "buffalo_lakes",
+        "aabuffalo",
+    )
+    FLOOR_ONLY_DOOR_PASS: ClassVar[tuple[str, ...]] = (
+        "myarcface",
+        "not-insightface",
+        "aabuffalo_l",
+        "aainsightface",
+        "aaayolonas",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", MULTI_SEG_FLOOR)
+    def test_junk_multi_seg_nc_floor_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must floor-deny (F15-1 compact-joined (e))"
+        )
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", BOTH_SIDES_FLOOR)
+    def test_both_sides_junk_nc_floor_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must floor-deny (F15-1 mid-occurrence NC)"
+        )
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+
+    @pytest.mark.parametrize("token,expected_pkg", DOOR_PROMOTE)
+    def test_trailing_exception_promotes_junk_nc_to_door(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        assert policy._token_has_exception_family(token) is True
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    @pytest.mark.parametrize("token", STILL_ADMIT)
+    def test_bare_buffalo_exclusions_still_admit(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must stay ADMIT (bare buffalo exclusion)"
+        )
+        assert policy.audit_derived_from_model(token).ok is True
+
+    @pytest.mark.parametrize("token", FLOOR_ONLY_DOOR_PASS)
+    def test_no_exception_stays_door_pass(self, token: str) -> None:
+        assert policy._token_has_exception_family(token) is False
+        assert policy.audit_derived_from_model(token).ok is True, (
+            f"{token!r} must stay door-pass (no exception witness)"
+        )
+
+    def test_my_buffalo_l_still_denies_on_doors(self) -> None:
+        token = "my_buffalo_l"
+        assert policy._package_denylist_hit(token) is not None
+        assert policy.audit_derived_from_model(token).ok is False
+
+    def test_red_proof_compact_joined_rule_e_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_COMPACT_JOINED_RULE_E_ENABLED``.
+
+        Compact-e-only witnesses (suffix rem empty after the compact
+        seed, so mid-NC cannot own them) admit again; both-sides
+        compact NC and already-separator ``my_buffalo_l`` stay denied.
+        """
+        compact_e_only = (
+            "aabuffalo_l",
+            "aabuffalo_s",
+            "aabuffalo_trt",
+            "aayolo_nas",
+            "aaantelope_v2",
+            "yolobuffalo_l",
+        )
+        for token in compact_e_only:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must floor-deny"
+            )
+        monkeypatch.setattr(policy, "_COMPACT_JOINED_RULE_E_ENABLED", False)
+        for token in compact_e_only:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without compact-joined (e), {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("aainsightfaceaa") is not None
+        assert policy._package_denylist_hit("my_buffalo_l") is not None
+        assert policy._package_denylist_hit("aabuffalo") is None
+
+    def test_red_proof_mid_nc_occurrence_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: neuter ``_COMPACT_MID_NC_OCCURRENCE_ENABLED``.
+
+        Both-sides junk NC admits; compact-joined multi-seg still denies.
+        """
+        for token, _pkg in self.BOTH_SIDES_FLOOR:
+            assert policy._package_denylist_hit(token) is not None, (
+                f"precondition: {token!r} must floor-deny"
+            )
+        monkeypatch.setattr(policy, "_COMPACT_MID_NC_OCCURRENCE_ENABLED", False)
+        for token, _pkg in self.BOTH_SIDES_FLOOR:
+            assert policy._package_denylist_hit(token) is None, (
+                f"red-proof: without mid-NC, {token!r} must admit"
+            )
+        assert policy._package_denylist_hit("aabuffalo_l") is not None
+        assert policy._package_denylist_hit("myarcface") is not None
 
 
 class TestF13StealRankingAndMultiStack:

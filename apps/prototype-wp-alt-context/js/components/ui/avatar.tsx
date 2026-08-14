@@ -24,7 +24,7 @@ export const AVATAR_STATES = {
 
 export type AvatarState = (typeof AVATAR_STATES)[keyof typeof AVATAR_STATES];
 
-type ImageLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
+export type ImageLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 const sizeMap: Record<AvatarSize, number> = {
   sm: 32,
@@ -64,6 +64,19 @@ function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingSta
   return AVATAR_STATES.loading;
 }
 
+/**
+ * Swap-frame resolver: a new src must not inherit the previous identity's
+ * loaded/error status for even one render.
+ */
+export function resolveAvatarRenderState(
+  src: string | undefined,
+  previousSrc: string | undefined,
+  loadStatus: ImageLoadingStatus,
+): AvatarState {
+  const effectiveStatus = src !== previousSrc ? 'idle' : loadStatus;
+  return resolveAvatarState(src, effectiveStatus);
+}
+
 export const Avatar = ({
   src,
   alt = __('Face thumbnail', 'alt-context'),
@@ -75,12 +88,12 @@ export const Avatar = ({
   const displaySize = sizePx ?? sizeMap[size];
   const iconSize = Math.max(12, Math.round(displaySize * 0.35));
   const [loadStatus, setLoadStatus] = React.useState<ImageLoadingStatus>('idle');
-  const previousSrc = React.useRef(src);
-  if (previousSrc.current !== src) {
-    previousSrc.current = src;
+  const [previousSrc, setPreviousSrc] = React.useState(src);
+  if (src !== previousSrc) {
+    setPreviousSrc(src);
     setLoadStatus('idle');
   }
-  const state = resolveAvatarState(src, loadStatus);
+  const state = resolveAvatarRenderState(src, previousSrc, loadStatus);
   const baseClass = 'acx-avatar';
   const classes = [baseClass, `${baseClass}--${size}`, shape === 'square' ? `${baseClass}--square` : '', className]
     .filter(Boolean)

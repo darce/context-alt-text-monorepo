@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IdentityThumbnail } from '../IdentityThumbnail';
+import { IdentityThumbnail, thumbnailCropOwnerId } from '../IdentityThumbnail';
 import type { ClusterIdentity } from '../../../api/recognition';
 
 const identity: ClusterIdentity = {
@@ -41,6 +41,38 @@ const isInteractiveControl = (el: Element): boolean => {
   // In the tab order (tabIndex >= 0) even without a matching tag/role.
   return el.tabIndex >= 0;
 };
+
+describe('thumbnailCropOwnerId', () => {
+  it('prefers identity_id over media+bbox [E21-19-R2-BR-01]', () => {
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+        identity_id: 'identity-first',
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      }),
+    ).toBe('identity-first');
+  });
+
+  it('folds bbox into the unassigned media fallback [E21-19-R2-BR-01]', () => {
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      }),
+    ).toBe('media:100:10,20,30,40');
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+        bbox: { x: 5, y: 5, width: 50, height: 50 },
+      }),
+    ).toBe('media:100:5,5,50,50');
+    expect(
+      thumbnailCropOwnerId({
+        media_id: 100,
+      }),
+    ).toBe('media:100');
+  });
+});
 
 describe('IdentityThumbnail', () => {
   it('renders placeholder when no metadata is available', () => {
@@ -695,6 +727,150 @@ describe('IdentityThumbnail', () => {
         const img = screen.getByRole('img');
         expect(img).toHaveAttribute('src', secondCrop);
         expect(img).toHaveAttribute('data-identity-id', 'identity-second');
+        expect(img.getAttribute('src')).not.toBe(firstCrop);
+      });
+    });
+
+    /**
+     * [E21-19-R2-BR-01] [WBUX-5-R2-S3-BR-01] [TEST-15]
+     * Unassigned faces on the same media share no identity_id. The owner key
+     * must include bbox or a swap still paints the previous crop for one frame.
+     */
+    it('does not paint the previous unassigned crop when only bbox changes [E21-19-R2-BR-01]', async () => {
+      const firstCrop = 'data:image/jpeg;base64,UNASSIGNED-FACE-A';
+      const secondCrop = 'data:image/jpeg;base64,UNASSIGNED-FACE-B';
+      let cropResult = firstCrop;
+      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => cropResult);
+
+      const pendingLoads: (() => void)[] = [];
+      class ControllableImage {
+        onload: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        onerror: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        crossOrigin = '';
+        naturalWidth = 100;
+        naturalHeight = 100;
+        width = 100;
+        height = 100;
+        private _src = '';
+        constructor() {
+          imageConstructCount += 1;
+        }
+        get src(): string {
+          return this._src;
+        }
+        set src(value: string) {
+          this._src = value;
+          pendingLoads.push(() => {
+            const handler = this.onload;
+            if (handler) {
+              handler.call(this as unknown as GlobalEventHandlers, new Event('load'));
+            }
+          });
+        }
+      }
+      globalThis.Image = ControllableImage as unknown as typeof Image;
+
+      const firstIdentity = {
+        media_id: 100,
+        media_url: 'https://example.com/shared-scene.jpg',
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      };
+      const secondIdentity = {
+        media_id: 100,
+        media_url: 'https://example.com/shared-scene.jpg',
+        bbox: { x: 50, y: 60, width: 20, height: 25 },
+      };
+
+      const fireIntersect = () => {
+        const host =
+          document.querySelector('[data-face-pending="true"]')?.parentElement ??
+          document.querySelector('.acx-cluster-card__thumb')?.parentElement;
+        expect(host).toBeTruthy();
+        if (!host) {
+          return;
+        }
+        const entry: IntersectionObserverEntry = {
+          isIntersecting: true,
+          target: host,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: host.getBoundingClientRect(),
+          intersectionRect: host.getBoundingClientRect(),
+          rootBounds: null,
+        };
+        observerCallback?.([entry], {} as IntersectionObserver);
+      };
+
+      const { rerender } = render(<IdentityThumbnail identity={firstIdentity} size={32} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        fireIntersect();
+      });
+
+      await waitFor(() => {
+        expect(pendingLoads.length).toBe(1);
+      });
+
+      cropResult = firstCrop;
+      await act(async () => {
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const img = screen.getByRole('img');
+        expect(img).toHaveAttribute('src', firstCrop);
+        expect(img).toHaveAttribute('data-media-id', '100');
+        expect(img.getAttribute('data-identity-id')).toBeNull();
+      });
+
+      const painted: string[] = [];
+      const recordImg = (node: Node) => {
+        if (!(node instanceof HTMLImageElement)) {
+          return;
+        }
+        painted.push(`${node.getAttribute('src')}|${node.getAttribute('data-media-id')}`);
+      };
+      const host =
+        document.querySelector('.acx-cluster-card__thumb')?.parentElement ?? document.body;
+      const observer = new MutationObserver(() => {
+        // Records are drained synchronously via takeRecords() after rerender.
+      });
+      observer.observe(host, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['src', 'alt', 'data-identity-id', 'data-media-id'],
+      });
+
+      rerender(<IdentityThumbnail identity={secondIdentity} size={32} />);
+      observer.takeRecords().forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.target instanceof HTMLImageElement) {
+          recordImg(mutation.target);
+        }
+        mutation.addedNodes.forEach(recordImg);
+      });
+      observer.disconnect();
+
+      // Goes red if media-only owner keys let the first bbox crop stay painted
+      // under the second face's attrs before effect cleanup can run.
+      expect(painted).not.toContain(`${firstCrop}|100`);
+      expect(document.querySelector(`img[src="${firstCrop}"]`)).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
+
+      cropResult = secondCrop;
+      await act(async () => {
+        await Promise.resolve();
+        fireIntersect();
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const img = screen.getByRole('img');
+        expect(img).toHaveAttribute('src', secondCrop);
+        expect(img).toHaveAttribute('data-media-id', '100');
         expect(img.getAttribute('src')).not.toBe(firstCrop);
       });
     });

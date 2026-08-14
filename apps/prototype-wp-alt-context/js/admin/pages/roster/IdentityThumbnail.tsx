@@ -39,8 +39,16 @@ interface OwnedCrop {
 }
 
 /** Face/media key for a crop so a previous person's data: URL cannot paint on a swap. */
-export const thumbnailCropOwnerId = (identity: ThumbnailIdentity): string =>
-  identity.identity_id ?? `media:${identity.media_id}`;
+export const thumbnailCropOwnerId = (identity: ThumbnailIdentity): string => {
+  if (identity.identity_id != null) {
+    return identity.identity_id;
+  }
+  const bbox = identity.bbox;
+  if (bbox != null) {
+    return `media:${identity.media_id}:${bbox.x},${bbox.y},${bbox.width},${bbox.height}`;
+  }
+  return `media:${identity.media_id}`;
+};
 
 /** Positive finite area required — zero-area is schema-legal but cannot crop [S8-BR-01]. */
 const isUsableBbox = (

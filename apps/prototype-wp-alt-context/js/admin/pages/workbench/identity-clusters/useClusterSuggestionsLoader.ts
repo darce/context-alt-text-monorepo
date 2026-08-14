@@ -1,8 +1,9 @@
 /**
  * Loader hook for cluster label suggestions.
  *
- * Fetches identity-based similarity suggestions, label search results, and
- * roster persons; builds the shared naming union via buildNamingOptions.
+ * Fetches identity-based similarity suggestions, at-rest labelled clusters,
+ * typed label search results, and roster persons; builds the shared naming
+ * union via buildNamingOptions.
  */
 
 import React from 'react';
@@ -61,6 +62,8 @@ export interface ClusterSuggestionsLoaderResult {
 
 const DEFAULT_DEBOUNCE_MS = 300;
 const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
+/** RES-05: at-rest labelled list is capped at 50. If response.total > 50 the dropdown is incomplete until the operator types 2+ chars (server-side search). */
+const AT_REST_LABELED_LIMIT = 50;
 
 export const useClusterSuggestionsLoader = ({
   identityId,
@@ -123,13 +126,32 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
+  // Empty search is omitted: listRecognitionClusters only sets `search` when truthy.
+  const { data: atRestLabeledClusters, isLoading: atRestLabeledLoading } = useQuery({
+    queryKey: queryKeys.clusters.list({
+      limit: AT_REST_LABELED_LIMIT,
+      offset: 0,
+      labeled_only: true,
+    }),
+    queryFn: () =>
+      listRecognitionClusters({
+        limit: AT_REST_LABELED_LIMIT,
+        offset: 0,
+        labeled_only: true,
+      }),
+    select: (response) => response.clusters.filter((cluster) => cluster.id !== editableClusterId),
+    enabled: Boolean(enabled && debouncedValue.length < 2),
+    staleTime: 30000,
+  });
+
   const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
 
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
     const roster = rosterError ? [] : rosterEntries;
+    const labeledClusters = debouncedValue.length >= 2 ? (labelMatches ?? []) : (atRestLabeledClusters ?? []);
     // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
-    const namedMatches = (labelMatches ?? []).filter(
+    const namedMatches = labeledClusters.filter(
       (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
     );
     return buildNamingOptions({
@@ -137,8 +159,10 @@ export const useClusterSuggestionsLoader = ({
       labelMatches: namedMatches,
       filter: debouncedValue,
       excludeClusterId: editableClusterId,
+      // At-rest page is already capped at AT_REST_LABELED_LIMIT; do not re-slice to 20.
+      limit: debouncedValue.length < 2 ? null : undefined,
     });
-  }, [rosterEntries, rosterError, labelMatches, debouncedValue, editableClusterId]);
+  }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId]);
 
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
@@ -184,7 +208,7 @@ export const useClusterSuggestionsLoader = ({
     namingOptions,
     collisionsByLabel: collisionsByLabel ?? EMPTY_COLLISIONS,
     labelMatches,
-    isLoading: suggestionsLoading || labelMatchesLoading || (enabled && rosterLoading),
+    isLoading: suggestionsLoading || labelMatchesLoading || atRestLabeledLoading || (enabled && rosterLoading),
     rosterError,
     findClusterByLabel,
   };

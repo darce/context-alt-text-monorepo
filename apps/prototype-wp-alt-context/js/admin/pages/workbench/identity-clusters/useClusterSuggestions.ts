@@ -152,7 +152,7 @@ export const resolveClusterMatchFromOptions = (
  *
  * Fetches:
  * 1. Similarity-based suggestions for the identity
- * 2. Label-based search results for existing clusters (debounced)
+ * 2. At-rest labelled clusters (empty input) plus typed label search (2+ chars)
  * 3. Roster persons via the shared buildNamingOptions union
  *
  * Returns formatted ComboboxOptions grouped by "Suggested" and "All Labels".

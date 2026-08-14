@@ -190,11 +190,14 @@ describe('TopClusterCard', () => {
   });
 
   // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share
-  // this accessible name. Pre-fix TopClusterCard used Avatar's 'No image'
-  // default, so this goes red if either surface diverges.
+  // this accessible name via Avatar missingLabel. Pre-fix TopClusterCard used
+  // Avatar's 'No image' default and ClusterPreview used a custom span, so this
+  // goes red if either surface diverges.
   it('shares missing-representative vocabulary with ClusterPreview', () => {
     const { unmount } = render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
-    const cardName = screen.getByRole('img', { name: MISSING_LABEL }).getAttribute('aria-label');
+    const cardMissing = screen.getByRole('img', { name: MISSING_LABEL });
+    const cardName = cardMissing.getAttribute('aria-label');
+    expect(cardMissing).toHaveAttribute('data-avatar-state', 'data-missing');
     unmount();
 
     const previewRep: DetectedIdentity = {
@@ -212,10 +215,12 @@ describe('TopClusterCard', () => {
       media_url: null,
     };
     render(<ClusterPreview representative={previewRep} memberCount={1} />);
-    const previewName = screen.getByRole('img', { name: MISSING_LABEL }).getAttribute('aria-label');
+    const previewMissing = screen.getByRole('img', { name: MISSING_LABEL });
+    const previewName = previewMissing.getAttribute('aria-label');
 
     expect(cardName).toBe(MISSING_LABEL);
     expect(previewName).toBe(cardName);
+    expect(previewMissing).toHaveAttribute('data-avatar-state', 'data-missing');
   });
 
   // E21-16 W2: machine suggested_label must not open the Yes/No confirm path.

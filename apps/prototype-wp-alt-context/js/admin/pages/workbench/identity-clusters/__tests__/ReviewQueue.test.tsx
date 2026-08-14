@@ -2378,6 +2378,54 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
   });
 
+  // E21-20-REV1-02 / TEST-15: S2-gated zeros leave the queue empty while work exists.
+  it('REV1-02: empty queue with zero-evidence clusters shows repair copy, not drain', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'zero-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByText('2 clusters need face data resync')).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

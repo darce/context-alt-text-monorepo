@@ -1,6 +1,6 @@
 const DOM_ID_SAFE = /^[A-Za-z0-9_-]+$/;
 
-export function sanitizeDomIdToken(raw: string): string {
+export const sanitizeDomIdToken = (raw: string): string => {
   if (typeof raw === 'string' && raw.length > 0 && DOM_ID_SAFE.test(raw)) {
     return raw;
   }
@@ -11,8 +11,6 @@ export function sanitizeDomIdToken(raw: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `h${(hash >>> 0).toString(36)}`;
-}
+};
 
-export function rosterFaceDomId(faceId: string): string {
-  return `acx-roster-face-${sanitizeDomIdToken(faceId)}`;
-}
+export const rosterFaceDomId = (faceId: string): string => `acx-roster-face-${sanitizeDomIdToken(faceId)}`;

@@ -17,19 +17,17 @@ export interface PersonScrubFace {
   isRepresentative: boolean;
 }
 
-export function toPersonFaceId(clusterId: string, identityId: string): string {
-  return `${clusterId}:${identityId}`;
-}
+export const toPersonFaceId = (clusterId: string, identityId: string): string => `${clusterId}:${identityId}`;
 
-export function identityIdFromFaceId(faceId: string): string {
+export const identityIdFromFaceId = (faceId: string): string => {
   const separator = faceId.indexOf(':');
   if (separator <= 0 || separator === faceId.length - 1) {
     return faceId;
   }
   return faceId.slice(separator + 1);
-}
+};
 
-export function collectPersonFaces(entry: RosterEntry): PersonScrubFace[] {
+export const collectPersonFaces = (entry: RosterEntry): PersonScrubFace[] => {
   const faces: PersonScrubFace[] = [];
 
   entry.clusters.forEach((cluster, clusterIndex) => {
@@ -69,13 +67,13 @@ export function collectPersonFaces(entry: RosterEntry): PersonScrubFace[] {
   });
 
   return faces;
-}
+};
 
-export function resolveVisibleFaceId(
+export const resolveVisibleFaceId = (
   visibleIds: readonly string[],
   requestedId: string | null,
   previousId: string | null,
-): string | null {
+): string | null => {
   if (requestedId) {
     if (visibleIds.includes(requestedId)) {
       return requestedId;
@@ -91,19 +89,18 @@ export function resolveVisibleFaceId(
     return previousId;
   }
   return visibleIds[0] ?? null;
-}
+};
 
-export function getSelectedFacePreviewLabel(face: PersonScrubFace): string {
-  return sprintf(
+export const getSelectedFacePreviewLabel = (face: PersonScrubFace): string =>
+  sprintf(
     __('Selected face, instance %d for Cluster %d, media %d', 'alt-context'),
     face.instanceOrdinal,
     face.clusterIndex + 1,
     face.mediaId,
   );
-}
 
-export function assertSelectedFace(face: PersonScrubFace | null): asserts face is PersonScrubFace {
+export const assertSelectedFace = (face: PersonScrubFace | null): asserts face is PersonScrubFace => {
   if (face == null) {
     throw new Error('Expected a selected roster face');
   }
-}
+};

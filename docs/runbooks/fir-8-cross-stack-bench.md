@@ -76,6 +76,21 @@ uv run python -m scripts.bench.cross_stack_bench run --config stack-pair.yaml --
 
 Flow: ingest → analyze → cluster → export persist. Resume is append-only via `legs/<stack_id>/items.jsonl`.
 
+`run` **requires a git checkout** of the monorepo. `init_run_dir` stamps `cli_sha` / `harness_sha` from `git log` and fails closed with `provenance_sha_unavailable` from a packaged install, tarball, or CI artifact tree that is not a checkout.
+
+### Failure modes (run / score)
+
+| Code | What you will see | What to do |
+| --- | --- | --- |
+| `stack_media_id_missing` | every analyze item fails; cluster gate refuses; run ends `run_incomplete` | the analyze payload has no integer `media_id` / `stack_media_id` — this is a stack contract gap, not a missing manifest id |
+| `provenance_sha_unavailable` | no run-dir is created | run from a git checkout of this monorepo |
+| `join_row_missing` | `score` aborts | a metric row's path or media_id is absent from the join; do not score a zero-padded hole |
+| `bootstrap_series_mismatch` | named cell stamps this as `bootstrap_status`; CONFIRMATORY is refused | paired series length/presence disagrees across legs |
+| `bootstrap_status` | cell field `ok` / `partial` / a fail-closed code; `partial` or any non-`ok` demotes CONFIRMATORY | inspect `bootstrap_n_used`; undefined resamples are Δ = 0 over B (conservative p) |
+| `export_envelope_invalid` | `score` aborts | exports must be a **bare JSON array**; `{"data": [...]}` object envelopes are rejected |
+| `preflight_missing` | `score` aborts | each `legs/<stack_id>/preflight.json` must exist (PROV-01) |
+| `leg_outcome_unreadable` | `status` / `run` aborts | rewrite or delete a torn `leg_outcome.json`; it is not treated as absence |
+
 **Do not run this against live endpoints until `acx-dev-fir` exists.** A mocked/unit path is the only verified path in this task.
 
 ---

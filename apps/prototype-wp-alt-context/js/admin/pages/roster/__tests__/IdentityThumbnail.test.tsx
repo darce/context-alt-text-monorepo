@@ -548,6 +548,157 @@ describe('IdentityThumbnail', () => {
       });
     });
 
+    /**
+     * [ROSTER-W-04] [WBUX-5-R2-S3-BR-01] [TEST-15]
+     * The swap render must not paint the previous crop under the new
+     * identity's data-* / alt. S6-BR-01 waits for effect cleanup and would
+     * stay green while one frame still leaks.
+     */
+    it('does not paint the previous crop under the new identity on the swap render [ROSTER-W-04]', async () => {
+      const firstCrop = 'data:image/jpeg;base64,OWNED-BY-FIRST';
+      const secondCrop = 'data:image/jpeg;base64,OWNED-BY-SECOND';
+      let cropResult = firstCrop;
+      HTMLCanvasElement.prototype.toDataURL = vi.fn(() => cropResult);
+
+      const pendingLoads: (() => void)[] = [];
+      class ControllableImage {
+        onload: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        onerror: ((this: GlobalEventHandlers, ev: Event) => unknown) | null = null;
+        crossOrigin = '';
+        naturalWidth = 100;
+        naturalHeight = 100;
+        width = 100;
+        height = 100;
+        private _src = '';
+        constructor() {
+          imageConstructCount += 1;
+        }
+        get src(): string {
+          return this._src;
+        }
+        set src(value: string) {
+          this._src = value;
+          pendingLoads.push(() => {
+            const handler = this.onload;
+            if (handler) {
+              handler.call(this as unknown as GlobalEventHandlers, new Event('load'));
+            }
+          });
+        }
+      }
+      globalThis.Image = ControllableImage as unknown as typeof Image;
+
+      const firstIdentity = {
+        media_id: 100,
+        identity_id: 'identity-first',
+        media_url: 'https://example.com/person-a.jpg',
+        bbox: { x: 10, y: 20, width: 30, height: 40 },
+      };
+      const secondIdentity = {
+        media_id: 200,
+        identity_id: 'identity-second',
+        media_url: 'https://example.com/person-b.jpg',
+        bbox: { x: 5, y: 5, width: 50, height: 50 },
+      };
+
+      const fireIntersect = () => {
+        const host =
+          document.querySelector('[data-face-pending="true"]')?.parentElement ??
+          document.querySelector('.acx-cluster-card__thumb')?.parentElement;
+        expect(host).toBeTruthy();
+        if (!host) {
+          return;
+        }
+        const entry: IntersectionObserverEntry = {
+          isIntersecting: true,
+          target: host,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: host.getBoundingClientRect(),
+          intersectionRect: host.getBoundingClientRect(),
+          rootBounds: null,
+        };
+        observerCallback?.([entry], {} as IntersectionObserver);
+      };
+
+      const { rerender } = render(<IdentityThumbnail identity={firstIdentity} size={32} />);
+
+      await act(async () => {
+        await Promise.resolve();
+        fireIntersect();
+      });
+
+      await waitFor(() => {
+        expect(pendingLoads.length).toBe(1);
+      });
+
+      cropResult = firstCrop;
+      await act(async () => {
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const img = screen.getByRole('img');
+        expect(img).toHaveAttribute('src', firstCrop);
+        expect(img).toHaveAttribute('data-identity-id', 'identity-first');
+      });
+
+      const painted: string[] = [];
+      const recordImg = (node: Node) => {
+        if (!(node instanceof HTMLImageElement)) {
+          return;
+        }
+        painted.push(
+          `${node.getAttribute('src')}|${node.getAttribute('data-identity-id')}|${node.getAttribute('data-media-id')}`,
+        );
+      };
+      const host =
+        document.querySelector('.acx-cluster-card__thumb')?.parentElement ?? document.body;
+      const observer = new MutationObserver(() => {
+        // Records are drained synchronously via takeRecords() after rerender.
+      });
+      observer.observe(host, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['src', 'alt', 'data-identity-id', 'data-media-id'],
+      });
+
+      rerender(<IdentityThumbnail identity={secondIdentity} size={32} />);
+      observer.takeRecords().forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.target instanceof HTMLImageElement) {
+          recordImg(mutation.target);
+        }
+        mutation.addedNodes.forEach(recordImg);
+      });
+      observer.disconnect();
+
+      // Goes red if the swap render writes the previous crop onto the new
+      // identity's attributes before effect cleanup can run.
+      expect(painted).not.toContain(`${firstCrop}|identity-second|200`);
+      expect(
+        document.querySelector(`img[src="${firstCrop}"][data-identity-id="identity-second"]`),
+      ).toBeNull();
+      expect(document.querySelector(`img[src="${firstCrop}"]`)).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
+
+      cropResult = secondCrop;
+      await act(async () => {
+        await Promise.resolve();
+        fireIntersect();
+        pendingLoads.shift()?.();
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const img = screen.getByRole('img');
+        expect(img).toHaveAttribute('src', secondCrop);
+        expect(img).toHaveAttribute('data-identity-id', 'identity-second');
+        expect(img.getAttribute('src')).not.toBe(firstCrop);
+      });
+    });
+
     it('ignores a late crop from a superseded identity [S6-BR-01 cancelled]', async () => {
       const firstCrop = 'data:image/jpeg;base64,LATE-A-CROP';
       const secondCrop = 'data:image/jpeg;base64,B-WINS-CROP';

@@ -155,6 +155,7 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,

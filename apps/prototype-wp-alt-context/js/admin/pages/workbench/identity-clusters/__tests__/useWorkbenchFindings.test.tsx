@@ -104,6 +104,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   queueSettled: true,
   ...overrides,
 });

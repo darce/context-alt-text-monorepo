@@ -173,7 +173,7 @@ export const WorkbenchFindingsPanel = ({
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
-  const { assignmentQuery, mergeQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
+  const { assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
   const {
     counts,
     previews,
@@ -182,15 +182,19 @@ export const WorkbenchFindingsPanel = ({
     isLoading,
     isError,
     isTopUnlabeledError,
+    isAssignmentError,
     isUnavailable,
     isReadOnly,
     nextAction,
   } = findings;
 
+  // REV2-08: the control is labelled as reloading recognition findings, so it
+  // must refetch every source that feeds them — name suggestions included.
   const handleRetryFindings = (): void => {
     void Promise.all([
       assignmentQuery.refetch(),
       mergeQuery.refetch(),
+      nameQuery.refetch(),
       topUnlabeledQuery.refetch(),
     ]).catch(() => undefined);
   };
@@ -377,7 +381,36 @@ export const WorkbenchFindingsPanel = ({
       {/* UI-04: empty drain copy is only for a successful zero — every failure
           mode (including a zero-total top-unlabeled outage) returns above.
           A zero-evidence-only backlog is a repair state, not "all caught up". */}
-      {!hasFindings && zeroEvidenceClusterCount === 0 && (
+      {/* REV2-01: an assignment-only outage leaves the other queues returning
+          successful empties, so hasFindings is false without isError ever being
+          set. Announcing "No findings yet" there tells the operator the backlog
+          is clear while the primary review queue is down. Same treatment as the
+          top-unlabeled degraded chip: name the outage, offer the retry. */}
+      {!hasFindings && zeroEvidenceClusterCount === 0 && isAssignmentError && (
+        <>
+          <p
+            id="acx-findings-panel-assignment-outage"
+            className="acx-findings-panel__status"
+            role="status"
+            aria-live="polite"
+          >
+            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+            {__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
+          </p>
+          <div className="acx-findings-panel__repair">
+            <button
+              type="button"
+              className="acx-button acx-button--secondary acx-button--small"
+              onClick={handleRetryFindings}
+              aria-describedby="acx-findings-panel-assignment-outage"
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
+        </>
+      )}
+
+      {!hasFindings && zeroEvidenceClusterCount === 0 && !isAssignmentError && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>

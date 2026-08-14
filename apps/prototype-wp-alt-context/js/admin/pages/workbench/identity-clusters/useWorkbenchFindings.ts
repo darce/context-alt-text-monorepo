@@ -113,6 +113,8 @@ export interface WorkbenchFindingsSourceState {
   isError: boolean;
   /** Projection outage on top-unlabeled — distinct from primary-queue isError. */
   isTopUnlabeledError: boolean;
+  /** Outage on the assignment queue alone — distinct from the all-queues isError. */
+  isAssignmentError: boolean;
   /** All four queue-source queries finished initial load (data or error). */
   queueSettled: boolean;
 }
@@ -137,6 +139,13 @@ export interface WorkbenchFindingsViewModel {
    * Required: an omitted flag silently restores the laundered-empty behaviour.
    */
   isTopUnlabeledError: boolean;
+  /**
+   * True when the assignment queue failed while other sources returned data.
+   * Without it, a lone assignment 500 leaves hasAnyData true and isError false,
+   * so the panel renders the "No findings yet" all-clear while the primary
+   * review queue is down (E21-20-REV2-01).
+   */
+  isAssignmentError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
   /**
@@ -384,6 +393,7 @@ export const buildWorkbenchFindings = (
     isLoading: state.isLoading,
     isError,
     isTopUnlabeledError: state.isTopUnlabeledError,
+    isAssignmentError: state.isAssignmentError,
     isUnavailable,
     isReadOnly,
     queueSettled: state.queueSettled,
@@ -427,6 +437,10 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // Separate flag so a top-unlabeled 500 is visible even when primary queues
   // returned empty success (UI-03 / UI-06) without blanking partial findings.
   const isTopUnlabeledError = topUnlabeledQuery.isError;
+  // REV2-01: same class as isTopUnlabeledError. An assignment-only outage keeps
+  // hasAnyData true (merge/name/top-unlabeled succeeded empty), so isError stays
+  // false and the panel would otherwise announce an all-clear over a dead queue.
+  const isAssignmentError = assignmentQuery.isError;
   // BR-06: every source must settle before clamp/index restore — partial
   // assignment+merge data must not look like a complete empty/short queue.
   const queueSettled =
@@ -459,6 +473,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       isLoading,
       isError,
       isTopUnlabeledError,
+      isAssignmentError,
       queueSettled,
     },
   );

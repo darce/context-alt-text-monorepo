@@ -10744,8 +10744,9 @@ class TestF13UnofficialSeparatorFolding:
     ) -> None:
         """TEST-15: emptying ``_UNOFFICIAL_SEPARATOR_CHARS`` re-admits witnesses.
 
-        Neuter: ``_UNOFFICIAL_SEPARATOR_CHARS`` → ``""`` (revert to the old
-        ``[-_.\\s]``-only charset). Official-separator twins stay denied.
+        Neuter: ``_ASCII_PUNCT_FOLD_TOTAL`` → ``False`` and
+        ``_UNOFFICIAL_SEPARATOR_CHARS`` → ``""`` (pre-F13-1 official-only
+        ``[-_.\\s]`` fold). Official-separator twins stay denied.
         """
         agpl_unknown = (
             [t for t, _ in self.AGPL_WITNESSES] + list(self.UNKNOWN_WITNESSES)
@@ -10756,6 +10757,10 @@ class TestF13UnofficialSeparatorFolding:
                 f"precondition: {token!r} must deny"
             )
             assert policy.audit_derived_from_model(token).ok is False
+        # F14-1: emptying the charset is a no-op under the total class
+        # fold. Revert both levers so this stays the pre-F13-1 official-only
+        # fold (TEST-15).
+        monkeypatch.setattr(policy, "_ASCII_PUNCT_FOLD_TOTAL", False)
         monkeypatch.setattr(policy, "_UNOFFICIAL_SEPARATOR_CHARS", "")
         # AGPL / unknown-residual forms have no ≥5-char deny suffix, so
         # the scanner itself admits once ``+``/``=``/… stop folding.
@@ -10777,6 +10782,192 @@ class TestF13UnofficialSeparatorFolding:
         assert policy._package_denylist_hit("yoloxyolo") is not None
         assert policy._package_denylist_hit("yolox_yolo") is not None
         assert policy._package_denylist_hit("yolox_pt_trt") is None
+
+
+class TestF14TotalAsciiPunctFold:
+    """F14-1: total ASCII-punct fold + C0/C1 fail-close.
+
+    F13-1 enumerated ``+=:@|#``. Every other ASCII punct (``~ ! , ; ' "
+    % ^ & * ( ) [ ] { } < > ? $`` …), NUL, and paired wrappers fail-opened.
+    Replace the enumeration with a class rule: after NFKC/Cf, any C0/C1
+    control is ``invalid_row``; every remaining non-alnum ASCII except
+    ``/`` folds to ``_``.
+    """
+
+    AGPL_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox~yolo", "yolo"),
+        ("yolox!yolo", "yolo"),
+        ("yolov8;seg", "yolov8"),
+        ("yolov8,", "yolov8"),
+        ("(yolov8)", "yolov8"),
+        ("yolo,v8", "yolo_v8"),
+        ("yolox～yolo", "yolo"),
+        ("yolo，v8", "yolo_v8"),
+    )
+    UNKNOWN_WITNESSES: ClassVar[tuple[str, ...]] = (
+        "yoloxpt~trt",
+    )
+    NC_WITNESSES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("arcface,r100", "arcface_r100"),
+        ("buffalo,l", "buffalo_l"),
+        ("scrfd,10g", "scrfd_10g"),
+        ("yolox~insightface", "insightface"),
+        ("yolox(insightface)", "insightface"),
+        ("yolox[insightface]", "insightface"),
+        ("yolox&buffalo_l", "buffalo_l"),
+        ("insightface~yolox", "insightface"),
+        ("arcface~yolox", "arcface"),
+        ("buffalo_l~yolox", "buffalo_l"),
+    )
+    CONTROL_ADMIT: ClassVar[tuple[str, ...]] = (
+        "ppyoloe+",
+        "ppyoloe+_crn_s_80e_coco",
+        "yolox:s",
+        "yolox_s+trt",
+        "yolodummy",
+    )
+    CONTROL_DENY: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("yolox+yolo", "yolo"),
+    )
+    INVALID_ROW: ClassVar[tuple[str, ...]] = (
+        "yolo\x00v8",
+        "yolox\x00yolo",
+    )
+
+    @pytest.mark.parametrize("token,expected_pkg", AGPL_WITNESSES)
+    def test_total_fold_agpl_denies_honest(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY after total ASCII-punct fold (F14-1)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert _door_entry_package_id(result.detail) == expected_pkg, (
+                f"{token!r}: door must name {expected_pkg!r}; "
+                f"got {result.detail!r}"
+            )
+
+    @pytest.mark.parametrize("token", UNKNOWN_WITNESSES)
+    def test_total_fold_unknown_residual_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY as unknown residual (F14-1 / F12-2 twin)"
+        )
+        assert hit.package_id.endswith("_unknown_residual"), (
+            f"{token!r}: expected *_unknown_residual, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert _door_entry_package_id(result.detail) == hit.package_id
+
+    @pytest.mark.parametrize("token,expected_pkg", NC_WITNESSES)
+    def test_total_fold_nc_denies_on_doors(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit NC on the scanner"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        assert hit.package_id == expected_pkg
+        for door in (
+            policy.audit_derived_from_model,
+            policy.audit_source,
+        ):
+            result = door(token)
+            assert result.ok is False, f"door must deny {token!r}"
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            pattern = _door_nc_pattern_id(result.detail)
+            entry = _door_entry_package_id(result.detail)
+            assert pattern == expected_pkg or entry == expected_pkg, (
+                f"{token!r}: door must name {expected_pkg!r}; "
+                f"got pattern={pattern!r} entry={entry!r} detail={result.detail!r}"
+            )
+
+    @pytest.mark.parametrize("token", CONTROL_ADMIT)
+    def test_total_fold_admit_controls_hold(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"control {token!r} must stay PASS"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is True, (
+            f"door must admit {token!r}; got {result.reason} ({result.detail})"
+        )
+
+    @pytest.mark.parametrize("token,expected_pkg", CONTROL_DENY)
+    def test_total_fold_existing_deny_controls_hold(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"control {token!r} must still DENY"
+        assert hit.package_id == expected_pkg
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert _door_entry_package_id(result.detail) == expected_pkg
+
+    def test_total_fold_br28_floor_only_unchanged(self) -> None:
+        for token in ("myarcface", "not-insightface"):
+            assert policy._package_denylist_hit(token) is not None
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"BR-28 {token!r} must stay floor-only door-pass"
+            )
+
+    def test_non_nfkc_dashes_still_invalid_row(self) -> None:
+        for token in ("yolo\u2010v8", "yolo\u2013v8", "yolo\u2014v8"):
+            assert policy.canonical(token) is None, (
+                f"non-NFKC dash {token!r} must stay canonical-None"
+            )
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    @pytest.mark.parametrize("token", INVALID_ROW)
+    def test_control_char_is_invalid_row(self, token: str) -> None:
+        assert policy.canonical(token) is None, (
+            f"{token!r} must fail-closed canonical-None (C0/C1)"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.INVALID_ROW
+
+    def test_red_proof_total_ascii_punct_fold_neuter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: revert ``_ASCII_PUNCT_FOLD_TOTAL`` to the F13-1 charset.
+
+        Neuter: ``_ASCII_PUNCT_FOLD_TOTAL`` → ``False`` (old enumeration
+        ``+=:@|#``). Tilde / bang / comma / wrapper witnesses admit;
+        official-separator twins and F13-1 ``+`` pins stay denied.
+        """
+        fold_only = (
+            [t for t, _ in self.AGPL_WITNESSES]
+            + list(self.UNKNOWN_WITNESSES)
+            + [t for t, _ in self.NC_WITNESSES]
+        )
+        for token in fold_only:
+            assert policy.audit_derived_from_model(token).ok is False, (
+                f"precondition: {token!r} must deny"
+            )
+        monkeypatch.setattr(policy, "_ASCII_PUNCT_FOLD_TOTAL", False)
+        for token in fold_only:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"red-proof: with total fold off, {token!r} must admit"
+            )
+        # F13-1 enumeration still folds ``+``.
+        assert policy._package_denylist_hit("yolox+yolo") is not None
+        assert policy._package_denylist_hit("yoloxyolo") is not None
+        assert policy._package_denylist_hit("yolox_yolo") is not None
+        assert policy.audit_derived_from_model("ppyoloe+").ok is True
+        assert policy.audit_derived_from_model("yolodummy").ok is True
 
 
 class TestF13NcDoorPromotionTrailingException:

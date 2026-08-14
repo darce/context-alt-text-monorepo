@@ -244,7 +244,13 @@ def test_optimistic_native_and_e2e_name_sets_agree() -> None:
 
 
 def test_optimistic_native_does_not_override_labeled_row() -> None:
-    """A labeled pred keeps its primary name even when geometry maps to another GT."""
+    """A labeled pred keeps its primary name even when geometry maps to another GT.
+
+    Both mapper paths honor labeled-wins: e2e does not union the Hungarian GT
+    name onto an already-labeled pred.
+    """
+    from scripts.bench.export_map import map_cluster_labels_optimistic
+
     manifest = GoldenManifest(
         manifest_version=2,
         roster=["Alice Q", "Bob Z"],
@@ -279,7 +285,147 @@ def test_optimistic_native_does_not_override_labeled_row() -> None:
     }
     join = {5: {"stack_media_id": 50, "image_width": 1000, "image_height": 1000}}
     _det, id_n = to_face_metric_inputs(export, manifest, join, "optimistic", frame="native")
+    _det, id_e = to_face_metric_inputs(export, manifest, join, "optimistic", frame="e2e")
     assert id_n[0].predicted == ["Bob Z"]
+    assert id_e[0].predicted == ["Bob Z"]
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    assert mapped.get(50, []) == ["Bob Z"]
+
+
+def _unlabeled_row(media_id: int, identity_id: str, bbox: dict) -> dict:
+    return {
+        "identity_id": identity_id,
+        "media_id": media_id,
+        "cluster_id": identity_id,
+        "cluster_label": "",
+        "is_auto_label": True,
+        "bbox": bbox,
+    }
+
+
+def test_optimistic_two_preds_one_gt_single_claim() -> None:
+    """Two unlabeled preds, one GT: Hungarian assigns one pred (FIR-8 R5-03)."""
+    from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
+
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q"],
+        entries=[
+            GoldenEntry(
+                path="two-pred.jpg",
+                sha256="f" * 64,
+                media_id=6,
+                face_count=1,
+                present_identities=["Alice Q"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+            )
+        ],
+    )
+    rows = [
+        _unlabeled_row(60, "p-exact", {"x": 200, "y": 200, "width": 200, "height": 200}),
+        _unlabeled_row(60, "p-shift", {"x": 220, "y": 200, "width": 200, "height": 200}),
+    ]
+    export = {
+        "media_identities": rows,
+        "clusters": [{"id": "p-exact", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = {6: {"stack_media_id": 60, "image_width": 1000, "image_height": 1000}}
+    native_map = _optimistic_names_by_pred_index(manifest.entries[0], rows, 1000, 1000)
+    assert len(native_map) == 1
+    assert set(native_map.values()) == {"Alice Q"}
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    names = mapped.get(60, [])
+    assert names == ["Alice Q"]
+    assert len(names) == len(set(names))
+
+
+def test_optimistic_one_pred_two_gts_single_claim() -> None:
+    """One unlabeled pred, two leftover GTs: fallback claims once (FIR-8 R5-03)."""
+    from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
+
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q", "Bob Z"],
+        entries=[
+            GoldenEntry(
+                path="one-pred.jpg",
+                sha256="a1" * 32,
+                media_id=7,
+                face_count=2,
+                present_identities=["Alice Q", "Bob Z"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[
+                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                ],
+            )
+        ],
+    )
+    rows = [_unlabeled_row(70, "p-wide", {"x": 100, "y": 100, "width": 800, "height": 800})]
+    export = {
+        "media_identities": rows,
+        "clusters": [{"id": "p-wide", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = {7: {"stack_media_id": 70, "image_width": 1000, "image_height": 1000}}
+    native_map = _optimistic_names_by_pred_index(manifest.entries[0], rows, 1000, 1000)
+    assert native_map == {0: "Alice Q"}
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    names = mapped.get(70, [])
+    assert names == ["Alice Q"]
+    assert len(names) == len(set(names))
+
+
+def test_optimistic_e2e_dedupes_repeated_gt_name() -> None:
+    """Two same-name GTs + two preds: e2e list is deduped (FIR-8 R5-03)."""
+    from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
+
+    manifest = GoldenManifest(
+        manifest_version=2,
+        roster=["Alice Q"],
+        entries=[
+            GoldenEntry(
+                path="dup.jpg",
+                sha256="b2" * 32,
+                media_id=8,
+                face_count=2,
+                present_identities=["Alice Q"],
+                must_right=[],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=True),
+                base_caption="",
+                face_boxes=[
+                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                ],
+            )
+        ],
+    )
+    rows = [
+        _unlabeled_row(80, "p-a", {"x": 200, "y": 200, "width": 200, "height": 200}),
+        _unlabeled_row(80, "p-b", {"x": 600, "y": 200, "width": 200, "height": 200}),
+    ]
+    export = {
+        "media_identities": rows,
+        "clusters": [{"id": "p-a", "label": "", "is_auto_label": True}],
+        "cluster_members": [],
+    }
+    join = {8: {"stack_media_id": 80, "image_width": 1000, "image_height": 1000}}
+    native_map = _optimistic_names_by_pred_index(manifest.entries[0], rows, 1000, 1000)
+    assert set(native_map.values()) == {"Alice Q"}
+    assert len(native_map) == 2
+    mapped = map_cluster_labels_optimistic(export, manifest, join)
+    names = mapped.get(80, [])
+    assert names == ["Alice Q"]
+    assert len(names) == 1
 
 
 def test_optimistic_maps_unlabeled_cluster_by_overlap() -> None:

@@ -286,7 +286,11 @@ def _optimistic_names_by_pred_index(
     width: int,
     height: int,
 ) -> dict[int, str]:
-    """Hungarian + centre-in-box GT name per prediction index (optimistic only)."""
+    """Hungarian + centre-in-box GT name per prediction index (optimistic only).
+
+    One pred claims at most one GT (``assigned_pred``). Native consumption
+    then applies labeled-wins: a pred with a primary name ignores this map.
+    """
     gt_named = [(b, gt_centre_to_tl(b.x, b.y, b.w, b.h)) for b in entry.face_boxes if b.name]
     if not gt_named:
         return {}
@@ -337,10 +341,14 @@ def map_cluster_labels_optimistic(
     manifest: GoldenManifest,
     join: dict[int, dict[str, Any]],
 ) -> dict[int, list[str]]:
-    """Hungarian overlap assignment; centre-in-box fallback allowed here only."""
-    primary = map_cluster_labels_primary(
-        export, manifest.roster or [n for e in manifest.entries for n in e.present_identities]
-    )
+    """Hungarian + centre-in-box on unlabeled residuals only (labeled-wins).
+
+    Already-labeled preds keep their primary names and are excluded from
+    the assignment matrix so a geometric overlap cannot union a second GT
+    name onto the media list. Names are appended once (deduped).
+    """
+    roster = list(manifest.roster) or [n for e in manifest.entries for n in e.present_identities]
+    primary = map_cluster_labels_primary(export, roster)
     # Residual: for media with boxes, assign unlabeled clusters by overlap.
     identities = _identities_list(export)
     by_stack: dict[int, list[dict[str, Any]]] = {}
@@ -371,6 +379,8 @@ def map_cluster_labels_optimistic(
         for row in rows:
             bbox = row.get("bbox") or {}
             if set(bbox) != _PRED_KEYS:
+                continue
+            if _primary_name_for_row(row, roster) is not None:
                 continue
             pred_tl.append(
                 pred_px_to_norm_tl(

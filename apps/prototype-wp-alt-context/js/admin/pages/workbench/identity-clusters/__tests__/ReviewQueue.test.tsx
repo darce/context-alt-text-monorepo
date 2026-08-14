@@ -978,6 +978,39 @@ describe('ReviewQueue', () => {
     });
   });
 
+  // E21-20-REV1-03 / TEST-15: chained assignment.then(merge) skips merge on reject.
+  it('REV1-03: unavailable Retry still refetches merge and top-unlabeled when assignment rejects', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    });
+
+    const mergeCallsBefore = vi.mocked(fetchPendingMergeSuggestions).mock.calls.length;
+    const topCallsBefore = vi.mocked(fetchTopUnlabeledClusters).mock.calls.length;
+    vi.mocked(fetchPendingSuggestions).mockRejectedValueOnce(new Error('assignment refetch failed'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchPendingMergeSuggestions).mock.calls.length).toBeGreaterThan(mergeCallsBefore);
+      expect(vi.mocked(fetchTopUnlabeledClusters).mock.calls.length).toBeGreaterThan(topCallsBefore);
+    });
+  });
+
   it('does not render bulk-accept or grouped Yes-all chrome', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [

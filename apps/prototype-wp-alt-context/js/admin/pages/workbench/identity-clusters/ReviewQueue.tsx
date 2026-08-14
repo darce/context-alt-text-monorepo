@@ -755,6 +755,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       });
     };
 
+    const retrySuggestionQueries = (): void => {
+      void Promise.all([
+        data.refetchAssignment(),
+        data.refetchMerge(),
+        data.refetchTopUnlabeled(),
+      ]).catch(() => undefined);
+    };
+
     // §7 render-branch flags, hoisted above the early returns so the card-primary
     // presence signal is computed in every state (BR-75).
     const showUnavailableWarning =
@@ -863,7 +871,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <button
             type="button"
             className="button"
-            onClick={() => void data.refetchAssignment().then(() => data.refetchMerge())}
+            onClick={retrySuggestionQueries}
           >
             {__('Retry', 'alt-context')}
           </button>
@@ -1171,7 +1179,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'Check the recognition service connection, then retry loading suggestions.',
                 'alt-context',
               )}
-              onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
+              onRetry={retrySuggestionQueries}
             />
           ) : showEndpointErrorWarning ? (
             <EmptyStateWarning
@@ -1180,7 +1188,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'The recognition service responded with an error. Retry now or check the service logs.',
                 'alt-context',
               )}
-              onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
+              onRetry={retrySuggestionQueries}
             />
           ) : length === 0 || !currentItem ? (
             // [rg-003] the outage and the Clear-filters escape hatch coexist: a

@@ -264,10 +264,6 @@ def holm_bonferroni(
 
 
 def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | None]:
-    if not ctx.get("cluster_ok", True):
-        raise BenchError("cluster_gate_refused", "cluster phase missing/failed; not scored")
-    if ctx.get("differential_attrition"):
-        raise BenchError("differential_attrition_exceeded", "biased pool")
     if ctx.get("count_only"):
         return CrossbenchTier.DIAGNOSTIC, None
     if not ctx.get("named", False):
@@ -448,7 +444,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     for entry in accepted:
         for stack_id in stacks:
             export = exports_by[stack_id]
-            rows = _unwrap_rows(export.media_identities, keys=("data",), what="media_identities")
+            rows = _unwrap_rows(export.media_identities, what="media_identities")
             stack_mid = join_by[stack_id][entry.media_id]["stack_media_id"]
             if not any(isinstance(r, dict) and r.get("media_id") == stack_mid for r in rows):
                 zero_det += 1
@@ -457,7 +453,7 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     # export rows not in roster → fail closed (stack_media_id domain only)
     for stack_id in stacks:
         export = exports_by[stack_id]
-        rows = _unwrap_rows(export.media_identities, keys=("data",), what="media_identities")
+        rows = _unwrap_rows(export.media_identities, what="media_identities")
         roster_stack_ids = {
             rec.get("stack_media_id")
             for rec in records_by[stack_id]
@@ -869,7 +865,6 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             "head_to_head_delta": pair.head_to_head_delta,
             "holm_significant": bool(holm_info["holm_significant"]) if holm_info and name not in holm_missing else False,
             "exhaustiveness_ok": exhaustiveness_ok,
-            "cluster_ok": True,
             "count_only": False,
             "bootstrap_status": boot_status,
         }

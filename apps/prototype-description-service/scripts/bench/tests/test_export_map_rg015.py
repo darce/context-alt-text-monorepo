@@ -77,10 +77,10 @@ def test_object_envelope_is_rejected() -> None:
     from scripts.bench.stack_pair import BenchError
 
     with pytest.raises(BenchError) as exc:
-        _unwrap_rows({"data": []}, keys=("data",), what="media_identities")
+        _unwrap_rows({"data": []}, what="media_identities")
     assert exc.value.code == "export_envelope_invalid"
     with pytest.raises(BenchError) as exc:
-        _unwrap_rows({"clusters": [{"id": 1}]}, keys=("clusters",), what="clusters")
+        _unwrap_rows({"clusters": [{"id": 1}]}, what="clusters")
     assert exc.value.code == "export_envelope_invalid"
 
 
@@ -89,10 +89,28 @@ def test_ambiguous_or_unknown_envelope_is_error() -> None:
     from scripts.bench.stack_pair import BenchError
 
     with pytest.raises(BenchError) as exc:
-        _unwrap_rows({"items": [{"id": 1}]}, keys=("data",), what="media_identities")
+        _unwrap_rows({"items": [{"id": 1}]}, what="media_identities")
     assert exc.value.code == "export_envelope_invalid"
     with pytest.raises(BenchError) as exc:
-        _unwrap_rows({"data": [], "clusters": []}, keys=("data", "clusters"), what="clusters")
+        _unwrap_rows({"data": [], "clusters": []}, what="clusters")
     assert exc.value.code == "export_envelope_invalid"
-    rows = _unwrap_rows([{"id": 1}], keys=("data",), what="media_identities")
+    rows = _unwrap_rows([{"id": 1}], what="media_identities")
     assert rows == [{"id": 1}]
+
+
+def test_dict_export_missing_media_identities_is_rejected() -> None:
+    from scripts.bench.export_map import _identities_list
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _identities_list({"clusters": []})
+    assert exc.value.code == "export_envelope_invalid"
+
+
+def test_non_dict_row_is_rejected() -> None:
+    from scripts.bench.export_map import _unwrap_rows
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _unwrap_rows([{"id": 1}, "nope"], what="media_identities")
+    assert exc.value.code == "export_envelope_invalid"

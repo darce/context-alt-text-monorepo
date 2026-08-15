@@ -1240,14 +1240,19 @@ def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
 
 
 def _stamp_missing_annotation_mode(entries: list[dict[str, Any]], mode_value: str) -> None:
-    """Fill blank entry stamps from the document mode. Never overwrite a stamp.
+    """Fill omitted entry stamps from the document mode. Never overwrite.
 
-    Overwriting would hide a conflict; leaving a disagreeing stamp lets the
-    shared resolver apply most-restrictive-wins / conflict-refuses.
+    A blank or whitespace-only string is not omitted: it is an explicit
+    empty token and is not inheritable (S2R3-02). Filling it would mint
+    the parent mode onto an entry that never carried it and reopen
+    exhaustive scoring on the face path. Leave the blank in place so the
+    resolver treats it as missing (same as omitted-after-resolve) and
+    refuses. Only a missing key or an explicit ``None`` is filled.
+    Overwriting a real stamp would hide a conflict; leaving a disagreeing
+    stamp lets the shared resolver apply most-restrictive-wins.
     """
     for entry in entries:
-        raw = entry.get("annotation_mode")
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
+        if entry.get("annotation_mode") is None:
             entry["annotation_mode"] = mode_value
 
 

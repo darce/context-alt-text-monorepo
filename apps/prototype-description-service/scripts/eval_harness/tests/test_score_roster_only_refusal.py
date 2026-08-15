@@ -18,7 +18,9 @@ from scripts.eval_harness.manifest import AnnotationMode, ManifestError, load_ma
 from scripts.eval_harness.report import (
     DETECTION_REFUSED_EXPLANATION,
     ReportError,
+    _entries_as_dicts,
     _resolve_score_annotation_mode,
+    _stamp_missing_annotation_mode,
     build_reports,
     score_face_run_record,
     score_run_record,
@@ -340,3 +342,55 @@ def test_empty_entries_hard_error_through_score_face() -> None:
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
     assert exc_info.value.invariant == "detection_refuses_empty_entries"
+
+
+def _mapping_entry(*, annotation_mode: object) -> dict:
+    entry = {
+        "path": "x.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Example"}],
+    }
+    if annotation_mode is not _OMIT:
+        entry["annotation_mode"] = annotation_mode
+    return entry
+
+
+_OMIT = object()
+
+
+def test_stamp_does_not_fill_blank_or_whitespace_entry_mode() -> None:
+    """S2R3-02: blank/whitespace is not inheritable; only omitted/None fill."""
+    entries = [
+        {"annotation_mode": ""},
+        {"annotation_mode": "   "},
+        {"annotation_mode": None},
+        {},
+    ]
+    _stamp_missing_annotation_mode(entries, "exhaustive")
+    assert entries[0]["annotation_mode"] == ""
+    assert entries[1]["annotation_mode"] == "   "
+    assert entries[2]["annotation_mode"] == "exhaustive"
+    assert entries[3]["annotation_mode"] == "exhaustive"
+
+
+def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
+    """S2R3-02: parent exhaustive must not mint exhaustive onto a blank stamp.
+
+    The live hole: fill-blanks treated "" as omitted, stamped exhaustive,
+    and score_face_run_record published the R2 overshoot numbers.
+    """
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Example"],
+        "entries": [_mapping_entry(annotation_mode="")],
+    }
+    entries, _, _ = _entries_as_dicts(manifest)
+    assert entries[0]["annotation_mode"] == ""
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(_face_run_record(), manifest)
+    assert exc_info.value.invariant == "detection_requires_annotation_mode"

@@ -92,3 +92,27 @@
 - Already covered by existing test: pending
 - Failing assertion: pending
 - After restore: pending
+
+## REV1-14 mutation M1 — dropping attachment_url from the source chain loses crop source
+- Mutation applied: `const sourceUrl = mediaMeta?.url ?? identity.attachment_url ?? identity.media_url ?? null;` -> `const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/roster/__tests__/IdentityThumbnail.test.tsx`
+- Verdict: FAILED
+- Already covered by existing test: yes (`does not paint a non-dedicated attachment thumb_url as a face chip [REV1-07]`; also `clears a fallback source img that 404s [REV1-08]`; `crops a non-dedicated attachment thumb_url instead of painting the scene [REV1-07]`)
+- Failing assertion: `expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();`
+- After restore: PASSED
+
+## REV1-14 mutation M2 — disabling the blob-failure latch never falls through
+- Mutation applied: `if (effectiveThumbUrl) { setThumbFailed(true); return; }` -> `if (effectiveThumbUrl) { return; }`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/roster/__tests__/IdentityThumbnail.test.tsx`
+- Verdict: FAILED
+- Already covered by existing test: yes (`names a claimed dedicated blob that 404s with no fallback [REV1-08]`; also `names a wrapping link after a claimed blob 404s [REV1-08]`; `clears a fallback source img that 404s [REV1-08]`; `keeps decorative alt="" unnamed after a claimed blob 404 [REV1-08]`)
+- Failing assertion: `expect(document.querySelector('img')).toBeNull();`
+- After restore: PASSED
+
+## REV1-14 mutation M3 — fallback source is the full scene instead of the crop
+- Mutation applied: `const fallbackSrc = needsCanvasCrop ? croppedSrc : sourceUrl;` -> `const fallbackSrc = sourceUrl;`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/roster/__tests__/IdentityThumbnail.test.tsx`
+- Verdict: FAILED
+- Already covered by existing test: yes (`keeps placeholder until crop is ready after intersection [S6-BR-02]`; also `does not paint a non-dedicated attachment thumb_url as a face chip [REV1-07]`; `does not construct Image before the host intersects`)
+- Failing assertion: `expect(document.querySelector('img')).toBeNull();`
+- After restore: PASSED

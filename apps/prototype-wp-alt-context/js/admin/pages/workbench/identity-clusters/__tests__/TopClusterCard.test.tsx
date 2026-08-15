@@ -213,7 +213,7 @@ describe('TopClusterCard', () => {
     smallCells.forEach((cell) => {
       expect(cell).toHaveStyle({ width: '39px', height: '39px' });
       expect(cell).toHaveClass('acx-avatar--hide-missing-label');
-      expect(cell.querySelector('.acx-avatar__missing-label')).toHaveTextContent(MISSING_LABEL);
+      expect(cell.querySelector('.acx-avatar__missing-label')).toHaveTextContent('No image');
     });
     unmount();
 
@@ -231,7 +231,7 @@ describe('TopClusterCard', () => {
     const largeCell = singleContainer.querySelector('.acx-top-cluster-card__thumb-image');
     expect(largeCell).toHaveStyle({ width: '80px', height: '80px' });
     expect(largeCell).not.toHaveClass('acx-avatar--hide-missing-label');
-    expect(singleContainer.querySelector('.acx-avatar__missing-label')).toHaveTextContent(MISSING_LABEL);
+    expect(singleContainer.querySelector('.acx-avatar__missing-label')).toHaveTextContent('No image');
   });
 
   // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share

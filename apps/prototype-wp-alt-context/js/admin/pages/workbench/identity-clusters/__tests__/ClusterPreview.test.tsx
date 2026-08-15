@@ -37,7 +37,8 @@ describe('ClusterPreview', () => {
     const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
     expect(missing).toHaveAccessibleName(MISSING_REPRESENTATIVE_LABEL);
     expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
-    expect(screen.getByText(MISSING_REPRESENTATIVE_LABEL)).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByText(MISSING_REPRESENTATIVE_LABEL)).not.toBeInTheDocument();
     expect(missing).toHaveClass('acx-avatar--hide-missing-label');
     expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
   });

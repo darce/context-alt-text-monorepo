@@ -13,18 +13,13 @@ import * as AvatarPrimitive from '@radix-ui/react-avatar';
 import { AlertTriangle, ImageOff } from 'lucide-react';
 import { __ } from '@wordpress/i18n';
 
-import type { AvatarState as FaceThumbDisplayState } from './faceThumbDisplay';
+import { AVATAR_STATE, type AvatarState } from './faceThumbDisplay';
+
+export { AVATAR_STATE, type AvatarState };
+
+export const AVATAR_STATES = AVATAR_STATE;
 
 export type AvatarSize = 'sm' | 'md' | 'lg';
-
-export const AVATAR_STATES = {
-  loading: 'loading',
-  real: 'real',
-  dataMissing: 'data-missing',
-  error: 'error',
-} as const;
-
-export type AvatarState = (typeof AVATAR_STATES)[keyof typeof AVATAR_STATES];
 
 export type ImageLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
@@ -54,7 +49,7 @@ export interface AvatarProps {
   /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
   hideMissingLabel?: boolean;
   /** Externally-owned state override. When omitted the component derives its own. */
-  state?: AvatarState | FaceThumbDisplayState;
+  state?: AvatarState;
   onLoad?: () => void;
   onError?: () => void;
 }
@@ -65,7 +60,7 @@ function hasAvatarSrc(src: string | undefined): src is string {
 
 function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingStatus): AvatarState {
   if (!hasAvatarSrc(src)) {
-    return AVATAR_STATES.dataMissing;
+    return AVATAR_STATE.missing;
   }
   if (loadStatus === 'loaded') {
     return AVATAR_STATES.real;
@@ -140,11 +135,11 @@ export const Avatar = ({
     .join(' ');
   const rootStyle = { width: displaySize, height: displaySize };
 
-  if (state === AVATAR_STATES.dataMissing) {
+  if (state === AVATAR_STATE.missing) {
     return (
       <span
         className={classes}
-        data-avatar-state={AVATAR_STATES.dataMissing}
+        data-avatar-state={AVATAR_STATE.missing}
         role="img"
         aria-label={missingLabel}
         style={rootStyle}

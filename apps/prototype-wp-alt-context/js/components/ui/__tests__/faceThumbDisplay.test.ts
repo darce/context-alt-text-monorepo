@@ -5,7 +5,6 @@ import {
   AVATAR_STATE,
   FACE_THUMB_MODE,
   LOAD_STATUS,
-  REPRESENTATIVE_IMAGE_UNAVAILABLE,
   resolveFaceThumbCrop,
   resolveFaceThumbDisplay,
   resolveUncroppedSource,
@@ -51,7 +50,7 @@ describe('resolveFaceThumbDisplay [TEST-15]', () => {
     );
 
     expect(display.state).toBe(AVATAR_STATE.missing);
-    expect(display.unavailableLabel).toBe(REPRESENTATIVE_IMAGE_UNAVAILABLE);
+    expect(display.unavailableLabel).toBe('Representative image unavailable');
     expect(display.isLoudError).toBe(false);
     expect(display.mode).toBe(FACE_THUMB_MODE.none);
   });
@@ -81,7 +80,7 @@ describe('resolveFaceThumbDisplay [TEST-15]', () => {
     );
 
     expect(fallback.state).toBe('fallback-crop');
-    expect(missing.state).toBe('missing');
+    expect(missing.state).toBe('data-missing');
     expect(error.state).toBe('error');
     expect(new Set([fallback.state, missing.state, error.state]).size).toBe(3);
   });

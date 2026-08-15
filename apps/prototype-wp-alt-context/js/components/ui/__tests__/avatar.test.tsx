@@ -97,7 +97,7 @@ describe('Avatar four-state contract', () => {
     const { container } = render(<Avatar />);
 
     const root = container.querySelector('[data-avatar-state]') as HTMLElement;
-    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.dataMissing);
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.missing);
     expect(root).toHaveAttribute('data-avatar-state', 'data-missing');
 
     const named = screen.getByRole('img', { name: 'No image' });

@@ -20,7 +20,7 @@ export const AVATAR_STATE = {
   real: 'real',
   fallbackCrop: 'fallback-crop',
   uncropped: 'uncropped',
-  missing: 'missing',
+  missing: 'data-missing',
   error: 'error',
 } as const;
 

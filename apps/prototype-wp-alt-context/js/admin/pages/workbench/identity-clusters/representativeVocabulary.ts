@@ -2,10 +2,12 @@
  * Canonical copy for missing-representative and gated-cluster states.
  * Preview surfaces and repair rows must read this module — do not hardcode.
  */
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { _n, sprintf } from '@wordpress/i18n';
+
+import { REPRESENTATIVE_IMAGE_UNAVAILABLE } from '../../../../components/ui/faceThumbDisplay';
 
 export const REPRESENTATIVE_VOCABULARY = {
-  imageUnavailable: __('Representative image unavailable', 'alt-context'),
+  imageUnavailable: REPRESENTATIVE_IMAGE_UNAVAILABLE,
 } as const;
 
 export function gatedClusterCopy(count: number, truncated = false): string {

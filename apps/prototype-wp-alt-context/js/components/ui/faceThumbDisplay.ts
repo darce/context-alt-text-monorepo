@@ -46,7 +46,10 @@ export const LOAD_STATUS = {
 
 export type LoadStatus = (typeof LOAD_STATUS)[keyof typeof LOAD_STATUS];
 
-export const REPRESENTATIVE_IMAGE_UNAVAILABLE = 'Representative image unavailable';
+export const REPRESENTATIVE_IMAGE_UNAVAILABLE = __(
+  'Representative image unavailable',
+  'alt-context',
+);
 
 export function unavailableImageName(alt?: string | null): string {
   if (typeof alt === 'string' && alt.trim() !== '') {
@@ -56,7 +59,7 @@ export function unavailableImageName(alt?: string | null): string {
       alt,
     );
   }
-  return __('Representative image unavailable', 'alt-context');
+  return REPRESENTATIVE_IMAGE_UNAVAILABLE;
 }
 
 export interface FaceThumbSource {

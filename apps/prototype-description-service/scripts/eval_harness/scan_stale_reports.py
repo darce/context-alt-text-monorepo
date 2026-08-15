@@ -132,6 +132,29 @@ def _per_identity_row_count(ident: Mapping[str, Any]) -> int | None:
     return len(table)
 
 
+# Exact key set emitted by report._refused_identification_metric.
+# Drift-tested against that function — do not invent extras (rg-015).
+REFUSED_IDENTIFICATION_KEYS: frozenset[str] = frozenset(
+    {
+        "refused",
+        "invariant",
+        "precision",
+        "recall",
+        "macro_precision",
+        "macro_recall",
+        "per_identity",
+        "true_rejections",
+        "excluded_images",
+        "wrong_names",
+        "ignored_wrong_names",
+    }
+)
+
+# A refused block may publish these as a non-null value. Every other
+# present key must be cleared (None, or an empty per_identity mapping).
+_REFUSED_STRUCTURAL_KEYS: frozenset[str] = frozenset({"refused", "invariant"})
+
+
 def _has_metric_fields(ident: Mapping[str, Any]) -> bool:
     """True when the block carries scoring keys, regardless of values.
 
@@ -142,19 +165,15 @@ def _has_metric_fields(ident: Mapping[str, Any]) -> bool:
     return any(key in ident for key in ("precision", "recall", "per_identity"))
 
 
-def _published_number(value: Any) -> bool:
-    """True when a metric field holds a published number (not null)."""
-    return value is not None
-
-
 def classify_identification(ident: Any) -> tuple[IdentVerdict, str]:
     """Classify one identification value. Never returns a silent pass.
 
-    REFUSED: ``refused is True``, no published score values, invariant set.
+    REFUSED: ``refused is True``, invariant set, and the block matches
+    the scorer-emitted refused shape (no additional published metrics).
     SCORED: not an explicit refusal, and at least one metric field is
     present — including ``precision: null`` / ``recall: 0.0`` leftovers.
     UNRECOGNIZED: everything else (wrong types, refused-but-scored,
-    empty object with no metric keys).
+    greenwashed refusal, empty object with no metric keys).
     """
     if not isinstance(ident, Mapping):
         return (
@@ -174,17 +193,31 @@ def classify_identification(ident: Any) -> tuple[IdentVerdict, str]:
                 IdentVerdict.UNRECOGNIZED,
                 "refused block has non-object per_identity",
             )
-        if _published_number(ident.get("precision")) or _published_number(
-            ident.get("recall")
-        ):
+        published: list[str] = []
+        for key, value in ident.items():
+            if key in _REFUSED_STRUCTURAL_KEYS:
+                continue
+            if key == "per_identity":
+                if table_rows:
+                    published.append("per_identity")
+                continue
+            if value is not None:
+                published.append(str(key))
+        if published:
+            if "precision" in published or "recall" in published:
+                return (
+                    IdentVerdict.UNRECOGNIZED,
+                    "refused block still publishes precision or recall",
+                )
+            if "per_identity" in published:
+                return (
+                    IdentVerdict.UNRECOGNIZED,
+                    "refused block still publishes a per-identity table",
+                )
+            named = ", ".join(sorted(published))
             return (
                 IdentVerdict.UNRECOGNIZED,
-                "refused block still publishes precision or recall",
-            )
-        if table_rows:
-            return (
-                IdentVerdict.UNRECOGNIZED,
-                "refused block still publishes a per-identity table",
+                f"refused block still publishes {named}",
             )
         invariant = ident.get("invariant")
         if not isinstance(invariant, str) or not invariant.strip():
@@ -293,11 +326,18 @@ def load_report(root: Path, rel: str) -> tuple[Any | None, str | None]:
 def provenance_contradictions(
     hits: list[IdentificationHit],
 ) -> dict[str, list[IdentificationHit]]:
-    """Groups whose members do not all share one verdict."""
+    """Groups whose members do not all share one verdict.
+
+    Reports with no ``score_manifest_sha256`` are skipped. Absence is
+    not a shared value — two reports that both omit the field are not
+    a provenance contradiction.
+    """
     groups: dict[str, list[IdentificationHit]] = defaultdict(list)
     for hit in hits:
-        key = hit.score_manifest_sha256 or "(missing)"
-        groups[key].append(hit)
+        sha = hit.score_manifest_sha256
+        if sha is None:
+            continue
+        groups[sha].append(hit)
     return {
         sha: members
         for sha, members in groups.items()

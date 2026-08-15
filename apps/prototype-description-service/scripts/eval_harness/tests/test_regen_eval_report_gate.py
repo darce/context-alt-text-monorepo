@@ -424,6 +424,159 @@ def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# S2R5-11: identification withdrawal must appear in the publish audit trail
+# ---------------------------------------------------------------------------
+
+
+def test_identification_summary_sees_scored_to_refused_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """S2R5-11: detection_summary cannot see this transition; ident must."""
+    regen = _load_regen()
+    scored = tmp_path / "before.json"
+    scored.write_text(
+        json.dumps(
+            {
+                "faces": {
+                    "detection": {"refused": True, "invariant": "detection_refuses_roster_only"},
+                    "identification": {
+                        "refused": False,
+                        "precision": 0.5,
+                        "recall": 0.0,
+                        "per_identity": {"Ada": {"precision": None, "recall": 0.0}},
+                    },
+                },
+                "provenance": {"score_manifest_sha256": "ab"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    before_det = regen.detection_summary(scored)
+    before_ident = regen.identification_summary(scored)
+    assert before_det["refused"] is True
+    assert before_ident["refused"] is False
+    assert before_ident["precision"] == 0.5
+    assert before_ident["per_identity_rows"] == 1
+
+    refused = tmp_path / "after.json"
+    refused.write_text(
+        json.dumps(
+            {
+                "faces": {
+                    "detection": {"refused": True, "invariant": "detection_refuses_roster_only"},
+                    "identification": {
+                        "refused": True,
+                        "invariant": "identification_refuses_unboxed_identity_claims",
+                        "precision": None,
+                        "recall": None,
+                        "per_identity": {},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_ident = regen.identification_summary(refused)
+    assert after_ident["refused"] is True
+    assert after_ident["invariant"] == "identification_refuses_unboxed_identity_claims"
+    assert after_ident["precision"] is None
+    assert after_ident["per_identity_rows"] == 0
+    # detection_summary of the after file is unchanged refused-detection —
+    # it still cannot describe the identification withdrawal.
+    after_det = regen.detection_summary(refused)
+    assert after_det["refused"] is True
+    assert after_det.get("precision") is None
+
+
+def test_md_identification_line_reads_face_identification_section(
+    tmp_path: Path,
+) -> None:
+    regen = _load_regen()
+    md = tmp_path / "report.md"
+    md.write_text(
+        "## Face detection\n\n"
+        "- REFUSED (detection_refuses_roster_only): lower bound\n\n"
+        "## Face identification (named assertions)\n\n"
+        "- micro precision: 0.500 recall: 0.000\n",
+        encoding="utf-8",
+    )
+    assert regen.md_detection_line(md) == (
+        "- REFUSED (detection_refuses_roster_only): lower bound"
+    )
+    assert regen.md_identification_line(md) == (
+        "- micro precision: 0.500 recall: 0.000"
+    )
+
+
+def _unboxed_roster_only_manifest() -> dict:
+    """Same as the boxed fixture minus face_boxes — identification must refuse."""
+    payload = _roster_only_manifest()
+    payload["entries"][0]["face_boxes"] = []
+    return payload
+
+
+def test_real_cli_allow_refused_prints_identification_audit_trail(
+    tmp_path: Path,
+) -> None:
+    """Publisher stdout must show the scored→refused identification change."""
+    run_record = _write_json(tmp_path / "run-record.json", _overshoot_record())
+    manifest = _write_json(tmp_path / "manifest.json", _unboxed_roster_only_manifest())
+    out_json = tmp_path / "dest-report.json"
+    out_md = tmp_path / "dest-report.md"
+    leftover = {
+        "faces": {
+            "detection": {"refused": True, "invariant": "detection_refuses_roster_only"},
+            "identification": {
+                "refused": False,
+                "precision": None,
+                "recall": 0.0,
+                "per_identity": {"Ada": {}},
+            },
+        }
+    }
+    out_json.write_text(json.dumps(leftover), encoding="utf-8")
+    out_md.write_text(
+        "## Face detection\n\n- REFUSED (detection_refuses_roster_only): x\n\n"
+        "## Face identification (named assertions)\n\n"
+        "- micro precision: null recall: 0.000\n",
+        encoding="utf-8",
+    )
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+            "--allow-refused",
+        ],
+        cwd=_REPO_ROOT,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 3, combined
+    assert "BEFORE_IDENT_JSON" in proc.stdout
+    assert "AFTER_IDENT_JSON" in proc.stdout
+    assert "BEFORE_IDENT_MD" in proc.stdout
+    assert "AFTER_IDENT_MD" in proc.stdout
+    before_line = next(
+        line for line in proc.stdout.splitlines() if line.startswith("BEFORE_IDENT_JSON ")
+    )
+    after_line = next(
+        line for line in proc.stdout.splitlines() if line.startswith("AFTER_IDENT_JSON ")
+    )
+    before = json.loads(before_line.split(" ", 1)[1])
+    after = json.loads(after_line.split(" ", 1)[1])
+    assert before["refused"] is False
+    assert before["per_identity_rows"] == 1
+    assert after["refused"] is True
+    assert after["invariant"] == "identification_refuses_unboxed_identity_claims"
+    assert "REFUSED" in proc.stdout.split("AFTER_IDENT_MD ", 1)[1].splitlines()[0]
+
+
+# ---------------------------------------------------------------------------
 # Classifier: reason string is selected by the numeric exit, not a guess
 # ---------------------------------------------------------------------------
 

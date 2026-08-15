@@ -26,6 +26,7 @@ from scripts.eval_harness.generate_determinism_anchor import (
     _coverage_gaps,
     _DEFAULT_MANIFEST_STEM,
     _DEFAULT_STEM,
+    _POS_TRAP_MEDIA_ID,
     _TRAP_MEDIA_ID,
     build_caption_anchor_manifest,
     build_run_record,
@@ -48,7 +49,7 @@ _GOLDEN = _SERVICE_ROOT / "scene" / "tests" / "seed" / "golden.json"
 _ANCHOR_DIR = _REPO_ROOT / "docs" / "tasks" / "vlm" / "bakeoff-results"
 _STEM = _DEFAULT_STEM
 _MAN_STEM = _DEFAULT_MANIFEST_STEM
-# Freeze corpus: golden + media 39 mixed-y trap (wG3). Score-time man is this, not golden.
+# Freeze corpus: golden + media 39 mixed-y trap (wG3) + media 40 centre-x-tie (G-02).
 _MAN = _ANCHOR_DIR / f"{_MAN_STEM}.json"
 _RUN = _ANCHOR_DIR / f"{_STEM}.json"
 _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-report.json"
@@ -57,14 +58,13 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # File digests of the committed freeze set — update when intentionally regenerating.
 # wG3: caption freeze corpus extended with media 39 G-01 mixed-y trap so
 # labeled_y_missing_images is freeze-observable (was structural 0 on golden).
-# wI1: report JSON/MD regenerated against the wG3 man+run (labeled_y_missing_*
-# keys appear; counts 38; detection tp 53; wrong_name_rate 0.1053; …).
-# Prior report digests c2fcfa34… / dc7bf054… were the pre-wG3 37-image freeze.
+# G-02: media 40 centre-x-tie trap so positional_images is freeze-observable
+# (was structural 0). Digests rewritten with the G-02 regen.
 _FROZEN_DIGESTS = {
-    _MAN.name: "2eae07326bd5a63834fe838de9fbc4e46ab71599ed213c6eacb1fd66757c57b7",
-    _RUN.name: "b5c3040aad98939b71c2242ed2cdbd8efcdb4a51bd65ec8f5f45e8a1a70e58cf",
-    _REPORT_JSON.name: "990e15178f9e0b2450d1f14099ea466e7dfad0c827897dc56862771279ce1394",
-    _REPORT_MD.name: "7c0e4ae779df28765f55f90e20e0dadc1702bcb4a1978e0a0b5b315336b281f9",
+    _MAN.name: "7cd318537e2a371b4545b7c974b4d7c04573c09a1e0c40d8077c976e2f937570",
+    _RUN.name: "82e7b47b334ce506ffdc5f8a842a3581ff1ede563d3b29fa61d54ef9fc9e280d",
+    _REPORT_JSON.name: "6bda0f8d5d3f27ab7033143cd77371c8560b34fe220c3249b0b6df819a63b8e4",
+    _REPORT_MD.name: "157d7e8891826c1e4c683f2d9a94a5a4d9a1eac3532597ba0ae5cb557ea75451",
 }
 
 
@@ -204,7 +204,7 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
     expected_sha = _manifest_sha(load_manifest(str(_MAN), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("7462d325")
+    assert len(manifest_sha) == 64
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -218,8 +218,9 @@ def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed(
     assert record["provenance"]["manifest_sha256"] == _manifest_sha(
         load_manifest(str(_MAN), skip_hash_verification=True)
     )
-    assert len(record["items"]) == 38  # golden 37 + G-01 trap media 39
+    assert len(record["items"]) == 39  # golden 37 + G-01 media 39 + G-02 media 40
     assert any(int(i["media_id"]) == _TRAP_MEDIA_ID for i in record["items"])
+    assert any(int(i["media_id"]) == _POS_TRAP_MEDIA_ID for i in record["items"])
     for item in record["items"]:
         for row in item["identities"]:
             assert isinstance(row, dict)
@@ -341,27 +342,27 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
 def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
     """The freeze corpus must name what it leaves unscored, in the anchor itself.
 
-    Freeze man is golden+trap (38 entries). face_boxes is 1/38 (trap only) —
+    Freeze man is golden+traps (39 entries). face_boxes is 2/39 (media 39+40) —
     still below the slice threshold, not a certified sampling frame (EVAL-03).
-    Other registry fields stay 0/38. golden.json itself remains 0/37 face_boxes.
+    Other registry fields stay 0/39. golden.json itself remains 0/37 face_boxes.
     """
     manifest = load_manifest(str(_MAN), skip_hash_verification=True)
     gaps = compute_corpus_coverage_gaps(manifest.entries)
     assert set(gaps) == set(SHIPPED_CORPUS_COVERAGE_GAPS)
     assert "demographic_cohort" in gaps  # VLM6-C-02: registry-driven
-    assert gaps["face_boxes"]["populated"] == 1  # media 39 trap only
-    assert gaps["face_boxes"]["total"] == 38
-    assert gaps["face_boxes"]["below_threshold"] is True  # 1 < 5
+    assert gaps["face_boxes"]["populated"] == 2  # media 39 + media 40 traps
+    assert gaps["face_boxes"]["total"] == 39
+    assert gaps["face_boxes"]["below_threshold"] is True  # 2 < 5
     assert gaps["face_boxes"]["pi_zero"] is False
-    assert "1/38" in gaps["face_boxes"]["reason"]
+    assert "2/39" in gaps["face_boxes"]["reason"]
     for field in ("spatial_facts", "reference_facts", "demographic_cohort"):
         info = gaps[field]
         assert info["populated"] == 0
-        assert info["total"] == 38
+        assert info["total"] == 39
         assert info["threshold"] == METRIC_BACKING_SLICE_THRESHOLD
         assert info["below_threshold"] is True
         assert info["pi_zero"] is True
-        assert "0/38" in info["reason"]
+        assert "0/39" in info["reason"]
     assert "right-names-on-wrong-faces" in gaps["face_boxes"]["reason"]
     # Seed golden stays structurally blind (shared fixture not bent).
     golden = load_manifest(str(_GOLDEN), skip_hash_verification=True)
@@ -538,9 +539,9 @@ def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3
 def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
     """require_metric_backing is exercised by the generator, not only unit tests.
 
-    Freeze corpus has 1/38 face_boxes (trap) so face_boxes is no longer
+    Freeze corpus has 2/39 face_boxes (traps) so face_boxes is no longer
     corpus-vacuous for require_metric_backing (is_vacuous ⇔ populated==0). It
-    remains under-sampled in coverage_gaps (1 < threshold 5). Other registry
+    remains under-sampled in coverage_gaps (2 < threshold 5). Other registry
     fields stay refused.
     """
     manifest = load_manifest(str(_MAN), skip_hash_verification=True)
@@ -628,6 +629,47 @@ def test_caption_anchor_corpus_includes_mixed_y_order_degraded_trap() -> None:
     assert any(int(e.media_id) == _TRAP_MEDIA_ID for e in committed.entries)
 
 
+def test_caption_anchor_corpus_includes_centre_x_tie_positional_trap() -> None:
+    """VLM6-R2-G-02: ≥1 freeze image with two named boxes at same x, distinct y.
+
+    Pre-extension positional_images was structurally 0 — no image could
+    distinguish a correct (x,y,name) key from a y-reversed one (HARM-06/07
+    landed green). Media 40 is additive; media 39 stays the mixed-y trap.
+    """
+    from scripts.eval_harness.face_metrics import labeled_order, named_box_name
+    from scripts.eval_harness.generate_determinism_anchor import (
+        _NAME_POS_BOTTOM,
+        _NAME_POS_TOP,
+    )
+
+    raw = build_caption_anchor_manifest(
+        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    )
+    ties = 0
+    for entry in raw["entries"]:
+        if int(entry["media_id"]) != _POS_TRAP_MEDIA_ID:
+            continue
+        boxes = list(entry.get("face_boxes") or [])
+        named = []
+        for b in boxes:
+            name = named_box_name(b)
+            if name is None or b.get("x") is None or b.get("y") is None:
+                continue
+            named.append((float(b["x"]), float(b["y"]), name))
+        assert len(named) >= 2, "media 40 needs two named boxes with x and y"
+        xs = {round(x, 6) for x, _y, _n in named}
+        ys = {y for _x, y, _n in named}
+        assert len(xs) == 1, f"centre x must tie; got {xs}"
+        assert len(ys) >= 2, f"y values must be distinct; got {ys}"
+        lo = labeled_order(boxes)
+        assert lo.order_degraded is False
+        assert lo.names == [_NAME_POS_TOP, _NAME_POS_BOTTOM]
+        ties += 1
+    assert ties == 1
+    committed = load_manifest(str(_MAN), skip_hash_verification=True)
+    assert any(int(e.media_id) == _POS_TRAP_MEDIA_ID for e in committed.entries)
+
+
 def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -663,10 +705,10 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(
         f"got {live_n} (trap media missing or y not actually omitted)"
     )
     assert live.get("labeled_y_missing_paths"), "paths must name the degraded image(s)"
-    # Trap is scored-but-disclosed, not folded into absence-only order_unknown:
-    # order_unknown still counts every image lacking usable L→R (incl. the trap).
+    # Media 39 is scored-but-disclosed (order_degraded), not folded into absence-only
+    # order_unknown. Media 40 is the one positional image (G-02).
     assert int(live["order_unknown_excluded"]) == 38
-    assert int(live["positional_images"]) == 0
+    assert int(live["positional_images"]) >= 1
 
     real_lo = labeled_order
 
@@ -712,3 +754,7 @@ def test_corpus_traps_disclose_deliberate_caption_trap_media() -> None:
     t = by_id[_TRAP_MEDIA_ID]
     assert "VLM6-R2-G-01" in str(t.get("kind") or "")
     assert "labeled_y_missing" in str(t.get("trips") or "")
+    assert _POS_TRAP_MEDIA_ID in by_id
+    t40 = by_id[_POS_TRAP_MEDIA_ID]
+    assert "VLM6-R2-G-02" in str(t40.get("kind") or "")
+    assert "positional_images" in str(t40.get("trips") or "")

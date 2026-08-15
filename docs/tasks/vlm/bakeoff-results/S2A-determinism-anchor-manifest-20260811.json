@@ -1566,6 +1566,53 @@
         "source": "fixture"
       },
       "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    {
+      "base_caption": "",
+      "context_pack": {
+        "caption": "",
+        "description": "",
+        "title": "Caption freeze G-02 centre-x-tie positional trap"
+      },
+      "difficulty": "easy",
+      "domain": "faces",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "h": 0.2,
+          "name": "Maria Correonero",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5,
+          "y": 0.1
+        },
+        {
+          "h": 0.2,
+          "name": "Caitlin Weaver",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5,
+          "y": 0.8
+        }
+      ],
+      "face_count": 2,
+      "media_id": 40,
+      "must_right": [],
+      "path": "mock_images/centre-x-tie-order.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Maria Correonero",
+        "Caitlin Weaver"
+      ],
+      "provenance": {
+        "license": "fixture",
+        "note": "synthetic caption determinism trap — no real image bytes; TRAP VLM6-R2-G-02 centre-x-tie positional (positional_images freeze observability)",
+        "publishable": false,
+        "source": "fixture"
+      },
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
     }
   ],
   "manifest_version": 2,

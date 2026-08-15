@@ -13,11 +13,12 @@ Default outputs (repo-root relative when run from ``apps/prototype-description-s
     ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json
     ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.md
 
-The freeze corpus is **golden.json + one additive trap entry** (media 39). The
-seed file ``scene/tests/seed/golden.json`` is left untouched — it remains the
+The freeze corpus is **golden.json + two additive trap entries** (media 39, 40).
+The seed file ``scene/tests/seed/golden.json`` is left untouched — it remains the
 37-entry shared fixture with zero ``face_boxes``. The caption freeze corpus is
 the generated bakeoff-results manifest so ``labeled_y_missing_images`` can leave
-structural 0 (VLM6-R2-G-01 residual / wG3; same trap shape as wF4 face media 11).
+structural 0 (VLM6-R2-G-01 residual / wG3) and ``positional_images`` can leave
+structural 0 (VLM6-R2-G-02; centre-x-tie trap).
 
 Regeneration is byte-stable: fixed ``fixture_revision`` / ``canonical_timestamp``
 defaults, sorted JSON keys, synthetic image material derived only from entry
@@ -62,7 +63,7 @@ from scripts.eval_harness.promote_atomic import (
     scavenge_orphan_stages,
     validate_live_head_sha,
 )
-from scripts.eval_harness.report import score_run_record
+from scripts.eval_harness.report import IdentityOrdering, score_run_record
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
 # Shared promote protocol (HARM-02) — caption namespace (RV2-03).
@@ -115,6 +116,33 @@ _GT_BOX_Y_MISSING = {
     "name": _NAME_Y_MISSING,
 }  # no y key
 
+# VLM6-R2-G-02: centre-x-tie positional trap. Two named boxes share centre x
+# with clearly distinct y so (x, y, name) is distinguishable from a y-blind or
+# y-reversed key. Correct order is Maria (y=0.1) then Caitlin (y=0.8); reversing
+# y flips to Caitlin,Maria. Additive media_id 40 — never renumbers 1..39.
+# Media 39 stays the mixed-y trap; do not reuse it for this gate.
+_POS_TRAP_MEDIA_ID = 40
+_POS_TRAP_PATH = "mock_images/centre-x-tie-order.jpg"
+_POS_TRAP_SHA256 = "6" * 64
+_NAME_POS_TOP = "Maria Correonero"  # smaller y → first under correct key
+_NAME_POS_BOTTOM = "Caitlin Weaver"  # larger y → second; y-reverse leads
+_GT_BOX_POS_TOP = {
+    "x": 0.5,
+    "y": 0.1,
+    "w": 0.2,
+    "h": 0.2,
+    "source": "iptc",
+    "name": _NAME_POS_TOP,
+}
+_GT_BOX_POS_BOTTOM = {
+    "x": 0.5,
+    "y": 0.8,
+    "w": 0.2,
+    "h": 0.2,
+    "source": "iptc",
+    "name": _NAME_POS_BOTTOM,
+}
+
 # Corpus-level trap inventory (EVAL-03 / VLM6-R2-C-02; wF4 precedent).
 # GoldenManifest extra=forbid blocks a top-level manifest field — inventory
 # lives on run-record provenance.corpus_traps (do not "fix" the model).
@@ -133,17 +161,36 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
             "Golden seed stays 0/37 face_boxes; this trap is freeze-corpus-only."
         ),
     },
+    {
+        "media_id": _POS_TRAP_MEDIA_ID,
+        "path": _POS_TRAP_PATH,
+        "kind": "VLM6-R2-G-02_centre_x_tie_positional",
+        "trips": (
+            "positional_images always-0 freeze blindness "
+            "(VLM6-R2-G-02; no centre-x-tie image)"
+        ),
+        "note": (
+            "two named boxes share centre x with distinct y so a correct (x,y,name) "
+            "key is distinguishable from a y-reversed or y-blind key. Without this "
+            "entry positional_images stays structural 0 and HARM-06/HARM-07 "
+            "ordering rewrites cannot go red on the caption freeze."
+        ),
+    },
 ]
 
 
 def build_caption_anchor_manifest(base: GoldenManifest) -> dict[str, Any]:
-    """Golden seed entries + additive G-01 mixed-y trap (does not bend golden.json).
+    """Golden seed entries + additive G-01 / G-02 traps (does not bend golden.json).
 
     Pre-wG3 the caption freeze scored golden directly: 37 entries, zero
     ``face_boxes`` → ``labeled_y_missing_images`` structurally always 0 → wiring
     the counter to constant 0 was freeze-invisible (wF4 Probe 5 / DBG-11).
-    Shape is *mixed* (not all-missing): G-01 collapsed whole-image sort keys
-    whenever *any* named box lacked y.
+    Shape of media 39 is *mixed* (not all-missing): G-01 collapsed whole-image
+    sort keys whenever *any* named box lacked y.
+
+    Media 40 is the G-02 residual: two named boxes at identical centre x and
+    distinct y so ``positional_images`` can leave structural 0. Append-only —
+    never renumber golden 1..38 or reuse media 39.
     """
     raw: dict[str, Any] = {
         "manifest_version": int(base.manifest_version),
@@ -155,42 +202,77 @@ def build_caption_anchor_manifest(base: GoldenManifest) -> dict[str, Any]:
         raw["roster_cohorts"] = dict(roster_cohorts)
 
     # Idempotent when the committed caption anchor is re-fed as base.
-    if any(int(e.get("media_id") or 0) == _TRAP_MEDIA_ID for e in raw["entries"]):
-        return raw
+    present_ids = {int(e.get("media_id") or 0) for e in raw["entries"]}
 
-    trap_note = (
-        "synthetic caption determinism trap — no real image bytes; "
-        "TRAP VLM6-R2-G-01 mixed-y order_degraded "
-        "(labeled_y_missing_images freeze observability / wG3)"
-    )
-    raw["entries"].append(
-        {
-            "path": _TRAP_PATH,
-            "sha256": _TRAP_SHA256,
-            "media_id": _TRAP_MEDIA_ID,
-            "face_count": 2,
-            "present_identities": [_NAME_Y_MISSING, _NAME_Y_PRESENT],
-            "base_caption": "",
-            "must_right": [],
-            "easy_wrong": [],
-            "policy": {"recognition_enabled": True},
-            # Mixed shape: present-y sibling first, missing-y second (load-bearing).
-            "face_boxes": [dict(_GT_BOX_Y_PRESENT), dict(_GT_BOX_Y_MISSING)],
-            "context_pack": {
-                "title": "Caption freeze G-01 mixed-y order_degraded trap",
-                "caption": "",
-                "description": "",
-            },
-            "difficulty": "easy",
-            "domain": "faces",
-            "provenance": {
-                "source": "fixture",
-                "license": "fixture",
-                "publishable": False,
-                "note": trap_note,
-            },
-        }
-    )
+    if _TRAP_MEDIA_ID not in present_ids:
+        trap_note = (
+            "synthetic caption determinism trap — no real image bytes; "
+            "TRAP VLM6-R2-G-01 mixed-y order_degraded "
+            "(labeled_y_missing_images freeze observability / wG3)"
+        )
+        raw["entries"].append(
+            {
+                "path": _TRAP_PATH,
+                "sha256": _TRAP_SHA256,
+                "media_id": _TRAP_MEDIA_ID,
+                "face_count": 2,
+                "present_identities": [_NAME_Y_MISSING, _NAME_Y_PRESENT],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                # Mixed shape: present-y sibling first, missing-y second (load-bearing).
+                "face_boxes": [dict(_GT_BOX_Y_PRESENT), dict(_GT_BOX_Y_MISSING)],
+                "context_pack": {
+                    "title": "Caption freeze G-01 mixed-y order_degraded trap",
+                    "caption": "",
+                    "description": "",
+                },
+                "difficulty": "easy",
+                "domain": "faces",
+                "provenance": {
+                    "source": "fixture",
+                    "license": "fixture",
+                    "publishable": False,
+                    "note": trap_note,
+                },
+            }
+        )
+
+    if _POS_TRAP_MEDIA_ID not in present_ids:
+        pos_note = (
+            "synthetic caption determinism trap — no real image bytes; "
+            "TRAP VLM6-R2-G-02 centre-x-tie positional "
+            "(positional_images freeze observability)"
+        )
+        raw["entries"].append(
+            {
+                "path": _POS_TRAP_PATH,
+                "sha256": _POS_TRAP_SHA256,
+                "media_id": _POS_TRAP_MEDIA_ID,
+                "face_count": 2,
+                "present_identities": [_NAME_POS_TOP, _NAME_POS_BOTTOM],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                # Identical centre x, distinct y (load-bearing for G-02).
+                "face_boxes": [dict(_GT_BOX_POS_TOP), dict(_GT_BOX_POS_BOTTOM)],
+                "context_pack": {
+                    "title": "Caption freeze G-02 centre-x-tie positional trap",
+                    "caption": "",
+                    "description": "",
+                },
+                "difficulty": "easy",
+                "domain": "faces",
+                "provenance": {
+                    "source": "fixture",
+                    "license": "fixture",
+                    "publishable": False,
+                    "note": pos_note,
+                },
+            }
+        )
     return raw
 
 
@@ -285,16 +367,20 @@ def build_run_record(
     adapter = SeededDescriptionAdapter()
     items: list[dict[str, Any]] = []
     for index, entry in enumerate(manifest.entries):
-        items.append(
-            {
-                "media_id": entry.media_id,
-                "path": entry.path,
-                "describe": _describe_payload(adapter, entry),
-                "identities": _identity_rows(entry, seed_index=index),
-                "face_count": _predicted_face_count(entry, seed_index=index),
-                "error": None,
-            }
-        )
+        item: dict[str, Any] = {
+            "media_id": entry.media_id,
+            "path": entry.path,
+            "describe": _describe_payload(adapter, entry),
+            "identities": _identity_rows(entry, seed_index=index),
+            "face_count": _predicted_face_count(entry, seed_index=index),
+            "error": None,
+        }
+        # G-02: POSITIONAL stamp so positional_images is freeze-observable.
+        # Identity rows stay unpositioned (C-09: no invented pixel bboxes);
+        # labeled L→R comes from face_boxes. Only media 40 is stamped.
+        if int(entry.media_id) == _POS_TRAP_MEDIA_ID:
+            item["identity_ordering"] = IdentityOrdering.POSITIONAL.value
+        items.append(item)
     # Computed at generation time from the loaded manifest (rg-015) — never assigned.
     manifest_sha = _manifest_sha(manifest)
     coverage_gaps = compute_corpus_coverage_gaps(manifest.entries)
@@ -314,6 +400,7 @@ def build_run_record(
     else:
         live_started = started_at or None  # empty string → None (S4-04: never pin a fake clock)
     has_g01_trap = any(int(t["media_id"]) == _TRAP_MEDIA_ID for t in corpus_traps)
+    has_g02_trap = any(int(t["media_id"]) == _POS_TRAP_MEDIA_ID for t in corpus_traps)
     note = (
         "byte-stability anchor from the seeded offline adapter; no model, no real "
         "image bytes. Proves the scoring path is deterministic and that corruption "
@@ -327,6 +414,11 @@ def build_run_record(
             "Freeze corpus is golden.json + media 39 mixed-y order_degraded trap "
             "(VLM6-R2-G-01 / wG3) so labeled_y_missing_images is freeze-observable; "
             "see provenance.corpus_traps. "
+        )
+    if has_g02_trap:
+        note += (
+            "Media 40 centre-x-tie trap (VLM6-R2-G-02) so positional_images is "
+            "freeze-observable; see provenance.corpus_traps. "
         )
     note += "See eval_harness/README.md § Corpus coverage boundary."
     provenance: dict[str, Any] = {
@@ -398,9 +490,9 @@ def write_anchor(
     """Generate caption-anchor man + run-record + scored report set.
 
     ``manifest_path`` is the **base seed** (default: golden.json). The freeze
-    corpus is golden + the G-01 mixed-y trap (media 39); that extended man is
-    written next to the run-record as ``{manifest_stem}.json``. golden.json
-    itself is never rewritten.
+    corpus is golden + the G-01 mixed-y trap (media 39) + the G-02 centre-x-tie
+    trap (media 40); that extended man is written next to the run-record as
+    ``{manifest_stem}.json``. golden.json itself is never rewritten.
 
     Builds the full artifact set in a temporary directory, verifies cross-file
     consistency, then promotes the named set via journaled stage install

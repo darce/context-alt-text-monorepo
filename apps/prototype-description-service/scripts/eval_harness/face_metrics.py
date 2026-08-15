@@ -223,10 +223,9 @@ def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> Non
     first_index: int | None = None
     first_path: str | None = None
     for index, entry in enumerate(entries):
-        # Fusion flatten (S2R4-05) still omits the key. A missing key is not
-        # a false witness — only a present box list can contradict face_count.
-        if "face_boxes" not in entry:
-            continue
+        # Absent key ≡ empty list. Fusion flatten and GoldenEntry.model_dump
+        # both emit face_boxes; a raw mapping that omits it cannot witness
+        # face_count (S2R5-07). 0 boxes vs face_count=0 is covered, not a hole.
         n_boxes = len(entry.get("face_boxes") or [])
         face_count = int(entry.get("face_count") or 0)
         if n_boxes == face_count:
@@ -246,16 +245,28 @@ def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> Non
         )
 
 
+def _recognition_enabled(entry: Mapping[str, Any]) -> bool:
+    """Match identification_pr: policy-disabled rows are not live claims."""
+    policy = entry.get("policy") or {}
+    if isinstance(policy, Mapping):
+        return bool(policy.get("recognition_enabled", True))
+    return bool(getattr(policy, "recognition_enabled", True))
+
+
 def require_boxed_identification_gt(entries: Sequence[Mapping[str, Any]]) -> None:
     """Refuse identification scoring when any claim lacks per-face box lineage.
 
     Does not drop the unboxed entries from the denominator and does not
     substitute 0.0 — the metric is not computable honestly (EVAL-03).
+    Policy-disabled rows are not live claims (same population as
+    identification_pr) and must not refuse an otherwise boxed score (S2R4-06).
     """
     holes: list[str] = []
     first_index: int | None = None
     first_path: str | None = None
     for index, entry in enumerate(entries):
+        if not _recognition_enabled(entry):
+            continue
         unboxed = unboxed_identity_claims(entry)
         if not unboxed:
             continue

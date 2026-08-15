@@ -8,6 +8,9 @@
 - score manifest_sha256: `73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539` (matches fetch: False)
 - started_at: 2026-07-07T15:58:56Z
 - images: 10/10 scored, 0 failed
+- notes: S2R4-14 F23-G re-score: docs/tasks/vlm/VLM-2B-bakeoff-Qwen3-VL-4B-Instruct-run-record.json against apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7. Identification was SCORED precision=None recall=0.0 per_identity=7; current scorer publishes REFUSED(identification_refuses_unboxed_identity_claims). Numbers are the scorer's output, not hand-edited.
+- notes: Provenance: fetch manifest_sha256=1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b score_manifest_sha256=73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539 (matches fetch: False). The fetch-time manifest is a pre-v3 snapshot the current loader cannot load (manifest_version 3 only, e30a8ce0). This re-score uses the in-tree v3 descendant of the same file, not a different corpus. Previous published score SHA was 73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539.
+- notes: Caption axes are unchanged versus the previously published report.
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
 
 ## Caption metrics (deterministic tier)
@@ -31,24 +34,7 @@
 
 ## Face identification (named assertions)
 
-- micro precision: null recall: 0.000
-- macro precision: null recall: 0.000
-- true rejections (strangers): 2
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=null recall=0.000 (tp=0 fp=0 fn=2)
-- Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Kirstie Mccarrel: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Maria Correonero: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ryann Wiseman: precision=null recall=0.000 (tp=0 fp=0 fn=2)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

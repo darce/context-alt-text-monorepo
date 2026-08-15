@@ -138,6 +138,39 @@ def detection_summary(path: Path | None) -> dict:
     }
 
 
+def attach_disclosure_notes(json_path: Path, md_path: Path, notes: list[str]) -> None:
+    """Write disclosure notes without inventing metric values.
+
+    JSON ``notes`` is a list of strings. Markdown twins get one
+    ``- notes:`` line per entry, inserted after the images line.
+    Existing ``- notes:`` lines are replaced so a re-run does not stack.
+    """
+    if not notes:
+        return
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    payload["notes"] = list(notes)
+    json_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    lines = [
+        line
+        for line in md_path.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("- notes:")
+    ]
+    out: list[str] = []
+    inserted = False
+    for line in lines:
+        out.append(line)
+        if not inserted and line.startswith("- images:"):
+            for note in notes:
+                out.append(f"- notes: {note}")
+            inserted = True
+    if not inserted:
+        out.extend(f"- notes: {note}" for note in notes)
+    md_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def md_detection_line(path: Path | None) -> str | None:
     if path is None or not path.is_file():
         return None
@@ -168,6 +201,15 @@ def main(argv: list[str] | None = None) -> int:
             "Default: hold the report and exit 3. Does not change the "
             "partial-corpus gate (CLI exit 1). The script still exits 3 "
             "so a refused publish is not a clean score."
+        ),
+    )
+    parser.add_argument(
+        "--note",
+        action="append",
+        default=[],
+        help=(
+            "disclosure note attached after a successful publish "
+            "(repeatable). Does not change scorer numbers."
         ),
     )
     args = parser.parse_args(argv)
@@ -227,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
         out_md.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(tmp_json, out_json)
         shutil.copy2(tmp_md, out_md)
+        if args.note:
+            attach_disclosure_notes(out_json, out_md, list(args.note))
 
     after_json = detection_summary(out_json)
     after_md = md_detection_line(out_md)

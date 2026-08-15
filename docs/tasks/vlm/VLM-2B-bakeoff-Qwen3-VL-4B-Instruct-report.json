@@ -26,71 +26,26 @@
       "tp": null
     },
     "identification": {
-      "excluded_images": [
-        "mock_images/maria-pool.jpg"
-      ],
-      "ignored_wrong_names": [],
+      "excluded_images": null,
+      "ignored_wrong_names": null,
+      "invariant": "identification_refuses_unboxed_identity_claims",
       "macro_precision": null,
-      "macro_recall": 0.0,
-      "per_identity": {
-        "Bea Burke": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Caitlin Weaver": {
-          "fn": 2,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Daniel Arce": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Erika Hansen Miller": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Kirstie Mccarrel": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Maria Correonero": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Ryann Wiseman": {
-          "fn": 2,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        }
-      },
+      "macro_recall": null,
+      "per_identity": {},
       "precision": null,
-      "recall": 0.0,
-      "true_rejections": 2,
-      "wrong_names": []
+      "recall": null,
+      "refused": true,
+      "true_rejections": null,
+      "wrong_names": null
     }
   },
   "failures": [],
   "kind": "report",
+  "notes": [
+    "S2R4-14 F23-G re-score: docs/tasks/vlm/VLM-2B-bakeoff-Qwen3-VL-4B-Instruct-run-record.json against apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7. Identification was SCORED precision=None recall=0.0 per_identity=7; current scorer publishes REFUSED(identification_refuses_unboxed_identity_claims). Numbers are the scorer's output, not hand-edited.",
+    "Provenance: fetch manifest_sha256=1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b score_manifest_sha256=73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539 (matches fetch: False). The fetch-time manifest is a pre-v3 snapshot the current loader cannot load (manifest_version 3 only, e30a8ce0). This re-score uses the in-tree v3 descendant of the same file, not a different corpus. Previous published score SHA was 73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539.",
+    "Caption axes are unchanged versus the previously published report."
+  ],
   "per_image": [
     {
       "cache_hit": false,

@@ -8,6 +8,8 @@
 - score manifest_sha256: `13999d331f7dc8c3b62848ba281def5512cd8babda9ac00930ca18c8a56dae93` (matches fetch: False)
 - started_at: 2026-07-16T23:33:28Z
 - images: 640/646 scored, 6 failed
+- notes: S2R4-14 F23-G re-score HELD: docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json against apps/prototype-description-service/scripts/eval_harness/corpus646-interleave-manifest-20260716.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7 exited 1 (partial-corpus: 640/646 scored, 6 failed — the same failures already listed in this artifact). regen_eval_report.py will not publish an exit-1 report (S2R4-03). faces.identification is therefore still the pre-S2R3-08 leftover (precision=null, recall=0.0, populated per-identity table). Do not read those rows as current-scorer identification P/R.
+- notes: Provenance unchanged: fetch=08751e69bf4d6bb4d4303f0bc7c38758f1f6fdaa60253828b7101ce5c2306d97 score=13999d331f7dc8c3b62848ba281def5512cd8babda9ac00930ca18c8a56dae93 (matches fetch: False). Caption numbers were not rewritten.
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
 - prompt variant: `v3` pipeline: two_pass
 - latency: per-image wall-clock p50 5.244s p95 17.197s (640 timed) · model calls/image: 2.0 (total 1280)

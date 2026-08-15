@@ -179,3 +179,20 @@
 - MUT-B verdict: FAILED, failing assertion: expect(screen.getByAltText('Reference image, possibly Ada Lovelace'))
 - After restore: PASSED
 - tsc: EXIT 0
+
+## PHP gate — golden refresh and pre-existing phpcs debt
+- Fixtures regenerated:
+  - `tests/fixtures/clusters-read/get_cluster_detail_local_projection/response.json` — (a) attachment_url (`"attachment_url":null` on sample_identities)
+  - `tests/fixtures/clusters-read/get_cluster_members_local_projection/response.json` — (a) attachment_url (`"attachment_url":null` on members)
+  - `tests/fixtures/clusters-read/list_clusters_local_projection/response.json` — (a) attachment_url (`"attachment_url":null` on sample_identities)
+  - `tests/fixtures/clusters-read/list_clusters_stale_projection_sync/response.json` — (b) null bbox (`"bbox":{"x":0,"y":0,"width":0,"height":0}` → `"bbox":null` on representative_identity)
+  - `tests/fixtures/clusters-read/list_clusters_stale_projection_sync_failed/response.json` — (b) null bbox (`"bbox":{"x":0,"y":0,"width":0,"height":0}` → `"bbox":null` on representative_identity)
+  - `tests/fixtures/clusters-read/list_top_unlabeled_local_projection/response.json` — (a) attachment_url (`"attachment_url":"http://example.test/media/101.jpg"` on representatives) and (b) null bbox (`"bbox":{"x":0,"y":0,"width":0,"height":0}` → `"bbox":null`)
+- Unclassifiable changes: none (no side-effects fixtures, status codes, totals, or limits moved)
+- phpunit: EXIT 0, 1757/8496
+- phpcs: EXIT 0
+- Suppression used: `$tag = '<script ...></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript`
+- MUT (positive-extent guard deleted) verdict: PASSED
+- Failing scenario: none
+- After restore: PASSED
+- MUT note: characterization rows omit `bbox_json` (stale members `[]`; unlabeled member has only `media_id`/`cluster_uuid`/`distance`), so `extract_bbox_pixels` returns null at the non-string/empty check and never reaches `$width <= 0 || $height <= 0`. The refreshed goldens pin missing-bbox → null, not the positive-extent guard. Regeneration did not erase a pin that these six scenarios never exercised.

@@ -199,7 +199,8 @@ class AdminEnqueueTest extends TestCase
         $admin = new Admin($this->spaOnlyManifestPath());
         wp_script_add_data('alt-context-admin', 'type', 'module');
 
-        $tag = '<script id="alt-context-admin-js" src="http://example.test/admin.js?ver=0.0.5"></script>';
+        // WHY: these are filter inputs under test, not emitted scripts.
+        $tag = '<script id="alt-context-admin-js" src="http://example.test/admin.js?ver=0.0.5"></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript
         $filtered = $admin->filter_module_script_tag($tag, 'alt-context-admin', 'http://example.test/admin.js');
 
         // Without this, a code-split ESM entry loads as a classic script and the SPA never mounts.
@@ -212,7 +213,7 @@ class AdminEnqueueTest extends TestCase
         $admin = new Admin($this->spaOnlyManifestPath());
 
         // No 'type' => 'module' data registered for this handle: discrimination guard.
-        $tag = '<script id="jquery-core-js" src="http://example.test/jquery.js"></script>';
+        $tag = '<script id="jquery-core-js" src="http://example.test/jquery.js"></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript
         $filtered = $admin->filter_module_script_tag($tag, 'jquery-core', 'http://example.test/jquery.js');
 
         $this->assertSame($tag, $filtered);
@@ -223,7 +224,7 @@ class AdminEnqueueTest extends TestCase
         $admin = new Admin($this->spaOnlyManifestPath());
         wp_script_add_data('alt-context-admin', 'type', 'module');
 
-        $tag = '<script type="module" id="alt-context-admin-js" src="http://example.test/admin.js"></script>';
+        $tag = '<script type="module" id="alt-context-admin-js" src="http://example.test/admin.js"></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript
         $filtered = $admin->filter_module_script_tag($tag, 'alt-context-admin', 'http://example.test/admin.js');
 
         $this->assertSame(1, substr_count($filtered, 'type="module"'));
@@ -238,7 +239,7 @@ class AdminEnqueueTest extends TestCase
         $admin->init();
         wp_script_add_data('alt-context-admin', 'type', 'module');
 
-        $tag = '<script id="alt-context-admin-js" src="http://example.test/admin.js?ver=0.0.5"></script>';
+        $tag = '<script id="alt-context-admin-js" src="http://example.test/admin.js?ver=0.0.5"></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript
         $filtered = apply_filters('script_loader_tag', $tag, 'alt-context-admin', 'http://example.test/admin.js');
 
         $this->assertStringContainsString('type="module"', $filtered);
@@ -250,7 +251,7 @@ class AdminEnqueueTest extends TestCase
         $admin = new Admin($this->spaOnlyManifestPath());
         wp_script_add_data('alt-context-admin', 'type', 'module');
 
-        $tag = "<script type='module' id='alt-context-admin-js' src='/a.js'></script>";
+        $tag = "<script type='module' id='alt-context-admin-js' src='/a.js'></script>"; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript
         $filtered = $admin->filter_module_script_tag($tag, 'alt-context-admin', '/a.js');
 
         $this->assertStringNotContainsString('type="module"', $filtered);

@@ -1754,6 +1754,57 @@ describe('WorkbenchFindingsPanel', () => {
     });
   });
 
+  // REV4-03 / TEST-15: assignment-outage Retry must not arm pendingRetryFocusRef
+  // (REV3-02). On successful recovery the outage block unmounts with the
+  // focused Retry inside it, so focus is restored in the settled .then —
+  // Review next when enabled, else the panel heading — not via the deferred
+  // [hasFindings, isError] effect.
+  it('REV4-03: successful assignment-outage retry moves focus to Review next, not body', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    let findings = makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false });
+    vi.mocked(useWorkbenchFindings).mockImplementation(() => findings);
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    await userEvent.click(retry);
+
+    findings = makeViewModel({
+      counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+      hasFindings: true,
+      isAssignmentError: false,
+      isError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(
+      screen.queryByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).not.toBeInTheDocument();
+    // REV3-02 must stay: outage Retry did not arm the deferred focus effect.
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Review next/ }));
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Review next/ }));
+    });
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is
   // the whole backlog. Dropping the qualifier (or ignoring topUnlabeledTruncated)
   // leaves this looking like the unqualified S2 copy.

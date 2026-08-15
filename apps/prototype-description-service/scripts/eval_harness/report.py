@@ -39,7 +39,9 @@ from .face_assignment import (
 )
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
+    DETECTION_EMPTY_OBSERVATIONS_INVARIANT,
     DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+    IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT,
     SAMPLING_FRAME_CLUSTERING,
     SAMPLING_FRAME_FACE_ID,
     SAMPLING_FRAME_UNKNOWN_REJECTION,
@@ -699,24 +701,32 @@ def score_run_record(
                 det = None
                 detection_invariant = exc.invariant
             else:
-                det = detection_pr(detections, annotation_mode=mode)
-                detection_invariant = None
+                if not detections:
+                    det = None
+                    detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
+                else:
+                    det = detection_pr(detections, annotation_mode=mode)
+                    detection_invariant = None
         elif mode is AnnotationMode.ROSTER_ONLY:
             det = None
             detection_invariant = "detection_refuses_roster_only"
         else:
             det = None
             detection_invariant = "detection_requires_annotation_mode"
-    try:
-        require_boxed_identification_gt(identification_entries)
-    except ManifestError as exc:
-        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
-            raise
+    if not identification_entries:
         ident = None
-        identification_invariant = exc.invariant
+        identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
     else:
-        ident = identification_pr(identifications)
-        identification_invariant = None
+        try:
+            require_boxed_identification_gt(identification_entries)
+        except ManifestError as exc:
+            if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+                raise
+            ident = None
+            identification_invariant = exc.invariant
+        else:
+            ident = identification_pr(identifications)
+            identification_invariant = None
 
     if ident is None:
         live_wrong: list[list[str]] = []

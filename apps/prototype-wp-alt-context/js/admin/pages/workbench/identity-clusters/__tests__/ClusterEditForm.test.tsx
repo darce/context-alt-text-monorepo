@@ -309,13 +309,38 @@ describe('ClusterEditForm', () => {
         {...defaultProps}
         labelInput=""
         atRestTruncated
-        atRestShown={50}
         atRestTotal={80}
         isAtRestMode
       />,
     );
 
-    expect(screen.getByText('Showing 50 of 80 labels — type to search for more')).toBeInTheDocument();
+    expect(screen.getByText('Showing 2 of 80 labels — type to search for more')).toBeInTheDocument();
+  });
+
+  it('pins the at-rest hint first number to the rendered overlay row count', () => {
+    const options = Array.from({ length: 12 }, (_, index) => ({
+      value: `cluster:u${index}`,
+      label: `Union Label ${index}`,
+      source: 'cluster' as const,
+      group: 'All Labels',
+    }));
+
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        options={options}
+        atRestTruncated
+        atRestTotal={80}
+        isAtRestMode
+      />,
+    );
+
+    const renderedOptionRows = screen.getAllByRole('button', { name: /confirm match/i });
+    expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+      `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
+    );
   });
 
   it('hides the at-rest incomplete-list hint once the loader leaves at-rest mode', () => {
@@ -324,13 +349,12 @@ describe('ClusterEditForm', () => {
         {...defaultProps}
         labelInput="To"
         atRestTruncated
-        atRestShown={50}
         atRestTotal={80}
         isAtRestMode={false}
       />,
     );
 
-    expect(screen.queryByText('Showing 50 of 80 labels — type to search for more')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Showing \d+ of \d+ labels — type to search for more/)).not.toBeInTheDocument();
   });
 
   it('does not invent an incomplete-list hint when the at-rest page is complete', () => {
@@ -339,7 +363,6 @@ describe('ClusterEditForm', () => {
         {...defaultProps}
         labelInput=""
         atRestTruncated={false}
-        atRestShown={12}
         atRestTotal={12}
       />,
     );

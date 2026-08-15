@@ -139,7 +139,6 @@ export const IdentityClusterItem = ({
     findClusterByLabel,
     atRestTotal = 0,
     atRestTruncated = false,
-    atRestShown = 0,
     isAtRestMode = false,
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
@@ -368,7 +367,6 @@ export const IdentityClusterItem = ({
             saveLabel={saveLabel}
             atRestTotal={atRestTotal}
             atRestTruncated={atRestTruncated}
-            atRestShown={atRestShown}
             isAtRestMode={isAtRestMode}
           />
         )}

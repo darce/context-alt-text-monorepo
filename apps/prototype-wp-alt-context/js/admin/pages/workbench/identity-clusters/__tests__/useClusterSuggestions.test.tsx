@@ -7,6 +7,7 @@ import * as buildNamingOptionsModule from '../buildNamingOptions';
 import {
   NAMING_GROUP_ALL_LABELS,
   NAMING_GROUP_SUGGESTED,
+  NAMING_OPTIONS_LIMIT,
   namingOptionValue,
 } from '../buildNamingOptions';
 import {
@@ -774,7 +775,8 @@ describe('useClusterSuggestions', () => {
     it('renders a labelled cluster at rest with no matching roster person', async () => {
       // Predicted first failure (pre-fix): Tory Guzman absent — labelled search
       // is disabled until 2+ chars, so at-rest union is suggestions + roster only.
-      // 25-row fixture: dropping loader `limit: null` re-slices to 20 and this goes red.
+      // ORCH-11: All Labels is sliced at NAMING_OPTIONS_LIMIT even when the
+      // at-rest labelled page is larger.
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
@@ -808,8 +810,10 @@ describe('useClusterSuggestions', () => {
         ),
       ).toBe(true);
       const optionLabels = result.current.options.map((option) => option.label);
-      expect(optionLabels).toEqual(expect.arrayContaining(labeledPage.map((cluster) => cluster.label)));
-      expect(optionLabels).toHaveLength(25);
+      expect(optionLabels).toEqual(
+        expect.arrayContaining(labeledPage.slice(0, NAMING_OPTIONS_LIMIT).map((cluster) => cluster.label)),
+      );
+      expect(optionLabels).toHaveLength(NAMING_OPTIONS_LIMIT);
 
       queryClient.clear();
     });

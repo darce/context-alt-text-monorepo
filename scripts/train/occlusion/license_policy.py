@@ -5132,11 +5132,19 @@ def _compact_mid_exception_deny_adjacency(
                     # admitted). Consult it whenever the prefix is not
                     # an exact folded deny/NC identity — those stay on
                     # F13 head-known-rem glue (``yolov8yolox_s``).
-                    if owned is None and (
-                        not _is_legitimate_residual_segment(rem, _seed_c)
-                        or (
-                            prefix
-                            and not _deny_has_folded_ab_claim(prefix)
+                    # Exception-family prefixes (``yolox``) must not
+                    # run the prefix owner: (c) fabricates ``yolo`` and
+                    # steals the multi-strip red-proof
+                    # (``yolox_yolop_ultralytics``).
+                    if (
+                        owned is None
+                        and prefix
+                        and prefix not in _exception_compact_spelling_set()
+                        and (
+                            not _is_legitimate_residual_segment(
+                                rem, _seed_c
+                            )
+                            or not _deny_has_folded_ab_claim(prefix)
                         )
                     ):
                         owned = _mid_exception_prefix_deny_owner(prefix)

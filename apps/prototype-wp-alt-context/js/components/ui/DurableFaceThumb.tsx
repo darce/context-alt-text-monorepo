@@ -32,6 +32,11 @@ export interface DurableFaceThumbProps {
   loading?: 'lazy' | 'eager';
   /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
   hideMissingLabel?: boolean;
+  /**
+   * Accessible name for the missing state. Surfaces with their own canonical
+   * copy module pass it here instead of hardcoding a second string.
+   */
+  missingLabel?: string;
 }
 
 export const DurableFaceThumb = ({
@@ -44,12 +49,16 @@ export const DurableFaceThumb = ({
   className = '',
   loading,
   hideMissingLabel = false,
+  missingLabel,
 }: DurableFaceThumbProps): React.JSX.Element => {
   const { display, onBlobLoad, onBlobError, onCropLoad, onCropError, onUncroppedLoad, onUncroppedError } =
     useDurableFaceThumb(source);
   const defaultDetectedAlt = __('Detected face', 'alt-context');
   const imageAlt = alt ?? defaultDetectedAlt;
-  const unavailableName = unavailableImageName(alt);
+  const unavailableName =
+    typeof missingLabel === 'string' && missingLabel.trim() !== ''
+      ? missingLabel
+      : unavailableImageName(alt);
   const baseClass = 'acx-durable-face-thumb';
   const stateClass = display.state !== AVATAR_STATE.real ? `${baseClass}--${display.state}` : '';
   const errorClass = display.isLoudError ? `${baseClass}--error` : '';
@@ -59,6 +68,10 @@ export const DurableFaceThumb = ({
   const classes = [baseClass, stateClass, errorClass, hideMissingClass, className, callerUncropped]
     .filter(Boolean)
     .join(' ');
+  // A caller-requested size must survive the fallback states too, or a grid
+  // cell collapses the moment its face source degrades.
+  const fallbackSize = sizePx ?? SIZE_PX[size];
+  const fallbackStyle: React.CSSProperties = { width: fallbackSize, height: fallbackSize };
 
   if (display.state === AVATAR_STATE.missing) {
     return (
@@ -67,6 +80,7 @@ export const DurableFaceThumb = ({
         data-avatar-state={AVATAR_STATE.missing}
         role="img"
         aria-label={unavailableName}
+        style={fallbackStyle}
       >
         <span className={`${baseClass}__fallback-label`}>{__('No image', 'alt-context')}</span>
       </span>
@@ -80,6 +94,7 @@ export const DurableFaceThumb = ({
         data-avatar-state={AVATAR_STATE.error}
         role="img"
         aria-label={__('Image failed to load', 'alt-context')}
+        style={fallbackStyle}
       >
         <span className={`${baseClass}__fallback-label`}>{__('Image failed to load', 'alt-context')}</span>
       </span>

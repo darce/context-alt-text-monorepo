@@ -193,4 +193,6 @@ testpaths = [
     "recognition/tests",
     "apps/prototype-description-service/recognition/tests",
     "scene/tests",
+    "scripts/eval_harness/tests",
+    "apps/prototype-description-service/scripts/eval_harness/tests",
 ]

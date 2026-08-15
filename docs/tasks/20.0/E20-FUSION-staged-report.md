@@ -2,11 +2,11 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `fusion-eval-stub` version(s): `1`
-- head_sha: `6688d4c904f4fa8031952dc5bae12582fcfee2c9`
+- head_sha: `e4f1730f3c697f6abd6afefb817310de76f3f0c2`
 - base_url: fusion-runner://staged
-- fetch manifest_sha256: `04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd`
-- score manifest_sha256: `04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd` (matches fetch: True)
-- started_at: 2026-08-15T01:32:34Z
+- fetch manifest_sha256: `2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9`
+- score manifest_sha256: `73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539` (matches fetch: False)
+- started_at: 2026-07-10T05:05:05Z
 - images: 10/10 scored, 0 failed
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
@@ -21,7 +21,7 @@
 ## Quality axes (short surface, report-only signals)
 
 - meta-framing images: 0
-- mean context duplication: null
+- mean context duplication: 0.382
 - name front-loaded rate: 1.000
 - sentence band [1, 4] ok rate: 1.000
 
@@ -31,24 +31,7 @@
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 0.889
-- macro precision: 1.000 recall: 0.857
-- true rejections (strangers): 2
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Caitlin Weaver: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
-- Daniel Arce: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Erika Hansen Miller: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Kirstie Mccarrel: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Maria Correonero: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ryann Wiseman: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

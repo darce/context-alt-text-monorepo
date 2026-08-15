@@ -7,7 +7,6 @@
   flex-shrink: 0;
   vertical-align: middle;
   background-color: var(--acx-color-data-placeholder);
-  container-type: size;
 
   &--sm {
     width: 32px;
@@ -52,12 +51,7 @@
     height: 100%;
     border-radius: inherit;
     background-color: var(--acx-gray-200);
-    background-image: linear-gradient(
-      90deg,
-      var(--acx-gray-200) 0%,
-      var(--acx-gray-100) 50%,
-      var(--acx-gray-200) 100%
-    );
+    background-image: linear-gradient(90deg, var(--acx-gray-200) 0%, var(--acx-gray-100) 50%, var(--acx-gray-200) 100%);
     background-size: 200% 100%;
     animation: acx-avatar-shimmer 1.2s ease-in-out infinite;
 
@@ -95,9 +89,10 @@
     overflow-wrap: anywhere;
     max-width: 100%;
 
-    // ClusterPreview chips are ~40px; icon + 2xs "No image" overflow that
-    // circle. Parent already exposes missingLabel as the accessible name.
-    @container (max-width: var(--acx-space-48)) {
+    // ClusterPreview's 40px chip (sizePx={40} + .acx-identity-cluster__thumb).
+    // Icon + 2xs "No image" overflow that circle. Avatar already sets
+    // role="img" aria-label={missingLabel}, so hiding the visible label is safe.
+    .acx-identity-cluster__thumb--unavailable & {
       display: none;
     }
   }

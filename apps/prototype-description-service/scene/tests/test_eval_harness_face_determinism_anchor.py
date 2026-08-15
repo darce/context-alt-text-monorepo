@@ -110,6 +110,54 @@ def _live_slice_names(report: dict) -> set[str]:
     return all_candidates - gaps
 
 
+# Post-HARM-01 detection literals from the committed freeze (wI2).
+# Must stay handwritten — reading them back from the freeze cannot detect a
+# laundered regen (VLM6-R2-C-01). Current freeze: tp=6 fp=1 fn=5 → 6/7, 6/11.
+_PINNED_DETECTION_TP = 6
+_PINNED_DETECTION_FP = 1
+_PINNED_DETECTION_FN = 5
+_PINNED_DETECTION_PRECISION = 0.8571428571428571
+_PINNED_DETECTION_RECALL = 0.5454545454545454
+
+
+def _oracle_detection_from_assignment(assignment: object) -> dict[str, float | int]:
+    """Independent detection counts. Does not call ``_detection_from_assignment``.
+
+    Invariant (HARM-01 / EVAL-16): ``fn == missed_gt + missed_stranger_gt``.
+    TP = IoU-accepted pairs. FP = unmatched detections.
+    """
+    by_media = getattr(assignment, "association_by_media")
+    tp = sum(len(assoc.pairs) for assoc in by_media.values())
+    fp = int(getattr(assignment, "false_detections"))
+    missed_gt = int(getattr(assignment, "missed_gt"))
+    missed_stranger_gt = int(getattr(assignment, "missed_stranger_gt", 0) or 0)
+    fn = missed_gt + missed_stranger_gt
+    precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+    recall = (tp / (tp + fn)) if (tp + fn) else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall}
+
+
+def _anchor_assignment():  # type: ignore[no-untyped-def]
+    """Score the committed face man+run into an AssignmentResult (no report formula)."""
+    from scripts.eval_harness.face_assignment import score_face_assignment
+    from scripts.eval_harness.report import _entries_as_dicts, _entry_index, _gt_by_media
+
+    manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
+    record = json.loads(_RUN.read_text())
+    entries, _, _ = _entries_as_dicts(manifest)
+    entry_by_id = _entry_index(entries)
+    gt_by_media = _gt_by_media(entries)
+    scoreable = []
+    for item in record.get("items") or []:
+        media_id = int(item["media_id"])
+        if entry_by_id.get(media_id) is None:
+            continue
+        if item.get("error"):
+            continue
+        scoreable.append(item)
+    return score_face_assignment(scoreable, gt_by_media)
+
+
 @pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS.items()))
 def test_committed_face_anchor_digests_match_frozen(name: str, expected: str) -> None:
     path = _ANCHOR_DIR / name
@@ -428,6 +476,126 @@ def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(
     )
     assert pre["detection"] != post["detection"], (
         "pre-HARM-01 re-score matched post detection — regression undetectable"
+    )
+
+
+def test_detection_oracle_agrees_with_live_and_pins_absolute_counts() -> None:
+    """VLM6-R2-C-01: independent oracle must match live; freeze counts are literals.
+
+    The HARM-05 pin only proves pre_fn < freeze.fn against a named-only mutant.
+    Any other identity-agnostic-but-wrong formula can launder itself by
+    regenerating the freeze. Two independent computations must agree, and the
+    post-HARM-01 counts must be pinned as source literals (not read from the
+    freeze at runtime).
+    """
+    from scripts.eval_harness.report import _detection_from_assignment
+
+    assignment = _anchor_assignment()
+    oracle = _oracle_detection_from_assignment(assignment)
+    live = _detection_from_assignment(assignment)
+    live_core = {k: live[k] for k in oracle}
+    assert live_core == oracle, (
+        f"oracle {oracle} != live _detection_from_assignment {live_core}"
+    )
+
+    # Absolute pins: handwritten literals from the current committed freeze.
+    assert oracle["tp"] == _PINNED_DETECTION_TP
+    assert oracle["fp"] == _PINNED_DETECTION_FP
+    assert oracle["fn"] == _PINNED_DETECTION_FN
+    assert oracle["precision"] == _PINNED_DETECTION_PRECISION
+    assert oracle["recall"] == _PINNED_DETECTION_RECALL
+    assert live["tp"] == 6
+    assert live["fp"] == 1
+    assert live["fn"] == 5
+    assert live["precision"] == 0.8571428571428571
+    assert live["recall"] == 0.5454545454545454
+
+    freeze = json.loads(_REPORT_JSON.read_text())["detection"]
+    assert freeze["tp"] == 6
+    assert freeze["fp"] == 1
+    assert freeze["fn"] == 5
+    assert freeze["precision"] == 0.8571428571428571
+    assert freeze["recall"] == 0.5454545454545454
+
+
+def test_detection_oracle_goes_red_on_wrong_identity_agnostic_formula(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VLM6-R2-C-01 / TEST-15: fn = missed_gt + missed_stranger_gt + 1 must fail.
+
+    Oracle is computed *after* the monkeypatch. If the oracle secretly called
+    ``_detection_from_assignment`` it would pick up +1 and this probe would
+    stay green — that is the independence check.
+    """
+    from scripts.eval_harness import report as report_mod
+
+    assignment = _anchor_assignment()
+
+    def _wrong_plus_one(assignment_arg):  # type: ignore[no-untyped-def]
+        tp = sum(len(a.pairs) for a in assignment_arg.association_by_media.values())
+        fp = int(assignment_arg.false_detections)
+        fn = (
+            int(assignment_arg.missed_gt)
+            + int(getattr(assignment_arg, "missed_stranger_gt", 0) or 0)
+            + 1
+        )
+        precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+        recall = (tp / (tp + fn)) if (tp + fn) else 0.0
+        return {"precision": precision, "recall": recall, "tp": tp, "fp": fp, "fn": fn}
+
+    monkeypatch.setattr(report_mod, "_detection_from_assignment", _wrong_plus_one)
+    oracle = _oracle_detection_from_assignment(assignment)
+    mutated = report_mod._detection_from_assignment(assignment)
+    mutated_core = {k: mutated[k] for k in oracle}
+    assert mutated_core != oracle, (
+        "oracle agreed with fn=missed_gt+missed_stranger_gt+1 — "
+        "oracle is not independent (likely calling _detection_from_assignment)"
+    )
+    assert int(mutated["fn"]) == int(oracle["fn"]) + 1
+
+
+def test_published_detection_recall_is_fixture_local_not_a_population_estimate() -> None:
+    """VLM6-R2-C-02: detection recall is not a population estimate.
+
+    Frame = all complete GT boxes on the synthetic multi-regime fixture.
+    Media 9 and 10 are deliberate TEST-15 stranger-miss levers (HARM-05);
+    they depress recall by corpus construction, not a model change.
+    detection-recall (all complete GT) and headline missed_gt (named-only)
+    are different frames — do not read them as the same measurement.
+    Numbers are unchanged; this is a labelling pin.
+    """
+    freeze = json.loads(_REPORT_JSON.read_text())
+    det = freeze["detection"]
+    assert det["tp"] == 6
+    assert det["fp"] == 1
+    assert det["fn"] == 5
+    assert det["precision"] == 0.8571428571428571
+    assert det["recall"] == 0.5454545454545454
+    frame = str(det.get("sampling_frame") or "")
+    assert frame, "detection must publish a sampling_frame"
+    assert "all_gt_boxes" in frame
+    assert "missed_stranger_gt" in frame
+
+    md = _REPORT_MD.read_text()
+    # Published rounded display — do not change these numbers (C-02).
+    assert "precision: 0.857 recall: 0.545 (tp=6 fp=1 fn=5" in md
+    assert "detection-recall: 0.545" in md
+    assert "missed_gt=2" in md
+
+    committed = json.loads(_RUN.read_text())
+    traps = list((committed.get("provenance") or {}).get("corpus_traps") or [])
+    by_id = {int(t["media_id"]): t for t in traps}
+    for mid in (9, 10):
+        assert mid in by_id, f"media {mid} must be a disclosed TEST-15 stranger-miss lever"
+        assert "HARM-05" in str(by_id[mid].get("kind") or "")
+
+    couple = (freeze.get("gate_proposal") or {}).get("identification_detection_coupling") or {}
+    # Two frames: detection-recall is all complete GT; missed_gt is named-only.
+    assert couple["detection_recall"] == det["recall"]
+    assert couple["missed_gt"] == 2
+    assert couple["missed_gt"] != det["fn"], (
+        "headline missed_gt and detection.fn must stay distinct frames "
+        "(named-only ID FN vs all-complete-GT detector FN)"
     )
 
 

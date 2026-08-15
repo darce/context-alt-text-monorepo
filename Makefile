@@ -19,6 +19,10 @@
 ROOT_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 ROOT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(ROOT_MAKEFILE)))
 
+# Scorer 0/1/2/3 contract shared with scripts/eval_exit_contract.py.
+# GNU Make still collapses every failed recipe to process exit 2.
+include $(ROOT_MAKEFILE_DIR)/scripts/eval_exit_contract.env
+
 # --- Git / Orchestrator detection ---
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -601,22 +605,25 @@ dev-stop:
 # UUID, required by all live subcommands), GOLDEN_IMAGES_DIR. Details:
 # apps/prototype-description-service/scripts/eval_harness/README.md
 #
-# Exit contract (score/run): 0 clean or refused-with-consent; 1 partial/
-# determinism/env; 2 argparse; 3 REFUSED without --allow-refused.
-# Shipped golden is roster_only (34/37 unboxed claims) so `run` ends in
-# exit 3. That is a correct refusal. Do not default --allow-refused here
+# Scorer contract (scripts.eval_harness.cli score/run): 0 clean or
+# refused-with-consent; 1 partial/determinism/env; 2 argparse; 3 REFUSED
+# without --allow-refused. GNU Make converts every failed recipe to make
+# exit 2, so this target cannot publish that contract as *make's* status:
+#   scorer 0 -> make 0
+#   scorer 1/2/3/other -> make 2
+# Read the real scorer status from the last stdout line
+#   eval-captions: scorer_exit=<N>
+# or from
+#   apps/prototype-description-service/scripts/eval_harness/out/eval-captions.status
+# To observe exit 3 directly, run scripts/eval-captions.sh (same args).
+# Shipped golden is roster_only (34/37 unboxed claims) so the scorer ends
+# in 3. That is a correct refusal. Do not default --allow-refused here
 # (auto-consent greenwashes a no-score report). Consent only at the call
 # site: make eval-captions EVAL_ARGS='--allow-refused'
+#        scripts/eval-captions.sh --allow-refused
 .PHONY: eval-captions
 eval-captions:
-	@cd apps/prototype-description-service && \
-	uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS); \
-	ec=$$?; \
-	if [ $$ec -eq 3 ]; then \
-		printf '%s\n' "eval-captions: REFUSED (exit 3). Default golden is roster_only with unboxed identity claims, so detection/identification are not scored. Add per-face boxes, or re-run with EVAL_ARGS='--allow-refused' only if you explicitly consent to a no-score report." >&2; \
-		exit 3; \
-	fi; \
-	exit $$ec
+	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

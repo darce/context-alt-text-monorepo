@@ -31,11 +31,16 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# Score CLI contract (scripts.eval_harness.cli): reason comes from the code.
-CLI_EXIT_CLEAN = 0
-CLI_EXIT_PARTIAL = 1
-CLI_EXIT_USAGE = 2
-CLI_EXIT_REFUSED = 3
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from eval_exit_contract import (  # noqa: E402
+    EXIT_CLEAN as CLI_EXIT_CLEAN,
+    EXIT_PARTIAL as CLI_EXIT_PARTIAL,
+    EXIT_REFUSED as CLI_EXIT_REFUSED,
+    EXIT_USAGE as CLI_EXIT_USAGE,
+)
 
 
 @dataclass(frozen=True)
@@ -119,11 +124,19 @@ def repo_root() -> Path:
     return Path(out.stdout.strip())
 
 
+def _faces_block(payload: dict, name: str) -> dict:
+    faces = payload.get("faces") or {}
+    if not isinstance(faces, dict):
+        return {}
+    block = faces.get(name) or {}
+    return block if isinstance(block, dict) else {}
+
+
 def detection_summary(path: Path | None) -> dict:
     if path is None or not path.is_file():
         return {"exists": False}
     payload = json.loads(path.read_text())
-    det = ((payload.get("faces") or {}).get("detection")) or {}
+    det = _faces_block(payload, "detection")
     return {
         "exists": True,
         "refused": det.get("refused"),
@@ -133,6 +146,40 @@ def detection_summary(path: Path | None) -> dict:
         "tp": det.get("tp"),
         "fp": det.get("fp"),
         "fn": det.get("fn"),
+        "score_manifest_sha256": (payload.get("provenance") or {}).get("score_manifest_sha256"),
+        "manifest_matches_fetch": (payload.get("provenance") or {}).get("manifest_matches_fetch"),
+    }
+
+
+def identification_summary(path: Path | None) -> dict:
+    """Mirror of detection_summary for faces.identification (S2R5-11).
+
+    A scored→refused identification withdrawal leaves no trace in
+    detection_summary. This is the publish audit for that transition.
+    """
+    if path is None or not path.is_file():
+        return {"exists": False}
+    payload = json.loads(path.read_text())
+    ident = _faces_block(payload, "identification")
+    per_identity = ident.get("per_identity")
+    per_identity_rows = len(per_identity) if isinstance(per_identity, dict) else 0
+    wrong_names = ident.get("wrong_names")
+    if wrong_names is None:
+        wrong_name_rows = None
+    elif isinstance(wrong_names, list):
+        wrong_name_rows = len(wrong_names)
+    else:
+        wrong_name_rows = None
+    return {
+        "exists": True,
+        "refused": ident.get("refused"),
+        "invariant": ident.get("invariant"),
+        "precision": ident.get("precision"),
+        "recall": ident.get("recall"),
+        "macro_precision": ident.get("macro_precision"),
+        "macro_recall": ident.get("macro_recall"),
+        "per_identity_rows": per_identity_rows,
+        "wrong_name_rows": wrong_name_rows,
         "score_manifest_sha256": (payload.get("provenance") or {}).get("score_manifest_sha256"),
         "manifest_matches_fetch": (payload.get("provenance") or {}).get("manifest_matches_fetch"),
     }
@@ -171,12 +218,12 @@ def attach_disclosure_notes(json_path: Path, md_path: Path, notes: list[str]) ->
     md_path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
-def md_detection_line(path: Path | None) -> str | None:
+def _md_section_first_bullet(path: Path | None, heading: str) -> str | None:
     if path is None or not path.is_file():
         return None
     in_section = False
     for line in path.read_text().splitlines():
-        if line.startswith("## Face detection"):
+        if line.startswith(heading):
             in_section = True
             continue
         if in_section and line.startswith("- "):
@@ -184,6 +231,14 @@ def md_detection_line(path: Path | None) -> str | None:
         if in_section and line.startswith("## "):
             break
     return None
+
+
+def md_detection_line(path: Path | None) -> str | None:
+    return _md_section_first_bullet(path, "## Face detection")
+
+
+def md_identification_line(path: Path | None) -> str | None:
+    return _md_section_first_bullet(path, "## Face identification")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -227,7 +282,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     before_json = detection_summary(out_json if out_json.is_file() else None)
+    before_ident_json = identification_summary(
+        out_json if out_json.is_file() else None
+    )
     before_md = md_detection_line(out_md if out_md.is_file() else None)
+    before_ident_md = md_identification_line(out_md if out_md.is_file() else None)
 
     service = root / "apps" / "prototype-description-service"
     python = service / ".venv" / "bin" / "python"
@@ -273,11 +332,17 @@ def main(argv: list[str] | None = None) -> int:
             attach_disclosure_notes(out_json, out_md, list(args.note))
 
     after_json = detection_summary(out_json)
+    after_ident_json = identification_summary(out_json)
     after_md = md_detection_line(out_md)
+    after_ident_md = md_identification_line(out_md)
     print("BEFORE_JSON", json.dumps(before_json, sort_keys=True))
     print("AFTER_JSON", json.dumps(after_json, sort_keys=True))
+    print("BEFORE_IDENT_JSON", json.dumps(before_ident_json, sort_keys=True))
+    print("AFTER_IDENT_JSON", json.dumps(after_ident_json, sort_keys=True))
     print("BEFORE_MD", before_md)
     print("AFTER_MD", after_md)
+    print("BEFORE_IDENT_MD", before_ident_md)
+    print("AFTER_IDENT_MD", after_ident_md)
     return decision.exit_code
 
 

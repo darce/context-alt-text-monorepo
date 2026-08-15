@@ -55,3 +55,13 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 - Verdict: FAILED
 - Failing assertion: `AssertionError: expected [ { …(4) }, { …(4) }, { …(4) }, …(37) ] to have a length of 20 but got 40`
 - After restore: PASSED
+
+## REV2-01 — the item actually wires the at-rest props
+- Mutation applied: IdentityClusterItem.tsx ClusterEditForm pass-through `atRestTotal={atRestTotal}` / `atRestTruncated={atRestTruncated}` / `isAtRestMode={isAtRestMode}` -> those three lines deleted
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx`
+- Verdict: FAILED
+- Failing assertion: `const hint = screen.getByText(/Showing \d+ of 80 labels/);` — Unable to find an element with the text: /Showing \d+ of 80 labels/.
+- After restore: PASSED
+
+## REV2-02 — hint is a description, not a second live region
+- Assertions touched: none

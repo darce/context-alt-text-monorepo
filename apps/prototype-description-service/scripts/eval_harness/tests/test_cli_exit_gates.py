@@ -184,3 +184,136 @@ def test_score_gate_exits_0_when_published_report_is_clean_even_if_rescore_is_re
     cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
     published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
     assert published["faces"]["detection"].get("refused") is not True
+
+
+# ---------------------------------------------------------------------------
+# S2R5-05 — consent is per-metric; one flag must not clear the other
+# ---------------------------------------------------------------------------
+
+
+def test_allow_refused_detection_does_not_consent_to_identification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Shipped roster-only + unboxed: both metrics refuse together.
+
+    Consenting only to detection must still exit 3 on identification.
+    A store_true / any-consent flag dies here.
+    """
+    import scripts.eval_harness.cli as cli_mod
+    from scripts.eval_harness.manifest import ScoreInvariant
+
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(
+            [
+                "score",
+                "--manifest",
+                str(man_path),
+                "--run-record",
+                str(rec_path),
+                "--allow-refused=detection",
+            ]
+        )
+    assert exc.value.code == 3
+    err = capsys.readouterr().err
+    assert "identification=" in err
+    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS in err
+    assert "detection=" not in err.split("refused metric(s) (")[1].split(")")[0]
+
+
+def test_allow_refused_identification_does_not_consent_to_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+    from scripts.eval_harness.manifest import ScoreInvariant
+
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(
+            [
+                "score",
+                "--manifest",
+                str(man_path),
+                "--run-record",
+                str(rec_path),
+                "--allow-refused=identification",
+            ]
+        )
+    assert exc.value.code == 3
+    err = capsys.readouterr().err
+    assert "detection=" in err
+    assert ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY in err
+    assert "identification=" not in err.split("refused metric(s) (")[1].split(")")[0]
+
+
+def test_allow_refused_both_metrics_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--allow-refused=detection",
+            "--allow-refused=identification",
+        ]
+    )
+
+
+def test_bare_allow_refused_is_equivalent_to_naming_every_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bare --allow-refused must stay working and name every metric in help."""
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--allow-refused",
+        ]
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--allow-refused" in help_text
+    assert "exit 3" in help_text
+    assert "every metric" in help_text
+    assert "detection" in help_text
+    assert "identification" in help_text
+
+
+def test_allow_refused_unknown_metric_is_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(
+            [
+                "score",
+                "--manifest",
+                str(tmp_path / "m.json"),
+                "--run-record",
+                str(tmp_path / "r.json"),
+                "--allow-refused=caption",
+            ]
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "caption" in err
+    assert "detection" in err

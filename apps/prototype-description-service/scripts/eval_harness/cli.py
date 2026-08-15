@@ -30,8 +30,9 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Mapping, NamedTuple
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
@@ -66,6 +67,18 @@ DEFAULT_STALL_LIMIT = 5
 # Refused detection/identification is not clean eval evidence. CI that checks
 # only process status must see a non-zero exit unless the caller opts in.
 REFUSED_METRIC_EXIT_CODE = 3
+
+
+class RefusedMetric(StrEnum):
+    """Named honesty fields an operator may consent to skip (sr-007)."""
+
+    DETECTION = "detection"
+    IDENTIFICATION = "identification"
+
+
+# Bare ``--allow-refused`` is strictly equivalent to naming every member.
+ALLOW_REFUSED_ALL = "*"
+
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
 _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
@@ -410,6 +423,92 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     return payload
 
 
+def _parse_allow_refused_metric(raw: str) -> str:
+    """argparse type: a RefusedMetric value, or the all-metrics sentinel."""
+    token = raw.strip()
+    if token in {ALLOW_REFUSED_ALL, "all"}:
+        return ALLOW_REFUSED_ALL
+    try:
+        return RefusedMetric(token).value
+    except ValueError:
+        names = ", ".join(member.value for member in RefusedMetric)
+        raise argparse.ArgumentTypeError(
+            f"{raw!r} is not a refused metric; expected one of: {names} "
+            "(bare --allow-refused names every metric)"
+        ) from None
+
+
+def consented_refused_metrics(raw: list[str] | None) -> frozenset[str]:
+    """Resolve repeatable ``--allow-refused`` values to a metric set.
+
+    Bare ``--allow-refused`` stores ``ALLOW_REFUSED_ALL`` and equals naming
+    every ``RefusedMetric`` member. Consenting to one metric never implies
+    another (S2R5-05).
+    """
+    if not raw:
+        return frozenset()
+    if ALLOW_REFUSED_ALL in raw:
+        return frozenset(member.value for member in RefusedMetric)
+    return frozenset(raw)
+
+
+def collect_refused_metrics(scored: Mapping[str, Any]) -> dict[str, str]:
+    """Return ``{metric: invariant}`` for refused honesty fields on a report."""
+    refused: dict[str, str] = {}
+    faces = scored.get("faces")
+    faces = faces if isinstance(faces, Mapping) else {}
+    detection = faces.get("detection")
+    if not isinstance(detection, Mapping):
+        detection = scored.get("detection")
+    if isinstance(detection, Mapping) and detection.get("refused"):
+        refused[RefusedMetric.DETECTION.value] = str(detection.get("invariant") or "unknown")
+    identification = faces.get("identification") if isinstance(faces, Mapping) else None
+    if isinstance(identification, Mapping) and identification.get("refused"):
+        refused[RefusedMetric.IDENTIFICATION.value] = str(
+            identification.get("invariant") or "unknown"
+        )
+    slices = scored.get("slices")
+    if isinstance(slices, Mapping):
+        for key in (
+            "headline_identification",
+            "full_corpus_identification",
+            "unknown_rejection",
+            "demographic",
+        ):
+            block = slices.get(key)
+            if isinstance(block, Mapping) and block.get("refused"):
+                refused.setdefault(
+                    RefusedMetric.IDENTIFICATION.value,
+                    str(block.get("invariant") or "unknown"),
+                )
+                break
+    return refused
+
+
+def raise_if_unconsented_refusals(
+    scored: Mapping[str, Any],
+    raw_allow: list[str] | None,
+    *,
+    command: str,
+) -> None:
+    """Exit 3 unless every refused metric was named (or bare-flagged)."""
+    blocked = {
+        name: invariant
+        for name, invariant in collect_refused_metrics(scored).items()
+        if name not in consented_refused_metrics(raw_allow)
+    }
+    if not blocked:
+        return
+    print(
+        f"{command} gate failed: refused metric(s) ("
+        + ", ".join(f"{name}={invariant}" for name, invariant in blocked.items())
+        + "); pass --allow-refused=METRIC to accept a run with no score "
+        "for those metrics (bare --allow-refused names every metric)",
+        file=sys.stderr,
+    )
+    raise SystemExit(REFUSED_METRIC_EXIT_CODE)
+
+
 def _reject_llm_judge(args: argparse.Namespace) -> None:
     """Reject the stub LLM-judge tier before any live work (§6c tiers 3-4 out of MVP).
 
@@ -541,21 +640,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score gate failed: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
-    if not getattr(args, "allow_refused", False):
-        refused: list[str] = []
-        if det.get("refused"):
-            refused.append(f"detection={det.get('invariant')}")
-        if ident.get("refused"):
-            refused.append(f"identification={ident.get('invariant')}")
-        if refused:
-            print(
-                "score gate failed: refused metric(s) ("
-                + ", ".join(refused)
-                + "); pass --allow-refused to accept a run with no score "
-                "for those metrics",
-                file=sys.stderr,
-            )
-            raise SystemExit(REFUSED_METRIC_EXIT_CODE)
+    raise_if_unconsented_refusals(
+        scored, getattr(args, "allow_refused", None), command="score"
+    )
 
 
 
@@ -882,14 +969,20 @@ def main(argv: list[str] | None = None) -> None:
     fetch_p.set_defaults(func=_cmd_fetch)
 
     def _allow_refused_flag(p: argparse.ArgumentParser) -> None:
+        named = ", ".join(member.value for member in RefusedMetric)
         p.add_argument(
             "--allow-refused",
-            action="store_true",
+            action="append",
+            nargs="?",
+            const=ALLOW_REFUSED_ALL,
+            type=_parse_allow_refused_metric,
+            metavar="METRIC",
             help=(
-                "exit 0 when detection or identification is REFUSED "
-                "(roster_only / unboxed identity claims). "
-                "Default: refused metrics exit 3 — a missing score is not "
-                "clean evaluation evidence"
+                "exit 0 for the named refused metric. Repeatable "
+                f"(--allow-refused=detection --allow-refused=identification). "
+                f"Bare --allow-refused is equivalent to naming every metric "
+                f"({named}). Default: refused metrics exit 3 — a missing "
+                "score is not clean evaluation evidence"
             ),
         )
 

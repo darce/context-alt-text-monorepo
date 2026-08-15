@@ -3463,6 +3463,36 @@ def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # V
     assert verdict_ok["verdict"] == ScoreVerdict.PASS.value, verdict_ok
 
 
+def test_vlm6_r2_g06_position_accuracy_just_above_floor_passes():
+    """VLM6-R2-G-06: just above 0.5 must not trip; equality must (comparison is <=)."""
+    from scripts.eval_harness.report import (
+        POSITION_ACCURACY_FLOOR,
+        build_score_quality_floor_reasons,
+        build_score_verdict,
+    )
+
+    assert POSITION_ACCURACY_FLOOR == 0.5
+    just_above = _passable_scored_dict()
+    just_above["faces"]["identification"]["positional"]["position_accuracy"] = 0.5001
+    just_above["faces"]["identification"]["positional"]["compared_images"] = 5
+    just_reasons = build_score_quality_floor_reasons(
+        just_above, scored_n=int(just_above["counts"]["scored"])
+    )
+    assert not any("quality-floor" in r for r in just_reasons), just_reasons
+    just_verdict = build_score_verdict(just_above, rubric_gate="enforce")
+    assert not any("quality-floor" in r for r in just_verdict["reasons"]), just_verdict["reasons"]
+
+    at_floor = _passable_scored_dict()
+    at_floor["faces"]["identification"]["positional"]["position_accuracy"] = 0.5
+    at_floor["faces"]["identification"]["positional"]["compared_images"] = 5
+    at_reasons = build_score_quality_floor_reasons(
+        at_floor, scored_n=int(at_floor["counts"]["scored"])
+    )
+    assert any("position_accuracy" in r and "<=" in r for r in at_reasons), at_reasons
+    at_verdict = build_score_verdict(at_floor, rubric_gate="enforce")
+    assert at_verdict["verdict"] == ScoreVerdict.FAIL.value, at_verdict
+
+
 def test_quality_floor_realistic_midrange_and_chance_boundary():  # VLM6-R2-G-06
     """0.5 is binary-chance, not a 0.05 band — realistic mid-range must pass.
 
@@ -3492,6 +3522,19 @@ def test_quality_floor_realistic_midrange_and_chance_boundary():  # VLM6-R2-G-06
     mid_verdict = build_score_verdict(mid, rubric_gate="enforce")
     assert not any("quality-floor" in r for r in mid_verdict["reasons"]), mid_verdict["reasons"]
     assert mid_verdict["verdict"] == ScoreVerdict.PASS.value, mid_verdict
+
+    # Just above chance: comparison is `<=`, so 0.5 + epsilon must not trip.
+    just_above = _passable_scored_dict()
+    just_above["faces"]["identification"]["positional"]["position_accuracy"] = 0.5001
+    just_above["faces"]["identification"]["positional"]["compared_images"] = 5
+    just_reasons = build_score_quality_floor_reasons(
+        just_above, scored_n=int(just_above["counts"]["scored"])
+    )
+    assert not any("position_accuracy" in r for r in just_reasons), just_reasons
+    just_verdict = build_score_verdict(just_above, rubric_gate="enforce")
+    assert not any(
+        "quality-floor" in r and "position_accuracy" in r for r in just_verdict["reasons"]
+    ), just_verdict["reasons"]
 
     # Exact chance boundary: `<=` means floor itself is FAIL.
     at_floor = _passable_scored_dict()

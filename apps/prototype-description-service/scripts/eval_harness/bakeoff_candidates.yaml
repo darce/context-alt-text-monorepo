@@ -76,7 +76,8 @@ entries:
       extra_flags: ["--no-think"]
       gguf: Qwen3.8-27B-UD-Q4_K_XL.gguf
       mmproj: mmproj-F16.gguf
-      min_runtime_build: "newer than b6887"
+      min_runtime_build: b6887
+      min_runtime_build_is_lower_bound: true
 
   - id: internvl35-8b
     role: candidate

@@ -79,6 +79,8 @@ class CandidatePlan:
     repo: str
     revision: str
     models_dir: str
+    min_runtime_build: str | None = None
+    min_runtime_build_is_lower_bound: bool = False
 
 
 def build_plans(
@@ -167,6 +169,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append(f"# candidate: {plan.candidate_id}")
         lines.append(f"# download: {hint}")
         lines.append("_total=$((_total + 1))")
+        lines.extend(_emit_runtime_build_preflight(plan))
         lines.append(f"{shlex.join(plan.serve_argv)} &")
         lines.append("_serve_pid=$!")
         lines.append("_ready=0")
@@ -375,7 +378,46 @@ def _plan_candidate(
         repo=entry.repo,
         revision=entry.revision,
         models_dir=models_dir,
+        min_runtime_build=entry.recipe.min_runtime_build,
+        min_runtime_build_is_lower_bound=entry.recipe.min_runtime_build_is_lower_bound,
     )
+
+
+def _emit_runtime_build_preflight(plan: CandidatePlan) -> list[str]:
+    """Emit a fail-fast llama.cpp build check before ``llama-server`` starts."""
+    required = plan.min_runtime_build
+    if not required:
+        return []
+    req_digits = required[1:] if required.startswith("b") else required
+    cid = plan.candidate_id
+    lines = [
+        f"# preflight: {cid} requires llama.cpp {required}",
+        "_build=$(llama-server --version 2>&1 | grep -oE 'b[0-9]+' | head -1) || _build=\"\"",
+        'if [ -z "${_build}" ]; then',
+        f'  echo "candidate {cid}: cannot parse llama-server runtime build '
+        f'(required {required}, observed empty)" >&2',
+        "  exit 1",
+        "fi",
+        '_obs=${_build#b}',
+        f"_req={req_digits}",
+        'if [ "${_obs}" -lt "${_req}" ]; then',
+        f'  echo "candidate {cid}: runtime build ${{_build}} is older than required '
+        f'{required} (observed ${{_build}})" >&2',
+        "  exit 1",
+        "fi",
+    ]
+    if plan.min_runtime_build_is_lower_bound:
+        lines.extend(
+            [
+                'if ! [ "${_obs}" -gt "${_req}" ]; then',
+                f'  echo "candidate {cid}: runtime build ${{_build}} equals pinned bound '
+                f"{required}; exact requirement is unknown and strictly greater than "
+                f'{required} (observed ${{_build}})" >&2',
+                "  exit 1",
+                "fi",
+            ]
+        )
+    return lines
 
 
 def _artifact_path(models_dir: str, candidate_id: str, filename: str) -> str:

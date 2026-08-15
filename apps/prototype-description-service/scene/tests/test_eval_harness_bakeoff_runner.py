@@ -494,3 +494,96 @@ def test_sealed_llama_cpp_mmproj_gb_from_notes() -> None:
     assert plans["kimi-vl-a3b"].total_gb == pytest.approx(11.5 + 0.91)
     assert plans["gemma-4-12b"].total_gb == pytest.approx(7.2 + 0.18)
     assert plans["minicpm-v-45"].total_gb == pytest.approx(7.0)
+
+
+_PREFLIGHT_CAPTURE = "_build=$(llama-server --version 2>&1 | grep -oE 'b[0-9]+' | head -1)"
+
+
+def _assert_runtime_build_preflight(
+    script: str,
+    *,
+    floored_ids: list[str],
+    lower_bound_ids: list[str],
+) -> None:
+    assert _PREFLIGHT_CAPTURE in script
+    for cid in floored_ids:
+        assert f"candidate {cid}" in script
+        assert f"required " in script
+        block_at = script.find(f"# preflight: {cid} requires llama.cpp")
+        assert block_at != -1, cid
+        next_serve = script.find("llama-server --host", block_at)
+        assert next_serve != -1, cid
+        assert block_at < next_serve
+        assert "exit 1" in script[block_at:next_serve]
+        assert "cannot parse llama-server runtime build" in script[block_at:next_serve]
+        assert '"${_obs}" -lt "${_req}"' in script[block_at:next_serve]
+    for cid in lower_bound_ids:
+        block_at = script.find(f"# preflight: {cid} requires llama.cpp")
+        next_serve = script.find("llama-server --host", block_at)
+        block = script[block_at:next_serve]
+        assert '"${_obs}" -gt "${_req}"' in block
+        assert "strictly greater" in block
+
+
+def test_emit_shell_runtime_build_preflight_refuses_under_versioned_host() -> None:
+    registry = _registry(
+        [
+            _entry("exact-floor", recipe=_recipe(min_runtime_build="b6887")),
+            _entry(
+                "lower-bound",
+                recipe=_recipe(
+                    min_runtime_build="b6887",
+                    min_runtime_build_is_lower_bound=True,
+                ),
+            ),
+            _entry("no-floor"),
+        ]
+    )
+    plans = build_plans(registry, **_PLAN_KW)
+    assert {plan.candidate_id for plan in plans} == {"exact-floor", "lower-bound", "no-floor"}
+    for plan in plans:
+        if plan.candidate_id == "no-floor":
+            assert plan.min_runtime_build is None
+        else:
+            assert plan.min_runtime_build == "b6887"
+    script = emit_shell(plans, incumbent_runs={})
+    _assert_runtime_build_preflight(
+        script,
+        floored_ids=["exact-floor", "lower-bound"],
+        lower_bound_ids=["lower-bound"],
+    )
+    no_floor_at = script.find("# candidate: no-floor")
+    no_floor_serve = script.find("llama-server --host", no_floor_at)
+    assert "llama-server --version" not in script[no_floor_at:no_floor_serve]
+
+    stripped = "\n".join(
+        line
+        for line in script.splitlines()
+        if "llama-server --version" not in line
+        and "_obs=" not in line
+        and "_req=" not in line
+        and "strictly greater" not in line
+        and "# preflight:" not in line
+        and "cannot parse llama-server runtime build" not in line
+    )
+    with pytest.raises(AssertionError):
+        _assert_runtime_build_preflight(
+            stripped,
+            floored_ids=["exact-floor", "lower-bound"],
+            lower_bound_ids=["lower-bound"],
+        )
+
+
+def test_sealed_qwen38_emit_shell_has_lower_bound_preflight() -> None:
+    registry = load_bakeoff_candidates()
+    plans = build_plans(registry, **_PLAN_KW)
+    floored = [plan for plan in plans if plan.min_runtime_build]
+    assert [plan.candidate_id for plan in floored] == ["qwen38-27b"]
+    assert floored[0].min_runtime_build == "b6887"
+    assert floored[0].min_runtime_build_is_lower_bound is True
+    script = emit_shell(plans, incumbent_runs={})
+    _assert_runtime_build_preflight(
+        script,
+        floored_ids=["qwen38-27b"],
+        lower_bound_ids=["qwen38-27b"],
+    )

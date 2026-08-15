@@ -30,6 +30,8 @@ QWEN38_QUANT = "UD-Q4_K_XL"
 QWEN38_ARTIFACT_GB = 17.9
 _SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 _TODO_RE = re.compile(r"TODO|<TODO", re.IGNORECASE)
+_LLAMA_CPP_BUILD_RE = re.compile(r"^b\d+$")
+_VLLM_BUILD_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
 DEFAULT_REGISTRY = Path(__file__).with_name("bakeoff_candidates.yaml")
 
 
@@ -96,6 +98,7 @@ class ServingRecipe(BaseModel):
     mmproj: str | None = None
     mmproj_gb: float | None = None
     min_runtime_build: str | None = None
+    min_runtime_build_is_lower_bound: bool = False
 
     @field_validator("min_runtime_build")
     @classmethod
@@ -105,12 +108,19 @@ class ServingRecipe(BaseModel):
         text = _nonempty_no_todo(value)
         if "tbd" in text.lower():
             raise ValueError(f"TODO placeholder is not a pin: {value!r}")
+        if not (_LLAMA_CPP_BUILD_RE.fullmatch(text) or _VLLM_BUILD_RE.fullmatch(text)):
+            raise ValueError(
+                f"min_runtime_build {value!r} must match ^b\\d+$ (llama_cpp) "
+                f"or ^\\d+\\.\\d+(\\.\\d+)?$ (vllm); free prose is not a pin"
+            )
         return text
 
     @model_validator(mode="after")
     def _llama_cpp_needs_artifacts(self) -> ServingRecipe:
         if self.stack is ServingStack.LLAMA_CPP and (not self.gguf or not self.mmproj):
             raise ValueError("llama_cpp recipe requires gguf and mmproj")
+        if self.min_runtime_build is None and self.min_runtime_build_is_lower_bound:
+            raise ValueError("min_runtime_build_is_lower_bound requires min_runtime_build")
         return self
 
 
@@ -166,6 +176,29 @@ class CandidateEntry(BaseModel):
     def _incumbents_are_not_competing(self) -> CandidateEntry:
         if self.role is CandidateRole.INCUMBENT and self.competing:
             raise ValueError(f"incumbent {self.id} cannot be competing")
+        return self
+
+    @model_validator(mode="after")
+    def _min_runtime_build_matches_stack(self) -> CandidateEntry:
+        pin = self.recipe.min_runtime_build
+        if pin is None:
+            return self
+        stack = self.recipe.stack
+        if stack is ServingStack.LLAMA_CPP:
+            if not _LLAMA_CPP_BUILD_RE.fullmatch(pin):
+                raise ValueError(
+                    f"{self.id}: min_runtime_build {pin!r} must match ^b\\d+$ for llama_cpp"
+                )
+        elif stack is ServingStack.VLLM:
+            if not _VLLM_BUILD_RE.fullmatch(pin):
+                raise ValueError(
+                    f"{self.id}: min_runtime_build {pin!r} must match "
+                    f"^\\d+\\.\\d+(\\.\\d+)?$ for vllm"
+                )
+        else:
+            raise ValueError(
+                f"{self.id}: min_runtime_build {pin!r} is not valid for stack {stack.value}"
+            )
         return self
 
 

@@ -1423,10 +1423,14 @@ def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) ->
 
 
 def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
-    """Read annotation_mode from a GoldenManifest or mapping; never invent one."""
+    """Read annotation_mode from a GoldenManifest or mapping; never invent one.
+
+    Mapping content wins over a dict-subclass attribute (S2R4-12). Attribute
+    first inverted most-restrictive-wins when the key said roster_only.
+    """
+    if isinstance(manifest, Mapping) and "annotation_mode" in manifest:
+        return parse_annotation_mode(manifest.get("annotation_mode"))
     raw = getattr(manifest, "annotation_mode", None)
-    if raw is None and isinstance(manifest, Mapping):
-        raw = manifest.get("annotation_mode")
     return parse_annotation_mode(raw)
 
 

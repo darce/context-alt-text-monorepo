@@ -166,7 +166,7 @@ export const useClusterSuggestionsLoader = ({
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
     const roster = rosterError ? [] : rosterEntries;
-    const labeledClusters = isAtRestMode ? (atRestLabeledClusters?.clusters ?? []) : (labelMatches ?? []);
+    const labeledClusters = isAtRestMode ? (atRestLabeledClusters?.clusters ?? []) : (labelMatches ?? atRestLabeledClusters?.clusters ?? []);
     // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
     const namedMatches = labeledClusters.filter(
       (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',

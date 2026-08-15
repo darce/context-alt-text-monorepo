@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as buildNamingOptionsModule from '../buildNamingOptions';
@@ -953,6 +953,76 @@ describe('useClusterSuggestions', () => {
       );
       expect(result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-self'))).toBe(
         false,
+      );
+      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+
+      queryClient.clear();
+    });
+
+    it('keeps the at-rest labelled page visible while the first search is in flight (REV1-02)', async () => {
+      // Predicted first failure (pre-fix): after debounce flips isAtRestMode, the
+      // search observer has never fetched, so labelMatches ?? [] blanks the list.
+      // Assert after the flip and before the deferred search resolves — asserting
+      // before debounce is tautological (at-rest mode is still active).
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+
+      type ClusterListResponse = Awaited<ReturnType<typeof recognitionApi.listRecognitionClusters>>;
+      let resolveSearch!: (value: ClusterListResponse) => void;
+      const pendingSearch = new Promise<ClusterListResponse>((resolve) => {
+        resolveSearch = resolve;
+      });
+
+      listRecognitionClustersMock.mockImplementation((params) => {
+        if (params?.search && String(params.search).length >= 2) {
+          return pendingSearch;
+        }
+        return Promise.resolve({
+          clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+          limit: 50,
+          total: 1,
+          truncated: false,
+        });
+      });
+
+      const { result, rerender } = renderHook(
+        ({ labelInput }: { labelInput: string }) =>
+          useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput, debounceMs: 300 }),
+        { wrapper, initialProps: { labelInput: '' } },
+      );
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+      );
+      expect(result.current.isAtRestMode).toBe(true);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      rerender({ labelInput: 'To' });
+      expect(result.current.isAtRestMode).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(result.current.isAtRestMode).toBe(false);
+      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true);
+      expect(
+        result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-tory')),
+      ).toBe(true);
+
+      vi.useRealTimers();
+      resolveSearch({
+        clusters: [{ ...baseCluster, id: 'cluster-tova', label: 'Tova Lin', identity_count: 3 }],
+        limit: 20,
+        total: 1,
+        truncated: false,
+      });
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Tova Lin')).toBe(true),
       );
       expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
 

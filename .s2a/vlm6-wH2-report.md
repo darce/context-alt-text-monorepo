@@ -32,8 +32,8 @@ Same path under `--check-determinism --expect-report … --freeze-certification`
 
 wG3 established: freeze corpus = golden seed + media 39; freeze man lives at
 `docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-manifest-20260811.json`
-(38 entries, `face_boxes` 1/38). Run `provenance.manifest_sha256` prefix `7462d325…`.
-Golden seed stays 37 entries, sha prefix `83bfdc4e…`, 0/37 face_boxes.
+(38 entries, `face_boxes` 1/38). Run `provenance.manifest_sha256` prefix `sha256:7462d325…`.
+Golden seed stays 37 entries, sha prefix `sha256:83bfdc4e…`, 0/37 face_boxes.
 
 ### Fix
 

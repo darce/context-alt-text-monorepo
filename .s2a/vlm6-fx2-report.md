@@ -132,6 +132,7 @@ RED assert: staged in phases → False
 **Change:** `validate_live_head_sha` in shared module (local S4-06 equivalent — see cross-lane). CLI `main` and `write_anchor` (when `live_head_sha is not None`) call it. Refuses: forty zeros, non-40-hex, non-hex. Optional `--verify-live-head-sha` runs `git rev-parse --verify <sha>^{commit}`.
 
 **RED (old path):**
+<!-- sha-guard:ignore-next-block -->
 ```
 OLD accepts '0000000000000000000000000000000000000000' → stamped as head_sha
 OLD accepts 'deadbeef' → stamped as head_sha
@@ -140,6 +141,7 @@ OLD accepts 'not-a-sha-at-all!!!' → stamped as head_sha
 ```
 
 **GREEN:**
+<!-- sha-guard:ignore-next-block -->
 ```
 refuse '0000…0000': … fabricated 40-zero sentinel …
 refuse 'deadbeef': … must be a 40-char lowercase hex git SHA …

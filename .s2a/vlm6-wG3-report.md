@@ -181,11 +181,11 @@ base cc1da6219d2407dca6c676d6e6583635bcdc9672
 | Artifact | Old digest (prefix) | New digest |
 | --- | --- | --- |
 | caption man | *(absent)* | `2eae07326bd5a63834fe838de9fbc4e46ab71599ed213c6eacb1fd66757c57b7` |
-| caption run-record | `d105f3ad…` | `b5c3040aad98939b71c2242ed2cdbd8efcdb4a51bd65ec8f5f45e8a1a70e58cf` |
-| `manifest_sha256` prefix | `83bfdc4e` (golden) | `7462d325` (freeze man) |
+| caption run-record | `sha256:d105f3ad…` | `b5c3040aad98939b71c2242ed2cdbd8efcdb4a51bd65ec8f5f45e8a1a70e58cf` |
+| `manifest_sha256` prefix | `sha256:83bfdc4e` (golden) | `sha256:7462d325` (freeze man) |
 
 Report digests **unchanged** (regen stage):  
-JSON `c2fcfa34…` · MD `dc7bf054…`
+JSON `sha256:c2fcfa34…` · MD `sha256:dc7bf054…`
 
 ### Live value shifts regen must absorb
 
@@ -208,7 +208,7 @@ JSON `c2fcfa34…` · MD `dc7bf054…`
 | `provenance.coverage_gaps.*.total` | 37 | 38 |
 | `provenance.coverage_gaps.face_boxes.populated` | 0 | 1 |
 | `provenance.corpus_traps` | absent | 1-entry trap inventory |
-| `provenance.manifest_sha256` | `83bfdc4e…` | `7462d325…` |
+| `provenance.manifest_sha256` | `sha256:83bfdc4e…` | `sha256:7462d325…` |
 
 Existing media 1–38 published cells not causally downstream of media 39 retain individual outcomes; aggregate detection tp (+2) and identity counts move only because the trap adds two named GT faces with matching seeded predictions (seed_index 37: no FN/FP deviation).
 

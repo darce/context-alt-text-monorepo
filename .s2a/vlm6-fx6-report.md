@@ -120,6 +120,7 @@ Call sites:
 ### RED / GREEN (shared guard)
 
 **RED:**
+<!-- sha-guard:ignore-next-block -->
 ```
 RED: HEAD_SHA is the fabricated 40-zero sentinel; ...
 RED: HEAD_SHA='aaaaaaaa...' is not a resolvable commit in this repository ...

@@ -85,6 +85,12 @@ LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
 # exhaustive capture-session gate (S2R6-01); roster_only may still carry it.
 LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
 
+# Recorded decision (S2R4-20): persisted annotation_mode is document-level.
+# S2R3-10 closed by extra=forbid + a comment left the mixed-stamp lattice
+# unreachable from any on-disk file and unrecorded outside those remarks.
+# The loader now refuses a per-entry stamp under this named invariant.
+ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT = "annotation_mode_is_document_level"
+
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
 # Centralized enums (sr-007) so difficulty/domain/fact-kind/relation are never
@@ -838,7 +844,7 @@ def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
         raise ManifestError(
             f"annotation_mode is document-level; per-entry stamp is not a "
             f"persisted contract ({label})",
-            invariant="annotation_mode_is_document_level",
+            invariant=ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT,
             entry_index=index,
             entry_path=entry_path,
         )

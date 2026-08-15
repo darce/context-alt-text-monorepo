@@ -235,7 +235,11 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
-            "face_boxes": [_named_box("Ryann Wiseman")],
+            "face_boxes": [
+                _named_box("Ryann Wiseman"),
+                {**_named_box("Ryann Wiseman"), "x": 0.2, "name": None},
+                {**_named_box("Ryann Wiseman"), "x": 0.8, "name": None},
+            ],
         }
     ]
     entries[0]["annotation_mode"] = "exhaustive"

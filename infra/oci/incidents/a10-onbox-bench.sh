@@ -54,7 +54,21 @@ modes_for() {  # macOS ships bash 3.2 — no associative arrays
 }
 
 echo "== 3/3 bench (~1h GPU budget; Ctrl-C safe — run-records are per-cell) =="
+# golden.json is roster_only. `cli score` therefore exits 3 (REFUSED) unless
+# the operator consents with --allow-refused. Do not add that flag here:
+# auto-consent would copy a no-score report as if it were a result.
 START=$(date +%s)
+worst_ec=0
+note_score_ec() {
+  local ec="$1"
+  if [ "$ec" -eq 1 ]; then
+    worst_ec=1
+  elif [ "$ec" -eq 3 ] && [ "$worst_ec" -ne 1 ]; then
+    worst_ec=3
+  elif [ "$ec" -ne 0 ] && [ "$worst_ec" -eq 0 ]; then
+    worst_ec="$ec"
+  fi
+}
 for entry in "${CONFIGS[@]}"; do
   name="${entry%%|*}"; flags="${entry#*|}"
   for mode in $(modes_for "$name"); do
@@ -67,11 +81,23 @@ for entry in "${CONFIGS[@]}"; do
            --out "$rr" >/dev/null 2>"$SVC/out/${tag}.err" ); then
       echo "ok -> scoring"
       ( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score \
-          --run-record "$rr" --manifest "$MANIFEST" >/dev/null 2>&1 )
+          --run-record "$rr" --manifest "$MANIFEST" )
+      score_ec=$?
       cp "$SVC/$rr" "$RESULTS/" 2>/dev/null
-      cp "$SVC/${rr%.json}"*report* "$RESULTS/" 2>/dev/null
+      if [ "$score_ec" -eq 3 ]; then
+        echo "  REFUSED (exit 3) — detection/identification not scored (roster_only / unboxed claims). Not copying the report as a scored result. Add per-face boxes, or re-run this cell with --allow-refused if you consent to a no-score report."
+        mkdir -p "$RESULTS/refused"
+        cp "$SVC/${rr%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
+        note_score_ec 3
+      elif [ "$score_ec" -ne 0 ]; then
+        echo "  score FAILED (exit $score_ec) — partial/determinism/env; not copying reports"
+        note_score_ec "$score_ec"
+      else
+        cp "$SVC/${rr%.json}"*report* "$RESULTS/" 2>/dev/null
+      fi
     else
       echo "FAILED (out/${tag}.err) — continuing"
+      note_score_ec 1
     fi
   done
 done
@@ -80,3 +106,4 @@ echo
 echo "Done in $(( ($(date +%s)-START)/60 ))m. Results -> $RESULTS"
 echo "TEARDOWN (owed):"
 echo "  oci compute instance terminate --instance-id ocid1.instance.oc1.iad.anuwcljt2mcagaqcklr52rajo3egewj3bham5hctguewgi6u5ro5o7lenitq --force"
+exit "$worst_ec"

@@ -40,9 +40,23 @@ RR="out/run-altq-646-interleave-v3.json"
     --out "$RR" ) || { echo "fetch FAILED"; exit 1; }
 
 echo "== score =="
-( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score --run-record "$RR" --manifest "$MANIFEST" ) || echo "score warning (rubric partial on 646)"
+# Do not treat exit 3 as "rubric partial" and do not discard nonzero.
+# 646 manifest is roster_only; refused detection/identification is exit 3.
+# --allow-refused is not added here: auto-consent would greenwash a no-score
+# report. Copy the run-record always; park refused reports under refused/.
+( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score --run-record "$RR" --manifest "$MANIFEST" )
+score_ec=$?
 cp "$SVC/$RR" "$RESULTS/" 2>/dev/null
-cp "$SVC/${RR%.json}"*report* "$RESULTS/" 2>/dev/null
+if [ "$score_ec" -eq 3 ]; then
+  echo "score REFUSED (exit 3): detection/identification not computable honestly (roster_only / unboxed claims). This is not rubric-partial. Report is refused evidence, not a clean score. Add per-face boxes, or re-run score with --allow-refused if you consent to a no-score report."
+  mkdir -p "$RESULTS/refused"
+  cp "$SVC/${RR%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
+elif [ "$score_ec" -ne 0 ]; then
+  echo "score FAILED (exit $score_ec): partial corpus, determinism failure, ManifestError/ReportError, or env — not a refusal."
+else
+  cp "$SVC/${RR%.json}"*report* "$RESULTS/" 2>/dev/null
+fi
 
 echo "Done. Results -> $RESULTS"
 echo "TEARDOWN (owed): oci compute instance terminate --instance-id <IID from launch output> --force"
+exit "$score_ec"

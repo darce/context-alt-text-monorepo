@@ -6,8 +6,9 @@ The previous audit treated a block as stale only when
 table, so that scan reported clean.
 
 This module drives the real repo-root script against a scratch git
-repo. A non-refused identification block is a finding, including the
-null-precision / zero-recall shape.
+repo. A leftover uncomputed identification block (not refused, null
+precision) is a finding. A numeric identification score is not — the
+report does not embed the manifest fields needed to judge honesty.
 """
 
 from __future__ import annotations
@@ -136,14 +137,36 @@ def test_missing_refused_key_empty_table_is_flagged(tmp_path: Path) -> None:
     assert "VLM-2B-bakeoff-MiniCPM-V-4.5-report.json" in combined
 
 
-def test_refused_false_is_flagged(tmp_path: Path) -> None:
+def test_refused_false_null_precision_is_flagged(tmp_path: Path) -> None:
+    """refused:false is not a refusal. Null precision is the leftover shape."""
     repo = _init_repo(tmp_path)
-    ident = {"refused": False, "precision": 0.5, "recall": 0.5, "per_identity": {}}
+    ident = {"refused": False, "precision": None, "recall": 0.0, "per_identity": {}}
     _track(repo, "docs/tasks/vlm/scored-report.json", _report(ident=ident))
-    _commit(repo, "add refused-false")
+    _commit(repo, "add refused-false leftover")
     proc = _run_guard(repo)
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "SCORED" in proc.stdout + proc.stderr
+
+
+def test_numeric_identification_score_is_not_flagged(tmp_path: Path) -> None:
+    """S2R5-18: a numeric score is not stale; honesty is not in the report."""
+    repo = _init_repo(tmp_path)
+    ident = {
+        "refused": False,
+        "precision": 0.5,
+        "recall": 0.5,
+        "per_identity": {
+            "Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}
+        },
+    }
+    _track(repo, "docs/tasks/vlm/scored-report.json", _report(ident=ident))
+    _commit(repo, "add numeric score")
+    proc = _run_guard(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "SCORED" not in combined
+    assert "ok —" in proc.stdout
+    assert "numeric" in proc.stdout
 
 
 def test_explicit_refusal_is_clean(tmp_path: Path) -> None:
@@ -184,11 +207,26 @@ def test_classifier_treats_null_refused_as_scored() -> None:
         "per_identity": {"Ada": {"precision": None, "recall": 0.0, "tp": 0, "fp": 0, "fn": 1}},
     }
     assert guard.is_refused_identification(ident) is False
+    assert guard.is_leftover_uncomputed_identification(ident) is True
     hit = guard.scan_payload("docs/x-report.json", {"faces": {"identification": ident}})
     assert hit is not None
     assert hit.precision is None
     assert hit.recall == 0.0
     assert hit.per_identity_rows == 1
+
+
+def test_classifier_does_not_flag_numeric_score() -> None:
+    """S2R5-18: refused is False + numeric P/R is not leftover."""
+    guard = _load_guard()
+    ident = {
+        "refused": False,
+        "precision": 0.5,
+        "recall": 0.5,
+        "per_identity": {"Ada": {"precision": 0.5, "recall": 0.5, "tp": 1, "fp": 1, "fn": 1}},
+    }
+    assert guard.is_refused_identification(ident) is False
+    assert guard.is_leftover_uncomputed_identification(ident) is False
+    assert guard.scan_payload("docs/x-report.json", {"faces": {"identification": ident}}) is None
 
 
 def test_dated_report_filename_is_scanned(tmp_path: Path) -> None:

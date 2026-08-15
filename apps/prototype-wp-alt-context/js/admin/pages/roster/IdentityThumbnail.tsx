@@ -81,6 +81,7 @@ export const IdentityThumbnail = ({
   const [cropped, setCropped] = React.useState<OwnedCrop | null>(null);
   const [isIntersecting, setIsIntersecting] = React.useState(false);
   const [thumbFailed, setThumbFailed] = React.useState(false);
+  const [fallbackFailed, setFallbackFailed] = React.useState(false);
   const hostRef = React.useRef<HTMLSpanElement | null>(null);
   const sourceUrl = mediaMeta?.url ?? identity.attachment_url ?? identity.media_url ?? null;
   const cropOwnerId = thumbnailCropOwnerId(identity);
@@ -90,6 +91,10 @@ export const IdentityThumbnail = ({
   React.useEffect(() => {
     setThumbFailed(false);
   }, [identity.thumb_url]);
+
+  React.useEffect(() => {
+    setFallbackFailed(false);
+  }, [sourceUrl, cropOwnerId]);
 
   // Canvas crop path only (no usable thumb_url). Dedicated blob errors fall
   // through here via thumbFailed so attachment_url + bbox can still paint.
@@ -204,8 +209,10 @@ export const IdentityThumbnail = ({
   // Ignore a previous identity's crop on this render — effect cleanup is
   // post-paint and would leak one frame [WBUX-5-R2-S3-BR-01].
   const croppedSrc = cropped !== null && cropped.ownerId === cropOwnerId ? cropped.src : null;
-  const resolvedSrc = effectiveThumbUrl ?? croppedSrc ?? (needsCanvasCrop ? null : sourceUrl);
+  const fallbackSrc = needsCanvasCrop ? croppedSrc : sourceUrl;
+  const resolvedSrc = effectiveThumbUrl ?? (fallbackFailed ? null : fallbackSrc);
   const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
+  const imageFailedLabel = __('Image failed to load', 'alt-context');
 
   if (!resolvedSrc) {
     // Sized via the size prop (inline, no CSS file) so rows with/without faces
@@ -225,8 +232,10 @@ export const IdentityThumbnail = ({
     // [A11Y-11] [A11Y-12]. Decorative alt="" and genuinely-missing media must
     // NOT be buttons: an aria-hidden control that still fires onClick violates
     // keyboard operability and name/role/value [WBUX-5-D-03] [A11Y-04].
-    const pendingCrop = needsCanvasCrop && !croppedSrc;
+    const pendingCrop = needsCanvasCrop && !croppedSrc && !fallbackFailed;
     const namedPending = pendingCrop && resolvedAlt !== '';
+    const claimedThenFailed = Boolean(dedicatedThumbUrl) && thumbFailed && !pendingCrop;
+    const loudError = (claimedThenFailed || fallbackFailed) && resolvedAlt !== '';
     const boxStyle: React.CSSProperties = {
       width: size,
       height: size,
@@ -234,6 +243,21 @@ export const IdentityThumbnail = ({
       verticalAlign: 'middle',
       flexShrink: 0,
     };
+    if (loudError) {
+      return (
+        <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+          <div
+            className="acx-cluster-card__face--placeholder"
+            role="img"
+            aria-label={imageFailedLabel}
+            data-face-error="true"
+            style={boxStyle}
+          >
+            {imageFailedLabel}
+          </div>
+        </span>
+      );
+    }
     if (onClick && namedPending) {
       return (
         <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
@@ -286,7 +310,9 @@ export const IdentityThumbnail = ({
         onError={() => {
           if (effectiveThumbUrl) {
             setThumbFailed(true);
+            return;
           }
+          setFallbackFailed(true);
         }}
         loading="lazy"
       />

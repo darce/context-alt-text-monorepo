@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cropFaceFromImage } from '../cropFaceFromImage';
+import { cropFaceFromImage, FACE_CROP_PADDING_RATIO } from '../cropFaceFromImage';
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
 
@@ -44,7 +44,8 @@ describe('cropFaceFromImage [TEST-15]', () => {
   const drawImage = vi.fn();
   const clearRect = vi.fn();
   const toDataURL = vi.fn(() => 'data:image/jpeg;base64,crop-record');
-  const getContext = vi.fn(() => ({ clearRect, drawImage }));
+  type FakeContext = { clearRect: typeof clearRect; drawImage: typeof drawImage };
+  const getContext = vi.fn((): FakeContext | null => ({ clearRect, drawImage }));
 
   beforeEach(() => {
     drawImage.mockClear();
@@ -107,6 +108,26 @@ describe('cropFaceFromImage [TEST-15]', () => {
     expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.92);
   });
 
+  it('applies FACE_CROP_PADDING_RATIO when paddingRatio is omitted', () => {
+    const image = { naturalWidth: 200, naturalHeight: 100, width: 200, height: 100 } as HTMLImageElement;
+    const bbox = { x: 40, y: 20, width: 40, height: 20 };
+    const expected = expectedSourceRect(200, 100, bbox, FACE_CROP_PADDING_RATIO);
+    const unpadded = expectedSourceRect(200, 100, bbox, 0);
+
+    cropFaceFromImage({ image, bbox, size: 32 });
+
+    const [, sx, sy, sWidth, sHeight] = drawImage.mock.calls[0] as [
+      HTMLImageElement,
+      number,
+      number,
+      number,
+      number,
+    ];
+    expect({ sx, sy, sWidth, sHeight }).toEqual(expected);
+    expect({ sx, sy, sWidth, sHeight }).not.toEqual(unpadded);
+    expect(FACE_CROP_PADDING_RATIO).toBeGreaterThan(0);
+  });
+
   it('scales the source rectangle when original dimensions differ from natural', () => {
     const image = { naturalWidth: 100, naturalHeight: 50, width: 100, height: 50 } as HTMLImageElement;
     const bbox = { x: 80, y: 40, width: 80, height: 40 };
@@ -156,6 +177,21 @@ describe('cropFaceFromImage [TEST-15]', () => {
       }),
     ).toBeNull();
     expect(drawImage).not.toHaveBeenCalled();
+    expect(toDataURL).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the crop throws', () => {
+    drawImage.mockImplementationOnce(() => {
+      throw new Error('drawImage failed');
+    });
+    const image = { naturalWidth: 100, naturalHeight: 100, width: 100, height: 100 } as HTMLImageElement;
+    expect(
+      cropFaceFromImage({
+        image,
+        bbox: { x: 10, y: 10, width: 20, height: 20 },
+        size: 32,
+      }),
+    ).toBeNull();
     expect(toDataURL).not.toHaveBeenCalled();
   });
 

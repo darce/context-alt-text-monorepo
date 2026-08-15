@@ -411,11 +411,14 @@ def test_legacy_import_lineage_carries_unknown_session() -> None:
     assert named["capture_session_id"]
 
 
-def test_in_tree_boxed_corpus_can_flip_to_exhaustive(tmp_path: Path) -> None:
-    """S2R5-06: documented exhaustive remedy is executable on a boxed corpus.
+def test_in_tree_boxed_corpus_cannot_flip_to_exhaustive_on_sentinel(
+    tmp_path: Path,
+) -> None:
+    """S2R6-01: the unknown-occasion sentinel is not an exhaustive remedy.
 
-    refetch6 already has boxes covering face_count. Before the session
-    backfill, flipping annotation_mode to exhaustive died in the loader.
+    refetch6 has boxes covering face_count, but every box carries the
+    minted ``legacy-import-unknown-session`` token. That is not a real
+    occasion key; flipping ``annotation_mode`` must still fail closed.
     """
     src = Path(__file__).resolve().parents[1] / "refetch6-manifest-20260716.json"
     doc = json.loads(src.read_text(encoding="utf-8"))
@@ -423,20 +426,14 @@ def test_in_tree_boxed_corpus_can_flip_to_exhaustive(tmp_path: Path) -> None:
     doc["annotation_mode"] = "exhaustive"
     path = tmp_path / "refetch6-exhaustive.json"
     path.write_text(json.dumps(doc), encoding="utf-8")
-    manifest = load_manifest(str(path))
-    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
-    n_boxes = 0
-    for entry in manifest.entries:
-        assert len(entry.face_boxes) == entry.face_count
-        for box in entry.face_boxes:
-            n_boxes += 1
-            assert box.lineage is not None
-            assert box.lineage.capture_session_id == LEGACY_IMPORT_CAPTURE_SESSION_ID
-    assert n_boxes == 9
+    with pytest.raises(ManifestError, match="capture_session") as exc_info:
+        load_manifest(str(path))
+    assert exc_info.value.invariant == "capture_session_id_required"
+    assert LEGACY_IMPORT_CAPTURE_SESSION_ID in str(exc_info.value)
 
 
-def test_legacy_import_helper_session_lets_exhaustive_load(tmp_path: Path) -> None:
-    """S2R5-06: a new exhaustive box built from the helper must load."""
+def test_legacy_import_helper_session_does_not_load_exhaustive(tmp_path: Path) -> None:
+    """S2R6-01: a new exhaustive box built from the helper must not load."""
     doc = {
         "manifest_version": 3,
         "annotation_mode": "exhaustive",
@@ -469,9 +466,7 @@ def test_legacy_import_helper_session_lets_exhaustive_load(tmp_path: Path) -> No
         ],
     }
     path = _write_manifest(tmp_path, doc, "legacy-exhaustive.json")
-    manifest = load_manifest(str(path))
-    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
-    assert (
-        manifest.entries[0].face_boxes[0].lineage.capture_session_id
-        == LEGACY_IMPORT_CAPTURE_SESSION_ID
-    )
+    with pytest.raises(ManifestError, match="capture_session") as exc_info:
+        load_manifest(str(path))
+    assert exc_info.value.invariant == "capture_session_id_required"
+    assert LEGACY_IMPORT_CAPTURE_SESSION_ID in str(exc_info.value)

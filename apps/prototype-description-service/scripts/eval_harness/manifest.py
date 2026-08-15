@@ -81,7 +81,8 @@ LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
 # Fail-closed: assume proposals were visible unless the record says otherwise.
 LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
 # Unknown occasion — pre-v3 boxes have no recoverable capture session.
-# Required so an in-tree boxed corpus can be flipped to exhaustive (S2R5-06).
+# This token means "there is no occasion key". It must not satisfy the
+# exhaustive capture-session gate (S2R6-01); roster_only may still carry it.
 LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
 
 
@@ -551,8 +552,8 @@ def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
     stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
     ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
     epoch sentinel (unknown). ``capture_session_id`` is the unknown-occasion
-    sentinel so a boxed roster_only corpus can be flipped to exhaustive
-    without the loader rejecting the existing boxes (S2R5-06).
+    sentinel: it records that no session is recoverable. The exhaustive
+    gate rejects this token (S2R6-01); it does not mint an occasion key.
     """
     return {
         "labeler_id": LEGACY_IMPORT_LABELER_ID,
@@ -773,16 +774,29 @@ class GoldenManifest(BaseModel):
                     )
 
     def _capture_session_required_when_exhaustive(self) -> None:
-        """Occasion key must be writable on every exhaustive box."""
+        """Occasion key must be a real session on every exhaustive box.
+
+        ``LEGACY_IMPORT_CAPTURE_SESSION_ID`` is not a session — it is the
+        documented unknown-occasion marker minted for pre-v3 boxes. A
+        truthy sentinel must not clear this gate (S2R6-01 / rg-015).
+        """
         if self.annotation_mode is not AnnotationMode.EXHAUSTIVE:
             return
         for index, entry in enumerate(self.entries):
             for box_index, box in enumerate(entry.face_boxes):
                 session = None if box.lineage is None else box.lineage.capture_session_id
-                if not session:
+                if not session or session == LEGACY_IMPORT_CAPTURE_SESSION_ID:
+                    detail = (
+                        "is missing capture_session_id"
+                        if not session
+                        else (
+                            f"carries unknown-occasion sentinel "
+                            f"{LEGACY_IMPORT_CAPTURE_SESSION_ID!r}"
+                        )
+                    )
                     raise ManifestError(
                         f"capture_session_id_required: exhaustive entry[{index}] "
-                        f"{entry.path} box[{box_index}] is missing capture_session_id",
+                        f"{entry.path} box[{box_index}] {detail}",
                         invariant="capture_session_id_required",
                         entry_index=index,
                         entry_path=entry.path,
@@ -811,8 +825,9 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     duplicate media_id/path, identities outside the roster, roster_cohorts keys
     outside the roster, any entry missing ``provenance`` (FIR-11 Slice 1 —
     required, fail-closed; every offending path is named in one error), a box
-    without ``LabelLineage``, an ``exhaustive`` box missing
-    ``capture_session_id``, a coverage mismatch under the declared
+    without ``LabelLineage``, an ``exhaustive`` box missing a real
+    ``capture_session_id`` (the legacy-import unknown-occasion sentinel
+    is rejected, not treated as a session), a coverage mismatch under the declared
     ``annotation_mode``, and (when ``images_dir`` is given) missing image files
     or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus defines no
     Must-Right/Easy-Wrong entries — the caption hard gate is then vacuous but

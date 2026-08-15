@@ -207,6 +207,50 @@ def test_boxed_identity_still_scores_identification() -> None:
     assert ident["wrong_names"] == []
 
 
+def test_require_boxed_skips_policy_disabled_unboxed_claim() -> None:
+    """S2R4-06: the helper must use identification_pr's population.
+
+    A recognition_enabled=False unboxed row is not a live claim. The helper
+    used to refuse the whole score when one such row sat next to an honest
+    boxed sibling.
+    """
+    boxed = _boxed_alice()
+    disabled = {
+        "path": "mock_images/theo.jpg",
+        "media_id": 2,
+        "face_count": 1,
+        "present_identities": ["Theo Example"],
+        "policy": {"recognition_enabled": False},
+        "face_boxes": [],
+    }
+    require_boxed_identification_gt([boxed, disabled])
+    require_boxed_identification_gt([disabled])
+
+
+def test_require_boxed_still_refuses_enabled_unboxed_sibling() -> None:
+    """A live unboxed claim still refuses even when a disabled row is present."""
+    boxed = _boxed_alice()
+    disabled = {
+        "path": "mock_images/theo.jpg",
+        "media_id": 2,
+        "present_identities": ["Theo Example"],
+        "policy": {"recognition_enabled": False},
+        "face_boxes": [],
+    }
+    live = {
+        "path": "mock_images/bob.jpg",
+        "media_id": 3,
+        "present_identities": ["Bob Example"],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    with pytest.raises(ManifestError) as exc_info:
+        require_boxed_identification_gt([boxed, disabled, live])
+    assert exc_info.value.invariant == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+    assert "Bob Example" in str(exc_info.value)
+    assert "Theo Example" not in str(exc_info.value)
+
+
 def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
     """S2R4-06: a policy-disabled unboxed row is not a live identification claim."""
     boxed = _boxed_alice()

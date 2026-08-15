@@ -114,13 +114,19 @@ def main() -> int:
         ]
         print("REGEN:", " ".join(cmd))
         proc = subprocess.run(cmd, cwd=service)
-        if proc.returncode != 0:
-            return proc.returncode
         tmp_json = tmp_dir / "run-report.json"
         tmp_md = tmp_dir / "run-report.md"
         if not tmp_json.is_file() or not tmp_md.is_file():
-            print(f"CLI did not write expected reports in {tmp_dir}", file=sys.stderr)
-            return 2
+            print(
+                f"CLI did not write expected reports in {tmp_dir} (exit {proc.returncode})",
+                file=sys.stderr,
+            )
+            return proc.returncode or 2
+        if proc.returncode != 0:
+            print(
+                f"CLI exited {proc.returncode} after writing reports "
+                "(partial-corpus score gate); publishing the written report"
+            )
         out_json.parent.mkdir(parents=True, exist_ok=True)
         out_md.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(tmp_json, out_json)

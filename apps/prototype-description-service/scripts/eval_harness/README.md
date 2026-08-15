@@ -112,10 +112,12 @@ produced by the model-free `seeded` stub adapter (`adapter=seeded`,
 markdown header say so explicitly. They are **not** a caption-model baseline; a
 real-model baseline must be captured with a live run before the §12 bake-off gate.
 
-**Rubric caveat (MVP):** the golden corpus currently ships with empty `must_right`
-/ `easy_wrong` for every entry, so the Must-Right hard gate and Easy-Wrong rubric
-are vacuous. The loader emits a `RubricEmptyWarning` and the report surfaces
-`must_right_defined_images: 0`, so this is disclosed, not silent.
+**Rubric caveat:** `scene/tests/seed/golden.json` now carries Must-Right /
+Easy-Wrong rows (the committed VLM-2A baseline reports
+`must_right_defined_images: 37`). A corpus with empty rubrics still
+emits `RubricEmptyWarning` and surfaces `must_right_defined_images: 0`;
+that is no longer the state of the golden used by the published VLM-2A
+baseline.
 
 ## Failure semantics (rg-007)
 

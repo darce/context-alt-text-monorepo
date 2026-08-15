@@ -5,7 +5,7 @@
 - head_sha: `4be31eae6967cebddc04c6a0234d583600450662`
 - base_url: http://localhost:8000
 - fetch manifest_sha256: `747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f`
-- score manifest_sha256: `747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f` (matches fetch: True)
+- score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-16T21:20:00Z
 - images: 37/37 scored, 0 failed
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
@@ -41,7 +41,7 @@
 
 ## Face detection (identity-agnostic)
 
-- precision: null recall: 0.000 (tp=0 fp=0 fn=57)
+- REFUSED (detection_refuses_roster_only): detection P/R is not computed unless annotation_mode is exhaustive
 
 ## Face identification (named assertions)
 

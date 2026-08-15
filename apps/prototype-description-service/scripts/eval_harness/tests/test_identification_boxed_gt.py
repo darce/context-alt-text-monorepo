@@ -11,11 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.eval_harness.face_metrics import (
-    IDENTIFICATION_UNBOXED_INVARIANT,
-    require_boxed_identification_gt,
-)
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError, load_manifest
+from scripts.eval_harness.face_metrics import require_boxed_identification_gt
+from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant, load_manifest
 from scripts.eval_harness.report import (
     IDENTIFICATION_REFUSED_EXPLANATION,
     Audience,
@@ -97,7 +94,7 @@ def _boxed_alice() -> dict:
 
 def _assert_identification_refused(ident: dict) -> None:
     assert ident["refused"] is True
-    assert ident["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
     assert ident["precision"] is None
     assert ident["recall"] is None
     assert ident["macro_precision"] is None
@@ -245,7 +242,7 @@ def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
 
 def test_markdown_names_refused_identification() -> None:
     _json_doc, md = build_reports(_record(["Alice Example"]), [_unboxed_alice()])
-    assert f"- REFUSED ({IDENTIFICATION_UNBOXED_INVARIANT}):" in md
+    assert f"- REFUSED ({ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS}):" in md
     assert "per-face box lineage" in md
     assert IDENTIFICATION_REFUSED_EXPLANATION in md
     face_id = md.split("## Face identification")[1]
@@ -330,7 +327,7 @@ def test_partially_boxed_group_require_boxed_raises() -> None:
     _face_run, _manifest, entry = _partially_boxed_group()
     with pytest.raises(ManifestError) as exc_info:
         require_boxed_identification_gt([entry])
-    assert exc_info.value.invariant == IDENTIFICATION_UNBOXED_INVARIANT
+    assert exc_info.value.invariant == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
     assert "Bob Builder" in str(exc_info.value)
     assert "Cara Cole" in str(exc_info.value)
 
@@ -349,12 +346,12 @@ def test_score_face_run_record_refuses_partially_boxed_group() -> None:
     unknown = scored["slices"]["unknown_rejection"]
     for block in (full, headline):
         assert block["refused"] is True
-        assert block["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+        assert block["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
         assert block["precision"] is None
         assert block["recall"] is None
         assert block.get("n_named_probes") is None
     assert unknown["refused"] is True
-    assert unknown["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert unknown["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
     assert unknown["rate"] is None
     assert unknown["n"] is None
     assert unknown.get("correct_rejects") is None
@@ -421,9 +418,9 @@ def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
     public_doc = json.loads(public_json)
     public_ident = public_doc["faces"]["identification"]
     assert local_ident["refused"] is True
-    assert local_ident["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert local_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
     assert public_ident["refused"] is True
-    assert public_ident["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert public_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
     assert public_ident["precision"] is None
     assert public_ident["recall"] is None
     assert public_ident["precision"] != 1.0
@@ -434,4 +431,4 @@ def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
     assert redaction["withheld_items"] == 1
     # A withheld-count is not the disclosure — identification itself is refused.
     assert "REFUSED" in public_md
-    assert IDENTIFICATION_UNBOXED_INVARIANT in public_md
+    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS in public_md

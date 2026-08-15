@@ -26,6 +26,7 @@ import {
 } from '../../../hooks/workbenchQueueUrl';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
+import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
 import {
@@ -279,6 +280,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [selectionOpen, setSelectionOpen] = React.useState(false);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
+    // REV4-02: RQ v5 isLoading stays false while an already-errored query
+    // refetches; track retry locally and inspect settled isError.
+    const [retrying, setRetrying] = React.useState(false);
+    const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
@@ -755,13 +760,23 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     };
 
     const retrySuggestionQueries = (): void => {
+      if (retrying) {
+        return;
+      }
+      setRetrying(true);
+      setRetryFailed(false);
       // REV2-08: name suggestions feed counts.names and the review queue.
       void Promise.all([
         data.refetchAssignment(),
         data.refetchMerge(),
         data.refetchName(),
         data.refetchTopUnlabeled(),
-      ]).catch(() => undefined);
+      ])
+        .catch(() => undefined)
+        .then((results) => {
+          setRetrying(false);
+          setRetryFailed(settledRefetchFailed(results));
+        });
     };
 
     // §7 render-branch flags, hoisted above the early returns so the card-primary
@@ -774,9 +789,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const suppressRetiredHead =
       headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
 
-    const isInitialFailureBranch = data.hasInitialFailure && data.failureCount <= 2;
+    // Hide the queue only while a source is still failing-to-load without a
+    // settled assignment+merge error. RQ v5 failureCount stays 1 when
+    // retry:false, so a `failureCount <= 2` gate made the error Retry dead
+    // (REV4-02). Once data.isError is set, show the error branch. Stay on
+    // that surface while a local retry is in-flight — refetch can clear
+    // query isError before it settles.
+    const isErrorBranch =
+      retrying || retryFailed || (data.isError && findings.isError);
+    const isInitialFailureBranch =
+      data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
-    const isErrorBranch = data.isError && findings.isError;
 
     // The current queue item resolves to a real card (its suggestion/cluster is in
     // the by-id map) — guards the rare projection race where an item is queued but
@@ -853,6 +876,32 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       [onCardPrimaryPresenceChange],
     );
 
+    if (isErrorBranch) {
+      return (
+        <div className="acx-review-queue acx-review-queue--error">
+          <p id="acx-review-queue-error" className="acx-review-queue__status">
+            {retrying ? null : (
+              <>
+                <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                {retryFailed
+                  ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
+                  : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+              </>
+            )}
+          </p>
+          <QueryRetryButton
+            describedBy="acx-review-queue-error"
+            retrying={retrying}
+            retryingLabel={__(QUERY_RETRY_COPY.RETRYING_SUGGESTIONS, 'alt-context')}
+            statusId="acx-review-queue-retrying"
+            statusClassName="acx-review-queue__status"
+            onClick={retrySuggestionQueries}
+            className="button"
+          />
+        </div>
+      );
+    }
+
     if (isInitialFailureBranch) {
       return null;
     }
@@ -861,21 +910,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return (
         <div className="acx-review-queue acx-review-queue--loading" role="status" aria-live="polite">
           <p>{__('Loading review queue…', 'alt-context')}</p>
-        </div>
-      );
-    }
-
-    if (isErrorBranch) {
-      return (
-        <div className="acx-review-queue acx-review-queue--error">
-          <p>{__('Failed to load suggestions.', 'alt-context')}</p>
-          <button
-            type="button"
-            className="button"
-            onClick={retrySuggestionQueries}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
         </div>
       );
     }

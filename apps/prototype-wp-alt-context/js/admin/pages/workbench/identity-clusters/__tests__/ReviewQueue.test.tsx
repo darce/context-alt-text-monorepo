@@ -2533,6 +2533,43 @@ describe('ReviewQueue', () => {
     });
   });
 
+  // REV4-02 / TEST-15: RQ v5 refetch() resolves on query error and isLoading
+  // stays false while an already-errored query refetches. Queue Retry must
+  // announce in-flight busy, then inspect settled isError for distinct copy.
+  it('REV4-02: queue Retry announces in-flight busy then distinct retry-failed copy', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top down'));
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Failed to load suggestions.')).toBeInTheDocument();
+
+    let rejectAssignment!: (reason?: unknown) => void;
+    const assignmentGate = new Promise((_resolve, reject) => {
+      rejectAssignment = reject;
+    });
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() => assignmentGate);
+
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying suggestions…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+
+    await act(async () => {
+      rejectAssignment(new Error('still down'));
+      await assignmentGate.catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retrying suggestions…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

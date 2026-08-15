@@ -68,12 +68,30 @@ Offline republish of one eval report from a named run-record + named
 manifest, using the description-service venv and
 `scripts.eval_harness.cli score`. Does not edit the scorer.
 
+The default command **holds** both destinations against the shipped
+roster-only golden (scorer exit 3). That is the safe default: a refused
+report is not published without publisher-side consent. Measured:
+destinations are unchanged and the process exits 3.
+
 ```bash
 python3 scripts/regen_eval_report.py \
   --run-record docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
   --manifest apps/prototype-description-service/scene/tests/seed/golden.json \
   --out-json docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.json \
   --out-md docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md
+```
+
+To actually republish a refused report (still exits 3; still no face
+P/R numbers), add `--allow-refused`. Do not point this at tracked
+destinations unless you intend to replace them.
+
+```bash
+python3 scripts/regen_eval_report.py \
+  --run-record docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
+  --manifest apps/prototype-description-service/scene/tests/seed/golden.json \
+  --out-json /path/to/dest-report.json \
+  --out-md /path/to/dest-report.md \
+  --allow-refused
 ```
 
 ## Test Placement Policy

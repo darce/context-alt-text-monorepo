@@ -50,17 +50,23 @@ make eval-captions EVAL_ARGS='--allow-refused'
 ## check_published_head_sha.py
 
 Every committed eval run-record and report under `docs/` and `benchmarks/`
-must stamp a `head_sha` that exists in this repository. Harvest/rebase
+must stamp a commit that exists in this repository. Harvest/rebase
 rewrites have previously left orphan SHAs in published artifacts.
 
 ```bash
 python3 scripts/check_published_head_sha.py
 ```
 
-The script walks tracked `docs/**` and `benchmarks/**` JSON/Markdown files,
-collects each published `head_sha`, and runs
-`git rev-parse --verify <sha>^{commit}` on each. Exit 0 if every stamp
-resolves; exit 1 if any SHA is missing. Wired into `make lint-scripts`.
+The script walks tracked `docs/**` and `benchmarks/**` JSON, Markdown,
+and HTML (`.html`/`.htm`) files. It harvests `head_sha`, `git_sha`, and
+selected `commit` forms. A present key is a stamp even when blank or
+non-string; non-conforming values are `UNREADABLE`, not absent.
+
+Exit 0 if every well-formed stamp resolves. Exit 1 if any stamp is
+`MISSING` or `UNREADABLE`, if no artifact files were scanned, or if the
+repository is a shallow clone (`cannot verify: shallow clone` — run
+`git fetch --unshallow`; unseen commits are not reported `MISSING`).
+Exit 2 if the git invocation itself fails. Wired into `make lint-scripts`.
 
 ## regen_eval_report.py
 

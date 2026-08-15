@@ -793,6 +793,138 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('identity-list-pixels', $payload[0]['sample_identities'][1]['identity_id']);
     }
 
+    public function testMapClusterListEmitsNullBboxWhenEdgeIsNonNumeric(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-non-numeric-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":"abc","height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-non-numeric-width', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenExtentsAreNegative(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-negative-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":-40,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-negative-height',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":-40}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-negative-width', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-negative-height', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenWidthIsZero(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-zero-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":0,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-zero-width', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsIntegerBboxWhenPixelsAreNumericAndPositive(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-happy-bbox',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":10,"y":20,"width":30,"height":40}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertSame('identity-happy-bbox', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertSame(
+            array(
+                'x' => 10,
+                'y' => 20,
+                'width' => 30,
+                'height' => 40,
+            ),
+            $payload[0]['sample_identities'][0]['bbox']
+        );
+    }
+
     public function testMapClusterDetailEmitsBboxOnHappyPathAndNullWhenAbsent(): void
     {
         $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';

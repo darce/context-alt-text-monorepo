@@ -84,6 +84,8 @@ interface ClusterEditFormProps {
   atRestTruncated?: boolean;
   /** Filtered at-rest page size after excluding the editable cluster. */
   atRestShown?: number;
+  /** True while the loader is still in at-rest (debounced) mode. */
+  isAtRestMode?: boolean;
 }
 
 /**
@@ -104,6 +106,7 @@ export const ClusterEditForm = ({
   atRestTotal = 0,
   atRestTruncated = false,
   atRestShown = 0,
+  isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
   void isLoading;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -127,7 +130,7 @@ export const ClusterEditForm = ({
   const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
-  const showAtRestTruncationHint = atRestTruncated && labelInput.length < 2;
+  const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
 
   // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
   // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.

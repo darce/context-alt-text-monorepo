@@ -311,13 +311,14 @@ describe('ClusterEditForm', () => {
         atRestTruncated
         atRestShown={50}
         atRestTotal={80}
+        isAtRestMode
       />,
     );
 
     expect(screen.getByText('Showing 50 of 80 labels — type to search for more')).toBeInTheDocument();
   });
 
-  it('hides the at-rest incomplete-list hint once the operator types 2+ characters', () => {
+  it('hides the at-rest incomplete-list hint once the loader leaves at-rest mode', () => {
     render(
       <ClusterEditForm
         {...defaultProps}
@@ -325,6 +326,7 @@ describe('ClusterEditForm', () => {
         atRestTruncated
         atRestShown={50}
         atRestTotal={80}
+        isAtRestMode={false}
       />,
     );
 

@@ -37,6 +37,8 @@ interface UseClusterSuggestionsReturn {
   atRestTruncated: boolean;
   /** Filtered at-rest page size after excluding the editable cluster. */
   atRestShown: number;
+  /** True while the debounced input is below the typed-search minimum. */
+  isAtRestMode: boolean;
 }
 
 export const selectClusterSuggestions = ({
@@ -179,6 +181,7 @@ export const useClusterSuggestions = ({
     atRestTotal,
     atRestTruncated,
     atRestShown,
+    isAtRestMode,
   } = useClusterSuggestionsLoader({
     identityId,
     enabled,
@@ -212,5 +215,6 @@ export const useClusterSuggestions = ({
     atRestTotal,
     atRestTruncated,
     atRestShown,
+    isAtRestMode,
   };
 };

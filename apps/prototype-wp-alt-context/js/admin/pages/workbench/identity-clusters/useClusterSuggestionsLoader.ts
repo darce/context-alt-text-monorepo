@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import {
@@ -64,10 +64,14 @@ export interface ClusterSuggestionsLoaderResult {
   atRestTruncated: boolean;
   /** Filtered at-rest page size after excluding the editable cluster. */
   atRestShown: number;
+  /** True while the debounced input is below the typed-search minimum. */
+  isAtRestMode: boolean;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
 const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
+/** Typed label search is disabled until the debounced input reaches this length. */
+export const ACX_LABEL_SEARCH_MIN_CHARS = 2;
 /** RES-05: at-rest labelled list is capped at 50. If response.total > 50 the dropdown is incomplete until the operator types 2+ chars (server-side search). */
 const AT_REST_LABELED_LIMIT = 50;
 
@@ -81,6 +85,7 @@ export const useClusterSuggestionsLoader = ({
   const queryClient = useQueryClient();
   const [debouncedLabel, setDebouncedLabel] = React.useState(labelInput);
   const debouncedValue = debounceMs <= 0 ? labelInput : debouncedLabel;
+  const isAtRestMode = debouncedValue.length < ACX_LABEL_SEARCH_MIN_CHARS;
 
   React.useEffect(() => {
     if (!enabled || debounceMs <= 0) {
@@ -128,7 +133,8 @@ export const useClusterSuggestionsLoader = ({
         search: debouncedValue,
       }),
     select: (response) => response.clusters.filter((cluster) => cluster.id !== editableClusterId),
-    enabled: Boolean(enabled && debouncedValue.length >= 2),
+    enabled: Boolean(enabled && !isAtRestMode),
+    placeholderData: keepPreviousData,
     staleTime: 30000,
   });
 
@@ -150,7 +156,8 @@ export const useClusterSuggestionsLoader = ({
       total: response.total,
       truncated: response.truncated,
     }),
-    enabled: Boolean(enabled && debouncedValue.length < 2),
+    enabled: Boolean(enabled && isAtRestMode),
+    placeholderData: keepPreviousData,
     staleTime: 30000,
   });
 
@@ -159,8 +166,7 @@ export const useClusterSuggestionsLoader = ({
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
     const roster = rosterError ? [] : rosterEntries;
-    const labeledClusters =
-      debouncedValue.length >= 2 ? (labelMatches ?? []) : (atRestLabeledClusters?.clusters ?? []);
+    const labeledClusters = isAtRestMode ? (atRestLabeledClusters?.clusters ?? []) : (labelMatches ?? []);
     // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
     const namedMatches = labeledClusters.filter(
       (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
@@ -171,9 +177,9 @@ export const useClusterSuggestionsLoader = ({
       filter: debouncedValue,
       excludeClusterId: editableClusterId,
       // At-rest page is already capped at AT_REST_LABELED_LIMIT; do not re-slice to 20.
-      limit: debouncedValue.length < 2 ? null : undefined,
+      limit: isAtRestMode ? null : undefined,
     });
-  }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId]);
+  }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
 
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
@@ -225,5 +231,6 @@ export const useClusterSuggestionsLoader = ({
     atRestTotal: atRestLabeledClusters?.total ?? 0,
     atRestTruncated: atRestLabeledClusters?.truncated ?? false,
     atRestShown: atRestLabeledClusters?.clusters.length ?? 0,
+    isAtRestMode,
   };
 };

@@ -154,3 +154,13 @@
 - Failing assertion: `Failed asserting that Array &0 [ 'x' => 1, 'y' => 2, 'width' => 0, 'height' => 4, ] is null.`
 - After restore: PASSED, 33 tests
 - Existing assertions updated for old zero-box behaviour: none
+
+## REV4-04 — crop error state is visible, not colour-only
+- Change: Avatar error idiom — `AlertTriangle` + `ImageOff` (both `aria-hidden`) plus visible `.acx-face-thumbnail__error-label` text "Face image unavailable" (`aria-hidden` so `role="img"` + aria-label is not announced twice). Tokens: `--acx-gray-200` background, `--acx-color-warning-border` color/label, `--acx-shadow-inset-danger`. Removed the same-token `::before` disc on `.acx-face-thumbnail--error`.
+- Test added: yes — FaceThumbnail error-state test asserts `.acx-face-thumbnail__warning-icon`, `.acx-face-thumbnail__broken-icon`, and `.acx-face-thumbnail__error-label` text "Face image unavailable" (not just the aria-label)
+- MUT-B verdict: FAILED
+
+## REV4-05 — transform-origin is pinned
+- MUT-A (transformOrigin deleted): FAILED
+- Failing assertion: expect(crop.getAttribute('style')).toMatch(/transform-origin:\s*top left/);
+- After restore: PASSED

@@ -203,6 +203,7 @@ describe('DurableFaceThumb [TEST-15]', () => {
     expect(crop.closest('.acx-face-thumbnail')).toBeInTheDocument();
     expect(crop.getAttribute('style')).toContain('translate(-4.799999999999999px, -19.2px)');
     expect(crop.getAttribute('style')).toContain('scale(0.96)');
+    expect(crop.getAttribute('style')).toMatch(/transform-origin:\s*top left/);
   });
 
   it('a loaded dedicated blob stays real, not fallback-crop [REV1-13]', async () => {

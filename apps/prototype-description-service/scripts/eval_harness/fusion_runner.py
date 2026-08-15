@@ -661,22 +661,44 @@ def _match_key(fact_source: Any, fact_label: Any, fact_id: Any) -> str:
     return f"{fact_source}:{str(fact_label).lower()}"
 
 
+# Keys ``score_run_record`` / ``build_reports`` actually read. S2R4-05's
+# ``{**e.model_dump(), ...}`` restored face_boxes (intended) and every other
+# GoldenEntry field (not intended) on a path that publishes artifacts.
+SCORER_ENTRY_KEYS: frozenset[str] = frozenset(
+    {
+        "path",
+        "media_id",
+        "face_count",
+        "present_identities",
+        "must_right",
+        "easy_wrong",
+        "policy",
+        "face_boxes",
+        "context_pack",
+        "provenance",
+    }
+)
+
+
 def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     """Shapes expected by ``report.score_run_record`` / ``build_reports``.
 
-    Stamps the parent ``annotation_mode`` onto every entry. The resolver
-    reads the stamp (data wins); an explicit kwarg cannot widen a
-    ``roster_only`` stamp to exhaustive.
+    Projects the scorer-contract keys and stamps the parent
+    ``annotation_mode``. The resolver reads the stamp (data wins); an
+    explicit kwarg cannot widen a ``roster_only`` stamp to exhaustive.
     """
     mode = (
         manifest.annotation_mode.value
         if hasattr(manifest.annotation_mode, "value")
         else str(manifest.annotation_mode)
     )
-    return [
-        {**e.model_dump(), "annotation_mode": mode}
-        for e in manifest.entries
-    ]
+    projected: list[dict[str, Any]] = []
+    for entry in manifest.entries:
+        dumped = entry.model_dump()
+        row = {key: dumped[key] for key in SCORER_ENTRY_KEYS if key in dumped}
+        row["annotation_mode"] = mode
+        projected.append(row)
+    return projected
 
 
 def _head_sha() -> str:

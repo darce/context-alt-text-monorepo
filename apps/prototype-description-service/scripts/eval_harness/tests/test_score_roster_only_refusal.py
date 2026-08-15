@@ -129,6 +129,23 @@ def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
     assert entries[0]["annotation_mode"] == "roster_only"
 
 
+def test_fusion_flatten_projects_scorer_contract_keys_only(tmp_path: Path) -> None:
+    """S2R5-10: flatten is an explicit projection, not a silent model_dump widen.
+
+    S2R4-05 restored face_boxes by spreading every model field. Extra keys
+    (sha256, expected_attachments, difficulty, …) are not the scorer
+    contract. A ``{**e.model_dump(), ...}`` revert dies here.
+    """
+    from scripts.eval_harness.fusion_runner import SCORER_ENTRY_KEYS
+
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    entries = manifest_entries_as_dicts(manifest)
+    leaked = {"sha256", "expected_attachments", "difficulty", "reference_facts", "base_caption"}
+    assert leaked.isdisjoint(entries[0])
+    assert "face_boxes" in entries[0]
+    assert set(entries[0]) == set(SCORER_ENTRY_KEYS) | {"annotation_mode"}
+
+
 def test_fusion_flatten_preserves_face_boxes(tmp_path: Path) -> None:
     """S2R4-05: flatten must keep box lineage so boxed GT still scores ID.
 

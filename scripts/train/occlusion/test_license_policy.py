@@ -13344,11 +13344,11 @@ class TestF17UnderscoreNcSeedGluedException:
         ("v8", "tiny", "onnx", "int8", "fp16", "cpu", "gpu", "trt", "final"),
     )
     MULTI_SEGMENT_SEPS: ClassVar[tuple[str, ...]] = ("_", "-", ".")
-    # 3 NC × 5 pairs × 2 orders × 3 seps = 90. fastsam × 5 × 2 × {_, -}
-    # = 20. ``tiny.onnx`` extension-strips to R20 ``fastsamxyolox_tiny``,
-    # whose rem ``tiny`` is a legitimate yolox tag so prefix-owner skips
-    # (pre-existing R20 sole-path — do not fold it into this sweep).
-    MULTI_SEGMENT_SWEEP_ROWS: ClassVar[int] = 110
+    # 3 NC × 5 pairs × 2 orders × 3 seps = 90. fastsam × 5 × 2 × 3
+    # seps = 30. All ten ``fastsamxyolox_{a}.{b}`` rows deny (R23-01
+    # consults the prefix owner for a legitimate rem tag, so
+    # ``tiny.onnx`` is no longer an extension-strip admit).
+    MULTI_SEGMENT_SWEEP_ROWS: ClassVar[int] = 120
     MULTI_SEGMENT_LONG_TAIL_ROWS: ClassVar[int] = 36  # 4 × 3 long × 3 seps
     # Current oracle attributions — verdicts AND package_id must hold.
     A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
@@ -13730,21 +13730,17 @@ class TestF17UnderscoreNcSeedGluedException:
         """R21-01/R22: {4 seeds}×{2-seg rem pairs}×{orderings}×{_,_,-. seps}.
 
         The original 90 NC rows are the 3 NC seeds × 5 pairs × 2 × 3;
-        fastsam adds the 30 AGPL rows (120 total).
+        fastsam adds the 30 AGPL rows including the ``.`` axis
+        (120 total).
         """
         seen = 0
         junk = "x"
         spelling = "yolox"
         two_seg = [p for p in self.MULTI_SEGMENT_PAIRS if len(p) == 2]
         for seed in self.MULTI_SEGMENT_SEEDS:
-            seps = (
-                ("_", "-")
-                if seed == "fastsam"
-                else self.MULTI_SEGMENT_SEPS
-            )
             for left, right in two_seg:
                 for a, b in ((left, right), (right, left)):
-                    for sep in seps:
+                    for sep in self.MULTI_SEGMENT_SEPS:
                         token = f"{seed}{junk}{spelling}_{a}{sep}{b}"
                         self._assert_seed_deny(token, seed)
                         seen += 1

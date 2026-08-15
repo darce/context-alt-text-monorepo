@@ -22,7 +22,7 @@ No production code (`scene/application/`) was touched.
 
 **Why not a pytest fixture:** the contract is keep the 2-tuple `engine, sf = await _sessionmaker()`. A fixture would rewrite every call site.
 
-**Why not wrap `engine.dispose`:** `AsyncEngine.dispose` is read-only.
+**Why not wrap `engine.dispose`:** choice, not a constraint. `AsyncEngine.dispose` is a plain function (`AsyncEngine.dispose = lambda self: None` succeeds on SQLAlchemy 2.0.49). Event + finalize stays because tests already `await engine.dispose()` and finalize covers the fail-before-dispose path.
 
 **Leak check:** after the green guard run, `ls /tmp/acx-describe-async-*` → no leftover dirs.
 
@@ -81,7 +81,7 @@ Prototype also showed the pool split: `:memory:` → `StaticPool`, subsequent se
 
 ## Step 2 — fix + d866e144 revert
 
-File-backed `_sessionmaker` as above. Timeout test restored to `0.05s`. That test stayed green across all verification below — the class is dead. Mid-query cancel no longer drops the schema, so the old 0.5s dodge is unnecessary.
+File-backed `_sessionmaker` as above. Timeout test restored to `0.05s`. That test stayed green across the **idle** verification below. Those idle runs show schema death is gone. They do **not** show the timeout test is safe under load — see s2 / GATEFLAKE-R1-01.
 
 Did **not** raise sleeps, widen other timeouts, or reorder awaits.
 
@@ -154,4 +154,4 @@ Guard discriminates the fixture, not worker timing.
 
 ## d866e144 outcome
 
-Reverted `job_timeout_seconds` 0.5 → 0.05 in `test_worker_timeout_marks_failed_exactly_once`. Green on the first full file run and on all 10 sequential + 3 shuffled runs. Safe because the pool no longer dies when cancel lands mid-query.
+Reverted `job_timeout_seconds` 0.5 → 0.05 in `test_worker_timeout_marks_failed_exactly_once`. Green on the first idle full file run and on all 10 sequential + 3 shuffled **idle** runs. That is all those 13 idle runs show: schema survival, not lock-race death. Loaded evidence is in the s2 report.

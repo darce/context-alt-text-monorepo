@@ -558,7 +558,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(screen.getByText('No image')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Cluster member — image unavailable' })).toBeInTheDocument();
     expect(container.querySelector('.acx-placeholder:empty')).toBeNull();
   });
 

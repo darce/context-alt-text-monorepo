@@ -11,6 +11,8 @@
  * Gate the avatar-first branch on isDedicatedFaceThumbUrl alone.
  */
 
+import { __, sprintf } from '@wordpress/i18n';
+
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
 import { isCroppableBbox } from './faceGeometry';
 import { isDedicatedFaceThumbUrl } from './isDedicatedFaceThumbUrl';
@@ -45,6 +47,17 @@ export const LOAD_STATUS = {
 export type LoadStatus = (typeof LOAD_STATUS)[keyof typeof LOAD_STATUS];
 
 export const REPRESENTATIVE_IMAGE_UNAVAILABLE = 'Representative image unavailable';
+
+export function unavailableImageName(alt?: string | null): string {
+  if (typeof alt === 'string' && alt.trim() !== '') {
+    return sprintf(
+      /* translators: %s: image description */
+      __('%s — image unavailable', 'alt-context'),
+      alt,
+    );
+  }
+  return __('Representative image unavailable', 'alt-context');
+}
 
 export interface FaceThumbSource {
   thumbUrl?: string | null;

@@ -7,6 +7,10 @@ import { DurableFaceThumb } from '../DurableFaceThumb';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  sprintf: (template: string, ...args: (string | number)[]) => {
+    let index = 0;
+    return template.replace(/%(\d+\$)?[sd]/g, () => String(args[index++] ?? ''));
+  },
 }));
 
 vi.mock('@radix-ui/react-avatar', async () => {
@@ -82,6 +86,17 @@ describe('DurableFaceThumb [TEST-15]', () => {
     expect(screen.getByText('No image')).toBeInTheDocument();
     expect(container.querySelector('[data-avatar-state="data-missing"]')).toBeInTheDocument();
     expect(container.querySelector('.acx-durable-face-thumb--error')).toBeNull();
+  });
+
+  it('missing state accessible names differ when callers pass distinct alts', () => {
+    const { rerender } = render(<DurableFaceThumb source={{}} alt="Detected face (first cluster)" />);
+    expect(screen.getByRole('img', { name: 'Detected face (first cluster) — image unavailable' })).toBeInTheDocument();
+
+    rerender(<DurableFaceThumb source={{}} alt="Candidate face" />);
+    expect(screen.getByRole('img', { name: 'Candidate face — image unavailable' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('img', { name: 'Detected face (first cluster) — image unavailable' }),
+    ).not.toBeInTheDocument();
   });
 
   it('genuine network failure keeps loud --error', async () => {

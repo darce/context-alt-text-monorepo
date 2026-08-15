@@ -43,7 +43,7 @@ Man/run digests unchanged (wG3 pins hold). Only report artifacts rewritten from 
 | `provenance.coverage_gaps.face_boxes.populated` | 1 | 1 | **yes** |
 | `provenance.coverage_gaps.face_boxes.pi_zero` | false | false | **yes** |
 | `provenance.corpus_traps` | 1-entry trap inventory | present (media 39) | **yes** |
-| `provenance.manifest_sha256` prefix | `7462d325…` | `7462d3259f068aa1…` | **yes** |
+| `provenance.manifest_sha256` prefix | `sha256:7462d325…` | `sha256:7462d3259f068aa1…` | **yes** |
 | **Keys must appear** `labeled_y_missing_*` | absent → present | **present** | **yes** |
 
 **Contract mismatches: none.** Every wG3 prediction materialised. No scorer edit required or performed (`sr-001`).
@@ -98,7 +98,7 @@ Pins updated only after Task 1 field-by-field verification. No assertion weakene
 
 ## Task 3 — freeze red-on-mutation (TEST-15)
 
-**Baseline after Task 2:** `write_anchor` report JSON/MD **byte-identical** to committed freeze (digest `990e1517…`). Caption freeze tests green.
+**Baseline after Task 2:** `write_anchor` report JSON/MD **byte-identical** to committed freeze (digest `sha256:990e1517…`). Caption freeze tests green.
 
 ### Mutation transcript 1 — `labeled_y_missing_images`
 
@@ -166,6 +166,7 @@ setup: source-aggregation mutation (in-process; scripts/ untouched)
 
 **Reproduction probe (pre-regen):**
 
+<!-- sha-guard:ignore-next-block -->
 ```text
 man match True
 run match True

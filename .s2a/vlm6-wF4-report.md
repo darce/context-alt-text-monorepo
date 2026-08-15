@@ -165,9 +165,9 @@ base f406193709619d143f463cc5dfa3f316fecb7333
 
 | Artifact | Old digest (prefix) | New digest |
 | --- | --- | --- |
-| face manifest | `67685bb7…` | `32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd` |
-| face run-record | `43d160d6…` | `20ed14fe53bf1554f0aa348f5b0270d426e68f31d9db9fec97f6bdfcee01adab` |
-| `manifest_sha256` prefix | `021109aa` | `02003e25` |
+| face manifest | `sha256:67685bb7…` | `32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd` |
+| face run-record | `sha256:43d160d6…` | `20ed14fe53bf1554f0aa348f5b0270d426e68f31d9db9fec97f6bdfcee01adab` |
+| `manifest_sha256` prefix | `sha256:021109aa` | `sha256:02003e25` |
 
 Report digests **unchanged** (regen stage).
 

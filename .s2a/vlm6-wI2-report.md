@@ -79,7 +79,7 @@ Every changed flat key and its owning lane:
 | `gate…missed_gt` | 1 → 2 | wF4+wG2 (Bob only; Alice incomplete) |
 | `provenance.corpus_traps` | absent → 3 traps | wF4 |
 | `provenance.note` | no G-01 / corpus_traps trailer → has both | wF4 |
-| `provenance.manifest_sha256` / `score_manifest_sha256` | `021109aa…` → `02003e25…` | wF4 man digest |
+| `provenance.manifest_sha256` / `score_manifest_sha256` | `sha256:021109aa…` → `sha256:02003e25…` | wF4 man digest |
 | `provenance.sampling_frames.detection` | absent → same as detection | wd-A / wH1 |
 | `provenance.total_gt_boxes` | 10 → 12 | wF4 (+2 boxes media 11) |
 | `slices.full_corpus_identification.fn/missed_gt/recall/denom` | 3/2/0.571/7 → 4/3/0.5/8 | wF4 Bob (+Alice not in id miss for incomplete geom — only +1 missed_gt) |
@@ -101,8 +101,8 @@ decisions[] bodies for media 1–7; `detection_recall_coupling_flag` remains JSO
 | --- | --- | --- |
 | `…-face-report.json` | `faf72705b708e77b57ec9255c7c5d9292b7d366f77348cac7a657db7ff394e52` | `c8e174db92b47d746c2497074d77f3197b016e4eec761ec1d5739488766058f6` |
 | `…-face-report.md` | `cc60073dd1f126517370e5832cae142201b89df22b8fe49d6aec2e299bc06b7d` | `ff108e77facba690b79c94b5acaf37edbe5bf01784f526cccad80f4e3e5b8899` |
-| manifest (input) | `32eff309…` | **unchanged** (wF4) |
-| run-record (input) | `20ed14fe…` | **unchanged** (wF4) |
+| manifest (input) | `sha256:32eff309…` | **unchanged** (wF4) |
+| run-record (input) | `sha256:20ed14fe…` | **unchanged** (wF4) |
 
 Updated only `_FROZEN_DIGESTS` report entries + comments in
 `test_eval_harness_face_determinism_anchor.py`. No assertion weakened.

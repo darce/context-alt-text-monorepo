@@ -30,6 +30,7 @@ Wrapper delegates with `empty_policy="refuse"`, `verify_git=True`.
 ```
 
 **Probe (real behaviour):**
+<!-- sha-guard:ignore-next-block -->
 ```
 accept real: True
 refuse '': --live-head-sha must not be empty; ...

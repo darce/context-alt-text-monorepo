@@ -107,6 +107,7 @@ test_rv2_06_no_head_sha_path_emits_forty_zeros PASSED
 **Why (a):** closes arbitrary-40-hex fabrication adjacent to forty zeros; test environment has git + repo.
 
 **RED (pre-fix format-only):**
+<!-- sha-guard:ignore-next-block -->
 ```
 RED (pre-fix accept arbitrary 40-hex):
   DID NOT RAISE SystemExit
@@ -114,6 +115,7 @@ RED (pre-fix accept arbitrary 40-hex):
 ```
 
 **GREEN:**
+<!-- sha-guard:ignore-next-block -->
 ```
 GREEN (post-fix refuse):
   raised: HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is not a resolvable commit in this repository (git rev-parse --verify failed); pass a real SHA from `git rev-parse HEAD` or unset HEAD_SHA to record null (RV3-05 / S4-06 / rg-015)

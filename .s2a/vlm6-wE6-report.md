@@ -119,6 +119,7 @@ stderr: 0 lane reports found by default walk; nothing to check — refusing to c
 
 **Reproduction probe (unfixed, wrong PASS):**
 
+<!-- sha-guard:ignore-next-block -->
 ```
 === rf11.md rc=0 ===
 STDOUT: lane report SHA citations: 1 file(s), 0 citations found (none to resolve)
@@ -138,6 +139,7 @@ FAILED test_markdown_emphasis_interior_hex_is_visible_and_flagged
 
 **GREEN:**
 
+<!-- sha-guard:ignore-next-block -->
 ```
 === rf11.md rc=1 ===
 STDERR: ... cited commit `deadbeef1234567` does not resolve ...

@@ -53,6 +53,7 @@ No `verify_git=` kwarg. Compatible with both current signature (defaulted) and t
 
 ### Reproduction (verbatim, pre-fix)
 
+<!-- sha-guard:ignore-next-block -->
 ```
 $ .venv/bin/python -c 'from scripts.eval_harness import generate_determinism_anchor as g; g.main(["--help"])'
 ...
@@ -74,6 +75,7 @@ Confirmed: flag value discarded; help lied (`rg-006`).
 
 ### GREEN (post-fix)
 
+<!-- sha-guard:ignore-next-block -->
 ```
 $ .venv/bin/python -c 'from scripts.eval_harness import generate_determinism_anchor as g; g.main(["--help"])'
 # usage line has no --verify-live-head-sha
@@ -94,6 +96,7 @@ Commit: `6f8a4d1a`.
 
 ### Reproduction / mutant (pre-boundary-lock)
 
+<!-- sha-guard:ignore-next-block -->
 ```
 DIVERGENCE TEST WOULD PASS (defaults): True (refuses under defaults)
 validate_honors_flag('a'*40, verify_git=False) → 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -134,6 +137,7 @@ Commit: `3483f38d`.
 
 ### Reproduction (verbatim, pre-fix)
 
+<!-- sha-guard:ignore-next-block -->
 ```
 $ cd apps/prototype-description-service
 $ .venv/bin/python - <<'PY'
@@ -196,6 +200,7 @@ SystemExit: ... git provenance probe failed (is-inside-work-tree rc=128 stdout='
 
 Pre-fix mutant that re-opens format-only on `rc=128`:
 
+<!-- sha-guard:ignore-next-block -->
 ```
 pre-fix is-inside rc=128 → 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   (would make test_vlm6_r2_d02_is_inside_rc128_refuses RED if production restored)

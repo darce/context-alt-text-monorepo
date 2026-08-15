@@ -24,6 +24,7 @@ sha-guard:ignore-next-block
 ### RD-01 / CDX-02 — Missing-git / ENOENT / bad cwd still stamped fabricated hex
 
 **Reproduction (pre-fix, verbatim):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === RD-01 empty PATH ===
 empty PATH: ACCEPTED aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -44,6 +45,7 @@ FAILED ...::test_we2_cdx02_nonexistent_git_cwd_refuses - Failed: DID NOT RAISE S
 **Fix:** `_resolve_git_binary()` + no format-only return on ENOENT/`FileNotFoundError`. Missing binary, dangling symlink, and unhappy probes all call `_refuse_git_probe`.
 
 **GREEN (post-fix probe):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 empty PATH no system git: REFUSED HEAD_SHA='aaaaaaaa…' git provenance probe failed (git binary missing/unusable: FileNotFoundError…
 dangling symlink git: REFUSED … git binary missing/unusable: FileNotFoundError…
@@ -55,6 +57,7 @@ bad git_cwd: REFUSED … is-inside-work-tree rc=128 … fatal: cannot change to 
 ### RD-02 — Second-probe ENOENT degrades after first probe alive
 
 **Reproduction (pre-fix):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === E2E5 / RD-02 second ENOENT ===
 second ENOENT: ACCEPTED aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -77,6 +80,7 @@ second ENOENT: REFUSED … rev-parse --verify missing-binary-after-alive: FileNo
 ### RD-03 / CDX-03 — `GIT_DIR` / alternates verify foreign commits
 
 **Reproduction (pre-fix):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === B1 / RD-03 GIT_DIR foreign ===
 GIT_DIR attacker foreign SHA: ACCEPTED ed1e2920…
@@ -101,6 +105,7 @@ clean monorepo real HEAD: ACCEPTED 88ed0e524bea8ee625afd405ca7f551d8ae1b5ba
 ### RD-04 / CDX-03 — Impostor `git` on `PATH`
 
 **Reproduction (pre-fix):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === RD-04 impostor ===
 impostor PATH: ACCEPTED aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa^{commit}}
@@ -124,6 +129,7 @@ impostor PATH fabricated: REFUSED … is not a resolvable commit in this reposit
 ### RD-05 — Verify trusts returncode only; stdout not re-hexed
 
 **Reproduction (pre-fix):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === RD-05 garbage stdout ===
 garbage stdout: ACCEPTED totally-not-a-sha
@@ -149,6 +155,7 @@ empty stdout: REFUSED … returned non-SHA stdout ''
 ### RD-06 — `normalize_head_sha(verify_git=False)` library opt-out
 
 **Reproduction (pre-fix):**
+<!-- sha-guard:ignore-next-block -->
 ```text
 === RD-06 verify_git=False ===
 verify_git=False: ACCEPTED aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

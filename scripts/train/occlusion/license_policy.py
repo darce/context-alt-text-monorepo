@@ -4681,11 +4681,16 @@ _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED: bool = True
 # False restores last-segment-only peel so multi-segment rem tails
 # admit again.
 _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED: bool = True
-# Rem-tail class bound: version/size/export debris is short. A
-# mid-chain ``yolop_yolop_…`` rem is thousands of chars — refuse
-# so the B8-02 deep-chain pin stays O(n) (R20-01 last-segment miss).
+# Historical F19 fail-open cliffs (R22). Production peel is unbounded
+# — each step strictly shortens the token — so these numbers are not
+# consulted unless a TEST-15 flag below restores the admit gadget.
 _MAX_COMPOSED_REM_COMPACT_LEN: int = 48
 _MAX_COMPOSED_REM_PEEL_SEGMENTS: int = 8
+# TEST-15: True restores the F19 fail-open (peel returns None → the
+# caller reads "no owner" and admits). Production stays False.
+_COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP: bool = False
+_COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP: bool = False
+_COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING: bool = False
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
 _PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
@@ -4837,6 +4842,52 @@ def _mid_exception_rem_is_trailing_segment(
     return token[sep + 1 :] == rem
 
 
+def _exception_compact_spelling_set() -> frozenset[str]:
+    """Compact exception spellings (cached). Used to refuse fabricated yolo."""
+    cached = getattr(_exception_compact_spelling_set, "_cached", None)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    out = frozenset(
+        spelling for _sc, _sk, spelling in _iter_exception_compact_spellings()
+    )
+    _exception_compact_spelling_set._cached = out  # type: ignore[attr-defined]
+    return out
+
+
+def _underscore_deny_seed_heads() -> tuple[str, ...]:
+    """First-segment heads of underscore deny/NC seeds (cached).
+
+    Class-level (derived from ``PACKAGE_DENYLIST``), not a gadget
+    denylist. Cheap prefilter so the 1200-yolop pin does not pay
+    ``_underscore_preserving_glued_seed_owner`` on every suffix.
+    """
+    cached = getattr(_underscore_deny_seed_heads, "_cached", None)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    heads: list[str] = []
+    seen: set[str] = set()
+    for seed_c, _sk, _entry in _iter_family_seeds(PACKAGE_DENYLIST):
+        if "_" not in seed_c:
+            continue
+        head = seed_c.split("_", 1)[0] + "_"
+        if head not in seen:
+            seen.add(head)
+            heads.append(head)
+    out = tuple(heads)
+    _underscore_deny_seed_heads._cached = out  # type: ignore[attr-defined]
+    return out
+
+
+def _token_starts_with_underscore_deny_head(token: str) -> bool:
+    """True when ``token`` begins with an underscore deny/NC seed head."""
+    if not token:
+        return False
+    for head in _underscore_deny_seed_heads():
+        if token.startswith(head):
+            return True
+    return False
+
+
 def _peel_composed_trailing_rem_segments(
     token: str, rem: str
 ) -> str | None:
@@ -4849,20 +4900,34 @@ def _peel_composed_trailing_rem_segments(
     once rem is fully consumed by **two or more** segments. A single
     trailing rem segment stays on
     :func:`_mid_exception_rem_is_trailing_segment` (R20-01 sole-path).
-    Glued rem (``buffalo_lxyoloxextra``) cannot peel — the last
+    Glued rem (``buffalo_lxyoloxextra``) cannot start a peel — the last
     segment is longer than rem — so A.3 unknown-residual holds.
-    Mid-chain rem longer than ``_MAX_COMPOSED_REM_COMPACT_LEN``
-    (the 1200-``yolop`` deep-chain pin) returns None immediately.
+
+    R22: the peel is monotone (each step strictly shortens ``current``)
+    and has no production cap. Exceeding the historical 8-segment /
+    48-char cliffs used to return None (fail-open → admit). TEST-15
+    flags restore those cliffs. The F19 ``spelling in rem`` bail is
+    gone — it laundered AGPL ``fastsamxyolox_v8_yolox`` and did not
+    pay for the deep-chain pin (length-bound already short-circuited
+    it; the pin's cost is the pre-existing scanner).
+
+    R22-04: leftover rem glued into the last segment after one or
+    more successful peels (``buffalo_lxyoloxextra_v8`` / compact-head
+    ``fastsamxyoloxextra_v8``) returns the prefix so the caller can
+    still name the owner — never admit.
     """
     if not rem or not token or "_" not in token:
         return None
-    if len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN:
+    # TEST-15: restore the F19 fail-open cliffs (admit gadgets).
+    if (
+        _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
+        and len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN
+    ):
         return None
-    # Mid-chain rem (``yolop_yolop_ultralytics``) is exception residue,
-    # not a rem tail. Refuse so peel stays off the B8-02 O(n) path.
-    for _sc, _sk, spelling in _iter_exception_compact_spellings():
-        if spelling and spelling in rem:
-            return None
+    if _COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING:
+        for _sc, _sk, spelling in _iter_exception_compact_spellings():
+            if spelling and spelling in rem:
+                return None
     remaining = rem
     current = token
     peels = 0
@@ -4871,16 +4936,24 @@ def _peel_composed_trailing_rem_segments(
         last = current[sep + 1 :]
         last_k = _compact_canonical(last) if last else ""
         if not last_k or not remaining.endswith(last_k):
-            return None
+            # R22-04: leftover rem is glued into the last segment.
+            return current if peels >= 1 else None
         remaining = remaining[: -len(last_k)]
         current = current[:sep].rstrip("_")
         peels += 1
-        if peels > _MAX_COMPOSED_REM_PEEL_SEGMENTS:
+        if (
+            _COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP
+            and peels > _MAX_COMPOSED_REM_PEEL_SEGMENTS
+        ):
             return None
         if not current:
             return None
         if not remaining:
             return current if peels >= 2 else None
+    # R22-04: trailing ``_`` exhausted (compact-head seed) with rem
+    # still leftover — ``fastsamxyoloxextra_v8`` after peeling ``v8``.
+    if remaining and peels >= 1:
+        return current
     return None
 
 
@@ -4918,13 +4991,17 @@ def _compact_mid_exception_deny_adjacency(
     same empty-rem owner sees ``buffalo_lxyolox``. R21-01:
     multi-segment rem tails (``v8-3`` / ``onnx_tiny``) fail
     last-segment-equals-rem and retry on progressively peeled
-    trailing rem segments. Separator-aligned deny forms
-    (``my_yoloxyolo`` / ``buffalo_l_xyolox``) still hit earlier
-    via (b) / suffix walk. Prefix ownership on the compact
-    (no-``_``) path is compact-(a) / contained-long / elevated
-    (c) only — the folded (b) ``seed_`` arm of
-    ``_deny_has_folded_ab_claim`` cannot fire on a compact slice
-    (R19-05).
+    trailing rem segments. R22: peel is monotone with no
+    segment cap and no exception-spelling bail. Rem longer
+    than the historical 48-char cliff skips the peel (the
+    1200-``yolop`` pin's cost is the pre-existing scanner)
+    and fail-closes via the unpeeled owner — never admit.
+    Separator-aligned deny forms (``my_yoloxyolo`` /
+    ``buffalo_l_xyolox``) still hit earlier via (b) / suffix
+    walk. Prefix ownership on the compact (no-``_``) path is
+    compact-(a) / contained-long / elevated (c) only — the
+    folded (b) ``seed_`` arm of ``_deny_has_folded_ab_claim``
+    cannot fire on a compact slice (R19-05).
     """
     if not token:
         return None
@@ -4959,6 +5036,47 @@ def _compact_mid_exception_deny_adjacency(
                     if _mid_exception_rem_is_trailing_segment(token, rem):
                         peeled = token[: token.rfind("_")].rstrip("_")
                     elif _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED:
+                        # R22: rem longer than the historical 48-char
+                        # cliff is mid-chain residue (1200-yolop) or a
+                        # long export tail. Unbounded peel of the
+                        # deep-chain is O(n²) across suffixes (~5 min
+                        # vs ~22 s). Skip peel and fail-close via the
+                        # unpeeled owner — never admit.
+                        if (
+                            len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN
+                            and not _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
+                        ):
+                            owned = None
+                            # Cheap prefilter: deep-chain (``yolox_``)
+                            # must not pay glued-owner on every suffix.
+                            if _token_starts_with_underscore_deny_head(
+                                token
+                            ):
+                                owned = (
+                                    _underscore_preserving_glued_seed_owner(
+                                        token
+                                    )
+                                )
+                            if owned is None:
+                                head_seg = token.split("_", 1)[0]
+                                spellings = (
+                                    _exception_compact_spelling_set()
+                                )
+                                if (
+                                    prefix
+                                    and len(prefix) <= 16
+                                    and prefix not in spellings
+                                    and head_seg not in spellings
+                                ):
+                                    owned = (
+                                        _mid_exception_prefix_deny_owner(
+                                            prefix
+                                        )
+                                    )
+                            if owned is not None:
+                                return owned
+                            start = idx + 1
+                            continue
                         # R21-01: last-segment peel misses when rem is
                         # several trailing segments (``v83`` != ``3``).
                         peeled = _peel_composed_trailing_rem_segments(
@@ -4977,9 +5095,52 @@ def _compact_mid_exception_deny_adjacency(
                 # R19-01: rem-path on underscore tokens would compact-
                 # join the dropped head into the prefix and retarget
                 # ``buffalo_lxyoloxextra`` from yolox_unknown_residual
-                # to buffalo_l (A.3). Leave glued non-empty rem to the
-                # last-segment suffix, which still sees prefix ``lx``.
+                # to buffalo_l (A.3). Leave *purely glued* non-empty
+                # rem to the last-segment suffix, which still sees
+                # prefix ``lx``. R22-04: rem that has a peelable
+                # trailing segment still consults the unpeeled owner
+                # before this skip (partial-peel leftover, or a peel
+                # miss that must not admit). TEST-15 fail-open flags
+                # disable the fallback so reintroduced cliffs admit.
                 if has_sep:
+                    if (
+                        _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED
+                        and not _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
+                        and not _COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP
+                        and not _COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING
+                    ):
+                        sep_u = token.rfind("_")
+                        last_u = token[sep_u + 1 :] if sep_u >= 0 else ""
+                        last_uk = (
+                            _compact_canonical(last_u) if last_u else ""
+                        )
+                        if (
+                            last_uk
+                            and rem.endswith(last_uk)
+                            and rem != last_uk
+                        ):
+                            owned = (
+                                _underscore_preserving_glued_seed_owner(
+                                    token
+                                )
+                            )
+                            # Prefix-owner on a legitimate exception
+                            # head (``yolox``) fabricates ``yolo`` via
+                            # (c). Only consult it for deny/NC stems
+                            # (``fastsamx``). Cap prefix length so
+                            # mid-chain buildup stays off this path.
+                            if (
+                                owned is None
+                                and prefix
+                                and len(prefix) <= 16
+                                and prefix
+                                not in _exception_compact_spelling_set()
+                            ):
+                                owned = _mid_exception_prefix_deny_owner(
+                                    prefix
+                                )
+                            if owned is not None:
+                                return owned
                     start = idx + 1
                     continue
                 deny = _deny_folded_ab_hit(rem)

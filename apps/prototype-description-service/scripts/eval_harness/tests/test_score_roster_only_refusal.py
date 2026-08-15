@@ -24,14 +24,17 @@ from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
     ManifestError,
+    REFUSAL_EXPLANATIONS,
     ScoreInvariant,
     load_manifest,
+    refusal_explanation,
 )
 from scripts.eval_harness.report import (
     ReportError,
     _MODE_RESTRICTIVENESS,
     _annotation_mode_of,
     _entries_as_dicts,
+    _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
     _stamp_missing_annotation_mode,
@@ -387,21 +390,111 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R4-11: pin the honest sentence, not three tokens the constant can lie with.
+    """S2R4-11: pin the mapping entry, not three tokens the constant can lie with.
 
     A sentence like "not computed: annotation_mode exhaustive path was used
-    anyway" keeps those tokens and must fail this pin.
+    anyway" keeps those tokens and must fail this pin. Swapping this
+    invariant's explanation with another member's also dies here.
     """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
     assert (
-        "detection P/R is not computed unless annotation_mode is exhaustive"
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
         in det_section
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        not in det_section
     )
     assert "used anyway" not in det_section
     assert "precision: null" not in det_section
+
+
+def test_refusal_explanation_maps_every_invariant() -> None:
+    """S2R4-11 / S2R5-04: pin invariant → explanation, not a prose fragment."""
+    assert set(REFUSAL_EXPLANATIONS) == set(ScoreInvariant)
+    texts = list(REFUSAL_EXPLANATIONS.values())
+    assert len(texts) == len(set(texts))
+    for member in ScoreInvariant:
+        assert refusal_explanation(member) == REFUSAL_EXPLANATIONS[member]
+        assert refusal_explanation(member.value) == REFUSAL_EXPLANATIONS[member]
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        == "detection P/R is not computed unless annotation_mode is exhaustive"
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        == "detection P/R is not computed from zero scored observations"
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
+        == (
+            "identification P/R is not computed from identity claims that carry no "
+            "per-face box lineage"
+        )
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
+        == "identification P/R is not computed from zero scored observations"
+    )
+
+
+def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
+    """S2R5-04: exhaustive + full lineage + zero items must not print stock lies.
+
+    The two historical sentences name missing exhaustive mode and missing
+    box lineage. This fixture has both. The fired invariants are the empty-
+    observation pair; the artifact must print those reasons.
+    """
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "annotation_mode": "exhaustive",
+            "face_boxes": [
+                {
+                    "x": 0.5,
+                    "y": 0.4,
+                    "w": 0.2,
+                    "h": 0.3,
+                    "name": "Alice Example",
+                    "source": "iptc",
+                    "lineage": _LINEAGE,
+                }
+            ],
+        }
+    ]
+    _json_doc, md = build_reports(_zero_observation_record(), entries)
+    det_section = md.split("## Face detection")[1].split("## Face identification")[0]
+    ident_section = md.split("## Face identification")[1].split("## Per-item failures")[0]
+    assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS}):" in det_section
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        in det_section
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        not in det_section
+    )
+    assert (
+        f"- REFUSED ({ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS}):"
+        in ident_section
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
+        in ident_section
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
+        not in ident_section
+    )
 
 
 def _face_run_record() -> dict:
@@ -624,17 +717,39 @@ def test_annotation_mode_of_mapping_key_beats_attribute() -> None:
 
 
 def test_score_invariants_are_imported_not_respelt() -> None:
-    """S2R4-21: raise token and catch-set share ScoreInvariant members."""
-    assert ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES == "detection_refuses_empty_entries"
-    assert (
-        ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
-        == "identification_refuses_unboxed_identity_claims"
-    )
+    """S2R4-21 / S2R5-08: raise token and catch-set share ScoreInvariant members."""
+    with pytest.raises(ManifestError) as exc_info:
+        _resolve_score_annotation_mode("exhaustive", [])
+    assert exc_info.value.invariant is ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
     scored = score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
     assert (
         scored["faces"]["detection"]["invariant"]
-        == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
+        is ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
     )
+    assert _invariant_is(
+        scored["faces"]["detection"]["invariant"],
+        ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+    )
+    assert not _invariant_is(
+        "detection_refuses_empty_entries",
+        ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+    )
+
+
+def test_respelt_empty_entries_string_is_not_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2R5-08: a re-spelt raise token must diverge from the catch set."""
+    import scripts.eval_harness.report as report_mod
+
+    def boom(*_args: object, **_kwargs: object) -> AnnotationMode:
+        raise ManifestError("empty", invariant="detection_refuses_empty_entries")
+
+    monkeypatch.setattr(report_mod, "_resolve_score_annotation_mode", boom)
+    with pytest.raises(ManifestError) as exc_info:
+        score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
+    assert exc_info.value.invariant == "detection_refuses_empty_entries"
+    assert exc_info.value.invariant is not ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
 
 
 def test_mode_restrictiveness_covers_every_annotation_mode() -> None:

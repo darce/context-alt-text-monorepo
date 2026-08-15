@@ -15,6 +15,7 @@ import {
   fetchTopUnlabeledClusters,
   rejectSuggestion,
   updateClusterLabel,
+  type PendingSuggestionsResponse,
 } from '../../../../api/recognition';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
@@ -978,6 +979,39 @@ describe('ReviewQueue', () => {
     });
   });
 
+  // E21-20-REV1-03 / TEST-15: chained assignment.then(merge) skips merge on reject.
+  it('REV1-03: unavailable Retry still refetches merge and top-unlabeled when assignment rejects', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderQueue();
+
+    await waitFor(() => {
+      expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    });
+
+    const mergeCallsBefore = vi.mocked(fetchPendingMergeSuggestions).mock.calls.length;
+    const topCallsBefore = vi.mocked(fetchTopUnlabeledClusters).mock.calls.length;
+    vi.mocked(fetchPendingSuggestions).mockRejectedValueOnce(new Error('assignment refetch failed'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchPendingMergeSuggestions).mock.calls.length).toBeGreaterThan(mergeCallsBefore);
+      expect(vi.mocked(fetchTopUnlabeledClusters).mock.calls.length).toBeGreaterThan(topCallsBefore);
+    });
+  });
+
   it('does not render bulk-accept or grouped Yes-all chrome', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
@@ -1105,7 +1139,7 @@ describe('ReviewQueue', () => {
             is_auto_label: false,
             identity_count: 5,
             user_confirmed: false,
-            representatives: [],
+            representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
           },
           {
             id: 'cluster-c2',
@@ -1115,7 +1149,7 @@ describe('ReviewQueue', () => {
             is_auto_label: false,
             identity_count: 4,
             user_confirmed: false,
-            representatives: [],
+            representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
           },
           {
             id: 'cluster-c3',
@@ -1125,7 +1159,7 @@ describe('ReviewQueue', () => {
             is_auto_label: false,
             identity_count: 3,
             user_confirmed: false,
-            representatives: [],
+            representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
           },
           {
             id: 'cluster-c4',
@@ -1135,7 +1169,7 @@ describe('ReviewQueue', () => {
             is_auto_label: false,
             identity_count: 2,
             user_confirmed: false,
-            representatives: [],
+            representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
           },
         ],
         limit: 20,
@@ -1592,7 +1626,7 @@ describe('ReviewQueue', () => {
           user_confirmed: false,
           suggested_label: null,
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
         {
           id: 'cluster-top-2',
@@ -1604,7 +1638,7 @@ describe('ReviewQueue', () => {
           user_confirmed: false,
           suggested_label: null,
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,
@@ -1740,7 +1774,7 @@ describe('ReviewQueue', () => {
           user_confirmed: false,
           suggested_label: null,
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,
@@ -1998,7 +2032,7 @@ describe('ReviewQueue', () => {
           user_confirmed: false,
           suggested_label: null,
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,
@@ -2378,6 +2412,311 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
   });
 
+  // E21-20-REV1-02 / TEST-15: S2-gated zeros leave the queue empty while work exists.
+  it('REV1-02: empty queue with zero-evidence clusters shows repair copy, not drain', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'zero-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
+    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+  });
+
+  // REV2-09 / TEST-15: repair copy without Resync is a dead end. Dropping
+  // refetchTopUnlabeled (or omitting the button) leaves this call count at 1.
+  it('REV2-09: empty-queue Resync refetches top-unlabeled and keeps the drain confirmation', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero', media_id: 1, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
+    const resync = screen.getByRole('button', { name: 'Resync' });
+    expect(resync.closest('[role="status"]')).toBeNull();
+    expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
+    const callsBefore = topMock.mock.calls.length;
+
+    await userEvent.click(resync);
+
+    await waitFor(() => {
+      expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+  });
+
+  // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
+  // Omitting data.refetchName() leaves this call count at the initial 1.
+  it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.ENDPOINT_ERROR,
+    });
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(fetchPendingNameSuggestions).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(fetchPendingNameSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchPendingSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchPendingMergeSuggestions).toHaveBeenCalledTimes(2);
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // REV4-02 / TEST-15: RQ v5 refetch() resolves on query error and isLoading
+  // stays false while an already-errored query refetches. Queue Retry must
+  // announce in-flight busy, then inspect settled isError for distinct copy.
+  it('REV4-02: queue Retry announces in-flight busy then distinct retry-failed copy', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top down'));
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Failed to load suggestions.')).toBeInTheDocument();
+
+    let rejectAssignment!: (reason?: unknown) => void;
+    const assignmentGate = new Promise<PendingSuggestionsResponse>((_resolve, reject) => {
+      rejectAssignment = reject;
+    });
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() => assignmentGate);
+
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying suggestions…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+
+    await act(async () => {
+      rejectAssignment(new Error('still down'));
+      await assignmentGate.catch(() => undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retrying suggestions…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
+  });
+
+  // REV5-02 / TEST-15: isErrorBranch used to include `retrying`, so pressing
+  // the unavailable EmptyStateWarning Retry unmounted it and dropped focus
+  // to <body>. Keep that surface mounted and do not swap in the generic
+  // "Retrying suggestions…" sentence.
+  it('REV5-02: unavailable Retry keeps focus off body and configured-service copy', async () => {
+    const unavailable: PendingSuggestionsResponse = {
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    };
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue(unavailable);
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+
+    let resolveAssignment!: (value: PendingSuggestionsResponse) => void;
+    const assignmentGate = new Promise<PendingSuggestionsResponse>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() => assignmentGate);
+
+    retry.focus();
+    await userEvent.click(retry);
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    expect(screen.queryByText('Retrying suggestions…')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveAssignment(unavailable);
+      await assignmentGate;
+    });
+  });
+
+  // REV5-03 / TEST-15: QueryRetryButton's in-flight status unmounts when
+  // retrying flips false. Settled retry-failed copy must be queryable via
+  // the same role=status / aria-live wrapper the findings panel uses.
+  it('REV5-03: settled retry-failed copy is announced via a live region', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top down'));
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
+    });
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(within(live).getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
+  });
+
+  // REV6-01 / TEST-15: queue Retry latches retryFailed while the unavailable
+  // EmptyStateWarning still masks isErrorBranch. A later sibling panel Retry
+  // refetches the same four queries to success. Without a reset keyed on
+  // data.isError && findings.isError, retryFailed stays true and the queue
+  // swaps to "Retry failed. Could not load suggestions." over live counts.
+  it('REV6-01: sibling recovery after a masked unavailable Retry does not keep retry-failed copy', async () => {
+    const unavailable: PendingSuggestionsResponse = {
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    };
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue(unavailable);
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    const { queryClient } = renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment still down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge still down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name still down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top still down'));
+
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchPendingSuggestions).mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    expect(screen.queryByText('Retry failed. Could not load suggestions.')).not.toBeInTheDocument();
+
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-recovered',
+          identity_id: 'identity-recovered',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    // Panel Retry refetches the same queries without calling retrySuggestionQueries.
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Retry failed. Could not load suggestions.')).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
@@ -2397,7 +2736,7 @@ describe('ReviewQueue', () => {
           user_confirmed: false,
           suggested_label: null,
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,

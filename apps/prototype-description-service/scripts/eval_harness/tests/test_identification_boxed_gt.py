@@ -205,6 +205,44 @@ def test_boxed_identity_still_scores_identification() -> None:
     assert ident["wrong_names"] == []
 
 
+def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
+    """S2R4-06: a policy-disabled unboxed row is not a live identification claim."""
+    boxed = _boxed_alice()
+    disabled = {
+        "path": "mock_images/bob.jpg",
+        "media_id": 2,
+        "face_count": 1,
+        "present_identities": ["Bob Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": False},
+        "face_boxes": [],
+        "annotation_mode": "roster_only",
+    }
+    record = _record(["Alice Example"])
+    record["items"].append(
+        {
+            "media_id": 2,
+            "path": "mock_images/bob.jpg",
+            "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+            "identities": [],
+            "face_count": 1,
+            "error": None,
+        }
+    )
+    scored = score_run_record(record, [boxed, disabled])
+    ident = scored["faces"]["identification"]
+    assert ident.get("refused") is not True
+    assert ident["precision"] == 1.0
+    assert ident["recall"] == 1.0
+    assert ident["precision"] is not None
+    assert "mock_images/bob.jpg" in ident["excluded_images"]
+    json_doc, _md = build_reports(record, [boxed, disabled])
+    built = json.loads(json_doc)["faces"]["identification"]
+    assert built.get("refused") is not True
+    assert built["precision"] == 1.0
+
+
 def test_markdown_names_refused_identification() -> None:
     _json_doc, md = build_reports(_record(["Alice Example"]), [_unboxed_alice()])
     assert f"- REFUSED ({IDENTIFICATION_UNBOXED_INVARIANT}):" in md

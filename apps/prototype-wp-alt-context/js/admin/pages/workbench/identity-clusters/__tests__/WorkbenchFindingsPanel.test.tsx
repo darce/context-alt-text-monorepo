@@ -1680,6 +1680,70 @@ describe('WorkbenchFindingsPanel', () => {
     );
   });
 
+  // REV3-03 / TEST-15: degraded-chip and assignment-outage Retry must share
+  // the error-branch busy contract (in-flight status + aria-busy), and the
+  // control must stay outside its live region (REV2-03).
+  it('REV3-03: degraded-chip Retry announces in-flight via the shared busy contract', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        isAssignmentError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry.closest('[role="status"]')).toBeNull();
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+  });
+
+  it('REV3-03: assignment-outage Retry announces in-flight via the shared busy contract', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry.closest('[role="status"]')).toBeNull();
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+  });
+
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is
   // the whole backlog. Dropping the qualifier (or ignoring topUnlabeledTruncated)
   // leaves this looking like the unqualified S2 copy.

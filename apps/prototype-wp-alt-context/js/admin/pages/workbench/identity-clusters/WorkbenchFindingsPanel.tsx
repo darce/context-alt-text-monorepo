@@ -120,6 +120,43 @@ const FindingsPreviewMissing = (): React.JSX.Element => (
   </div>
 );
 
+const FINDINGS_RETRY_STATUS_ID = 'acx-findings-panel-retrying';
+
+/** Shared Retry control so every caller gets aria-busy + in-flight status. */
+const FindingsRetryButton = ({
+  describedBy,
+  retrying,
+  onClick,
+  className,
+}: {
+  describedBy: string;
+  retrying: boolean;
+  onClick: () => void;
+  className: string;
+}): React.JSX.Element => (
+  <>
+    {retrying && (
+      <p
+        id={FINDINGS_RETRY_STATUS_ID}
+        className="acx-findings-panel__status"
+        role="status"
+        aria-live="polite"
+      >
+        {__('Retrying recognition findings…', 'alt-context')}
+      </p>
+    )}
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-describedby={describedBy}
+      aria-busy={retrying || undefined}
+    >
+      {__('Retry', 'alt-context')}
+    </button>
+  </>
+);
+
 /**
  * Renderer order mirrors TopClusterCard (dedicated thumb → CSS face crop →
  * uncropped fallback). Previews are non-interactive evidence chips (A11Y-14:
@@ -293,21 +330,18 @@ export const WorkbenchFindingsPanel = ({
           <p id="acx-findings-panel-error" className="acx-findings-panel__status">
             <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
             {retrying
-              ? __('Retrying recognition findings…', 'alt-context')
+              ? null
               : retryFailed
                 ? __('Retry failed. Could not load recognition findings.', 'alt-context')
                 : __('Could not load recognition findings.', 'alt-context')}
           </p>
         </div>
-        <button
-          type="button"
-          className="acx-button acx-button--secondary"
+        <FindingsRetryButton
+          describedBy="acx-findings-panel-error"
+          retrying={retrying}
           onClick={() => handleRetryFindings({ restoreFocus: true })}
-          aria-describedby="acx-findings-panel-error"
-          aria-busy={retrying || undefined}
-        >
-          {__('Retry', 'alt-context')}
-        </button>
+          className="acx-button acx-button--secondary"
+        />
       </div>
     );
   }
@@ -414,14 +448,12 @@ export const WorkbenchFindingsPanel = ({
 
       {isTopUnlabeledError && hasFindings && (
         <div className="acx-findings-panel__repair">
-          <button
-            type="button"
-            className="acx-button acx-button--secondary acx-button--small"
+          <FindingsRetryButton
+            describedBy="acx-findings-panel-unlabeled-outage"
+            retrying={retrying}
             onClick={() => handleRetryFindings()}
-            aria-describedby="acx-findings-panel-unlabeled-outage"
-          >
-            {__('Retry', 'alt-context')}
-          </button>
+            className="acx-button acx-button--secondary acx-button--small"
+          />
         </div>
       )}
 
@@ -466,14 +498,12 @@ export const WorkbenchFindingsPanel = ({
             {__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
           </p>
           <div className="acx-findings-panel__repair">
-            <button
-              type="button"
-              className="acx-button acx-button--secondary acx-button--small"
+            <FindingsRetryButton
+              describedBy="acx-findings-panel-assignment-outage"
+              retrying={retrying}
               onClick={() => handleRetryFindings()}
-              aria-describedby="acx-findings-panel-assignment-outage"
-            >
-              {__('Retry', 'alt-context')}
-            </button>
+              className="acx-button acx-button--secondary acx-button--small"
+            />
           </div>
         </>
       )}

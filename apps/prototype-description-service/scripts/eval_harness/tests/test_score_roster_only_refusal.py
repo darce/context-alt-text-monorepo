@@ -34,6 +34,7 @@ from scripts.eval_harness.report import (
     _MODE_RESTRICTIVENESS,
     _annotation_mode_of,
     _entries_as_dicts,
+    _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
     _stamp_missing_annotation_mode,
@@ -699,17 +700,39 @@ def test_annotation_mode_of_mapping_key_beats_attribute() -> None:
 
 
 def test_score_invariants_are_imported_not_respelt() -> None:
-    """S2R4-21: raise token and catch-set share ScoreInvariant members."""
-    assert ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES == "detection_refuses_empty_entries"
-    assert (
-        ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
-        == "identification_refuses_unboxed_identity_claims"
-    )
+    """S2R4-21 / S2R5-08: raise token and catch-set share ScoreInvariant members."""
+    with pytest.raises(ManifestError) as exc_info:
+        _resolve_score_annotation_mode("exhaustive", [])
+    assert exc_info.value.invariant is ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
     scored = score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
     assert (
         scored["faces"]["detection"]["invariant"]
-        == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
+        is ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
     )
+    assert _invariant_is(
+        scored["faces"]["detection"]["invariant"],
+        ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+    )
+    assert not _invariant_is(
+        "detection_refuses_empty_entries",
+        ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+    )
+
+
+def test_respelt_empty_entries_string_is_not_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2R5-08: a re-spelt raise token must diverge from the catch set."""
+    import scripts.eval_harness.report as report_mod
+
+    def boom(*_args: object, **_kwargs: object) -> AnnotationMode:
+        raise ManifestError("empty", invariant="detection_refuses_empty_entries")
+
+    monkeypatch.setattr(report_mod, "_resolve_score_annotation_mode", boom)
+    with pytest.raises(ManifestError) as exc_info:
+        score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
+    assert exc_info.value.invariant == "detection_refuses_empty_entries"
+    assert exc_info.value.invariant is not ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
 
 
 def test_mode_restrictiveness_covers_every_annotation_mode() -> None:

@@ -1622,6 +1622,64 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.queryByText('Retry failed. Could not load recognition findings.')).not.toBeInTheDocument();
   });
 
+  // REV3-02 / TEST-15: degraded-chip Retry lives in the data branch, so
+  // pendingRetryFocusRef must stay unarmed. A later hasFindings flip is not a
+  // reason to jump focus to Review next.
+  it('REV3-02: degraded-chip Retry does not move focus when hasFindings later becomes true', async () => {
+    const degraded = makeViewModel({
+      counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+      hasFindings: true,
+      isTopUnlabeledError: true,
+      isAssignmentError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    vi.mocked(useWorkbenchFindings).mockReturnValue(degraded);
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalled();
+    });
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        hasFindings: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 1, total: 3 },
+        hasFindings: true,
+        isError: false,
+        isTopUnlabeledError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Review next/ }));
+    expect(document.activeElement).not.toBe(
+      screen.getByRole('heading', { name: 'Recognition findings' }),
+    );
+  });
+
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is
   // the whole backlog. Dropping the qualifier (or ignoring topUnlabeledTruncated)
   // leaves this looking like the unqualified S2 copy.

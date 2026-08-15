@@ -211,13 +211,18 @@ export const WorkbenchFindingsPanel = ({
 
   // REV2-08: the control is labelled as reloading recognition findings, so it
   // must refetch every source that feeds them — name suggestions included.
-  const handleRetryFindings = (): void => {
+  const handleRetryFindings = (options?: { restoreFocus?: boolean }): void => {
     if (retrying) {
       return;
     }
     setRetrying(true);
     setRetryFailed(false);
-    pendingRetryFocusRef.current = true;
+    // REV3-02: only the error-branch Retry should restore focus. Degraded-chip
+    // and assignment-outage Retry live in the data tree — arming here would
+    // jump focus minutes later on an unrelated hasFindings/isError change.
+    if (options?.restoreFocus) {
+      pendingRetryFocusRef.current = true;
+    }
     void Promise.all([
       assignmentQuery.refetch(),
       mergeQuery.refetch(),
@@ -231,6 +236,9 @@ export const WorkbenchFindingsPanel = ({
         const failed =
           !Array.isArray(results) || results.some((result) => Boolean(result?.isError));
         setRetryFailed(failed);
+        if (failed) {
+          pendingRetryFocusRef.current = false;
+        }
       });
   };
 
@@ -294,7 +302,7 @@ export const WorkbenchFindingsPanel = ({
         <button
           type="button"
           className="acx-button acx-button--secondary"
-          onClick={handleRetryFindings}
+          onClick={() => handleRetryFindings({ restoreFocus: true })}
           aria-describedby="acx-findings-panel-error"
           aria-busy={retrying || undefined}
         >
@@ -409,7 +417,7 @@ export const WorkbenchFindingsPanel = ({
           <button
             type="button"
             className="acx-button acx-button--secondary acx-button--small"
-            onClick={handleRetryFindings}
+            onClick={() => handleRetryFindings()}
             aria-describedby="acx-findings-panel-unlabeled-outage"
           >
             {__('Retry', 'alt-context')}
@@ -461,7 +469,7 @@ export const WorkbenchFindingsPanel = ({
             <button
               type="button"
               className="acx-button acx-button--secondary acx-button--small"
-              onClick={handleRetryFindings}
+              onClick={() => handleRetryFindings()}
               aria-describedby="acx-findings-panel-assignment-outage"
             >
               {__('Retry', 'alt-context')}

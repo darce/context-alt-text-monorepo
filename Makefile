@@ -600,9 +600,23 @@ dev-stop:
 # eval-tenant key, never the demo tenant's), ACX_EVAL_TENANT_ID (eval tenant
 # UUID, required by all live subcommands), GOLDEN_IMAGES_DIR. Details:
 # apps/prototype-description-service/scripts/eval_harness/README.md
+#
+# Exit contract (score/run): 0 clean or refused-with-consent; 1 partial/
+# determinism/env; 2 argparse; 3 REFUSED without --allow-refused.
+# Shipped golden is roster_only (34/37 unboxed claims) so `run` ends in
+# exit 3. That is a correct refusal. Do not default --allow-refused here
+# (auto-consent greenwashes a no-score report). Consent only at the call
+# site: make eval-captions EVAL_ARGS='--allow-refused'
 .PHONY: eval-captions
 eval-captions:
-	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS)
+	@cd apps/prototype-description-service && \
+	uv run python -m scripts.eval_harness.cli run $(EVAL_ARGS); \
+	ec=$$?; \
+	if [ $$ec -eq 3 ]; then \
+		printf '%s\n' "eval-captions: REFUSED (exit 3). Default golden is roster_only with unboxed identity claims, so detection/identification are not scored. Add per-face boxes, or re-run with EVAL_ARGS='--allow-refused' only if you explicitly consent to a no-score report." >&2; \
+		exit 3; \
+	fi; \
+	exit $$ec
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

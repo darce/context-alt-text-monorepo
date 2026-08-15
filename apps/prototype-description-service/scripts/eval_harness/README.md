@@ -27,13 +27,81 @@ cd apps/prototype-description-service   # load-bearing: repo root has a differen
 uv run python -m scripts.eval_harness.cli seed-roster --entities "$GOLDEN_IMAGES_DIR/mock_entities"
 
 # full run (fetch + score); or from repo root: make eval-captions
+# Shipped golden is roster_only (34/37 unboxed claims) → score ends in exit 3.
+# That is a correct refusal, not a harness bug. Do not add --allow-refused
+# unless you explicitly consent to a no-score report (see Exit contract).
 uv run python -m scripts.eval_harness.cli run
 
-# smoke: 3 images
+# smoke: 3 images (same exit-3 contract on the default golden)
 uv run python -m scripts.eval_harness.cli run --limit 3
 
-# offline re-score of a recorded run (deterministic; bit-identical check)
+# offline re-score of a recorded run (deterministic; bit-identical check).
+# Same exit 3 against the shipped golden. Reports are still written on exit 3.
 uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harness/out/run-<stamp>.json --check-determinism
+```
+
+## Exit contract (`score` / `run`)
+
+`python -m scripts.eval_harness.cli score|run` exits:
+
+| Exit | Meaning |
+| --- | --- |
+| **0** | Clean score, or refused metrics **with** `--allow-refused` |
+| **1** | Partial corpus (`failed>0`), determinism failure, `ManifestError`/`ReportError`, env failures |
+| **2** | argparse |
+| **3** | Detection and/or identification **REFUSED** and no `--allow-refused` |
+
+Partial is checked before refusal, so partial+refused exits **1**. `score-face` has no `--allow-refused` and never exits 3.
+
+### What REFUSED means
+
+A REFUSED metric means the scorer could not compute it honestly:
+
+- **Detection** — `annotation_mode=roster_only` (the labelled face count is only a lower bound, so detection P/R would overstate), or the mode is missing/unrecognised.
+- **Identification** — identity claims with no per-face box lineage (`identification_refuses_unboxed_identity_claims`).
+
+Refusal is a **correct outcome**, not a failure to paper over. Exit 3 exists so a refusal cannot be mistaken for a clean score.
+
+The shipped default manifest (`scene/tests/seed/golden.json`) is `roster_only` with 34/37 unboxed claims, so every `score`/`run` against it exits 3 unless the caller consents.
+
+### What the operator should do
+
+1. **Add per-face boxes** (and set `annotation_mode=exhaustive` only when every face is boxed) so detection P/R and boxed identification can be computed honestly; or
+2. **Consent explicitly** with `--allow-refused` if you want the caption report and accept that `faces.detection` / `faces.identification` carry `refused: true` and null numbers. State why at the call site — do not hide the flag in a wrapper.
+
+`--allow-refused` does not invent numbers. It only changes the process exit from 3 to 0.
+
+`--allow-refused` help text (from `score --help`):
+
+```
+--allow-refused       exit 0 when detection or identification is REFUSED
+                      (roster_only / unboxed identity claims). Default:
+                      refused metrics exit 3 — a missing score is not
+                      clean evaluation evidence
+```
+
+### Worked offline example (no live tenant)
+
+Copy a committed run-record out of tree so `score` does not write reports next to published artifacts:
+
+```bash
+cd apps/prototype-description-service
+mkdir -p /tmp/acx-eval-score
+cp ../../docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json /tmp/acx-eval-score/run.json
+uv run python -m scripts.eval_harness.cli score \
+  --run-record /tmp/acx-eval-score/run.json \
+  --manifest scene/tests/seed/golden.json
+# expected: exit 3; report written at /tmp/acx-eval-score/run-report.{json,md}
+```
+
+To accept the refused report (still no detection/identification numbers):
+
+```bash
+uv run python -m scripts.eval_harness.cli score \
+  --run-record /tmp/acx-eval-score/run.json \
+  --manifest scene/tests/seed/golden.json \
+  --allow-refused
+# expected: exit 0; same refused JSON, different process status
 ```
 
 ## Hosted provider matrix (E20-11)

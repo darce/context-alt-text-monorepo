@@ -28,9 +28,9 @@ export const settledRefetchFailed = (results: unknown): boolean =>
 interface QueryRetryButtonProps {
   describedBy: string;
   retrying: boolean;
-  retryingLabel: string;
-  statusId: string;
-  statusClassName: string;
+  retryingLabel?: string;
+  statusId?: string;
+  statusClassName?: string;
   onClick: () => void;
   className: string;
 }
@@ -46,11 +46,11 @@ export const QueryRetryButton = ({
   className,
 }: QueryRetryButtonProps): React.JSX.Element => (
   <>
-    {retrying && (
+    {retrying && retryingLabel && statusId ? (
       <p id={statusId} className={statusClassName} role="status" aria-live="polite">
         {retryingLabel}
       </p>
-    )}
+    ) : null}
     <button
       type="button"
       className={className}

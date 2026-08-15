@@ -15,6 +15,7 @@ import {
   fetchTopUnlabeledClusters,
   rejectSuggestion,
   updateClusterLabel,
+  type PendingSuggestionsResponse,
 } from '../../../../api/recognition';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
@@ -2548,7 +2549,7 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('Failed to load suggestions.')).toBeInTheDocument();
 
     let rejectAssignment!: (reason?: unknown) => void;
-    const assignmentGate = new Promise((_resolve, reject) => {
+    const assignmentGate = new Promise<PendingSuggestionsResponse>((_resolve, reject) => {
       rejectAssignment = reject;
     });
     vi.mocked(fetchPendingSuggestions).mockImplementation(() => assignmentGate);
@@ -2568,6 +2569,73 @@ describe('ReviewQueue', () => {
     });
     expect(screen.queryByText('Retrying suggestions…')).not.toBeInTheDocument();
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
+  });
+
+  // REV5-02 / TEST-15: isErrorBranch used to include `retrying`, so pressing
+  // the unavailable EmptyStateWarning Retry unmounted it and dropped focus
+  // to <body>. Keep that surface mounted and do not swap in the generic
+  // "Retrying suggestions…" sentence.
+  it('REV5-02: unavailable Retry keeps focus off body and configured-service copy', async () => {
+    const unavailable: PendingSuggestionsResponse = {
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    };
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue(unavailable);
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+
+    let resolveAssignment!: (value: PendingSuggestionsResponse) => void;
+    const assignmentGate = new Promise<PendingSuggestionsResponse>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() => assignmentGate);
+
+    retry.focus();
+    await userEvent.click(retry);
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    expect(screen.queryByText('Retrying suggestions…')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveAssignment(unavailable);
+      await assignmentGate;
+    });
+  });
+
+  // REV5-03 / TEST-15: QueryRetryButton's in-flight status unmounts when
+  // retrying flips false. Settled retry-failed copy must be queryable via
+  // the same role=status / aria-live wrapper the findings panel uses.
+  it('REV5-03: settled retry-failed copy is announced via a live region', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top down'));
+
+    renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
+    });
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(within(live).getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
   });
 
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {

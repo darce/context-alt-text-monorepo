@@ -1574,10 +1574,12 @@ describe('WorkbenchFindingsPanel', () => {
     });
   });
 
-  // REV3-01 / TEST-15: RQ v5 refetch() resolves on query error, so retryFailed
-  // must come from results.some(r => r.isError) and clear when the error
-  // branch unmounts. A later background invalidation is not a retried failure.
-  it('REV3-01: successful retry then later background error shows plain load copy, not Retry failed', async () => {
+  // REV3-01 / REV4-01 / TEST-15: RQ v5 refetch() resolves on query error, so
+  // retryFailed must come from results.some(r => r.isError). The pin must
+  // observe the live-region copy WHILE the error view-model is still mounted —
+  // leaving the error branch clears retryFailed via onErrorBranch and hides
+  // a `const failed = true` mutation (REV4-01).
+  it('REV3-01 / REV4-01: successful retry while error view-model stays mounted shows plain load copy, not Retry failed', async () => {
     const recovered = makeViewModel({
       counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
       hasFindings: true,
@@ -1606,6 +1608,14 @@ describe('WorkbenchFindingsPanel', () => {
     await waitFor(() => {
       expect(refetchAssignment).toHaveBeenCalled();
     });
+
+    // REV4-01: still on the error branch. All settled results are isError:false,
+    // so the live region must be the plain load sentence — not Retry failed.
+    await waitFor(() => {
+      expect(screen.queryByText('Retrying recognition findings…')).not.toBeInTheDocument();
+      expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retry failed. Could not load recognition findings.')).not.toBeInTheDocument();
 
     findings = recovered;
     rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);

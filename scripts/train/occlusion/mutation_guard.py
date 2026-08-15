@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2399  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2411  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1956,11 +1956,23 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yoloxs-fastsam-agpl]',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_yolos_tiny-fastsam-agpl]',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyoloxextra_v8-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_r22_02_padded_prefix_past_16_with_long_rem_denies',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_r22_02_prefix_by_rem_matrix_denies',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_exception_spelling_fail_open',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_len_cap_fail_open',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_segment_cap_fail_open',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_rem_length_span_sweep',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_wide_multi_segment_long_tail_sweep',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_catalogue_yolox_tags_on_fastsam_deny',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_contrast_rows_still_deny',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_extension_twins_cannot_launder',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_f13_exact_deny_prefix_stays_on_head_glue',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_listed_yolox_legit_tags_cannot_launder_compact_heads',
+    'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_sibling_exception_families_cannot_launder',
+    'test_license_policy.py::TestF21NcSeedDoorReportsNcAxis::test_contrast_v8_rows_stay_nc',
+    'test_license_policy.py::TestF21NcSeedDoorReportsNcAxis::test_listed_nc_seed_exception_in_rem_door_is_nc',
+    'test_license_policy.py::TestF21NcSeedDoorReportsNcAxis::test_real_agpl_residue_still_outranks_nc',
+    'test_license_policy.py::TestF21NcSeedDoorReportsNcAxis::test_unknown_residual_without_nc_seed_stays_agpl',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',

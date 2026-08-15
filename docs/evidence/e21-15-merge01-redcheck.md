@@ -208,3 +208,10 @@
   - `src/api/services/class-description-history-service.php:348` Call to function is_string() with non-empty-string will always evaluate to true. (`function.alreadyNarrowedType`)
 - phpcs: EXIT 0
 - `git status --short` after the run: clean
+
+## phpstan — two unreachable branches, first run in repo history
+- Both sites confirmed inside `if ( '' !== trim( $current ) )`, no `$current` reassignment between guard and use: yes
+- Lines changed: 337, 348 — `is_string( $current ) ? $current : (...)` → `$current`
+- phpstan: EXIT 0, [OK] No errors
+- phpunit: EXIT 0, 64/398 — `--filter DescriptionHistory` matched 64 tests
+- phpcs: EXIT 0

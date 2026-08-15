@@ -80,7 +80,7 @@ describe('DurableFaceThumb [TEST-15]', () => {
 
     expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
     expect(screen.getByText('No image')).toBeInTheDocument();
-    expect(container.querySelector('[data-avatar-state="missing"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-avatar-state="data-missing"]')).toBeInTheDocument();
     expect(container.querySelector('.acx-durable-face-thumb--error')).toBeNull();
   });
 
@@ -119,7 +119,7 @@ describe('DurableFaceThumb [TEST-15]', () => {
     });
 
     rerender(<DurableFaceThumb source={{}} />);
-    expect(container.querySelector('[data-avatar-state="missing"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-avatar-state="data-missing"]')).toBeInTheDocument();
 
     rerender(<DurableFaceThumb source={{ thumbUrl: BLOB_URL }} />);
     fireEvent.error(screen.getByRole('img'));

@@ -10,7 +10,6 @@ import { FaceThumbnail } from './FaceThumbnail';
 import {
   AVATAR_STATE,
   FACE_THUMB_MODE,
-  REPRESENTATIVE_IMAGE_UNAVAILABLE,
   type FaceThumbSource,
 } from './faceThumbDisplay';
 import { useDurableFaceThumb } from './useDurableFaceThumb';
@@ -56,7 +55,7 @@ export const DurableFaceThumb = ({
         className={classes}
         data-avatar-state={AVATAR_STATE.missing}
         role="img"
-        aria-label={__(REPRESENTATIVE_IMAGE_UNAVAILABLE, 'alt-context')}
+        aria-label={__('Representative image unavailable', 'alt-context')}
       >
         <span className={`${baseClass}__fallback-label`}>{__('No image', 'alt-context')}</span>
       </span>
@@ -141,7 +140,7 @@ export const DurableFaceThumb = ({
       className={classes}
       data-avatar-state={display.state}
       role="img"
-      aria-label={__(REPRESENTATIVE_IMAGE_UNAVAILABLE, 'alt-context')}
+      aria-label={__('Representative image unavailable', 'alt-context')}
     />
   );
 };

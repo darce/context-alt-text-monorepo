@@ -73,6 +73,7 @@
 
   &[data-avatar-state='error'] {
     color: var(--acx-color-warning-border);
+    box-shadow: var(--acx-shadow-inset-danger);
   }
 
   &--square[data-avatar-state='data-missing'],

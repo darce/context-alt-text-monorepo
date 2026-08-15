@@ -794,9 +794,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // retry:false, so a `failureCount <= 2` gate made the error Retry dead
     // (REV4-02). Once data.isError is set, show the error branch. Stay on
     // that surface while a local retry is in-flight — refetch can clear
-    // query isError before it settles.
+    // query isError before it settles. REV5-02: unavailable / endpoint-error
+    // EmptyStateWarning stays mounted across retry so the focused Retry is
+    // not swapped for the generic error-branch control.
     const isErrorBranch =
-      retrying || retryFailed || (data.isError && findings.isError);
+      !showUnavailableWarning &&
+      !showEndpointErrorWarning &&
+      (retrying || retryFailed || (data.isError && findings.isError));
     const isInitialFailureBranch =
       data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
@@ -879,16 +883,18 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     if (isErrorBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--error">
-          <p id="acx-review-queue-error" className="acx-review-queue__status">
-            {retrying ? null : (
-              <>
-                <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
-                {retryFailed
-                  ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
-                  : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
-              </>
-            )}
-          </p>
+          <div role="status" aria-live="polite">
+            <p id="acx-review-queue-error" className="acx-review-queue__status">
+              {retrying ? null : (
+                <>
+                  <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                  {retryFailed
+                    ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
+                    : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+                </>
+              )}
+            </p>
+          </div>
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
@@ -1215,6 +1221,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'alt-context',
               )}
               onRetry={retrySuggestionQueries}
+              retrying={retrying}
             />
           ) : showEndpointErrorWarning ? (
             <EmptyStateWarning
@@ -1224,6 +1231,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'alt-context',
               )}
               onRetry={retrySuggestionQueries}
+              retrying={retrying}
             />
           ) : length === 0 || !currentItem ? (
             // [rg-003] the outage and the Clear-filters escape hatch coexist: a

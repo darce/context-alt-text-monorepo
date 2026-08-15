@@ -13987,6 +13987,12 @@ class TestF20ComposedRemBoundsFailClosed:
                     result = policy.audit_derived_from_model(token)
                     assert result.ok is False, f"{token!r} door must DENY"
                     if seed == "fastsam":
+                        assert hit.reason is (
+                            policy.RejectionReason.DENYLISTED_PACKAGE
+                        ), (
+                            f"{token!r}: AGPL seed floor must stay "
+                            f"denylisted_package, got {hit.reason}"
+                        )
                         assert (
                             result.reason
                             is policy.RejectionReason.DENYLISTED_PACKAGE
@@ -13995,6 +14001,12 @@ class TestF20ComposedRemBoundsFailClosed:
                             f"denylisted_package, got {result.reason}"
                         )
                     else:
+                        assert hit.reason is (
+                            policy.RejectionReason.NC_MODEL_DERIVED
+                        ), (
+                            f"{token!r}: NC seed floor must stay "
+                            f"nc_model_derived, got {hit.reason}"
+                        )
                         assert (
                             result.reason
                             is policy.RejectionReason.NC_MODEL_DERIVED

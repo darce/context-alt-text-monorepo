@@ -4165,7 +4165,11 @@ def _fixture_local_detection_caveat_line(
 
     Filters solely on ``affects`` containing ``detection_fn``. Absent that tag,
     emit nothing so a real population corpus cannot grow a phantom caveat.
-    ``N`` is the number of matching trap entries, not a hardcoded count.
+
+    ``N`` is ``len`` of matching trap MEDIA, never trap-attributed FN. The
+    scored ``detection`` dict is corpus-level only and trap entries carry no
+    per-image FN count, so inventing an FN share here would be fabricated
+    contract metadata (rg-015).
     """
     traps_fn = _corpus_traps_with_affect(traps, CORPUS_TRAP_AFFECTS_DETECTION_FN)
     if not traps_fn:
@@ -4178,8 +4182,10 @@ def _fixture_local_detection_caveat_line(
     n = len(ordered)
     return (
         "- ⚠ fixture-local detection frame — recall is NOT a population estimate: "
-        f"{n} of fn={_fmt_prov(fn)} come from deliberate trap media ({media_bits}) "
-        "added so the pre-HARM-01 named-only FN formula goes red; this corpus is a "
+        f"fn={_fmt_prov(fn)} includes misses from {n} deliberate trap media "
+        f"({media_bits}) added so the pre-HARM-01 named-only FN formula goes red; "
+        "the attributable FN share is not derivable from this table because a "
+        "trap image with several GT faces misses several; this corpus is a "
         f"synthetic determinism anchor ({_fmt_prov(scored_images)} images), not a "
         "sampled population."
     )

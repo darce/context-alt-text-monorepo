@@ -124,7 +124,7 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         # Machine-readable: report.py filters on this field (rg-009 — no kind/id match).
         "affects": ["detection_fn"],
         "note": (
-            "anonymous GT, zero detections; 1 of 4 detection FN on the freeze. "
+            "anonymous GT, zero detections; contributes exactly 1 detection FN. "
             "Without this entry pre- and post-HARM-01 fn agree (blind freeze)."
         ),
     },

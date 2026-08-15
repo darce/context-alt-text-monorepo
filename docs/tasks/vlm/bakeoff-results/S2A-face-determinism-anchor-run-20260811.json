@@ -446,7 +446,7 @@
         ],
         "kind": "HARM-05_pure_stranger_miss",
         "media_id": 9,
-        "note": "anonymous GT, zero detections; 1 of 4 detection FN on the freeze. Without this entry pre- and post-HARM-01 fn agree (blind freeze).",
+        "note": "anonymous GT, zero detections; contributes exactly 1 detection FN. Without this entry pre- and post-HARM-01 fn agree (blind freeze).",
         "path": "localwp/uploads/stranger-fn-miss.jpg",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)"
       },

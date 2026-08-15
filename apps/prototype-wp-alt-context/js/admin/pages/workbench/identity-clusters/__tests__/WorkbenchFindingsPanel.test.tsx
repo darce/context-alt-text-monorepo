@@ -1372,6 +1372,8 @@ describe('WorkbenchFindingsPanel', () => {
 
   // E21-20-REV1-04 / TEST-15: repair copy lives in the counts status region;
   // Resync stays outside any live region and is described by the sentence.
+  // REV2-03: the same contract applies to Retry — no interactive control may
+  // sit inside any role=status (error Retry and unlabeled-outage Retry too).
   it('REV1-04: repair sentence shares the counts live region and Resync is described outside it', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
@@ -1394,6 +1396,10 @@ describe('WorkbenchFindingsPanel', () => {
     expect(liveRegions[0]).toHaveTextContent('2 groups missing face data');
     expect(liveRegions[0]).toHaveTextContent('1 to review');
     expect(within(liveRegions[0]).queryByRole('button', { name: 'Resync' })).not.toBeInTheDocument();
+    for (const region of liveRegions) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
 
     const resync = screen.getByRole('button', { name: 'Resync' });
     expect(resync.closest('[role="status"]')).toBeNull();
@@ -1402,6 +1408,64 @@ describe('WorkbenchFindingsPanel', () => {
     expect(described).not.toBeNull();
     expect(described).toHaveTextContent('2 groups missing face data');
     expect(resync.getAttribute('aria-describedby')).toBe(described?.id);
+  });
+
+  // REV2-03 / TEST-15: error Retry used to sit inside the status region.
+  // Moving the button back inside role=status fails the closest() assertion.
+  it('REV2-03: error Retry sits outside the live region and is described by the error copy', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    for (const region of screen.getAllByRole('status')) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    expect(retry).toHaveAttribute('aria-describedby', 'acx-findings-panel-error');
+    const described = document.getElementById('acx-findings-panel-error');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('Could not load recognition findings.');
+  });
+
+  // REV2-03 / TEST-15: unlabeled-outage chip Retry used to sit inside counts status.
+  it('REV2-03: unlabeled-outage Retry sits outside the counts live region', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        isAssignmentError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
+    for (const region of screen.getAllByRole('status')) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    expect(retry).toHaveAttribute('aria-describedby', 'acx-findings-panel-unlabeled-outage');
+    const described = document.getElementById('acx-findings-panel-unlabeled-outage');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('Unlabeled groups unavailable');
   });
 
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is

@@ -232,14 +232,19 @@ export const WorkbenchFindingsPanel = ({
       >
         <FindingsRegionHeading visuallyHidden />
         <div role="status" aria-live="polite">
-          <p className="acx-findings-panel__status">
+          <p id="acx-findings-panel-error" className="acx-findings-panel__status">
             <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
             {__('Could not load recognition findings.', 'alt-context')}
           </p>
-          <button type="button" className="acx-button acx-button--secondary" onClick={handleRetryFindings}>
-            {__('Retry', 'alt-context')}
-          </button>
         </div>
+        <button
+          type="button"
+          className="acx-button acx-button--secondary"
+          onClick={handleRetryFindings}
+          aria-describedby="acx-findings-panel-error"
+        >
+          {__('Retry', 'alt-context')}
+        </button>
       </div>
     );
   }
@@ -314,16 +319,12 @@ export const WorkbenchFindingsPanel = ({
               </li>
               <li className="acx-findings-panel__count">
                 {isTopUnlabeledError ? (
-                  <span className="acx-findings-panel__degraded-chip">
+                  <span
+                    id="acx-findings-panel-unlabeled-outage"
+                    className="acx-findings-panel__degraded-chip"
+                  >
                     <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={14} />
                     {__('Unlabeled groups unavailable', 'alt-context')}
-                    <button
-                      type="button"
-                      className="acx-button acx-button--secondary acx-button--small"
-                      onClick={handleRetryFindings}
-                    >
-                      {__('Retry', 'alt-context')}
-                    </button>
                   </span>
                 ) : (
                   sprintf(
@@ -345,6 +346,19 @@ export const WorkbenchFindingsPanel = ({
               </p>
             </>
           )}
+        </div>
+      )}
+
+      {isTopUnlabeledError && hasFindings && (
+        <div className="acx-findings-panel__repair">
+          <button
+            type="button"
+            className="acx-button acx-button--secondary acx-button--small"
+            onClick={handleRetryFindings}
+            aria-describedby="acx-findings-panel-unlabeled-outage"
+          >
+            {__('Retry', 'alt-context')}
+          </button>
         </div>
       )}
 

@@ -124,3 +124,33 @@
 - Failing assertion: `Failed asserting that Array &0 [ 'x' => 1, 'y' => 2, 'width' => 3, 'height' => 0, ] is null.`
 - After restore: PASSED
 - map_media_identities / map_cluster_detail: added dedicated test `testMapClusterDetailEmitsBboxOnHappyPathAndNullWhenAbsent`; map_media_identities already covered by `testMapMediaIdentitiesGroupsByMediaId` and `testMapMediaIdentitiesFallsBackToClusterRepresentativeMetadata` in MemberResponseMapperTest (method lives on MemberResponseMapper, not ClusterResponseMapper)
+
+## REV4-02 — malformed bbox yields null, not a fabricated box
+- Guards added:
+```
+		if (
+			! is_numeric( $pixels['x'] )
+			|| ! is_numeric( $pixels['y'] )
+			|| ! is_numeric( $pixels['width'] )
+			|| ! is_numeric( $pixels['height'] )
+		) {
+			return null;
+		}
+
+		$width  = (int) $pixels['width'];
+		$height = (int) $pixels['height'];
+		if ( $width <= 0 || $height <= 0 ) {
+			return null;
+		}
+```
+- Cases added:
+  - `testMapClusterListEmitsNullBboxWhenEdgeIsNonNumeric` (`width` => `'abc'`)
+  - `testMapClusterListEmitsNullBboxWhenExtentsAreNegative` (`width` => `-40` and `height` => `-40`)
+  - `testMapClusterListEmitsNullBboxWhenWidthIsZero` (`width` => `0`)
+  - `testMapClusterListEmitsIntegerBboxWhenPixelsAreNumericAndPositive` (`{x:10,y:20,width:30,height:40}`)
+- Mutation applied: deleted the `is_numeric` check and the positive-extent check (`$width <= 0 || $height <= 0`), restoring the bare `absint` block (`'width' => absint( $pixels['width'] )` / `'height' => absint( $pixels['height'] )`)
+- Command: `cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit --filter ClusterResponseMapperTest`
+- Verdict: FAILED
+- Failing assertion: `Failed asserting that Array &0 [ 'x' => 1, 'y' => 2, 'width' => 0, 'height' => 4, ] is null.`
+- After restore: PASSED, 33 tests
+- Existing assertions updated for old zero-box behaviour: none

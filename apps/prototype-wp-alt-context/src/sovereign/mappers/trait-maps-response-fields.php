@@ -112,11 +112,26 @@ trait MapsResponseFields {
 			return null;
 		}
 
+		if (
+			! is_numeric( $pixels['x'] )
+			|| ! is_numeric( $pixels['y'] )
+			|| ! is_numeric( $pixels['width'] )
+			|| ! is_numeric( $pixels['height'] )
+		) {
+			return null;
+		}
+
+		$width  = (int) $pixels['width'];
+		$height = (int) $pixels['height'];
+		if ( $width <= 0 || $height <= 0 ) {
+			return null;
+		}
+
 		return array(
 			'x' => absint( $pixels['x'] ),
 			'y' => absint( $pixels['y'] ),
-			'width' => absint( $pixels['width'] ),
-			'height' => absint( $pixels['height'] ),
+			'width' => $width,
+			'height' => $height,
 		);
 	}
 

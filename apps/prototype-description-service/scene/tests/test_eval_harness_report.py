@@ -749,6 +749,55 @@ def test_build_reports_scored_detection_public_redaction() -> None:
     assert _PUBLIC_NAME in json_doc
 
 
+def test_overshoot_markdown_names_fp() -> None:
+    """pred=3 labeled=1 must surface tp=1 fp=2 fn=0, not a refused block.
+
+    S2R6E-03 / S2R4-16: the existing scored-detection fixtures are balanced
+    at fp=0, fn=0, so a transposition is invisible there. This is the
+    scene-layer pin that can observe it.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice.jpg",
+                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "identities": ["Alice Example"],
+                "face_count": 3,
+                "error": None,
+            }
+        ],
+    }
+    entry = {
+        "path": "mock_images/alice.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [_named_box("Alice Example")],
+        "annotation_mode": "exhaustive",
+    }
+    json_doc, md = build_reports(record, [entry])
+    det = json.loads(json_doc)["faces"]["detection"]
+    assert det.get("refused") is not True
+    assert det["tp"] == 1
+    assert det["fp"] == 2
+    assert det["fn"] == 0
+    section = md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "REFUSED" not in section
+    assert "- precision: 0.333 recall: 1.000 (tp=1 fp=2 fn=0)" in section
+
+
 # --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
 
 

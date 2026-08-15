@@ -44,7 +44,8 @@
   "notes": [
     "S2R4-14 F23-G re-score: docs/tasks/vlm/VLM-2B-bakeoff-CapRL-Qwen3VL-4B-run-record.json against apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7. Identification was SCORED precision=None recall=0.0 per_identity=7; current scorer publishes REFUSED(identification_refuses_unboxed_identity_claims). Numbers are the scorer's output, not hand-edited.",
     "Provenance: fetch manifest_sha256=1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b score_manifest_sha256=73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539 (matches fetch: False). The fetch-time manifest is a pre-v3 snapshot the current loader cannot load (manifest_version 3 only, e30a8ce0). This re-score uses the in-tree v3 descendant of the same file, not a different corpus. Previous published score SHA was 73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539.",
-    "Caption axes are unchanged versus the previously published report."
+    "Caption axes are unchanged versus the previously published report.",
+    "S2R4-15 S2R3-07 rebaseline (commit a90a091e) is still the published caption: must_right_defined_images 9→8; mean_gated_score 0.900→0.8889; a name_precision line was added (now 0.900). F23-G re-score left those caption axes unchanged versus a90a091e, so 'caption unchanged' does not mean they match the pre-S2R3-07 report."
   ],
   "per_image": [
     {

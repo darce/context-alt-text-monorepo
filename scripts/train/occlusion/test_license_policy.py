@@ -13796,7 +13796,11 @@ class TestF20ComposedRemBoundsFailClosed:
     monotone (no segment cap, no exception-spelling bail). Rem longer
     than the historical 48-char cliff skips peel (deep-chain cost is
     the pre-existing scanner) and fail-closes via the unpeeled owner.
-    TEST-15 flags restore each F19 fail-open.
+
+    Pins must die on the production-shaped revert, not on a test-only
+    flag. The unpeeled-owner fallback still names underscore seeds
+    and compact-heads with prefix ≤ 16, so the F19 cliffs are pinned
+    on padded compact-heads (prefix = 17) the fallback cannot see.
     """
 
     F17 = TestF17UnderscoreNcSeedGluedException
@@ -14245,74 +14249,117 @@ class TestF20ComposedRemBoundsFailClosed:
         )
         assert skipped > 0, "expected some prefix_len < seed+1 cells"
 
-    def test_red_proof_composed_rem_len_cap_fail_open(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TEST-15: restore the 48-char rem fail-open → long rem admits.
+    @staticmethod
+    def _padded_prefix17(seed: str, rem_tail: str) -> str:
+        """``{seed}{z*}xyolox_{rem_tail}`` with compact prefix length 17.
 
-        Rem must be multi-segment (``v8`` + 47 ``a``) so the length
-        cliff is the peel, not R20 last-segment-equals-rem.
+        Prefix 17 is past the has_sep fallback's ``len(prefix) <= 16``
+        gate. Underscore seeds (``buffalo_l``) still deny via the
+        glued-owner arm — compact-heads (``fastsam`` / ``arcface``)
+        are the witnesses a restored F19 cliff can admit.
         """
-        token = "buffalo_lxyolox_v8_" + ("a" * 47)
-        rem = policy._compact_canonical(token.split("yolox", 1)[1])
-        assert len(rem) == 49
-        assert policy._package_denylist_hit(token) is not None
-        monkeypatch.setattr(
-            policy, "_COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP", True
-        )
-        assert policy._package_denylist_hit(token) is None, (
-            "red-proof: 48-char rem cap fail-open must admit "
-            f"{token!r}"
-        )
-        # Short rem / 8-seg / exception-in-rem still deny (other arms).
-        assert (
-            policy._package_denylist_hit("buffalo_lxyolox_v8_tiny")
-            is not None
-        )
-        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
-        assert extra is not None
-        assert extra.package_id == "yolox_unknown_residual"
-        assert policy._package_denylist_hit("ayoloxs") is None
+        seed_k = seed.replace("_", "")
+        pad_len = 17 - len(seed_k) - 1
+        if pad_len < 0:
+            raise ValueError(f"{seed!r} compact is already past prefix 17")
+        return f"{seed}{'z' * pad_len}xyolox_{rem_tail}"
 
-    def test_red_proof_composed_rem_segment_cap_fail_open(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TEST-15: restore the 8-segment peel fail-open → 9-seg admits."""
-        token = "buffalo_lxyolox_1_2_3_4_5_6_7_8_9"
-        assert policy._package_denylist_hit(token) is not None
-        monkeypatch.setattr(
-            policy, "_COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP", True
-        )
-        assert policy._package_denylist_hit(token) is None, (
-            "red-proof: 8-segment peel cap fail-open must admit "
-            f"{token!r}"
-        )
-        assert (
-            policy._package_denylist_hit("buffalo_lxyolox_v8_tiny")
-            is not None
-        )
-        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
-        assert extra is not None
-        assert extra.package_id == "yolox_unknown_residual"
-        assert policy._package_denylist_hit("ayoloxs") is None
+    def test_padded_prefix_segment_8_denies_9_and_12_deny(self) -> None:
+        """R22-05 / R23-02: 8-seg still denies; 9-seg and 12-seg deny.
 
-    def test_red_proof_composed_rem_exception_spelling_fail_open(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TEST-15: restore ``spelling in rem`` bail → AGPL rem admits."""
-        token = "fastsamxyolox_v8_yolox"
-        assert policy._package_denylist_hit(token) is not None
-        monkeypatch.setattr(
-            policy, "_COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING", True
-        )
-        assert policy._package_denylist_hit(token) is None, (
-            "red-proof: exception-spelling bail fail-open must admit "
-            f"{token!r}"
-        )
-        # Non-exception rem tail still denies.
-        assert (
-            policy._package_denylist_hit("fastsamxyolox_v8_tiny") is not None
-        )
+        Restoring F19 ``if peels > 8: return None`` admits the padded
+        9-seg compact-head (fallback cannot see prefix 17). Raising
+        the cap 8→9 still admits 12-seg. buffalo_l 8/9 is the wrong
+        witness — glued-owner names it past the cap.
+        """
+        eight = "1_2_3_4_5_6_7_8"
+        nine = "1_2_3_4_5_6_7_8_9"
+        # 12 single-char segs keep rem at 12 chars (under the 48-char
+        # caller skip). ``s0``…``s19`` compact-length is 50 and would
+        # deny via the rem>48 unpeeled owner even with an 8-seg cap.
+        twelve = "1_2_3_4_5_6_7_8_9_0_a_b"
+        for seed, axis in (("fastsam", "agpl"), ("arcface", "nc")):
+            t8 = self._padded_prefix17(seed, eight)
+            t9 = self._padded_prefix17(seed, nine)
+            t12 = self._padded_prefix17(seed, twelve)
+            compact9 = policy._compact_canonical(t9)
+            idx = compact9.find("yolox")
+            assert len(compact9[:idx]) == 17, (seed, compact9[:idx])
+            rem12 = policy._compact_canonical(t12.split("yolox", 1)[1])
+            assert len(rem12) == 12
+            assert t8.count("_") - t8.split("yolox", 1)[0].count("_") == 8
+            assert t9.count("_") - t9.split("yolox", 1)[0].count("_") == 9
+            assert t12.count("_") - t12.split("yolox", 1)[0].count("_") == 12
+            self._assert_probe(t8, seed, axis)
+            self._assert_probe(t9, seed, axis)
+            self._assert_probe(t12, seed, axis)
+
+    def test_padded_prefix_len_48_and_49_both_deny(self) -> None:
+        """R22-05 / R23-02: padded rem=48 and rem=49 both deny.
+
+        Peel-only ``if len(rem) > 48: return None`` is a no-op — the
+        caller skip never reaches peel. The F19-shaped revert is that
+        fail-open PLUS deleting the caller skip; rem=49 then admits
+        on a padded compact-head (R22-02 already covers the skip-only
+        walk-around of re-gating the unpeeled owner on prefix ≤ 16).
+        """
+        for seed, axis in (("fastsam", "agpl"), ("arcface", "nc")):
+            at = self._r22_02_composed_token(seed, 17, 48)
+            past = self._r22_02_composed_token(seed, 17, 49)
+            assert at is not None and past is not None
+            rem_at = policy._compact_canonical(at.split("yolox", 1)[1])
+            rem_past = policy._compact_canonical(past.split("yolox", 1)[1])
+            assert len(rem_at) == 48
+            assert len(rem_past) == 49
+            self._assert_probe(at, seed, axis)
+            self._assert_probe(past, seed, axis)
+
+    def test_padded_prefix_exception_spelling_in_rem_denies(self) -> None:
+        """R22-05 / R23-02: exception spelling in rem cannot launder.
+
+        Restoring F19 ``if spelling in rem: return None`` admits the
+        padded compact-head. Unpadded ``fastsamxyolox_v8_yolox`` is
+        the wrong witness — fallback prefix-owner still names it.
+        """
+        spellings = ("yolox", "yolop", "yolof", "yolos", "ppyolo")
+        for seed, axis in (("fastsam", "agpl"), ("arcface", "nc")):
+            for spelling in spellings:
+                token = self._padded_prefix17(seed, f"v8_{spelling}")
+                compact = policy._compact_canonical(token)
+                idx = compact.find("yolox")
+                assert len(compact[:idx]) == 17
+                rem = compact[idx + 5 :]
+                assert spelling in rem, (token, rem, spelling)
+                self._assert_probe(token, seed, axis)
+            # rem compact == ``yolox`` via two peelable segments so an
+            # exact-match-only bail (``rem == spelling``) still admits.
+            exact = self._padded_prefix17(seed, "yo_lox")
+            rem_exact = policy._compact_canonical(
+                exact.split("yolox", 1)[1]
+            )
+            assert rem_exact == "yolox", (exact, rem_exact)
+            self._assert_probe(exact, seed, axis)
+
+    def test_padded_prefix_glued_leftover_after_peel_denies(self) -> None:
+        """R23-02: leftover rem after a peel must not admit.
+
+        Deleting the R22-04 leftover return admits a padded
+        compact-head ``{seed}{pad}xyoloxextra_v8`` — fallback cannot
+        see prefix 17. Unpadded ``fastsamxyoloxextra_v8`` is the
+        wrong witness (prefix ≤ 16 still names the stem).
+        """
+        for seed, axis in (("fastsam", "agpl"), ("arcface", "nc")):
+            seed_k = seed.replace("_", "")
+            pad_len = 17 - len(seed_k) - 1
+            # peels == 1 then leftover (loop ends: no ``_`` left). Both
+            # leftover sites must fire at peels>=1 — raising the floor
+            # to peels>=2 admits this token.
+            token = f"{seed}{'z' * pad_len}xyoloxextra_v8"
+            compact = policy._compact_canonical(token)
+            idx = compact.find("yolox")
+            assert len(compact[:idx]) == 17, (seed, compact[:idx])
+            self._assert_probe(token, seed, axis)
+        # A.3 purely-glued rem is still unknown-residual.
         extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
         assert extra is not None
         assert extra.package_id == "yolox_unknown_residual"

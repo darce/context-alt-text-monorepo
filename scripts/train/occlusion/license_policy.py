@@ -4697,16 +4697,10 @@ _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED: bool = True
 # False restores last-segment-only peel so multi-segment rem tails
 # admit again.
 _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED: bool = True
-# Historical F19 fail-open cliffs (R22). Production peel is unbounded
-# — each step strictly shortens the token — so these numbers are not
-# consulted unless a TEST-15 flag below restores the admit gadget.
+# Rem longer than this skips peel (the 1200-yolop pin's cost is the
+# pre-existing scanner) and fail-closes via the unpeeled owner.
+# Not a fail-open and not a test-only toggle.
 _MAX_COMPOSED_REM_COMPACT_LEN: int = 48
-_MAX_COMPOSED_REM_PEEL_SEGMENTS: int = 8
-# TEST-15: True restores the F19 fail-open (peel returns None → the
-# caller reads "no owner" and admits). Production stays False.
-_COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP: bool = False
-_COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP: bool = False
-_COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING: bool = False
 # F15-10b: ppyolo + nas residual → Deci YOLO-NAS NC. TEST-15: False
 # restores generic ppyolo unknown residual for ``pp_yolo_nas``.
 _PPYOLO_NAS_RESIDUAL_NC_ENABLED: bool = True
@@ -4963,12 +4957,12 @@ def _peel_composed_trailing_rem_segments(
     segment is longer than rem — so A.3 unknown-residual holds.
 
     R22: the peel is monotone (each step strictly shortens ``current``)
-    and has no production cap. Exceeding the historical 8-segment /
-    48-char cliffs used to return None (fail-open → admit). TEST-15
-    flags restore those cliffs. The F19 ``spelling in rem`` bail is
-    gone — it laundered AGPL ``fastsamxyolox_v8_yolox`` and did not
-    pay for the deep-chain pin (length-bound already short-circuited
-    it; the pin's cost is the pre-existing scanner).
+    and has no production cap. F19 returned None at three cliffs
+    (8 segments, 48-char rem, ``spelling in rem``) and the caller
+    treated that as "no owner" and admitted. Those fail-opens are
+    gone — not parked behind a test-only toggle. Rem longer than
+    :data:`_MAX_COMPOSED_REM_COMPACT_LEN` is skipped by the caller
+    and fail-closes via the unpeeled owner.
 
     R22-04: leftover rem glued into the last segment after one or
     more successful peels (``buffalo_lxyoloxextra_v8`` / compact-head
@@ -4977,16 +4971,6 @@ def _peel_composed_trailing_rem_segments(
     """
     if not rem or not token or "_" not in token:
         return None
-    # TEST-15: restore the F19 fail-open cliffs (admit gadgets).
-    if (
-        _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
-        and len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN
-    ):
-        return None
-    if _COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING:
-        for _sc, _sk, spelling in _iter_exception_compact_spellings():
-            if spelling and spelling in rem:
-                return None
     remaining = rem
     current = token
     peels = 0
@@ -5000,11 +4984,6 @@ def _peel_composed_trailing_rem_segments(
         remaining = remaining[: -len(last_k)]
         current = current[:sep].rstrip("_")
         peels += 1
-        if (
-            _COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP
-            and peels > _MAX_COMPOSED_REM_PEEL_SEGMENTS
-        ):
-            return None
         if not current:
             return None
         if not remaining:
@@ -5104,10 +5083,7 @@ def _compact_mid_exception_deny_adjacency(
                         # deep-chain is O(n²) across suffixes. Skip peel
                         # and fail-close via the unpeeled owner — never
                         # admit. Prefix length is not a gate (R22-02).
-                        if (
-                            len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN
-                            and not _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
-                        ):
+                        if len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN:
                             owned = _long_composed_rem_unpeeled_owner(
                                 token, prefix
                             )
@@ -5158,15 +5134,9 @@ def _compact_mid_exception_deny_adjacency(
                 # prefix ``lx``. R22-04: rem that has a peelable
                 # trailing segment still consults the unpeeled owner
                 # before this skip (partial-peel leftover, or a peel
-                # miss that must not admit). TEST-15 fail-open flags
-                # disable the fallback so reintroduced cliffs admit.
+                # miss that must not admit).
                 if has_sep:
-                    if (
-                        _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED
-                        and not _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
-                        and not _COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP
-                        and not _COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING
-                    ):
+                    if _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED:
                         sep_u = token.rfind("_")
                         last_u = token[sep_u + 1 :] if sep_u >= 0 else ""
                         last_uk = (

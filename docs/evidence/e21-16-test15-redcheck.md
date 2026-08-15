@@ -48,3 +48,10 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 - Verdict: FAILED
 - Failing assertion: `AssertionError: expected 'acx-identity-cluster-at-rest-hint' not to be 'acx-identity-cluster-at-rest-hint' // Object.is equality`
 - After restore: PASSED
+
+## ORCH-11 — at-rest options stay capped
+- Mutation applied: `limit` omitted (default NAMING_OPTIONS_LIMIT) -> `limit: isAtRestMode ? null : undefined,`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/workbench/identity-clusters/__tests__/useClusterSuggestionsLoader.test.tsx`
+- Verdict: FAILED
+- Failing assertion: `AssertionError: expected [ { …(4) }, { …(4) }, { …(4) }, …(37) ] to have a length of 20 but got 40`
+- After restore: PASSED

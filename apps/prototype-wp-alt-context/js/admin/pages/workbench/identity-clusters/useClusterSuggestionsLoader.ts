@@ -176,8 +176,6 @@ export const useClusterSuggestionsLoader = ({
       labelMatches: namedMatches,
       filter: debouncedValue,
       excludeClusterId: editableClusterId,
-      // At-rest page is already capped at AT_REST_LABELED_LIMIT; do not re-slice to 20.
-      limit: isAtRestMode ? null : undefined,
     });
   }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
 

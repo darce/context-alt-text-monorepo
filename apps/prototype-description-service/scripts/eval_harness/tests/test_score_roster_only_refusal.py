@@ -14,8 +14,13 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
-from scripts.eval_harness.manifest import load_manifest
-from scripts.eval_harness.report import build_reports, score_run_record
+from scripts.eval_harness.manifest import AnnotationMode, load_manifest
+from scripts.eval_harness.report import (
+    DETECTION_REFUSED_EXPLANATION,
+    ReportError,
+    build_reports,
+    score_run_record,
+)
 
 _LINEAGE = {
     "labeler_id": "test-labeler",
@@ -156,8 +161,13 @@ def test_exhaustive_fusion_flatten_detection_unchanged(tmp_path: Path) -> None:
     assert det["recall"] == pytest.approx(EXHAUSTIVE_DETECTION["recall"])
 
 
-def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """CLI score is the other shipped score_run_record caller."""
+def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI score stamps entries and omits the kwarg (S2R2-10 omission branch).
+
+    Exit stays 0: caption/identification still scored; refusal is the correct
+    detection outcome for roster_only, not a failed run. The one-liner must
+    name the refusal so a stdout/CI check cannot treat it as a clean score.
+    """
     import scripts.eval_harness.cli as cli_mod
 
     man_path = _write_manifest(tmp_path, "roster_only")
@@ -170,3 +180,116 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     assert det["refused"] is True
     assert det["invariant"] == "detection_refuses_roster_only"
     assert det["precision"] is None
+    md = record_path.with_name("run-report.md").read_text(encoding="utf-8")
+    refused_line = f"- REFUSED (detection_refuses_roster_only): {DETECTION_REFUSED_EXPLANATION}"
+    assert refused_line in md
+    captured = capsys.readouterr()
+    assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
+
+
+def _stamped(mode: str) -> list[dict]:
+    return [
+        {
+            "path": "mock_images/alice.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "annotation_mode": mode,
+        }
+    ]
+
+
+def test_explicit_exhaustive_cannot_widen_roster_only_stamp() -> None:
+    """S2R2-01: explicit exhaustive + roster_only stamp refuses (data wins)."""
+    scored = score_run_record(
+        _OVERSHOOT_RECORD,
+        _stamped("roster_only"),
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+    )
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["precision"] is None
+    assert det["fp"] is None
+
+
+def test_stamped_roster_only_without_kwarg_refuses() -> None:
+    """S2R2-10: stamp is load-bearing when the explicit kwarg is omitted."""
+    scored = score_run_record(_OVERSHOOT_RECORD, _stamped("roster_only"))
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["precision"] is None
+
+
+def test_partial_stamp_does_not_promote_to_unstamped_siblings() -> None:
+    """S2R2-03: one exhaustive stamp must not cover an unstamped overshoot."""
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": ["Alice Example"],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "annotation_mode": "exhaustive",
+        },
+        {
+            "path": "mock_images/other.jpg",
+            "media_id": 99,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+    ]
+    scored = score_run_record(_OVERSHOOT_RECORD, entries)
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == "detection_requires_annotation_mode"
+    assert det["precision"] is None
+
+
+def test_unrecognised_mode_has_own_invariant() -> None:
+    """S2R2-12: a typo is not reported as an omitted mode."""
+    scored = score_run_record(
+        _OVERSHOOT_RECORD,
+        _stamped("exhaustive"),
+        annotation_mode="exhaustve",
+    )
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == "detection_unrecognised_annotation_mode"
+    assert det["precision"] is None
+
+
+def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
+    """S2R2-01: explicit must not suppress the mixed-stamp guard."""
+    entries = [
+        {**_stamped("exhaustive")[0], "media_id": 1},
+        {
+            "path": "mock_images/other.jpg",
+            "media_id": 99,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "annotation_mode": "roster_only",
+        },
+    ]
+    with pytest.raises(ReportError, match="mixed annotation_mode"):
+        score_run_record(_OVERSHOOT_RECORD, entries, annotation_mode="exhaustive")
+
+
+def test_markdown_names_refused_detection() -> None:
+    """S2R2-09: the human-readable refusal line is pinned, not only the JSON."""
+    manifest_entries = _stamped("roster_only")
+    _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
+    assert f"- REFUSED (detection_refuses_roster_only): {DETECTION_REFUSED_EXPLANATION}" in md
+    assert "precision: null" not in md.split("## Face detection")[1].split("## Face identification")[0]

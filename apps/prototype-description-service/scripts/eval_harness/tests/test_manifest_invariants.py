@@ -279,8 +279,10 @@ def test_provenanced_fixture_is_v3_roster_only() -> None:
 def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Behavioural: CLI score never reaches the legacy loader.
 
-    Replaces the source-text grep (FIR-11-S2-03). The sentinel must fire on
-    the audit-arm path and must stay silent on the gate path.
+    Replaces the source-text grep (FIR-11-S2-03). The sentinel must stay
+    silent on the gate path. Audit-arm liveness is pinned by
+    test_golden150_draft_fails_naming_all_six_unprovenanced_paths (the
+    legacy reader loads the frozen v2 artifact).
     """
     import scripts.eval_harness.cli as cli_mod
     import scripts.eval_harness.manifest as man_mod
@@ -334,10 +336,6 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
     assert hits == []
-
-    with pytest.raises(RuntimeError, match="legacy-sentinel-hit"):
-        man_mod.load_legacy_manifest(str(_golden150_path()))
-    assert hits, "audit-arm path must reach load_legacy_manifest"
 
 
 def test_calibrate_strata_fixture_is_not_a_golden_manifest() -> None:

@@ -33,6 +33,9 @@ compares two independently produced numbers:
 
 - ``exhaustive``: ``len(face_boxes) == face_count``
 - ``roster_only``: ``len(face_boxes) <= face_count``
+- both modes: ``face_count >= len(present_identities)`` — an identity
+  claim that exceeds the independently recorded face count is unbacked
+  and cannot be scored as identification ground truth
 
 Declared limitation (GF-12): equality proves internal consistency only (the
 operator's count matches the operator's own boxes). Exhaustiveness *in the
@@ -209,6 +212,36 @@ class AnnotationMode(StrEnum):
 
     EXHAUSTIVE = "exhaustive"
     ROSTER_ONLY = "roster_only"
+
+
+def parse_annotation_mode(value: object) -> AnnotationMode | None:
+    """Return the enum member, or None when the value is omitted.
+
+    Empty / whitespace-only strings are omitted. Unknown tokens (including
+    wrong case) raise ManifestError with invariant
+    ``detection_unrecognised_annotation_mode``. Never invents exhaustive.
+    """
+    if value is None:
+        return None
+    if isinstance(value, AnnotationMode):
+        return value
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        try:
+            return AnnotationMode(token)
+        except ValueError:
+            raise ManifestError(
+                f"unrecognised annotation_mode {value!r}; "
+                f"expected one of {[member.value for member in AnnotationMode]}",
+                invariant="detection_unrecognised_annotation_mode",
+            ) from None
+    raise ManifestError(
+        f"unrecognised annotation_mode {value!r}; "
+        f"expected one of {[member.value for member in AnnotationMode]}",
+        invariant="detection_unrecognised_annotation_mode",
+    )
 
 
 class LabelSource(StrEnum):
@@ -588,6 +621,25 @@ class GoldenManifest(BaseModel):
             raise ValueError("manifest has no entries; an empty corpus cannot be scored")
         return value
 
+    def _present_identities_fit_face_count(self) -> None:
+        """Reject identity claims that exceed the independently recorded face_count.
+
+        ``present_identities`` is identification ground truth. A list longer
+        than ``face_count`` is an unbacked claim in both annotation modes
+        (FIR-11-S2-04 / S2R2-05).
+        """
+        for index, entry in enumerate(self.entries):
+            n_ids = len(entry.present_identities)
+            if entry.face_count < n_ids:
+                raise ManifestError(
+                    f"present_identities_fit_face_count: entry[{index}] "
+                    f"{entry.path}: face_count={entry.face_count} < "
+                    f"len(present_identities)={n_ids}",
+                    invariant="present_identities_fit_face_count",
+                    entry_index=index,
+                    entry_path=entry.path,
+                )
+
     def _boxes_cover_face_count(self) -> None:
         """Manifest-level coverage invariant (replaces retired entry-level check).
 
@@ -651,6 +703,7 @@ class GoldenManifest(BaseModel):
     def _enforce_v3_invariants(self, info: ValidationInfo) -> GoldenManifest:
         if info.context and info.context.get("legacy"):
             return self
+        self._present_identities_fit_face_count()
         self._boxes_cover_face_count()
         self._lineage_required_on_boxes()
         self._capture_session_required_when_exhaustive()

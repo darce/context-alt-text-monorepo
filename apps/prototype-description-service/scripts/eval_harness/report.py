@@ -53,7 +53,14 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
 )
-from .manifest import AnnotationMode, ManifestError, Provenance, ProvenanceSource, SliceTag
+from .manifest import (
+    AnnotationMode,
+    ManifestError,
+    Provenance,
+    ProvenanceSource,
+    SliceTag,
+    parse_annotation_mode,
+)
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
@@ -75,6 +82,16 @@ FACE_BAKEOFF_PROTOCOL_ID = "fir-5-face-bakeoff-v0.11.0"
 
 # Release-surface label (RLSE-11): gate_proposal is never a release artifact.
 GATE_PROPOSAL_RELEASE_SURFACE = "proposal_only_not_release"
+
+# roster_only is more restrictive: it can only narrow an exhaustive stamp.
+_MODE_RESTRICTIVENESS = {
+    AnnotationMode.EXHAUSTIVE: 0,
+    AnnotationMode.ROSTER_ONLY: 1,
+}
+
+DETECTION_REFUSED_EXPLANATION = (
+    "detection P/R is not computed unless annotation_mode is exhaustive"
+)
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
 # Measured protocol changes (weighted prototypes, ambiguity margin, matched
@@ -317,40 +334,44 @@ def _latency_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
-def _mode_value(annotation_mode: AnnotationMode | str | None) -> str | None:
-    """Normalize AnnotationMode | str | None to a plain string. Never invent a mode."""
-    if annotation_mode is None:
-        return None
-    if isinstance(annotation_mode, AnnotationMode):
-        return annotation_mode.value
-    return str(annotation_mode)
-
-
 def _resolve_score_annotation_mode(
     annotation_mode: AnnotationMode | str | None,
     manifest_entries: Sequence[Mapping[str, Any]],
-) -> str | None:
-    """Resolve detection contract from the explicit arg or stamped entries.
+) -> AnnotationMode | None:
+    """Resolve detection contract once from the data.
 
-    Omission is not exhaustive. A forgotten mode must refuse, never score.
-    Mixed stamped values fail loud — guessing would re-open the roster_only hole.
+    Every scored entry must carry a stamp and those stamps must agree
+    (mixed stamps fail loud). An explicit argument is compared against the
+    stamp after that check — it may only *narrow* (most-restrictive-wins).
+    Explicit ``exhaustive`` never overrides a ``roster_only`` stamp.
+    Omission is not exhaustive.
     """
-    explicit = _mode_value(annotation_mode)
-    stamped: set[str] = set()
+    explicit = parse_annotation_mode(annotation_mode)
+    stamped: set[AnnotationMode] = set()
+    missing = False
     for entry in manifest_entries:
-        value = _mode_value(entry.get("annotation_mode"))
-        if value is not None:
-            stamped.add(value)
-    if explicit is not None:
-        return explicit
+        raw = entry.get("annotation_mode") if isinstance(entry, Mapping) else None
+        parsed = parse_annotation_mode(raw)
+        if parsed is None:
+            missing = True
+        else:
+            stamped.add(parsed)
+    if missing:
+        return None
     if len(stamped) > 1:
         raise ReportError(
-            f"mixed annotation_mode on score entries: {sorted(stamped)}; "
+            f"mixed annotation_mode on score entries: "
+            f"{sorted(member.value for member in stamped)}; "
             "refusing to guess which detection contract applies"
         )
-    if len(stamped) == 1:
-        return next(iter(stamped))
-    return None
+    if not stamped:
+        return explicit
+    data = next(iter(stamped))
+    if explicit is None:
+        return data
+    if _MODE_RESTRICTIVENESS[explicit] > _MODE_RESTRICTIVENESS[data]:
+        return explicit
+    return data
 
 
 def score_run_record(
@@ -365,11 +386,13 @@ def score_run_record(
     """Pure scoring: run record + manifest labels -> metrics dict.
 
     Detection P/R is computed only when the resolved ``annotation_mode`` is
-    ``exhaustive``. ``roster_only`` and an unresolved mode (caller omitted the
-    arg *and* entries carry no stamped mode) refuse — they never silently
-    score unlabeled non-roster faces as false positives. Identification and
-    caption metrics still run. Face-bakeoff scoring (``score_face_run_record``)
-    raises instead.
+    ``AnnotationMode.EXHAUSTIVE``. Mode is resolved from per-entry stamps
+    (every scored entry must declare one; they must agree). An explicit
+    argument may only narrow the stamp — it cannot widen ``roster_only``
+    to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
+    token refuse; they never silently score unlabeled non-roster faces as
+    false positives. Identification and caption metrics still run.
+    Face-bakeoff scoring (``score_face_run_record``) raises instead.
     """
     _validate_record_kind(run_record)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
@@ -497,7 +520,14 @@ def score_run_record(
         # true_rejections is unreachable (S3-01, HARM-04). Required, not defaulted:
         # a missing face_count must fail loud, never silently re-create the bug.
         face_count = int(entry["face_count"])
-        stranger_faces = max(face_count - len(entry["present_identities"]), 0)
+        n_labeled = len(entry["present_identities"])
+        if face_count < n_labeled:
+            raise ReportError(
+                f"{path} media_id={media_id}: face_count={face_count} < "
+                f"len(present_identities)={n_labeled} "
+                "(present_identities_fit_face_count)"
+            )
+        stranger_faces = face_count - n_labeled
         detections.append(
             ImageDetection(
                 image=path,
@@ -561,17 +591,23 @@ def score_run_record(
             row["distractor_taken"] = taken
         per_image.append(row)
 
-    mode_value = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
-    if mode_value == AnnotationMode.EXHAUSTIVE:
-        det = detection_pr(detections, annotation_mode=mode_value)
-        detection_invariant: str | None = None
-    else:
+    try:
+        mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
+    except ManifestError as exc:
+        if exc.invariant != "detection_unrecognised_annotation_mode":
+            raise
         det = None
-        detection_invariant = (
-            "detection_refuses_roster_only"
-            if mode_value == AnnotationMode.ROSTER_ONLY
-            else "detection_requires_annotation_mode"
-        )
+        detection_invariant = exc.invariant
+    else:
+        if mode is AnnotationMode.EXHAUSTIVE:
+            det = detection_pr(detections, annotation_mode=mode)
+            detection_invariant = None
+        elif mode is AnnotationMode.ROSTER_ONLY:
+            det = None
+            detection_invariant = "detection_refuses_roster_only"
+        else:
+            det = None
+            detection_invariant = "detection_requires_annotation_mode"
     ident = identification_pr(identifications)
 
     ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
@@ -883,8 +919,7 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): detection P/R is not computed "
-            "unless annotation_mode is exhaustive"
+            f"- REFUSED ({det.get('invariant')}): {DETECTION_REFUSED_EXPLANATION}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "
@@ -1181,11 +1216,19 @@ def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
     raw = getattr(manifest, "annotation_mode", None)
     if raw is None and isinstance(manifest, Mapping):
         raw = manifest.get("annotation_mode")
-    if raw is None:
-        return None
-    if isinstance(raw, AnnotationMode):
-        return raw
-    return AnnotationMode(str(raw))
+    return parse_annotation_mode(raw)
+
+
+def _stamp_missing_annotation_mode(entries: list[dict[str, Any]], mode_value: str) -> None:
+    """Fill blank entry stamps from the document mode. Never overwrite a stamp.
+
+    Overwriting would hide a conflict; leaving a disagreeing stamp lets the
+    shared resolver apply most-restrictive-wins / conflict-refuses.
+    """
+    for entry in entries:
+        raw = entry.get("annotation_mode")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            entry["annotation_mode"] = mode_value
 
 
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
@@ -1197,15 +1240,13 @@ def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, st
         roster_cohorts = dict(getattr(manifest, "roster_cohorts", {}) or {})
         roster = list(getattr(manifest, "roster", []) or [])
         if mode_value is not None:
-            for entry in entries:
-                entry.setdefault("annotation_mode", mode_value)
+            _stamp_missing_annotation_mode(entries, mode_value)
         return entries, roster_cohorts, roster
     if isinstance(manifest, Mapping):
         raw_entries = list(manifest.get("entries") or [])
         entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in raw_entries]
         if mode_value is not None:
-            for entry in entries:
-                entry.setdefault("annotation_mode", mode_value)
+            _stamp_missing_annotation_mode(entries, mode_value)
         return entries, dict(manifest.get("roster_cohorts") or {}), list(manifest.get("roster") or [])
     # bare entry list
     entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in manifest]
@@ -1466,14 +1507,20 @@ def score_face_run_record(
     for an under-floor slice. 0-box corpus → all DIRECTIONAL.
     """
     _validate_face_record_kind(face_run_record)
-    mode = _annotation_mode_of(manifest)
-    if mode is AnnotationMode.ROSTER_ONLY:
-        raise ManifestError(
-            "score_face_run_record refuses roster_only manifests; unlabeled "
-            "non-roster faces would be scored as false positives",
-            invariant="detection_refuses_roster_only",
-        )
     entries, roster_cohorts, _roster = _entries_as_dicts(manifest)
+    mode = _resolve_score_annotation_mode(_annotation_mode_of(manifest), entries)
+    if mode is not AnnotationMode.EXHAUSTIVE:
+        if mode is AnnotationMode.ROSTER_ONLY:
+            raise ManifestError(
+                "score_face_run_record refuses roster_only manifests; unlabeled "
+                "non-roster faces would be scored as false positives",
+                invariant="detection_refuses_roster_only",
+            )
+        raise ManifestError(
+            "score_face_run_record requires annotation_mode=exhaustive; "
+            "omission is not exhaustive",
+            invariant="detection_requires_annotation_mode",
+        )
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)

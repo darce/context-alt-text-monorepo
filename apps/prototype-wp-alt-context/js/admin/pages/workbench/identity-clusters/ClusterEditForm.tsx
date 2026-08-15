@@ -78,6 +78,12 @@ interface ClusterEditFormProps {
   onCancel: () => void;
   /** Called when a suggested match is rejected */
   onRejectSuggestion?: (suggestionId: string) => void;
+  /** Envelope total from the at-rest labelled-cluster page. */
+  atRestTotal?: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated?: boolean;
+  /** True while the loader is still in at-rest (debounced) mode. */
+  isAtRestMode?: boolean;
 }
 
 /**
@@ -95,6 +101,9 @@ export const ClusterEditForm = ({
   onConfirmSuggestion,
   onCancel,
   onRejectSuggestion,
+  atRestTotal = 0,
+  atRestTruncated = false,
+  isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
   void isLoading;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +127,8 @@ export const ClusterEditForm = ({
   const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+  const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
+  const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
 
   // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
   // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.
@@ -193,6 +204,9 @@ export const ClusterEditForm = ({
           placeholder={__('Enter a name…', 'alt-context')}
           disabled={isPending}
           aria-label={__('Cluster label', 'alt-context')}
+          aria-describedby={
+            [showAtRestTruncationHint ? atRestHintId : undefined].filter(Boolean).join(' ') || undefined
+          }
         />
 
         {displayedOptions.length > 0 && !isPending && (
@@ -264,6 +278,19 @@ export const ClusterEditForm = ({
               </div>
             ))}
           </div>
+        )}
+        {showAtRestTruncationHint && (
+          <p
+            id={atRestHintId}
+            className="acx-identity-cluster__at-rest-hint"
+          >
+            {sprintf(
+              /* translators: 1: number of labels currently shown, 2: total labelled clusters */
+              __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
+              displayedOptions.length,
+              atRestTotal,
+            )}
+          </p>
         )}
       </div>
 

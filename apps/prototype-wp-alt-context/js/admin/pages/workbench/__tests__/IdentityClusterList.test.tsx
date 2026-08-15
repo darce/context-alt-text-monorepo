@@ -45,6 +45,9 @@ const loaderResultFrom = (
     isLoading: partial.isLoading ?? false,
     rosterError: partial.rosterError ?? false,
     findClusterByLabel: partial.findClusterByLabel ?? defaultFindClusterByLabel,
+    atRestTotal: partial.atRestTotal ?? 0,
+    atRestTruncated: partial.atRestTruncated ?? false,
+    isAtRestMode: partial.isAtRestMode ?? true,
   };
 };
 

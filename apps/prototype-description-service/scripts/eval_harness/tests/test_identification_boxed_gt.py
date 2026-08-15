@@ -15,7 +15,6 @@ from scripts.eval_harness.face_metrics import require_boxed_identification_gt
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     ManifestError,
-    REFUSAL_EXPLANATIONS,
     ScoreInvariant,
     load_manifest,
 )
@@ -290,19 +289,23 @@ def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
 
 
 def test_markdown_names_refused_identification() -> None:
+    """S2R4-19: pin the explanation substance, not the production constant.
+
+    A lying sentence that keeps 'per-face box lineage' (e.g. 'identification
+    P/R is computed even when claims carry no per-face box lineage') must
+    fail this pin. Importing REFUSAL_EXPLANATIONS here would stay green.
+    """
     _json_doc, md = build_reports(_record(["Alice Example"]), [_unboxed_alice()])
+    face_id = md.split("## Face identification")[1]
     assert f"- REFUSED ({ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS}):" in md
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
-        in md
-    )
-    assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
-        not in md
-    )
-    face_id = md.split("## Face identification")[1]
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
+    ) in face_id
+    assert "identification P/R is not computed from zero scored observations" not in face_id
     assert "micro precision:" not in face_id
     assert "used anyway" not in face_id
+    assert "is computed even when" not in face_id
 
 
 def _unit(vec: list[float]) -> list[float]:

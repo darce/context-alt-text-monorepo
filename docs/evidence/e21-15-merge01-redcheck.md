@@ -198,3 +198,13 @@
 - Failing assertion: Failed asserting that two strings are identical. Expected `"bbox":null`; actual `"bbox":{"x":0,"y":0,"width":0,"height":0}`.
 - After restore: PASSED, 26 tests
 - What the six goldens pin: missing/empty `bbox_json` maps to `null`, not a fabricated `{0,0,0,0}`. The non-numeric and non-positive-extent guards are covered separately by ClusterResponseMapperTest (REV4-02).
+
+## check-php — phpstan could never run on the gate host
+- Root cause: no `tmpDir` in phpstan.neon.dist; sys_get_temp_dir()/phpstan on the gate host is owned by `ubuntu` (0755) and the gate runs as `gate` (uid 1002). phpcs failing first masked it.
+- Fix: `tmpDir: .phpstan-cache`
+- gitignore entry: `.phpstan-cache/`
+- phpstan: EXIT 1, errors found:
+  - `src/api/services/class-description-history-service.php:337` Call to function is_string() with non-empty-string will always evaluate to true. (`function.alreadyNarrowedType`)
+  - `src/api/services/class-description-history-service.php:348` Call to function is_string() with non-empty-string will always evaluate to true. (`function.alreadyNarrowedType`)
+- phpcs: EXIT 0
+- `git status --short` after the run: clean

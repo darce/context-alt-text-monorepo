@@ -13,6 +13,8 @@ import * as AvatarPrimitive from '@radix-ui/react-avatar';
 import { AlertTriangle, ImageOff } from 'lucide-react';
 import { __ } from '@wordpress/i18n';
 
+import type { AvatarState as FaceThumbDisplayState } from './faceThumbDisplay';
+
 export type AvatarSize = 'sm' | 'md' | 'lg';
 
 export const AVATAR_STATES = {
@@ -52,7 +54,7 @@ export interface AvatarProps {
   /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
   hideMissingLabel?: boolean;
   /** Externally-owned state override. When omitted the component derives its own. */
-  state?: AvatarState | 'fallback-crop' | 'uncropped' | 'missing';
+  state?: AvatarState | FaceThumbDisplayState;
   onLoad?: () => void;
   onError?: () => void;
 }
@@ -105,6 +107,21 @@ export const Avatar = ({
   const iconSize = Math.max(12, Math.round(displaySize * 0.35));
   const [loadStatus, setLoadStatus] = React.useState<ImageLoadingStatus>('idle');
   const [previousSrc, setPreviousSrc] = React.useState(src);
+  const onLoadRef = React.useRef(onLoad);
+  const onErrorRef = React.useRef(onError);
+  React.useEffect(() => {
+    onLoadRef.current = onLoad;
+  }, [onLoad]);
+  React.useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+  React.useEffect(() => {
+    if (loadStatus === 'loaded') {
+      onLoadRef.current?.();
+    } else if (loadStatus === 'error') {
+      onErrorRef.current?.();
+    }
+  }, [loadStatus]);
   if (src !== previousSrc) {
     setPreviousSrc(src);
     setLoadStatus('idle');
@@ -144,14 +161,7 @@ export const Avatar = ({
         className={`${baseClass}__image`}
         src={src}
         alt={alt}
-        onLoadingStatusChange={(status) => {
-          setLoadStatus(status);
-          if (status === 'loaded') {
-            onLoad?.();
-          } else if (status === 'error') {
-            onError?.();
-          }
-        }}
+        onLoadingStatusChange={setLoadStatus}
       />
       {state === AVATAR_STATES.loading ? <span className={`${baseClass}__skeleton`} aria-hidden="true" /> : null}
       {state === AVATAR_STATES.error ? (

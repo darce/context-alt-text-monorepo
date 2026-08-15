@@ -115,6 +115,11 @@ def _mode_restrictiveness(mode: AnnotationMode) -> int:
         )
     return rank
 
+
+def _invariant_is(actual: object, *members: ScoreInvariant) -> bool:
+    """Identity match against canonical ScoreInvariant members (S2R5-08)."""
+    return any(actual is member for member in members)
+
 # Aliases for the two historical sentences. Markdown looks up by the fired
 # invariant via refusal_explanation — these names are not a default reason.
 DETECTION_REFUSED_EXPLANATION = refusal_explanation(
@@ -708,10 +713,11 @@ def score_run_record(
     try:
         mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
     except ManifestError as exc:
-        if exc.invariant not in {
+        if not _invariant_is(
+            exc.invariant,
             ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
             ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
-        }:
+        ):
             raise
         det = None
         detection_invariant = exc.invariant
@@ -720,7 +726,9 @@ def score_run_record(
             try:
                 require_exhaustive_box_coverage(manifest_entries)
             except ManifestError as exc:
-                if exc.invariant != DETECTION_UNCOVERED_FACE_COUNT_INVARIANT:
+                if not _invariant_is(
+                    exc.invariant, DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+                ):
                     raise
                 det = None
                 detection_invariant = exc.invariant
@@ -746,7 +754,7 @@ def score_run_record(
                 _identification_metric_entries(identification_entries)
             )
         except ManifestError as exc:
-            if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+            if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
                 raise
             ident = None
             identification_invariant = exc.invariant
@@ -1805,7 +1813,7 @@ def score_face_run_record(
             [entry_by_id[int(item["media_id"])] for item in scoreable]
         )
     except ManifestError as exc:
-        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+        if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
             raise
         identification_invariant = exc.invariant
     else:

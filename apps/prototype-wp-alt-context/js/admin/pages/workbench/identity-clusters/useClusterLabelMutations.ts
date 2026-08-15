@@ -3,9 +3,10 @@
  */
 
 import { __ } from '@wordpress/i18n';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
+  acceptSuggestion,
   mergeCluster,
   revertMergeCluster,
   updateClusterLabel,
@@ -18,6 +19,7 @@ import {
   isProjectionNotReadyError,
 } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
+import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -46,6 +48,7 @@ export const useClusterLabelMutations = ({
   invalidateQueries,
   updateCachedClusterLabel,
 }: UseClusterLabelMutationsOptions) => {
+  const queryClient = useQueryClient();
   const mergeSurvivors = useOptionalMergeSurvivors();
   const renameMutation = useMutation({
     mutationKey: ['rename-cluster', clusterId],
@@ -88,23 +91,30 @@ export const useClusterLabelMutations = ({
 
   const mergeMutation = useMutation({
     mutationKey: ['merge-cluster', clusterId],
-    mutationFn: ({
+    mutationFn: async ({
       targetClusterId,
       targetLabel,
       signal,
+      suggestionId,
     }: {
       targetClusterId: string;
       targetLabel?: string;
       signal?: AbortSignal;
+      suggestionId?: string;
     }) => {
       if (!clusterId) {
         return Promise.reject(new Error(__('Cannot merge: no cluster ID', 'alt-context')));
       }
-      return mergeCluster(clusterId, targetClusterId, targetLabel, signal);
+      // Structural merge first; then resolve the pending row by id when confirm threaded it (BR-16).
+      const result = await mergeCluster(clusterId, targetClusterId, targetLabel, signal);
+      if (suggestionId) {
+        await acceptSuggestion(suggestionId);
+      }
+      return result;
     },
     // Don't retry on client errors
     retry: false,
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       // Authoritative survivor from MergeClusterResponse (source retired → target survives).
       if (result.source_id && result.target_id) {
         mergeSurvivors?.recordMergeSurvivor(result.source_id, result.target_id);
@@ -112,10 +122,16 @@ export const useClusterLabelMutations = ({
       if (clusterId) {
         updateCachedClusterLabel(clusterId, result.target_label ?? '');
       }
+      // L1V-03: drop accepted pending row before invalidate so review queue is not stale until refetch.
+      if (variables.suggestionId) {
+        removePendingSuggestionFromCache(queryClient, variables.suggestionId);
+      }
       invalidateQueries();
       onMergeSuccess?.(result);
     },
     onError: (err: unknown, variables) => {
+      // L1V-02: hop-1 merge may have committed before hop-2 accept failed — always refresh caches.
+      invalidateQueries();
       if (isAbortError(err)) {
         onAbort?.();
         return;
@@ -144,8 +160,12 @@ export const useClusterLabelMutations = ({
 
   return {
     rename: (label: string, signal?: AbortSignal) => renameMutation.mutate({ label, signal }),
-    merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) =>
-      mergeMutation.mutate({ targetClusterId, targetLabel, signal }),
+    merge: (
+      targetClusterId: string,
+      targetLabel?: string,
+      signal?: AbortSignal,
+      suggestionId?: string,
+    ) => mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
     revertMerge: revertMergeMutation.mutate,
     isRenaming: renameMutation.isPending,
     isMerging: mergeMutation.isPending,

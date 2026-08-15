@@ -128,10 +128,10 @@ const matchesPrefix = (label: string, filterLower: string): boolean => {
 /**
  * Build the union naming options for both labeling surfaces.
  *
- * - Cluster leg applies isHumanLabeledTarget so auto `cluster-*` labels never appear (BR-17).
+ * - Cluster candidates apply isHumanLabeledTarget so auto `cluster-*` labels never appear (BR-17).
+ * - collisionsByLabel registers every truthy cluster label (BR-42 raw equality), including machine shapes.
  * - Persons listed before clusters; case-insensitive dedupe prefers the person entry.
  * - Filter-before-slice: prefix-filter then truncate.
- * - collisionsByLabel exposes the pre-dedupe universe for the duplicate guard.
  */
 export const buildNamingOptions = ({
   rosterEntries,
@@ -173,8 +173,7 @@ export const buildNamingOptions = ({
   const clusterCandidates: NamingOption[] = [];
   for (const cluster of labelMatches) {
     const label = cluster.label?.trim() ?? '';
-    // BR-17: auto cluster-* labels from search never render as naming options.
-    if (!isHumanLabeledTarget(label)) {
+    if (!label) {
       continue;
     }
     if (excludeClusterId && cluster.id === excludeClusterId) {
@@ -186,7 +185,12 @@ export const buildNamingOptions = ({
       source: 'cluster',
       identityCount: cluster.identity_count,
     };
+    // BR-42: collision detection uses raw equality — every truthy label registers.
     addCollision(option);
+    // BR-17: machine-shaped labels never render as naming-option candidates.
+    if (!isHumanLabeledTarget(label)) {
+      continue;
+    }
     if (matchesPrefix(label, filterLower)) {
       clusterCandidates.push(option);
     }

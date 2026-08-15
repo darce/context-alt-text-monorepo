@@ -6,7 +6,6 @@ import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
-import { MediaSummaryBar } from './MediaSummaryBar';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -25,8 +24,6 @@ import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } f
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
-  collapsed?: boolean;
-  onExpand?: () => void;
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
    * card owns the single viewport accent primary, so both footer CTAs step down.
@@ -34,11 +31,7 @@ interface MediaSelectionProps {
   reviewActive?: boolean;
 }
 
-export const MediaSelection = ({
-  collapsed = false,
-  onExpand,
-  reviewActive = false,
-}: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -103,10 +96,6 @@ export const MediaSelection = ({
   // §7 media-footer CTA hierarchy: a per-state selector resolves the SINGLE
   // accent primary across the footer, reconciled against the review card.
   const footerCta = selectMediaFooterCtaState({ reviewActive, describeRunning: isDescribeRunning });
-
-  if (collapsed) {
-    return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
-  }
 
   return (
     <>

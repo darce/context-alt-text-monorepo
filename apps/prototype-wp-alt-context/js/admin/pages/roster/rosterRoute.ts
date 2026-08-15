@@ -19,6 +19,7 @@ export const ROSTER_ROUTE_PARAM_KEYS = ['person', 'queue', 'face', 'cluster'] as
 
 export interface ParsedRosterRoute {
   selectedClusterId: string | null;
+  selectedFaceId: string | null;
   requiresProjectionGateNotice: boolean;
 }
 
@@ -101,13 +102,16 @@ export const selectDeterministicDefaultWorkspaceEntry = (entries: readonly Roste
  * - person/queue/face keep projection-gate notice behavior.
  */
 export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRoute => {
+  const selectedFaceId = getRouteParam(searchParams, 'face');
+
   if (
     getRouteParam(searchParams, 'person') ||
     getRouteParam(searchParams, 'queue') ||
-    getRouteParam(searchParams, 'face')
+    selectedFaceId
   ) {
     return {
       selectedClusterId: null,
+      selectedFaceId,
       requiresProjectionGateNotice: true,
     };
   }
@@ -116,14 +120,33 @@ export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRou
   if (clusterId) {
     return {
       selectedClusterId: clusterId,
+      selectedFaceId: null,
       requiresProjectionGateNotice: false,
     };
   }
 
   return {
     selectedClusterId: null,
+    selectedFaceId: null,
     requiresProjectionGateNotice: false,
   };
+};
+
+export const writeRosterFaceParam = (
+  previous: URLSearchParams,
+  faceId: string | null,
+  personUuid?: string | null,
+): URLSearchParams => {
+  const next = new URLSearchParams(previous);
+  if (typeof personUuid === 'string' && personUuid.length > 0) {
+    next.set('person', personUuid);
+  }
+  if (typeof faceId === 'string' && faceId.length > 0) {
+    next.set('face', faceId);
+  } else {
+    next.delete('face');
+  }
+  return next;
 };
 
 export const hasCanonicalProjectionShape = (entries: readonly RosterEntry[]): boolean =>

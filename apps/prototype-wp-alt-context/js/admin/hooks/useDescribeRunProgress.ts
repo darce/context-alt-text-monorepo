@@ -21,7 +21,7 @@ import { isAbortLike } from '../utils/retryPolicy';
  * (`eta_seconds`) — never recomputed client-side. Stall is derived locally as
  * the time since `completed` last advanced, mirroring useJobProgressStream.
  */
-const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
+export const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 
 /**
  * Consecutive abort-like poll failures that flip a frozen run to a hard error
@@ -30,7 +30,35 @@ const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
  * ~>10s of dead air, at which point the run stops polling and surfaces the
  * Retry affordance instead of freezing forever.
  */
-const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
+export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
+
+/**
+ * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
+ *
+ * Transient abort/timeout must keep polling — the shared retry policy never
+ * retries abort-like errors, so the next scheduled poll IS the retry. Stop only
+ * on hard (non-abort) errors, terminal run status, or the frozen-streak bound.
+ *
+ * Exported so pure unit tests can invert each branch (TEST-15) without the hook.
+ */
+export const getDescribeRunRefetchInterval = (args: {
+  status: 'pending' | 'error' | 'success';
+  error: unknown;
+  data: DescribeRunResponse | undefined;
+  frozenPollStreak: number;
+}): number | false => {
+  // Keep polling through abort/timeout; only hard failures stop (BR-07).
+  if (args.status === 'error' && !isAbortLike(args.error)) {
+    return false;
+  }
+  if (args.frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD) {
+    return false;
+  }
+  if (args.data && isDescribeRunTerminal(args.data.status)) {
+    return false;
+  }
+  return DESCRIBE_RUN_POLL_INTERVAL_MS;
+};
 
 export interface DescribeRunProgress {
   run: DescribeRunResponse | null;
@@ -71,24 +99,16 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     },
     enabled: runId !== null,
     // Gated on the shared recognition cooldown (UXP-2 slice 2).
-    refetchInterval: gateRefetchInterval((q) => {
-      // BR-07: a transient abort/timeout on a 2s status poll must not dead-end
-      // the progress bar — the shared policy never retries abort-like errors,
-      // so the next scheduled poll IS the retry. Only hard failures stop.
-      if (q.state.status === 'error' && !isAbortLike(q.state.error)) {
-        return false;
-      }
-      // Bounded frozen state: once too many consecutive polls abort, stop
-      // retrying and let the hard-error Retry affordance take over.
-      if (consecutiveFrozenPollsRef.current >= FROZEN_POLL_ESCALATION_THRESHOLD) {
-        return false;
-      }
-      const data = q.state.data;
-      if (data && isDescribeRunTerminal(data.status)) {
-        return false;
-      }
-      return DESCRIBE_RUN_POLL_INTERVAL_MS;
-    }),
+    // Never return false from the gated path during cooldown (gate handles that);
+    // terminal / hard-error / frozen-bound stops are decided by the pure helper.
+    refetchInterval: gateRefetchInterval((q) =>
+      getDescribeRunRefetchInterval({
+        status: q.state.status,
+        error: q.state.error,
+        data: q.state.data,
+        frozenPollStreak: consecutiveFrozenPollsRef.current,
+      }),
+    ),
   });
 
   // Count consecutive abort-like poll failures off the query's update

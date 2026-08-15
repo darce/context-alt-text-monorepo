@@ -153,6 +153,7 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   hasFindings: false,
   isLoading: false,
   isError: false,
+  isTopUnlabeledError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,
@@ -200,7 +201,6 @@ describe('WorkbenchPage', () => {
   const mockUseWorkbenchFindings = vi.mocked(useWorkbenchFindings);
   let setCurrentPage: Dispatch<SetStateAction<number>>;
   let setPerPage: Mock<(nextPerPage: number) => void>;
-  let setMediaExpanded: Mock<(expanded: boolean) => void>;
 
   const filtersMock = (overrides: Record<string, unknown> = {}) => ({
     searchQuery: '',
@@ -215,8 +215,6 @@ describe('WorkbenchPage', () => {
     queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
     getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
     setQueueState: vi.fn(),
-    mediaExpanded: false,
-    setMediaExpanded,
     ...overrides,
   });
 
@@ -281,7 +279,6 @@ describe('WorkbenchPage', () => {
     clearHistory.mockClear();
     setCurrentPage = vi.fn() as Dispatch<SetStateAction<number>>;
     setPerPage = vi.fn<(nextPerPage: number) => void>();
-    setMediaExpanded = vi.fn<(expanded: boolean) => void>();
 
     const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
@@ -564,74 +561,22 @@ describe('WorkbenchPage', () => {
     expect(mediaRegion).toContainElement(screen.getByRole('button', { name: 'Analyze selected media' }));
   });
 
-  it('collapses the media region to a summary bar while findings are active', () => {
+  it('keeps the media table rendered while findings are active', () => {
     mockUseWorkbenchFindings.mockReturnValue(
       makeFindingsViewModel({
         counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
         hasFindings: true,
-      }),
-    );
-
-    renderWorkbench();
-
-    expect(screen.getByText('1 media item')).toBeInTheDocument();
-    expect(screen.getByText('1 selected')).toBeInTheDocument();
-    expect(screen.getByText('All media')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show media table' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: 'Media pagination' })).not.toBeInTheDocument();
-  });
-
-  it('expands the collapsed media region and preserves selection state', async () => {
-    mockUseWorkbenchFindings.mockReturnValue(
-      makeFindingsViewModel({
-        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
-        hasFindings: true,
-      }),
-    );
-
-    // URL-backed expand: setMediaExpanded must flip mediaExpanded and re-render.
-    let mediaExpanded = false;
-    const view = renderWorkbench();
-    const boundSetMediaExpanded = vi.fn((expanded: boolean) => {
-      mediaExpanded = expanded;
-      mockUseWorkbenchFilters.mockReturnValue(
-        filtersMock({ mediaExpanded, setMediaExpanded: boundSetMediaExpanded }),
-      );
-      view.rerender(<WorkbenchPage />);
-    });
-    setMediaExpanded = boundSetMediaExpanded;
-    mockUseWorkbenchFilters.mockReturnValue(
-      filtersMock({ mediaExpanded: false, setMediaExpanded: boundSetMediaExpanded }),
-    );
-    view.rerender(<WorkbenchPage />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Show media table' }));
-
-    expect(boundSetMediaExpanded).toHaveBeenCalledWith(true);
-    expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: 'Media pagination' })).toBeInTheDocument();
-    expect(screen.getByText('Ready to analyze 1 media item.')).toBeInTheDocument();
-  });
-
-  it.each([
-    ['loading', { isLoading: true }],
-    ['error', { isError: true }],
-    ['unavailable', { isUnavailable: true }],
-  ])('keeps the media table expanded while findings are %s', (_state, overrides) => {
-    mockUseWorkbenchFindings.mockReturnValue(
-      makeFindingsViewModel({
-        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
-        hasFindings: true,
-        ...overrides,
       }),
     );
 
     renderWorkbench();
 
     expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Media pagination' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show media table' })).not.toBeInTheDocument();
   });
+
+
 
   it('clamps current page when total pages shrink', async () => {
     setupScanMutation('success');
@@ -903,6 +848,16 @@ describe('WorkbenchPage', () => {
       expect(library).toContainElement(mediaRegions[0] as HTMLElement);
     });
 
+    it('does not put aria-live on the control panel host [L2V-01]', () => {
+      setupScanMutation('success');
+      renderWorkbench();
+
+      const panelHost = document.querySelector('.acx-workbench__panel');
+      expect(panelHost).not.toBeNull();
+      // Nested narrow live regions may exist; the panel host itself must not re-announce.
+      expect(panelHost).not.toHaveAttribute('aria-live');
+    });
+
     it('restores ?panes=library-collapsed independently of the ?panel= overlay [NAV-11]', () => {
       setupScanMutation('success');
       renderWorkbench(undefined, ['/workbench?panes=library-collapsed&panel=conflicts']);
@@ -915,23 +870,5 @@ describe('WorkbenchPage', () => {
       expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
     });
 
-    it('clears media=expanded when findings arrive in the rehomed library host', () => {
-      // Auto-collapse effect migrated from ScanTabContent to WorkbenchPageContent alongside
-      // MediaSelection. Rising edge (no findings → findings) clears media=expanded (NAV-11).
-      setupScanMutation('success');
-      mockUseWorkbenchFilters.mockReturnValue(filtersMock({ mediaExpanded: true, setMediaExpanded }));
-      const view = renderWorkbench();
-      expect(setMediaExpanded).not.toHaveBeenCalled();
-
-      mockUseWorkbenchFindings.mockReturnValue(
-        makeFindingsViewModel({
-          counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
-          hasFindings: true,
-        }),
-      );
-      view.rerender(<WorkbenchPage />);
-
-      expect(setMediaExpanded).toHaveBeenCalledWith(false);
-    });
   });
 });

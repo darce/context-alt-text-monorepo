@@ -476,6 +476,10 @@ class ConflictController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'resolution_not_allowed', 'Resolution is not allowed for this conflict.', array( 'status' => 422 ) );
 		}
 
+		if ( 'reserved_label' === $reason ) {
+			return new WP_Error( 'reserved_label', 'Labels beginning with cluster- or cluster_ are reserved.', array( 'status' => 400 ) );
+		}
+
 		if ( 'not_found' === $reason ) {
 			return new WP_Error( 'conflict_not_found', 'Conflict not found.', array( 'status' => 404 ) );
 		}

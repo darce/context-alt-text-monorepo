@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Mappers;
 
 require_once __DIR__ . '/trait-maps-response-fields.php';
 
+use AltContext\Support\Telemetry;
 use function absint;
 use function array_slice;
 use function array_values;
@@ -20,9 +21,16 @@ class ClusterResponseMapper {
 	/**
 	 * @param array<int,array<string,mixed>> $cluster_rows
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
+	 * @param int|null $preview_limit Per-cluster member fetch cap; when set, members were
+	 *                                fetched for this page (densify sparse maps) and counts
+	 *                                at exactly this cap are expected truncation, not drift.
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function map_cluster_list( array $cluster_rows, array $members_by_cluster ): array {
+	public function map_cluster_list( array $cluster_rows, array $members_by_cluster, ?int $preview_limit = null ): array {
+		if ( null !== $preview_limit ) {
+			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
+		}
+
 		$results = array();
 
 		foreach ( $cluster_rows as $row ) {
@@ -31,7 +39,7 @@ class ClusterResponseMapper {
 			if ( '' !== $cluster_id && isset( $members_by_cluster[ $cluster_id ] ) && is_array( $members_by_cluster[ $cluster_id ] ) ) {
 				$members = $members_by_cluster[ $cluster_id ];
 			}
-			$results[] = $this->map_cluster_summary( $row, $members );
+			$results[] = $this->map_cluster_summary( $row, $members, isset( $members_by_cluster[ $cluster_id ] ), $preview_limit );
 		}
 
 		return $results;
@@ -40,10 +48,11 @@ class ClusterResponseMapper {
 	/**
 	 * @param array<string,mixed> $cluster_row
 	 * @param array<int,array<string,mixed>> $member_rows
+	 * @param int|null $preview_limit Optional per-cluster fetch cap (see map_cluster_list).
 	 * @return array<string,mixed>
 	 */
-	public function map_cluster_detail( array $cluster_row, array $member_rows ): array {
-		return $this->map_cluster_summary( $cluster_row, $member_rows );
+	public function map_cluster_detail( array $cluster_row, array $member_rows, ?int $preview_limit = null ): array {
+		return $this->map_cluster_summary( $cluster_row, $member_rows, true, $preview_limit );
 	}
 
 	/**
@@ -66,9 +75,14 @@ class ClusterResponseMapper {
 	 * @param array<int,array<string,mixed>> $cluster_rows
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
 	 * @param string $tenant_id
+	 * @param int|null $preview_limit Per-cluster member fetch cap (see map_cluster_list).
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function map_top_unlabeled_clusters( array $cluster_rows, array $members_by_cluster, string $tenant_id ): array {
+	public function map_top_unlabeled_clusters( array $cluster_rows, array $members_by_cluster, string $tenant_id, ?int $preview_limit = null ): array {
+		if ( null !== $preview_limit ) {
+			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
+		}
+
 		$results = array();
 
 		foreach ( $cluster_rows as $row ) {
@@ -95,7 +109,7 @@ class ClusterResponseMapper {
 				'label' => $label_state['label'],
 				'is_labeled' => $label_state['is_labeled'],
 				'is_auto_label' => $label_state['is_auto_label'],
-				'identity_count' => $this->resolve_identity_count( $row, $members ),
+				'identity_count' => $this->resolve_identity_count( $row, $members, isset( $members_by_cluster[ $cluster_id ] ), $preview_limit ),
 				'user_confirmed' => $label_state['user_confirmed'],
 				'suggested_label' => isset( $row['suggested_label'] ) && '' !== $row['suggested_label'] ? (string) $row['suggested_label'] : null,
 				'suggested_label_source' => isset( $row['suggested_label_source'] ) && '' !== $row['suggested_label_source'] ? (string) $row['suggested_label_source'] : null,
@@ -111,9 +125,10 @@ class ClusterResponseMapper {
 	/**
 	 * @param array<string,mixed> $cluster_row
 	 * @param array<int,array<string,mixed>> $member_rows
+	 * @param int|null $preview_limit
 	 * @return array<string,mixed>
 	 */
-	private function map_cluster_summary( array $cluster_row, array $member_rows ): array {
+	private function map_cluster_summary( array $cluster_row, array $member_rows, bool $members_loaded, ?int $preview_limit = null ): array {
 		$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
 		$label_state = $this->resolve_label_state( $cluster_row );
 		$members    = array_values( $member_rows );
@@ -134,14 +149,17 @@ class ClusterResponseMapper {
 			$sample_identities[] = $this->map_cluster_identity( $member_row );
 		}
 
+		$person_uuid = trim( (string) ( $cluster_row['person_uuid'] ?? '' ) );
+
 		return array(
 			'id' => $cluster_id,
 			'label' => $label_state['label'],
 			'is_auto_label' => $label_state['is_auto_label'],
-			'identity_count' => $this->resolve_identity_count( $cluster_row, $members ),
+			'identity_count' => $this->resolve_identity_count( $cluster_row, $members, $members_loaded, $preview_limit ),
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
+			'person_uuid' => '' !== $person_uuid ? $person_uuid : null,
 		);
 	}
 
@@ -220,13 +238,68 @@ class ClusterResponseMapper {
 	/**
 	 * @param array<string,mixed> $cluster_row
 	 * @param array<int,array<string,mixed>> $member_rows
+	 * @param int|null $preview_limit
 	 */
-	private function resolve_identity_count( array $cluster_row, array $member_rows ): int {
+	private function resolve_identity_count( array $cluster_row, array $member_rows, bool $members_loaded, ?int $preview_limit = null ): int {
 		if ( is_numeric( $cluster_row['identity_count'] ?? null ) ) {
-			return max( 0, (int) $cluster_row['identity_count'] );
+			$projected_count = max( 0, (int) $cluster_row['identity_count'] );
+			$observed_count  = count( $member_rows );
+			if ( $members_loaded && $projected_count !== $observed_count ) {
+				// Cap-hit with more projected than observed is intentional preview
+				// truncation, not drift — log only genuine shortfalls (OBS-08).
+				$is_expected_truncation = null !== $preview_limit
+					&& $preview_limit > 0
+					&& $observed_count === $preview_limit
+					&& $projected_count > $observed_count;
+
+				if ( ! $is_expected_truncation ) {
+					Telemetry::log_line(
+						sprintf(
+							'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
+							trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) ),
+							$projected_count,
+							$observed_count
+						)
+					);
+					if ( 0 === $observed_count ) {
+						return 0;
+					}
+				}
+			}
+
+			return $projected_count;
 		}
 
 		return count( $member_rows );
+	}
+
+	/**
+	 * Repository maps omit keys for clusters with zero member rows. When members
+	 * were fetched for this page, densify so [] means "none" and key absence
+	 * remains reserved for "not fetched" at call sites that skip densify.
+	 *
+	 * @param array<int,array<string,mixed>> $cluster_rows
+	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
+	 * @return array<string,array<int,array<string,mixed>>>
+	 */
+	private function densify_members_for_cluster_rows( array $cluster_rows, array $members_by_cluster ): array {
+		$dense = array();
+		foreach ( $cluster_rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$cluster_id = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_id ) {
+				continue;
+			}
+			if ( isset( $members_by_cluster[ $cluster_id ] ) && is_array( $members_by_cluster[ $cluster_id ] ) ) {
+				$dense[ $cluster_id ] = $members_by_cluster[ $cluster_id ];
+			} else {
+				$dense[ $cluster_id ] = array();
+			}
+		}
+
+		return $dense;
 	}
 
 	/**

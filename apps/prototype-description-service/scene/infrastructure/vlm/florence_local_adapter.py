@@ -93,7 +93,11 @@ class LocalCpuDescriptionAdapter:
                     self.model_id, revision=self._revision, trust_remote_code=True
                 )
             except Exception as exc:  # noqa: BLE001 - surface any load failure uniformly
-                raise LocalVlmUnavailableError(f"failed to load {self.model_id}: {exc}") from exc
+                # Preserve forensic signal (weights absent vs corrupt vs remote code):
+                # chain + name the original exception class in the message (RB-05).
+                raise LocalVlmUnavailableError(
+                    f"failed to load {self.model_id}: {type(exc).__name__}: {exc}"
+                ) from exc
 
     # --------------------------------------------------------------- inference
     def _downsample(self, image):

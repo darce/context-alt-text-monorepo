@@ -40,3 +40,30 @@ Makefile
 # Face-pipeline ONNX weights are operator-provisioned at deploy (not baked in).
 # Keep LICENSE.* + README under recognition/infrastructure/face_pipeline/models/.
 recognition/infrastructure/face_pipeline/models/*.onnx
+
+# Model weights are operator-provisioned on the /data/cache volume mount for the
+# runtime-vlm target — never bake multi-GB weights into the build context.
+#
+# Exclude the artifact CLASSES, not cache directory names. `**/huggingface_cache/`
+# and `**/.cache/huggingface/` were tried first and matched nothing: the real
+# caches live at $HOME/.cache/huggingface (outside the context) and at the
+# in-container path HF_HOME=/data/cache/huggingface_cache, so neither could ever
+# appear here. A stray checkpoint dropped under scene/ or the service root was
+# the actual unguarded path (ORCH-LAUNCH-01-S1-RA-09 / RB-06).
+#
+# WHY (Docker .dockerignore glob-depth rule — do NOT "simplify" back to bare *.ext):
+#   Docker anchors patterns without `/` at the context root only. `*.bin` matches
+#   only ./foo.bin, not scene/infrastructure/vlm/checkpoint.bin. Depth-recursive
+#   exclusion requires the `**/` prefix (`**/*.bin`). This is the OPPOSITE of
+#   rsync (no slash = basename at any depth). Keep `**/` here; never strip it.
+#
+# scripts/deploy/recognition-service.sh rsyncs this context to the build VM with
+# its own exclude list and does NOT read .dockerignore; keep the two in sync via
+# artifact CLASSES (tool-specific spellings) — test_dockerignore_weight_exclusions.py.
+**/*.safetensors
+**/*.bin
+**/*.pt
+**/*.pth
+**/*.gguf
+**/*.msgpack
+**/models--*/

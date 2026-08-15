@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { JobProgress } from '../../../api/recognition/types/scan';
 import { CONFIRM_NO_JOB_ZERO_STATE } from '../confirmTabCopy';
 import type { ScanRunViewModel } from '../JobPipelineContext';
-import { ConfirmPanel, ScanActionPanel } from '../Panels';
+import { buildCoarseJobAnnouncement, ConfirmPanel, ScanActionPanel } from '../Panels';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -92,6 +92,173 @@ describe('ScanActionPanel', () => {
     expect(onCancelScan).toHaveBeenCalledOnce();
   });
 
+  it('hides cancel when idle and shows scan region description (L3R-05)', () => {
+    render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: false }} onCancelScan={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    expect(
+      screen.getByText(
+        'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('suppresses cancel and progress bar when suppressPrimaryChrome is set (L3R-02)', () => {
+    const progress: JobProgress = { completed: 4, total: 10, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, progress, statusText: 'working' }}
+        onCancelScan={vi.fn()}
+        suppressPrimaryChrome
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.getByText(/Job pending: working/)).toBeTruthy();
+    expect(screen.getByText('Processed 4/10 images')).toBeTruthy();
+  });
+
+  it('L3R-01 residual: live region stays phase-stable while per-tick statusText updates visually', () => {
+    const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
+    const { rerender } = render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress,
+          statusText: 'Processed 1/10 images',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    const announce = screen.getByTestId('scan-status-announce');
+    expect(announce.getAttribute('role')).toBe('status');
+    expect(announce.textContent).toBe('Job job-1: Detecting');
+    const visual = screen.getByTestId('scan-status-visual');
+    expect(visual.textContent).toBe('Job job-1: Processed 1/10 images');
+    // L3V-02: visual status must not be a live region (mutation: re-add role=status on <p>).
+    expect(visual.getAttribute('role')).toBeNull();
+    expect(visual.getAttribute('aria-live')).toBeNull();
+
+    // Per-tick count change: visual updates, live region does not.
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress: { completed: 5, total: 10, phase: 'detecting' },
+          statusText: 'Processed 5/10 images',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 5/10 images');
+    expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Detecting');
+
+    // Phase change: live region updates.
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          progress: { completed: 10, total: 10, phase: 'clustering' },
+          statusText: 'Processed 10/10 identities',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Clustering');
+  });
+
+  it('buildCoarseJobAnnouncement ignores count-bearing statusText without a phase', () => {
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Processed 3/8 images',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'completed',
+        progressPhase: null,
+      }),
+    ).toBe('Job j1: completed');
+  });
+
+  it('L3V-03: countdown statusText ticks do not change the announce region when phase is null', () => {
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Clustering queued — starting in 5s',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+    expect(
+      buildCoarseJobAnnouncement({
+        jobId: 'j1',
+        statusText: 'Clustering queued — starting in 4s',
+        progressPhase: null,
+      }),
+    ).toBeNull();
+
+    const { rerender } = render(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          statusText: 'Clustering queued — starting in 5s',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe(
+      'Job job-1: Clustering queued — starting in 5s',
+    );
+
+    rerender(
+      <ScanActionPanel
+        scanRun={{
+          ...baseScanRun,
+          isScanning: true,
+          statusText: 'Clustering queued — starting in 4s',
+          jobId: 'job-1',
+        }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+
+    // Announce region stays absent/stable; only visual countdown advances.
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.getByTestId('scan-status-visual').textContent).toBe(
+      'Job job-1: Clustering queued — starting in 4s',
+    );
+  });
+
+  it('L3R-07: stall Cancel is suppressed when suppressPrimaryChrome is set', () => {
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, stallSeconds: 31 }}
+        onCancelScan={vi.fn()}
+        onRetryStream={vi.fn()}
+        suppressPrimaryChrome
+      />,
+    );
+
+    expect(screen.getByText('Stuck - last update 31 seconds ago')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    // Primary Cancel is on the strip; stall block must not add a second "Cancel".
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+  });
+
   it('disables cancel button while cancelling', () => {
     render(
       <ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true, isCancelling: true }} onCancelScan={vi.fn()} />,
@@ -141,6 +308,41 @@ describe('ScanActionPanel', () => {
     const progress: JobProgress = { completed: 50, total: 150, phase: 'clustering' };
     render(<ScanActionPanel scanRun={{ ...baseScanRun, progress }} onCancelScan={vi.fn()} />);
     expect(screen.getByRole('progressbar', { name: 'Clustering progress' })).toBeTruthy();
+  });
+
+  it('renders compact variant as a single-row strip with progress and cancel', async () => {
+    const onCancelScan = vi.fn();
+    const progress: JobProgress = { completed: 42, total: 100, phase: 'clustering' };
+    const { container } = render(
+      <ScanActionPanel
+        variant="compact"
+        scanRun={{ ...baseScanRun, isScanning: true, progress }}
+        onCancelScan={onCancelScan}
+      />,
+    );
+
+    expect(container.querySelector('[data-variant="compact"]')).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+    // L3R-06: leading verb derived from phase (clustering), not hardcoded Scanning…
+    expect(screen.getByText(/Clustering…/)).toBeTruthy();
+    expect(screen.getByText(/42%/)).toBeTruthy();
+    expect(screen.getByText(/phase: Clustering/i)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancelScan).toHaveBeenCalledOnce();
+  });
+
+  it('derives compact leading verb from currentPhase (L3R-06)', () => {
+    const progress: JobProgress = { completed: 10, total: 100, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        variant="compact"
+        currentPhase="projecting"
+        scanRun={{ ...baseScanRun, isScanning: false, progress }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Syncing results…/)).toBeTruthy();
+    expect(screen.queryByText(/^Scanning…/)).toBeNull();
   });
 });
 

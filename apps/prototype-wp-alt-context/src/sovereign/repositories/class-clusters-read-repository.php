@@ -7,14 +7,12 @@ namespace AltContext\Sovereign\Repositories;
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 
-use function implode;
 use function is_array;
 use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function sprintf;
 use function trim;
 
 class ClustersReadRepository {
@@ -49,45 +47,81 @@ class ClustersReadRepository {
 
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
+		$persons_table     = $this->resolve_persons_table_name();
 
-		$conditions    = array( 'c.tenant_id = %s' );
-		$persons_table = $this->resolve_persons_table_name();
-		$args          = array( $this->table_name, $persons_table, $normalized_tenant_id );
-
-		if ( $labeled_only ) {
-			$conditions[] = "c.label IS NOT NULL AND c.label != ''";
-		}
-
-		if ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
-			$conditions[] = 'c.label LIKE %s';
-			$args[]       = '%' . $wpdb->esc_like( $search ) . '%';
-		}
-
-		$sql = $this->prepare_query(
-			sprintf(
-				'SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
-				 FROM %%i c 
-				 LEFT JOIN %%i p ON c.person_id = p.id
-				 WHERE %s
+		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
+		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
+			$sql = $this->prepare_projection_read_query(
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				 FROM %i c
+				 LEFT JOIN %i p ON c.person_id = p.id
+				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != '' AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
-				 LIMIT %%d OFFSET %%d',
-				implode( ' AND ', $conditions )
-			),
-			array_merge(
-				$args,
+				 LIMIT %d OFFSET %d",
 				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_tenant_id,
+					'%' . $wpdb->esc_like( $search ) . '%',
 					$normalized_limit,
 					$normalized_offset,
 				)
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
+			);
+		} elseif ( $labeled_only ) {
+			$sql = $this->prepare_projection_read_query(
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				 FROM %i c
+				 LEFT JOIN %i p ON c.person_id = p.id
+				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != ''
+				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
+				 LIMIT %d OFFSET %d",
+				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_tenant_id,
+					$normalized_limit,
+					$normalized_offset,
+				)
+			);
+		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
+			$sql = $this->prepare_projection_read_query(
+				'SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				 FROM %i c
+				 LEFT JOIN %i p ON c.person_id = p.id
+				 WHERE c.tenant_id = %s AND c.label LIKE %s
+				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
+				 LIMIT %d OFFSET %d',
+				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_tenant_id,
+					'%' . $wpdb->esc_like( $search ) . '%',
+					$normalized_limit,
+					$normalized_offset,
+				)
+			);
+		} else {
+			$sql = $this->prepare_projection_read_query(
+				'SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				 FROM %i c
+				 LEFT JOIN %i p ON c.person_id = p.id
+				 WHERE c.tenant_id = %s
+				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
+				 LIMIT %d OFFSET %d',
+				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_tenant_id,
+					$normalized_limit,
+					$normalized_offset,
+				)
+			);
 		}
 
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_for_tenant', $rows, true );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -109,38 +143,32 @@ class ClustersReadRepository {
 
 		$normalized_search = trim( $search );
 		$normalized_limit  = max( 1, $limit );
-		$conditions        = array(
-			'tenant_id = %s',
-			"label IS NOT NULL",
-			"label != ''",
-		);
-		$args = array(
-			$this->table_name,
-			$normalized_tenant_id,
-		);
 
 		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
-			$conditions[] = 'label LIKE %s';
-			$args[]       = '%' . $wpdb->esc_like( $normalized_search ) . '%';
+			$sql = $this->prepare_projection_read_query(
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND label LIKE %s ORDER BY label ASC) filtered LIMIT %d",
+				array(
+					$this->table_name,
+					$normalized_tenant_id,
+					'%' . $wpdb->esc_like( $normalized_search ) . '%',
+					$normalized_limit,
+				)
+			);
+		} else {
+			$sql = $this->prepare_projection_read_query(
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' ORDER BY label ASC) filtered LIMIT %d",
+				array(
+					$this->table_name,
+					$normalized_tenant_id,
+					$normalized_limit,
+				)
+			);
 		}
 
-		$sql = $this->prepare_query(
-			sprintf(
-				'SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %%i WHERE %s ORDER BY label ASC) filtered LIMIT %%d',
-				implode( ' AND ', $conditions )
-			),
-			array_merge(
-				$args,
-				array( $normalized_limit )
-			)
-		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_labels', $rows, true );
 		if ( ! is_array( $rows ) ) {
 			return array();
 		}
@@ -172,20 +200,19 @@ class ClustersReadRepository {
 			return false;
 		}
 
-		$sql = $this->prepare_query(
-			'SELECT 1 FROM %i WHERE tenant_id = %s LIMIT 1',
+		$sql = $this->prepare_projection_read_query(
+			'SELECT EXISTS(SELECT 1 FROM %i WHERE tenant_id = %s LIMIT 1)',
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return false;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		return null !== $wpdb->get_var( $sql );
+		$value = $wpdb->get_var( $sql );
+		$this->guard_query_error( 'clusters.has_projection_rows_for_tenant', $value, true );
+		return 0 < (int) $value;
 	}
 
 	/**
@@ -206,8 +233,8 @@ class ClustersReadRepository {
 
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
-		$sql = $this->prepare_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
+		$sql = $this->prepare_projection_read_query(
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
 				WHERE c.tenant_id = %s
@@ -225,12 +252,10 @@ class ClustersReadRepository {
 				)
 			);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_top_unlabeled', $rows, true );
 		return is_array( $rows ) ? $rows : array();
 	}
 
@@ -247,7 +272,7 @@ class ClustersReadRepository {
 			return 0;
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			"SELECT COUNT(*)
 			FROM %i c
 			WHERE c.tenant_id = %s
@@ -261,12 +286,11 @@ class ClustersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$count = $wpdb->get_var( $sql );
+		// COUNT(*) always returns a row on success; null means the query did not run.
+		$this->guard_query_error( 'clusters.count_top_unlabeled_singletons', $count, true );
 		return is_numeric( $count ) ? max( 0, (int) $count ) : 0;
 	}
 
@@ -282,8 +306,8 @@ class ClustersReadRepository {
 		}
 
 		$persons_table = $this->resolve_persons_table_name();
-		$sql = $this->prepare_query(
-			"SELECT c.*, COALESCE(p.name, c.label) as label 
+		$sql = $this->prepare_projection_read_query(
+			"SELECT c.*, p.person_uuid, COALESCE(p.name, c.label) as label 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
 			 WHERE c.cluster_uuid = %s 
@@ -295,12 +319,11 @@ class ClustersReadRepository {
 				)
 			);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return null;
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$row = $wpdb->get_row( $sql, ARRAY_A );
+		// null is a legitimate miss for get_row.
+		$this->guard_query_error( 'clusters.find_by_uuid', $row, false );
 		return is_array( $row ) ? $row : null;
 	}
 
@@ -320,7 +343,7 @@ class ClustersReadRepository {
 			return array();
 		}
 
-		$sql = $this->prepare_query(
+		$sql = $this->prepare_projection_read_query(
 			'SELECT * FROM %i WHERE tenant_id = %s AND is_user_confirmed = 1',
 			array(
 				$this->table_name,
@@ -328,12 +351,10 @@ class ClustersReadRepository {
 			)
 		);
 
-		if ( ! is_string( $sql ) || '' === $sql ) {
-			return array();
-		}
-
+		$this->clear_query_error();
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.get_curated_clusters_for_tenant', $rows, true );
 		if ( ! is_array( $rows ) ) {
 			return array();
 		}

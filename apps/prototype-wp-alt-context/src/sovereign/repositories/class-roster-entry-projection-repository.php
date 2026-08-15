@@ -8,11 +8,14 @@ require_once dirname( __DIR__, 2 ) . '/api/class-blob-url-rewriter.php';
 require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/interface-sync-state-repository.php';
 require_once __DIR__ . '/class-sync-state-repository.php';
+require_once __DIR__ . '/trait-prepares-sql-queries.php';
 
 use AltContext\Api\BlobUrlRewriter;
 use AltContext\Api\Services\PersonResolutionService;
 
 class RosterEntryProjectionRepository {
+	use PreparesSqlQueries;
+
 	private SyncStateRepositoryInterface $sync_state_repository;
 
 	public function __construct( ?SyncStateRepositoryInterface $sync_state_repository = null ) {
@@ -30,13 +33,16 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_persons = $wpdb->prefix . 'acx_persons';
-		$results       = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i ORDER BY name ASC',
-				$table_persons
-			),
-			ARRAY_A
+		$sql           = $this->prepare_query(
+			'SELECT * FROM %i ORDER BY name ASC',
+			array( $table_persons )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$results = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $results ) ) {
 			return array();
@@ -230,14 +236,17 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
-		$rows           = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i WHERE person_id IN (' . \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) ) . ') ORDER BY updated_at DESC',
-				$table_clusters,
-				...$person_ids
-			),
-			ARRAY_A
+		$placeholders   = \implode( ', ', \array_fill( 0, \count( $person_ids ), '%d' ) );
+		$sql            = $this->prepare_query(
+			"SELECT * FROM %i WHERE person_id IN ($placeholders) ORDER BY updated_at DESC",
+			\array_merge( array( $table_clusters ), $person_ids )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();
@@ -272,14 +281,17 @@ class RosterEntryProjectionRepository {
 		}
 
 		$table_members = $wpdb->prefix . 'acx_identity_members';
-		$rows          = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM %i WHERE cluster_uuid IN (' . \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) ) . ') ORDER BY updated_at DESC',
-				$table_members,
-				...$cluster_uuids
-			),
-			ARRAY_A
+		$placeholders  = \implode( ', ', \array_fill( 0, \count( $cluster_uuids ), '%s' ) );
+		$sql           = $this->prepare_query(
+			"SELECT * FROM %i WHERE cluster_uuid IN ($placeholders) ORDER BY updated_at DESC",
+			\array_merge( array( $table_members ), $cluster_uuids )
 		);
+		if ( ! \is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
 
 		if ( ! \is_array( $rows ) ) {
 			return array();

@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from pydantic import ValidationError
+
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError, load_manifest
+from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, ManifestError, load_manifest
 from scripts.eval_harness.report import (
     DETECTION_REFUSED_EXPLANATION,
     ReportError,
@@ -477,3 +479,35 @@ def test_mixed_and_missing_reports_mixed() -> None:
         score_run_record(_OVERSHOOT_RECORD, entries)
     assert "missing stamp" in str(exc_info.value)
     assert exc_info.value.invariant == "detection_refuses_mixed_annotation_mode"
+
+
+def test_per_entry_lattice_is_raw_mapping_only() -> None:
+    """S2R3-10: GoldenEntry cannot carry a per-entry stamp.
+
+    The resolver lattice is reachable only via raw mappings. Adding
+    `annotation_mode` to GoldenEntry would change that design and die here.
+    """
+    assert "annotation_mode" not in GoldenEntry.model_fields
+    with pytest.raises(ValidationError):
+        GoldenEntry(
+            path="x.jpg",
+            sha256="a" * 64,
+            media_id=1,
+            face_count=0,
+            present_identities=[],
+            must_right=[],
+            easy_wrong=[],
+            policy={"recognition_enabled": True},
+            annotation_mode="roster_only",
+        )
+    typed = GoldenEntry(
+        path="x.jpg",
+        sha256="a" * 64,
+        media_id=1,
+        face_count=0,
+        present_identities=[],
+        must_right=[],
+        easy_wrong=[],
+        policy={"recognition_enabled": True},
+    )
+    assert "annotation_mode" not in typed.model_dump()

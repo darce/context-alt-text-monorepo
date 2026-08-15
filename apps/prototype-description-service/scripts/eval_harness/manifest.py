@@ -535,6 +535,9 @@ class FaceBox(BaseModel):
 
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # annotation_mode is intentionally absent (S2R3-10): extra=forbid, no
+    # field. Per-entry stamps are raw-mapping-only; the document mode lives
+    # on GoldenManifest. Flatteners stamp that parent mode onto dumped dicts.
 
     path: str
     sha256: str

@@ -486,16 +486,12 @@ def test_worker_cancellation_marks_failed_then_re_raises():
         # connection and cannot dirty-read or roll back the worker's
         # uncommitted flush. Seeing RUNNING means phase-1 committed.
         # Cancel after that write, not mid-write (GATEFLAKE-R1-01 lock
-        # race). Measured hedge: poll may block or raise database is
-        # locked if the worker still holds the write lock.
+        # race). The worker's uncommitted flush holds RESERVED, which does
+        # not block this reader; only an EXCLUSIVE held past busy_timeout
+        # (5000ms) would raise database is locked and fail the test.
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            try:
-                started_item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
-            except Exception as exc:
-                if "database is locked" in str(exc).lower():
-                    print("GATEFLAKE-S3-LOCK during poll:", type(exc).__name__, exc)
-                raise
+            started_item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
             if started_item is not None and started_item.status == DescribeItemStatus.RUNNING:
                 break
             await asyncio.sleep(0.01)

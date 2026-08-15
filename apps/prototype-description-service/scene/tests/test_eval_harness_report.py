@@ -4461,8 +4461,9 @@ def _scored_face_md_stub(*, traps: list[dict] | None, fn: int = 5, scored: int =
 def test_fixture_local_detection_caveat_filters_on_affects_only():  # VLM6-R2-C-02
     """Renderer unit: caveat keys on affects=detection_fn, never kind/media id.
 
-    N is derived from the matching trap list. A trap whose kind looks like
-    HARM-05 but has no affects (or a different affect) must not emit the line.
+    N is the matching trap-media count, never trap-attributed FN (rg-015).
+    A trap whose kind looks like HARM-05 but has no affects (or a different
+    affect) must not emit the line.
     """
     assert CORPUS_TRAP_AFFECTS_DETECTION_FN == "detection_fn"
     traps = [
@@ -4483,7 +4484,10 @@ def test_fixture_local_detection_caveat_filters_on_affects_only():  # VLM6-R2-C-
     assert line is not None
     assert "fixture-local detection frame" in line
     assert "recall is NOT a population estimate" in line
-    assert "1 of fn=5" in line  # N derived; only one trap declares detection_fn
+    assert "fn=5 includes misses from 1 deliberate trap media" in line
+    # Defect pin: N is trap MEDIA. "{n} of fn=" reads as an FN share (rg-015).
+    assert "1 of fn=" not in line
+    assert "the attributable FN share is not derivable from this table" in line
     assert "99 `fixture/trap-a.jpg`" in line
     assert "y-missing-mixed-order.jpg" not in line
     assert "synthetic determinism anchor (11 images)" in line

@@ -79,11 +79,16 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # Regenerated VLM6-R2-C-02: corpus_traps[].affects + fixture-local detection
 # caveat in the face MD. Manifest digest unchanged (corpus body identical);
 # run/report/md moved (affects stamp + caveat line).
+# Regenerated 2026-08-15 (VLM6-R2-C-02 wording): caveat now states
+# "fn=M includes misses from N deliberate trap media" instead of "N of fn=M
+# come from" (N is trap MEDIA, not FN share; rg-015). Media 9 note dropped
+# the stale "1 of 4" denominator. Manifest digest unchanged (corpus body
+# identical); run/report/md moved. Digests from sha256sum of generator output.
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
-    _RUN.name: "5a589466630eb7dc9296f7a947563b06d1e3908dbdb905123b4d334a291ac8f4",
-    _REPORT_JSON.name: "cd56435dca8542f915a4decb9955e95c750ab1560bc8399521d8b361d08a32e9",
-    _REPORT_MD.name: "92c464416b961622a0a31606e865dad6cca749d4c3abe30849a59faa61a2d3c2",
+    _RUN.name: "f0e8298a96df12c6ea114c05a65158abe2bba24b6362407594a9d71354e384db",
+    _REPORT_JSON.name: "b6d6b88534a6616546eaaebda4120c2196d5d1e7abd9ddf454ee92cfd2bf4524",
+    _REPORT_MD.name: "b739f5ea10fb661f4667d283b28c93ab261e4466c1c40e1f7c5b112ea4852b26",
 }
 
 
@@ -425,18 +430,35 @@ def test_fixture_local_detection_caveat_present_and_disappears_without_affects()
     assert "recall is NOT a population estimate" in md
     assert "9 `localwp/uploads/stranger-fn-miss.jpg`" in md
     assert "10 `localwp/uploads/mixed-fn-miss.jpg`" in md
-    assert "2 of fn=5" in md
+    assert "fn=5 includes misses from 2 deliberate trap media" in md
+    # Defect pin: N is trap MEDIA. "{n} of fn=" reads as an FN share (rg-015).
+    assert "2 of fn=" not in md
+    assert "the attributable FN share is not derivable from this table" in md
     assert "synthetic determinism anchor (11 images)" in md
 
     record = json.loads(_RUN.read_text())
     traps = list((record.get("provenance") or {}).get("corpus_traps") or [])
     assert traps, "committed run must disclose corpus_traps"
-    for trap in traps:
-        trap.pop("affects", None)
-    record["provenance"]["corpus_traps"] = traps
 
     manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
     synth, real = occlusion_inputs_from_record(record, manifest)
+    # Live renderer (not just the frozen MD) must emit the trap-media wording
+    # so a "N of fn=M" regression goes red (TEST-15).
+    _json_doc, live_md = build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=_manifest_sha(manifest),
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
+    assert "fn=5 includes misses from 2 deliberate trap media" in live_md
+    assert "2 of fn=" not in live_md
+    assert "the attributable FN share is not derivable from this table" in live_md
+
+    for trap in traps:
+        trap.pop("affects", None)
+    record["provenance"]["corpus_traps"] = traps
     _json_doc, stripped_md = build_face_reports(
         record,
         manifest,

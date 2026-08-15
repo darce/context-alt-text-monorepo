@@ -1,0 +1,955 @@
+{
+  "caption": {
+    "insertion_rate": 1.0,
+    "mean_gated_score": 1.0,
+    "must_right_defined_images": 37,
+    "must_right_failed_images": 0,
+    "name_precision": 1.0,
+    "policy_violations": 0,
+    "wrong_name_image_rate": 0.0,
+    "wrong_name_images": 0
+  },
+  "counts": {
+    "failed": 0,
+    "scored": 37,
+    "total": 37
+  },
+  "eval_mode": "standard",
+  "faces": {
+    "detection": {
+      "fn": null,
+      "fp": null,
+      "invariant": "detection_refuses_roster_only",
+      "precision": null,
+      "recall": null,
+      "refused": true,
+      "tp": null
+    },
+    "identification": {
+      "excluded_images": [],
+      "ignored_wrong_names": [],
+      "macro_precision": 1.0,
+      "macro_recall": 1.0,
+      "per_identity": {
+        "Bea Burke": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
+        },
+        "Caitlin Weaver": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 14
+        },
+        "Cristina Quintana": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
+        },
+        "Daniel Arce": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
+        },
+        "Ellyn Heald": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
+        },
+        "Erika Hansen Miller": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 1
+        },
+        "Kirstie Mccarrel": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 5
+        },
+        "Liam Maloney": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 2
+        },
+        "Maria Correonero": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 7
+        },
+        "Ryann Wiseman": {
+          "fn": 0,
+          "fp": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "tp": 3
+        }
+      },
+      "precision": 1.0,
+      "recall": 1.0,
+      "true_rejections": 10,
+      "wrong_names": []
+    }
+  },
+  "failures": [],
+  "kind": "report",
+  "per_image": [
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2414,
+      "first_sentence_gist_ok": false,
+      "fkre": 49.83,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 1,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/Breiðamerkurjökull.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.129,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.1852,
+      "first_sentence_gist_ok": false,
+      "fkre": 57.79,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Bea Burke"
+      ],
+      "media_id": 2,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/bea-nye.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1379,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2353,
+      "first_sentence_gist_ok": false,
+      "fkre": 50.45,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 3,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-antartica.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1389,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.16,
+      "first_sentence_gist_ok": false,
+      "fkre": 69.76,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 4,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-bar.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1852,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3636,
+      "first_sentence_gist_ok": false,
+      "fkre": 41.48,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver",
+        "Erika Hansen Miller"
+      ],
+      "media_id": 5,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-erika.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0417,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4348,
+      "first_sentence_gist_ok": false,
+      "fkre": 46.1,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 6,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-flowers.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.04,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.6087,
+      "first_sentence_gist_ok": false,
+      "fkre": 66.4,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 7,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-hair.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.08,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.5,
+      "first_sentence_gist_ok": false,
+      "fkre": 50.29,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 8,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-occlusion-2.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1923,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.5,
+      "first_sentence_gist_ok": false,
+      "fkre": 57.95,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 9,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-occlusion.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.1905,
+      "first_sentence_gist_ok": false,
+      "fkre": 58.43,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 10,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-purple.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4828,
+      "first_sentence_gist_ok": false,
+      "fkre": 49.83,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 11,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-running-2.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0968,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.32,
+      "first_sentence_gist_ok": false,
+      "fkre": 54.1,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 12,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-running.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1111,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4545,
+      "first_sentence_gist_ok": false,
+      "fkre": 48.53,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 13,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0417,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3571,
+      "first_sentence_gist_ok": false,
+      "fkre": 60.77,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 14,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-sunglasses.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1333,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.36,
+      "first_sentence_gist_ok": false,
+      "fkre": 35.3,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 15,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw-underexposed.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1111,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2632,
+      "first_sentence_gist_ok": false,
+      "fkre": 56.61,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Caitlin Weaver"
+      ],
+      "media_id": 16,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ccqw.blurry.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0952,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.8235,
+      "first_sentence_gist_ok": true,
+      "fkre": 62.88,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Cristina Quintana"
+      ],
+      "media_id": 17,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/cristina-1.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0526,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2759,
+      "first_sentence_gist_ok": false,
+      "fkre": 60.75,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Ellyn Heald"
+      ],
+      "media_id": 18,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/example-ellynheald-goldleaf.jpeg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1613,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4138,
+      "first_sentence_gist_ok": false,
+      "fkre": 49.83,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 19,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/k.mcc-1.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1613,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.25,
+      "first_sentence_gist_ok": false,
+      "fkre": 49.91,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 20,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/kirstie-1.jpeg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0909,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3548,
+      "first_sentence_gist_ok": false,
+      "fkre": 63.1,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 21,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/kirstie-boat.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2424,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4231,
+      "first_sentence_gist_ok": false,
+      "fkre": 45.47,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Daniel Arce",
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 23,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1429,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.75,
+      "first_sentence_gist_ok": false,
+      "fkre": 66.56,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Kirstie Mccarrel"
+      ],
+      "media_id": 24,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/kirstie-pool.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1538,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3333,
+      "first_sentence_gist_ok": false,
+      "fkre": 60.05,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Liam Maloney"
+      ],
+      "media_id": 25,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/liam-maloney-2.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1154,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.1818,
+      "first_sentence_gist_ok": false,
+      "fkre": 38.37,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Liam Maloney"
+      ],
+      "media_id": 26,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/liam-maloney-home.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0857,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.8636,
+      "first_sentence_gist_ok": false,
+      "fkre": 59.1,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [],
+      "media_id": 27,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": null,
+      "path": "mock_images/liam-maloney-painting.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.125,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4545,
+      "first_sentence_gist_ok": false,
+      "fkre": 43.2,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 28,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/maria-cocktail.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1429,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2963,
+      "first_sentence_gist_ok": false,
+      "fkre": 51.96,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 29,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/maria-party.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1379,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4074,
+      "first_sentence_gist_ok": false,
+      "fkre": 51.96,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 30,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/maria-pool.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1034,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2609,
+      "first_sentence_gist_ok": false,
+      "fkre": 59.64,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 31,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/mcm-eye-blocked.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.08,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.1818,
+      "first_sentence_gist_ok": false,
+      "fkre": 45.62,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 32,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/mcm-icecave.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1143,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3077,
+      "first_sentence_gist_ok": false,
+      "fkre": 42.45,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Maria Correonero"
+      ],
+      "media_id": 33,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/mcm-planecrash.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0714,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.3333,
+      "first_sentence_gist_ok": false,
+      "fkre": 60.05,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [],
+      "media_id": 34,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": null,
+      "path": "mock_images/nina-machiavelli.jpeg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0769,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.5625,
+      "first_sentence_gist_ok": false,
+      "fkre": 47.91,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [],
+      "media_id": 35,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": null,
+      "path": "mock_images/rrw-mirror.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1471,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.4688,
+      "first_sentence_gist_ok": false,
+      "fkre": 47.91,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 36,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ryann-bar.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.1471,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2,
+      "first_sentence_gist_ok": false,
+      "fkre": 38.43,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 37,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ryann-group-party.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.0741,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.2368,
+      "first_sentence_gist_ok": false,
+      "fkre": 49.91,
+      "gated_score": 1.0,
+      "hallucinated_names": [],
+      "inserted_identities": [
+        "Ryann Wiseman"
+      ],
+      "media_id": 38,
+      "meta_framing_hits": [],
+      "missing_identities": [],
+      "must_right_failures": [],
+      "name_front_loaded": true,
+      "path": "mock_images/ryann-party.jpg",
+      "policy_violation": false,
+      "repetition_ratio": 0.2,
+      "sentence_count": 1,
+      "tag_coverage": null,
+      "wrong_name_hits": []
+    }
+  ],
+  "provenance": {
+    "base_url": "seeded://stub",
+    "head_sha": "b9fe952f2be5f5070025d881e2b040f5feeac57b",
+    "manifest_matches_fetch": false,
+    "manifest_sha256": "003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64",
+    "model": {
+      "adapters": [
+        "seeded"
+      ],
+      "model_ids": [
+        "seeded-fixtures"
+      ],
+      "model_versions": [
+        "1"
+      ]
+    },
+    "score_manifest_sha256": "fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d",
+    "started_at": "2026-07-07T00:00:00Z"
+  },
+  "quality": {
+    "mean_context_duplication": 0.3794,
+    "meta_framing_images": 0,
+    "name_front_loaded_rate": 1.0,
+    "sentence_band": [
+      1,
+      4
+    ],
+    "sentence_band_ok_rate": 1.0
+  },
+  "schema": "acx-eval/v1"
+}

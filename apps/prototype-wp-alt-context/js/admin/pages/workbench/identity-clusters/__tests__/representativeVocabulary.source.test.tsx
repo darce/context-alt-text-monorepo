@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import React from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -103,6 +107,22 @@ const missingMerge: PendingMergeSuggestion = {
   similarity: 0.87,
   status: 'pending',
 };
+
+describe('unavailable-image literal source pin', () => {
+  const testDir = path.dirname(fileURLToPath(import.meta.url));
+  const vocabSource = readFileSync(path.resolve(testDir, '../representativeVocabulary.ts'), 'utf8');
+  const faceThumbSource = readFileSync(
+    path.resolve(testDir, '../../../../../components/ui/faceThumbDisplay.ts'),
+    'utf8',
+  );
+
+  it('quoted Representative image unavailable occurs exactly once across the two sources', () => {
+    const matches = `${faceThumbSource}\n${vocabSource}`.match(
+      /'Representative image unavailable'/g,
+    ) ?? [];
+    expect(matches).toHaveLength(1);
+  });
+});
 
 describe('missing-representative vocabulary source', () => {
   afterEach(() => {

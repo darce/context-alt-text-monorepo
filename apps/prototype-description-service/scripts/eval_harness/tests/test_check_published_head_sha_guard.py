@@ -251,6 +251,52 @@ def test_zero_matching_files_exits_nonzero(tmp_path: Path) -> None:
     assert "ok —" not in combined
 
 
+def test_blank_head_sha_is_unreadable_not_absent(tmp_path: Path) -> None:
+    """S2R5-20: a present empty string is a stamp, not a missing key."""
+    repo = _init_repo(tmp_path)
+    _track(repo, "docs/report.json", json.dumps({"provenance": {"head_sha": ""}}))
+    _commit(repo, "add blank head_sha")
+    proc = _run_guard(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 1, combined
+    assert "UNREADABLE" in combined
+    assert "  MISSING  " not in combined
+    assert "ok — 0 head_sha" not in combined
+    assert '""' in combined
+
+
+def test_nonstring_head_sha_is_unreadable_not_absent(tmp_path: Path) -> None:
+    """S2R5-20: a present non-string value is a stamp, not a missing key."""
+    repo = _init_repo(tmp_path)
+    _track(repo, "docs/report.json", json.dumps({"provenance": {"head_sha": 123}}))
+    _commit(repo, "add numeric head_sha")
+    proc = _run_guard(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 1, combined
+    assert "UNREADABLE" in combined
+    assert "123" in combined
+    assert "  MISSING  " not in combined
+    assert "ok — 0 head_sha" not in combined
+
+
+def test_malformed_commit_string_is_unreadable_not_absent(tmp_path: Path) -> None:
+    """S2R5-20: commit: not-a-sha is present-but-malformed, not absent."""
+    repo = _init_repo(tmp_path)
+    _track(
+        repo,
+        "docs/report.json",
+        json.dumps({"provenance": {"commit": "not-a-sha"}}),
+    )
+    _commit(repo, "add garbage commit")
+    proc = _run_guard(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 1, combined
+    assert "UNREADABLE" in combined
+    assert "not-a-sha" in combined
+    assert "  MISSING  " not in combined
+    assert "ok — 0 head_sha" not in combined
+
+
 def test_shallow_clone_is_cannot_verify_not_missing(tmp_path: Path) -> None:
     """S2R5-21: a shallow clone must not report unseen stamps as MISSING."""
     src = _init_repo(tmp_path)

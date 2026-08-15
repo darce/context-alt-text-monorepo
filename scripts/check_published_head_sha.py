@@ -8,7 +8,9 @@ walks tracked eval artifacts under ``docs/`` and ``benchmarks/`` and fails
 if any published stamp is missing or unreadable.
 
 A present stamp that is not a resolvable commit (``unknown``, truncated,
-uppercase that does not resolve, or other garbage) is invalid — not absent.
+uppercase that does not resolve, blank, non-string JSON, or other
+garbage) is invalid — not absent. A present ``head_sha`` / ``git_sha``
+/ ``commit`` key is a stamp regardless of type or emptiness.
 Zero matching artifact files is a failed scan, not a clean pass.
 
 Usage (from repo root):
@@ -109,14 +111,24 @@ def _is_commit_key_value(value: str) -> bool:
     return bool(SHA_OR_UNKNOWN_RE.fullmatch(value))
 
 
+def json_stamp_raw(value: object) -> str:
+    """Literal display form of a present JSON stamp, including non-strings."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return json.dumps(value)
+
+
 def _record_stamp(
     found: list[PublishedStamp], seen: set[tuple[str, str]], key: str, raw: str
 ) -> None:
+    # Present keys are stamps even when blank or non-conforming. Do not
+    # collapse those into absence (S2R5-20). Strip padding so a well-formed
+    # SHA still resolves; a blank stays blank and is UNREADABLE.
     value = raw.strip()
-    if not value:
-        return
-    if key == COMMIT_KEY and not _is_commit_key_value(value):
-        return
     marker = (key, value)
     if marker in seen:
         return
@@ -127,10 +139,8 @@ def _record_stamp(
 def _walk_json_stamps(obj: object, found: list[PublishedStamp], seen: set[tuple[str, str]]) -> None:
     if isinstance(obj, dict):
         for key, val in obj.items():
-            if key in OPEN_KEYS and isinstance(val, str):
-                _record_stamp(found, seen, key, val)
-            elif key == COMMIT_KEY and isinstance(val, str):
-                _record_stamp(found, seen, key, val)
+            if key in OPEN_KEYS or key == COMMIT_KEY:
+                _record_stamp(found, seen, key, json_stamp_raw(val))
             else:
                 _walk_json_stamps(val, found, seen)
     elif isinstance(obj, list):
@@ -254,7 +264,8 @@ def main() -> int:
             file=sys.stderr,
         )
         for rel, raw, key in unreadable:
-            print(f"  UNREADABLE  {raw}  {rel}  ({key})", file=sys.stderr)
+            shown = raw if raw else '""'
+            print(f"  UNREADABLE  {shown}  {rel}  ({key})", file=sys.stderr)
         for rel, sha in missing:
             print(f"  MISSING  {sha}  {rel}", file=sys.stderr)
         return 1

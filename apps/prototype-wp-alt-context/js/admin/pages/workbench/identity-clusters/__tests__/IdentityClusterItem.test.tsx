@@ -15,6 +15,9 @@ vi.mock('../useClusterSuggestions', () => ({
     isLoading: false,
     collisionsByLabel: new Map(),
     findClusterByLabel,
+    atRestTotal: 80,
+    atRestTruncated: true,
+    isAtRestMode: true,
   }),
 }));
 
@@ -181,5 +184,23 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
 
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('passes at-rest truncation props through so the labelled editor describes the truncated page', () => {
+    renderItem();
+
+    fireEvent.click(screen.getByRole('button', { name: 'bob' }));
+
+    const hint = screen.getByText(/Showing \d+ of 80 labels/);
+    expect(hint).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+      hint.textContent ?? '',
+    );
   });
 });

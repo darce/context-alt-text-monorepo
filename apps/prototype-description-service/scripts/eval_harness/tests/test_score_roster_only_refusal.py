@@ -14,11 +14,13 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
-from scripts.eval_harness.manifest import AnnotationMode, load_manifest
+from scripts.eval_harness.manifest import AnnotationMode, ManifestError, load_manifest
 from scripts.eval_harness.report import (
     DETECTION_REFUSED_EXPLANATION,
     ReportError,
+    _resolve_score_annotation_mode,
     build_reports,
+    score_face_run_record,
     score_run_record,
 )
 
@@ -293,3 +295,48 @@ def test_markdown_names_refused_detection() -> None:
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     assert f"- REFUSED (detection_refuses_roster_only): {DETECTION_REFUSED_EXPLANATION}" in md
     assert "precision: null" not in md.split("## Face detection")[1].split("## Face identification")[0]
+
+
+def _face_run_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "t",
+            "leg": "candidate",
+        },
+        "items": [],
+    }
+
+
+def test_empty_entries_refuse_explicit_exhaustive() -> None:
+    """S2R3-01: empty list + explicit exhaustive refuses, never scores.
+
+    `missing` is only assigned inside the per-entry loop. An empty list
+    never enters that loop, so the resolver used to return the explicit
+    mode and fail-open exhaustive. Zero entries cannot witness a
+    detection contract — refuse with a named invariant.
+    """
+    with pytest.raises(ManifestError) as exc_info:
+        _resolve_score_annotation_mode("exhaustive", [])
+    assert exc_info.value.invariant == "detection_refuses_empty_entries"
+
+
+def test_empty_entries_score_run_record_refuses_explicit_exhaustive() -> None:
+    """S2R3-01: caption path maps the empty-list invariant onto a refusal."""
+    scored = score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == "detection_refuses_empty_entries"
+    assert det["precision"] is None
+    assert det["fp"] is None
+
+
+def test_empty_entries_hard_error_through_score_face() -> None:
+    """S2R3-01: the empty lattice cell is a named raise on the face path."""
+    manifest = {"annotation_mode": "exhaustive", "roster": [], "entries": []}
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(_face_run_record(), manifest)
+    assert exc_info.value.invariant == "detection_refuses_empty_entries"

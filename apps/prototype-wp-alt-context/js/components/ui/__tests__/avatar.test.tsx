@@ -222,4 +222,29 @@ describe('Avatar four-state contract', () => {
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
   });
+
+  it('uses an external state override instead of the derived load status', () => {
+    const { container } = render(
+      <Avatar src="https://example.com/thumb.jpg?status=loading" alt="Owned" state={AVATAR_STATES.real} />,
+    );
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
+    expect(container.querySelector('.acx-avatar__skeleton')).toBeNull();
+  });
+
+  it('forwards onLoad and onError from onLoadingStatusChange', () => {
+    const onLoad = vi.fn();
+    const onError = vi.fn();
+    const { rerender } = render(
+      <Avatar src="https://example.com/thumb.jpg?status=loaded" alt="Loaded" onLoad={onLoad} onError={onError} />,
+    );
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+
+    rerender(
+      <Avatar src="https://example.com/thumb.jpg?status=error" alt="Broken" onLoad={onLoad} onError={onError} />,
+    );
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
 });

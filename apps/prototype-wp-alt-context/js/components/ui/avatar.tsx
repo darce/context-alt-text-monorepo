@@ -51,6 +51,10 @@ export interface AvatarProps {
   missingText?: string;
   /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
   hideMissingLabel?: boolean;
+  /** Externally-owned state override. When omitted the component derives its own. */
+  state?: AvatarState | 'fallback-crop' | 'uncropped' | 'missing';
+  onLoad?: () => void;
+  onError?: () => void;
 }
 
 function hasAvatarSrc(src: string | undefined): src is string {
@@ -93,6 +97,9 @@ export const Avatar = ({
   missingLabel = __('No image', 'alt-context'),
   missingText = __('No image', 'alt-context'),
   hideMissingLabel = false,
+  state: stateOverride,
+  onLoad,
+  onError,
 }: AvatarProps): React.JSX.Element => {
   const displaySize = sizePx ?? sizeMap[size];
   const iconSize = Math.max(12, Math.round(displaySize * 0.35));
@@ -102,7 +109,8 @@ export const Avatar = ({
     setPreviousSrc(src);
     setLoadStatus('idle');
   }
-  const state = resolveAvatarRenderState(src, previousSrc, loadStatus);
+  const derivedState = resolveAvatarRenderState(src, previousSrc, loadStatus);
+  const state = stateOverride ?? derivedState;
   const baseClass = 'acx-avatar';
   const classes = [
     baseClass,
@@ -136,7 +144,14 @@ export const Avatar = ({
         className={`${baseClass}__image`}
         src={src}
         alt={alt}
-        onLoadingStatusChange={setLoadStatus}
+        onLoadingStatusChange={(status) => {
+          setLoadStatus(status);
+          if (status === 'loaded') {
+            onLoad?.();
+          } else if (status === 'error') {
+            onError?.();
+          }
+        }}
       />
       {state === AVATAR_STATES.loading ? <span className={`${baseClass}__skeleton`} aria-hidden="true" /> : null}
       {state === AVATAR_STATES.error ? (

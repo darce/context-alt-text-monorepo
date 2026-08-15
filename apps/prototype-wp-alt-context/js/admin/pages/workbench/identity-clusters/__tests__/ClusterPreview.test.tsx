@@ -48,13 +48,17 @@ describe('ClusterPreview', () => {
     expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
   });
 
-  it('renders an uncropped source when media_url is missing but a plain thumb_url remains [REV1-02]', () => {
-    render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
+  it('renders Avatar data-missing when media_url is missing even if a plain thumb_url remains [REV1-02]', () => {
+    const { container } = render(
+      <ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />,
+    );
 
-    const image = screen.getByAltText('Detected identity thumbnail');
-    expect(image).toHaveAttribute('src', 'https://example.test/thumb.jpg');
-    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
-    expect(screen.queryByLabelText('Representative image unavailable')).not.toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveClass('acx-avatar--hide-missing-label');
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByAltText('Detected identity thumbnail')).not.toBeInTheDocument();
+    expect(container.querySelector('.acx-durable-face-thumb__uncropped')).toBeNull();
   });
 
   it('does not render a pin control (UXA-07)', () => {

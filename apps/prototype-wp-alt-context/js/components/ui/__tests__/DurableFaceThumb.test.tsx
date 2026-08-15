@@ -19,8 +19,28 @@ vi.mock('@radix-ui/react-avatar', async () => {
         children as React.ReactNode,
       );
     }),
-    Image: ReactMod.forwardRef(function MockImage(props: Record<string, unknown>, ref: unknown) {
-      return ReactMod.createElement('img', { ...props, ref } as React.ImgHTMLAttributes<HTMLImageElement>);
+    Image: ReactMod.forwardRef(function MockImage(
+      { onLoadingStatusChange, ...props }: Record<string, unknown>,
+      ref: unknown,
+    ) {
+      return ReactMod.createElement('img', {
+        ...(props as React.ImgHTMLAttributes<HTMLImageElement>),
+        ref,
+        onLoad: (event: React.SyntheticEvent<HTMLImageElement>) => {
+          if (typeof onLoadingStatusChange === 'function') {
+            onLoadingStatusChange('loaded');
+          }
+          const onLoad = props.onLoad as React.ReactEventHandler<HTMLImageElement> | undefined;
+          onLoad?.(event);
+        },
+        onError: (event: React.SyntheticEvent<HTMLImageElement>) => {
+          if (typeof onLoadingStatusChange === 'function') {
+            onLoadingStatusChange('error');
+          }
+          const onError = props.onError as React.ReactEventHandler<HTMLImageElement> | undefined;
+          onError?.(event);
+        },
+      } as React.ImgHTMLAttributes<HTMLImageElement>);
     }),
     Fallback: ReactMod.forwardRef(function MockFallback() {
       return null;

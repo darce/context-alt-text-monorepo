@@ -22,9 +22,7 @@ const collectScssFiles = (directory: string): string[] => {
   });
 };
 
-const extractConditionalAtRuleConditions = (
-  contents: string,
-): Array<{ kind: 'media' | 'container'; condition: string }> => {
+const extractConditionalAtRuleConditions = (contents: string): { kind: 'media' | 'container'; condition: string }[] => {
   const matches = stripScssComments(contents).matchAll(/@(media|container)\s+([^{]+)\{/g);
 
   return [...matches].map((match) => ({
@@ -91,5 +89,14 @@ describe('admin style query conditions', () => {
     const baseDeclarations = topLevelDeclarations(extractRuleBody(source, '.acx-avatar'));
 
     expect(baseDeclarations).not.toMatch(/container-type\s*:\s*size\b/);
+  });
+
+  // E21-20-REV8-01 / TEST-15: hide lives on Avatar's own modifier, not a
+  // consumer descendant. Mutation: delete the hide rule -> RED.
+  it('hides the missing label via Avatar --hide-missing-label, not a consumer descendant', () => {
+    const source = stripScssComments(readFileSync(avatarScssPath, 'utf8'));
+
+    expect(source).toMatch(/&--hide-missing-label\s+&__missing-label\s*\{[^}]*display\s*:\s*none/);
+    expect(source).not.toMatch(/thumb--unavailable/);
   });
 });

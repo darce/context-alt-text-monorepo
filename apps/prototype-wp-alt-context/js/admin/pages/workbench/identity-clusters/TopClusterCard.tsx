@@ -107,10 +107,8 @@ export const TopClusterCard = ({
   const gapPx = 2;
   const maxThumbs = 4;
   const faceCount = cluster.identity_count;
-  const trimmedSuggested =
-    typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
-  const suggestedLabel =
-    trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
+  const trimmedSuggested = typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
+  const suggestedLabel = trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
   const title = suggestedLabel
     ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
     : __('Name this person', 'alt-context');
@@ -123,6 +121,7 @@ export const TopClusterCard = ({
   const columnCount = reps.length <= 1 ? 1 : 2;
   const rowCount = reps.length <= 2 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
+  const hideMissingLabel = columnCount > 1;
   const gridHeight = cellSize * rowCount + gapPx * (rowCount - 1);
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
@@ -177,6 +176,7 @@ export const TopClusterCard = ({
                       shape="square"
                       alt={faceAltText}
                       missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : cropData ? (
@@ -195,6 +195,7 @@ export const TopClusterCard = ({
                       shape="square"
                       alt={faceAltText}
                       missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   ) : (
@@ -202,6 +203,7 @@ export const TopClusterCard = ({
                       sizePx={cellSize}
                       shape="square"
                       missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
                       className="acx-top-cluster-card__thumb-image"
                     />
                   )}

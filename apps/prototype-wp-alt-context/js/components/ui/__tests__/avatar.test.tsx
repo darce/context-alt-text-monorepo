@@ -106,13 +106,30 @@ describe('Avatar four-state contract', () => {
     expect(container.querySelector('.lucide-image-off')).not.toBeNull();
   });
 
-  it('data-missing: missingLabel overrides the accessible name without changing visible text', () => {
-    render(<Avatar missingLabel="Representative image unavailable" />);
+  // E21-20-REV8-02 / TEST-15: the visible span must render the missingLabel prop,
+  // not the default literal. Mutation: revert the span to __('No image') -> RED.
+  it('data-missing: custom missingLabel appears in the visible span, not only aria-label', () => {
+    const { container } = render(<Avatar missingLabel="Representative image unavailable" />);
 
     const named = screen.getByRole('img', { name: 'Representative image unavailable' });
     expect(named).toHaveAccessibleName('Representative image unavailable');
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const visible = container.querySelector('.acx-avatar__missing-label');
+    expect(visible).toHaveTextContent('Representative image unavailable');
+    expect(visible).not.toHaveTextContent(/^No image$/);
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
+  });
+
+  it('data-missing: hideMissingLabel applies the Avatar hide modifier class', () => {
+    const { container } = render(
+      <Avatar hideMissingLabel missingLabel="Representative image unavailable" />,
+    );
+
+    const root = container.querySelector('[data-avatar-state="data-missing"]');
+    expect(root).toHaveClass('acx-avatar--hide-missing-label');
+    expect(container.querySelector('.acx-avatar__missing-label')).toHaveTextContent(
+      'Representative image unavailable',
+    );
   });
 
   it('data-missing: empty src is the explicit no-src branch, not error', () => {

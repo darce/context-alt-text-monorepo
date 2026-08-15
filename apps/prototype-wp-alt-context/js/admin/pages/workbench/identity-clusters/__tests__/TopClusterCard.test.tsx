@@ -189,6 +189,51 @@ describe('TopClusterCard', () => {
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
+  // E21-20-REV8-01 / TEST-15: two-or-more reps use cellSize 39 and must hide
+  // the visible missing label; the single-rep 80px path must keep it.
+  // Mutation: drop hideMissingLabel from the 39px Avatars -> RED.
+  it('hides the missing-state visible label at cellSize 39 and keeps it at cellSize 80', () => {
+    const twoMissingReps = [
+      buildRepresentative({ id: 'rep-1' }),
+      buildRepresentative({ id: 'rep-2' }),
+    ];
+    const { container, unmount } = render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: twoMissingReps.length,
+          representatives: twoMissingReps,
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const smallCells = container.querySelectorAll('.acx-top-cluster-card__thumb-image');
+    expect(smallCells).toHaveLength(2);
+    smallCells.forEach((cell) => {
+      expect(cell).toHaveStyle({ width: '39px', height: '39px' });
+      expect(cell).toHaveClass('acx-avatar--hide-missing-label');
+      expect(cell.querySelector('.acx-avatar__missing-label')).toHaveTextContent(MISSING_LABEL);
+    });
+    unmount();
+
+    const { container: singleContainer } = render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 1,
+          representatives: [buildRepresentative({ id: 'rep-1' })],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const largeCell = singleContainer.querySelector('.acx-top-cluster-card__thumb-image');
+    expect(largeCell).toHaveStyle({ width: '80px', height: '80px' });
+    expect(largeCell).not.toHaveClass('acx-avatar--hide-missing-label');
+    expect(singleContainer.querySelector('.acx-avatar__missing-label')).toHaveTextContent(MISSING_LABEL);
+  });
+
   // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share
   // this accessible name via Avatar missingLabel. Pre-fix TopClusterCard used
   // Avatar's 'No image' default and ClusterPreview used a custom span, so this

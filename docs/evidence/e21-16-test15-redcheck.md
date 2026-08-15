@@ -34,3 +34,10 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 - Verdict: FAILED
 - Failing assertion: `await waitFor(() => expect(result.current.atRestTruncated).toBe(true));`
 - After restore: PASSED
+
+## ORCH-10 — hint counts the rendered rows
+- Mutation applied: `displayedOptions.length` -> `49`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx -t "pins the at-rest hint first number to the rendered overlay row count"`
+- Verdict: FAILED
+- Failing assertion: `expect(screen.getByText(\`Showing ${renderedOptionRows.length} of 80 labels — type to search for more\`)).toBeInTheDocument();` — Unable to find an element with the text: Showing 5 of 80 labels — type to search for more.
+- After restore: PASSED

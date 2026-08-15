@@ -82,8 +82,6 @@ interface ClusterEditFormProps {
   atRestTotal?: number;
   /** Envelope truncated flag from the at-rest labelled-cluster page. */
   atRestTruncated?: boolean;
-  /** Filtered at-rest page size after excluding the editable cluster. */
-  atRestShown?: number;
   /** True while the loader is still in at-rest (debounced) mode. */
   isAtRestMode?: boolean;
 }
@@ -105,7 +103,6 @@ export const ClusterEditForm = ({
   onRejectSuggestion,
   atRestTotal = 0,
   atRestTruncated = false,
-  atRestShown = 0,
   isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
   void isLoading;
@@ -131,6 +128,7 @@ export const ClusterEditForm = ({
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
+  const atRestHintId = 'acx-identity-cluster-at-rest-hint';
 
   // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
   // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.
@@ -206,6 +204,9 @@ export const ClusterEditForm = ({
           placeholder={__('Enter a name…', 'alt-context')}
           disabled={isPending}
           aria-label={__('Cluster label', 'alt-context')}
+          aria-describedby={
+            [showAtRestTruncationHint ? atRestHintId : undefined].filter(Boolean).join(' ') || undefined
+          }
         />
 
         {displayedOptions.length > 0 && !isPending && (
@@ -279,11 +280,16 @@ export const ClusterEditForm = ({
           </div>
         )}
         {showAtRestTruncationHint && (
-          <p className="acx-identity-cluster__at-rest-hint">
+          <p
+            id={atRestHintId}
+            className="acx-identity-cluster__at-rest-hint"
+            role="status"
+            aria-live="polite"
+          >
             {sprintf(
               /* translators: 1: number of labels currently shown, 2: total labelled clusters */
               __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
-              atRestShown,
+              displayedOptions.length,
               atRestTotal,
             )}
           </p>

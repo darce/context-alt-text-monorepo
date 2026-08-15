@@ -23,6 +23,7 @@ from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
 from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, ManifestError, load_manifest
 from scripts.eval_harness.report import (
     ReportError,
+    _MODE_RESTRICTIVENESS,
     _annotation_mode_of,
     _entries_as_dicts,
     _mode_restrictiveness,
@@ -595,6 +596,20 @@ def test_annotation_mode_of_mapping_key_beats_attribute() -> None:
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), payload)
     assert exc_info.value.invariant == "detection_refuses_roster_only"
+
+
+def test_mode_restrictiveness_covers_every_annotation_mode() -> None:
+    """S2R4-17: table must be the AnnotationMode key set.
+
+    Import-time also raises RuntimeError on drift. The test names the
+    equality so a lying extra/missing key cannot hide behind a score-time
+    KeyError that both suites never hit.
+    """
+    assert set(_MODE_RESTRICTIVENESS) == set(AnnotationMode)
+    assert (
+        _MODE_RESTRICTIVENESS[AnnotationMode.ROSTER_ONLY]
+        > _MODE_RESTRICTIVENESS[AnnotationMode.EXHAUSTIVE]
+    )
 
 
 def test_restrictiveness_unknown_mode_is_typed_refusal() -> None:

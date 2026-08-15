@@ -94,6 +94,12 @@ _MODE_RESTRICTIVENESS = {
     AnnotationMode.EXHAUSTIVE: 0,
     AnnotationMode.ROSTER_ONLY: 1,
 }
+if frozenset(_MODE_RESTRICTIVENESS) != frozenset(AnnotationMode):
+    raise RuntimeError(
+        "_MODE_RESTRICTIVENESS keys drifted from AnnotationMode: "
+        f"table={sorted(member.value for member in _MODE_RESTRICTIVENESS)} "
+        f"enum={sorted(member.value for member in AnnotationMode)}"
+    )
 
 
 def _mode_restrictiveness(mode: AnnotationMode) -> int:

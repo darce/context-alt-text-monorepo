@@ -228,14 +228,15 @@ def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
 
 
 def test_face_count_below_labeled_rejected(tmp_path):  # retired entry check re-expressed
-    """The retired _face_count_covers_labeled check is gone.
+    """Original _face_count_covers_labeled scenario, re-expressed.
 
-    Re-expressed against the manifest-level coverage invariant: exhaustive
-    with face_count=3 and a single box fails boxes_cover_face_count.
+    face_count=0 with one labeled identity. In v3 that identity has a named
+    box, so the manifest-level _boxes_cover_face_count fires: 1 box > 0
+    face_count (roster_only upper bound). Not silently dropped.
     """
     data = _valid_manifest_dict()
-    data["annotation_mode"] = "exhaustive"
-    data["entries"][0]["face_count"] = 3
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 0
     data["entries"][0]["face_boxes"] = [
         {
             "x": 0.5,
@@ -247,14 +248,13 @@ def test_face_count_below_labeled_rejected(tmp_path):  # retired entry check re-
             "lineage": _test_lineage(decision="named"),
         }
     ]
-    data["entries"][1]["face_count"] = 0
-    data["entries"][1]["face_boxes"] = []
     with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
     err = exc_info.value
     assert err.invariant == "boxes_cover_face_count"
     assert err.entry_index == 0
     assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
 
 
 def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
@@ -650,12 +650,13 @@ def test_exhaustive_face_count_mismatch_fails_validation(tmp_path):
         }
     ]
     data["entries"][1]["face_count"] = 0
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
     err = exc_info.value
     assert err.invariant == "boxes_cover_face_count"
     assert err.entry_index == 0
-    assert "scene-001.jpg" in err.entry_path
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
 
 
 def test_roster_only_more_boxes_than_face_count_fails(tmp_path):
@@ -683,10 +684,13 @@ def test_roster_only_more_boxes_than_face_count_fails(tmp_path):
             "lineage": _test_lineage(decision="stranger"),
         },
     ]
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
-    assert exc_info.value.invariant == "boxes_cover_face_count"
-    assert exc_info.value.entry_index == 0
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
 
 
 def test_box_without_lineage_fails_validation(tmp_path):
@@ -695,12 +699,13 @@ def test_box_without_lineage_fails_validation(tmp_path):
     data["entries"][0]["face_boxes"] = [
         {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Alice Example", "source": "operator"}
     ]
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="label_lineage_required") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
     err = exc_info.value
     assert err.invariant == "label_lineage_required"
     assert err.entry_index == 0
-    assert "scene-001.jpg" in err.entry_path
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
 
 
 def test_exhaustive_box_missing_capture_session_id_fails(tmp_path):
@@ -720,20 +725,22 @@ def test_exhaustive_box_missing_capture_session_id_fails(tmp_path):
         }
     ]
     data["entries"][1]["face_count"] = 0
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="capture_session_id_required") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
     err = exc_info.value
     assert err.invariant == "capture_session_id_required"
     assert err.entry_index == 0
-    assert "scene-001.jpg" in err.entry_path
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
 
 
 def test_missing_annotation_mode_fails(tmp_path):
     data = _valid_manifest_dict()
     del data["annotation_mode"]
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="annotation_mode is required") as exc_info:
         load_manifest(_write_manifest(tmp_path, data))
     assert exc_info.value.invariant == "annotation_mode_required"
+    assert "exhaustive|roster_only" in str(exc_info.value)
 
 
 def test_exhaustive_matching_boxes_loads(tmp_path):
@@ -781,17 +788,108 @@ def test_seed_corpus_is_roster_only():
     assert manifest.manifest_version == 3
 
 
-def test_cli_gate_commands_do_not_reach_load_legacy_manifest():
-    """No cli.py gate command path imports or calls load_legacy_manifest."""
-    cli_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "scripts",
-        "eval_harness",
-        "cli.py",
+def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypatch):
+    """Behavioural: CLI score/score-face never call load_legacy_manifest.
+
+    A source-text grep would stay green on a rename or a moved call. The
+    sentinel is hit when the audit-arm loader is invoked directly.
+    """
+    import scripts.eval_harness.cli as cli_mod
+    import scripts.eval_harness.manifest as man_mod
+
+    hits: list[tuple] = []
+
+    def _sentinel(*args, **kwargs):
+        hits.append((args, kwargs))
+        raise RuntimeError("legacy-sentinel-hit")
+
+    monkeypatch.setattr(man_mod, "load_legacy_manifest", _sentinel)
+    if hasattr(cli_mod, "load_legacy_manifest"):
+        monkeypatch.setattr(cli_mod, "load_legacy_manifest", _sentinel)
+
+    img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
+    data = _valid_manifest_dict()
+    man_path = tmp_path / "golden.json"
+    man_path.write_text(json.dumps(data))
+    record_path = tmp_path / "run.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "base_url": "x",
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": data["entries"][0]["path"],
+                        "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                        "identities": ["Alice Example"],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 2,
+                        "path": data["entries"][1]["path"],
+                        "describe": {"alt_text_draft": "empty.", "visual_facts": {"objects": []}},
+                        "identities": [],
+                        "face_count": 0,
+                        "error": None,
+                    },
+                ],
+            }
+        )
     )
-    source = open(cli_path, encoding="utf-8").read()
-    assert "load_legacy_manifest" not in source
-    assert "from .manifest import" in source
-    assert "load_manifest" in source
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert hits == []
+
+    face_record_path = tmp_path / "face-run.json"
+    face_record_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "face_run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                    "leg": "candidate",
+                },
+                "items": [],
+            }
+        )
+    )
+    # roster_only score-face raises; the point is it loaded via load_manifest.
+    with pytest.raises(SystemExit):
+        cli_mod.main(
+            ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
+        )
+    assert hits == []
+
+    v2 = {
+        "manifest_version": 2,
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "a.jpg",
+                "sha256": img_hash,
+                "media_id": 1,
+                "face_count": 0,
+                "present_identities": [],
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+            }
+        ],
+    }
+    v2_path = tmp_path / "legacy.json"
+    v2_path.write_text(json.dumps(v2))
+    with pytest.raises(RuntimeError, match="legacy-sentinel-hit"):
+        man_mod.load_legacy_manifest(str(v2_path))
+    assert hits, "audit-arm path must reach load_legacy_manifest"

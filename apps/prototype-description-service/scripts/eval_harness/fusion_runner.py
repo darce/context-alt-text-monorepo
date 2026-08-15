@@ -662,7 +662,16 @@ def _match_key(fact_source: Any, fact_label: Any, fact_id: Any) -> str:
 
 
 def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
-    """Shapes expected by ``report.score_run_record`` / ``build_reports``."""
+    """Shapes expected by ``report.score_run_record`` / ``build_reports``.
+
+    Stamps the parent ``annotation_mode`` onto every entry so detection
+    refusal cannot be stripped by a caller that forgets the kwarg.
+    """
+    mode = (
+        manifest.annotation_mode.value
+        if hasattr(manifest.annotation_mode, "value")
+        else str(manifest.annotation_mode)
+    )
     return [
         {
             "path": e.path,
@@ -672,6 +681,7 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
             "must_right": list(e.must_right),
             "easy_wrong": list(e.easy_wrong),
             "policy": {"recognition_enabled": e.policy.recognition_enabled},
+            "annotation_mode": mode,
         }
         for e in manifest.entries
     ]
@@ -713,7 +723,10 @@ def main(argv: list[str] | None = None) -> int:
         record = run_fusion_eval(manifest, mode=mode, head_sha=head, limit=args.limit)
         mis = score_misattachments(record, manifest)
         json_report, md_report = build_reports(
-            record, entries, score_manifest_sha256=record["provenance"]["manifest_sha256"]
+            record,
+            entries,
+            score_manifest_sha256=record["provenance"]["manifest_sha256"],
+            annotation_mode=manifest.annotation_mode,
         )
         # Append mis-attachment summary to markdown (report.py unchanged).
         md_report = md_report.rstrip() + "\n\n## Mis-attachment (E20-FUSION)\n\n"

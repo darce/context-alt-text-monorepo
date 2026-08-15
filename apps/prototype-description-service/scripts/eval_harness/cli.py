@@ -484,6 +484,16 @@ def collect_refused_metrics(scored: Mapping[str, Any]) -> dict[str, str]:
     return refused
 
 
+def raise_if_aborted_run(record: Mapping[str, Any], *, command: str) -> None:
+    """A partial run is not a corpus (S2R5-12 / AUDIT-08). Exit 1, not 3."""
+    if record.get("aborted"):
+        print(
+            f"{command} gate failed: run record is aborted; a partial run is not a corpus",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def raise_if_unconsented_refusals(
     scored: Mapping[str, Any],
     raw_allow: list[str] | None,
@@ -631,6 +641,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         f"{id_bit} "
         f"{det_bit}"
     )
+    raise_if_aborted_run(record, command="score")
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
     failed = int(scored["counts"]["failed"])
@@ -911,6 +922,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
     )
+    raise_if_aborted_run(record, command="score-face")
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         sys.exit(

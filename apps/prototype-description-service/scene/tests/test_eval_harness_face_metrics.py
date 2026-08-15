@@ -1443,6 +1443,9 @@ def test_matched_faces_is_optional_last_field():
     assert row.matched_faces is None
 
 
+# VLM6-S7-02: this test was defined twice; the shadowed copy's extra
+# `assert result.recall is None` was dropped, not merged — recall is None only
+# when tp+fn == 0, which no row here produces (labeled_faces=2 throughout).
 @pytest.mark.parametrize(
     ("matched", "expect_ok", "fp", "fn"),
     [
@@ -1467,9 +1470,3 @@ def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
     assert result.false_negatives == fn
     assert result.false_positives >= 0
     assert result.false_negatives >= 0
-    if matched is None:
-        # VLM6-S7-02: carried over from a duplicate definition of this test that
-        # main shadowed (defined twice, so only the second was ever collected).
-        # Scoped to the count-only path on purpose — with matched_faces supplied
-        # recall IS computable, so the shadowed copy's unqualified form was wrong.
-        assert result.recall is None

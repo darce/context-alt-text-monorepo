@@ -144,10 +144,12 @@ uv run python -m scripts.eval_harness.cli run \
 - Provider, per-image price, estimated spend, and per-item `latency_s` land in
   the run-record provenance/items; each hosted item's
   `describe.provider_disclosure.left_service_boundary` is `true`.
-- Scoring caveat: the MVP corpus ships empty context packs/rubrics, so provider
-  comparison is scoped to context-independent caption metrics + latency + cost
-  (see the E20-11 decision memo). Insertion/named-entity claims need the
-  VLM-2C manifest population first.
+- Scoring caveat: `scene/tests/seed/golden.json` carries Must-Right /
+  Easy-Wrong rows on all 37 images (`must_right_defined_images: 37`). Hosted
+  comparison can therefore include insertion/named-entity claims against
+  those rubrics, plus latency + cost (see the E20-11 decision memo). A
+  corpus that still ships empty rubrics emits `RubricEmptyWarning` and
+  `must_right_defined_images: 0`; that is not the state of the golden.
 
 ## Artifacts and retention
 
@@ -168,11 +170,86 @@ JSON sections: `provenance` (fetch-time `manifest_sha256`, `score_manifest_sha25
 + `manifest_matches_fetch` flag, base_url, HEAD sha, started_at, and a `model`
 block naming the **adapter(s)/model_id(s)/model_version(s)** that produced the
 captions), `counts`, `caption` (insertion_rate, Must-Right failed + rubric-defined
-images, policy violations, mean gated score), `faces.detection` (count-based P/R
-against ground-truth `face_count`), `faces.identification` (micro + macro P/R,
-per-identity table, wrong_names listed individually, true_rejections, excluded
-policy-disabled images), `per_image`, `failures`. Deterministic sections are
+images, policy violations, mean gated score), `faces.detection`,
+`faces.identification`, `per_image`, `failures`. Deterministic sections are
 bit-identical across re-scores of the same run record.
+
+### Face metric shapes (scored vs REFUSED)
+
+A consumer **MUST** check `refused` before reading any number on
+`faces.detection` or `faces.identification`. A refused block sets
+`precision` / `recall` / `wrong_names` (and the other counters) to JSON
+`null`. `len(wrong_names)` on that value is a TypeError, not "zero errors".
+
+**Scored `faces.detection`** (only when `annotation_mode=exhaustive`):
+
+```json
+{"precision": 0.5, "recall": 1.0, "tp": 1, "fp": 1, "fn": 0}
+```
+
+**REFUSED `faces.detection`** (`roster_only` / missing / unrecognised mode):
+
+```json
+{
+  "refused": true,
+  "invariant": "detection_refuses_roster_only",
+  "precision": null,
+  "recall": null,
+  "tp": null,
+  "fp": null,
+  "fn": null
+}
+```
+
+**Scored `faces.identification`** (only when every identity claim has
+per-face box lineage):
+
+```json
+{
+  "precision": 1.0,
+  "recall": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "per_identity": {
+    "Alice Example": {"precision": 1.0, "recall": 1.0, "tp": 1, "fp": 0, "fn": 0}
+  },
+  "true_rejections": 0,
+  "excluded_images": 0,
+  "wrong_names": [],
+  "ignored_wrong_names": []
+}
+```
+
+`wrong_names` is a list of `[path, name]` pairs (or `[]`). Only then is
+`len(wrong_names)` safe.
+
+**REFUSED `faces.identification`** (unboxed identity claims):
+
+```json
+{
+  "refused": true,
+  "invariant": "identification_refuses_unboxed_identity_claims",
+  "precision": null,
+  "recall": null,
+  "macro_precision": null,
+  "macro_recall": null,
+  "per_identity": {},
+  "true_rejections": null,
+  "excluded_images": null,
+  "wrong_names": null,
+  "ignored_wrong_names": null
+}
+```
+
+The markdown report renders the same refusal as
+`REFUSED (<invariant>): <explanation>` — detection:
+"detection P/R is not computed unless annotation_mode is exhaustive";
+identification: "identification P/R is not computed from identity claims
+that carry no per-face box lineage". The JSON block carries `invariant`;
+the explanation string is markdown-only.
+
+The shipped golden produces the refused shapes above on every `score`/`run`
+(see Exit contract).
 
 **Baseline caveat:** the committed `docs/tasks/vlm/VLM-2A-baseline-*` artifacts were
 produced by the model-free `seeded` stub adapter (`adapter=seeded`,

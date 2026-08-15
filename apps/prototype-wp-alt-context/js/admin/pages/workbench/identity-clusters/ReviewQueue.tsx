@@ -11,6 +11,7 @@
 
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
@@ -25,6 +26,7 @@ import {
 } from '../../../hooks/workbenchQueueUrl';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
+import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
 import {
@@ -52,6 +54,7 @@ import {
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
+import { gatedClusterCopy } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
@@ -277,6 +280,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [selectionOpen, setSelectionOpen] = React.useState(false);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
+    // REV4-02: RQ v5 isLoading stays false while an already-errored query
+    // refetches; track retry locally and inspect settled isError.
+    const [retrying, setRetrying] = React.useState(false);
+    const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
@@ -577,14 +584,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
               : errorCopy,
           );
-        } else {
+        } else if (filteredEmptyWithWork) {
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
+          setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
+        } else if (findings.zeroEvidenceClusterCount > 0) {
+          // REV2-09: the queue is genuinely empty — keep the drain confirmation
+          // and name the gated clusters that still need a resync.
           setLiveMessage(
-            __(
-              filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
-              'alt-context',
-            ),
+            `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
+              findings.zeroEvidenceClusterCount,
+              findings.topUnlabeledTruncated,
+            )}`,
           );
+        } else {
+          setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
@@ -598,6 +611,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       data.isTopUnlabeledError,
       emptyStateAnchorRef,
       filteredEmptyWithWork,
+      findings.zeroEvidenceClusterCount,
+      findings.topUnlabeledTruncated,
       focusPrimaryInCard,
       length,
       safeIndex,
@@ -744,19 +759,65 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       });
     };
 
+    const retrySuggestionQueries = (): void => {
+      if (retrying) {
+        return;
+      }
+      setRetrying(true);
+      setRetryFailed(false);
+      // REV2-08: name suggestions feed counts.names and the review queue.
+      void Promise.all([
+        data.refetchAssignment(),
+        data.refetchMerge(),
+        data.refetchName(),
+        data.refetchTopUnlabeled(),
+      ])
+        .catch(() => undefined)
+        .then((results) => {
+          setRetrying(false);
+          setRetryFailed(settledRefetchFailed(results));
+        });
+    };
+
     // §7 render-branch flags, hoisted above the early returns so the card-primary
     // presence signal is computed in every state (BR-75).
     const showUnavailableWarning =
       length === 0 && data.assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
     const showEndpointErrorWarning =
       length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
+    // REV6-01: retryFailed is local. A sibling findings-panel retry can
+    // recover the same four queries without touching this latch. Reset
+    // when the query-error boolean is false. Key on that boolean, not
+    // isErrorBranch — isErrorBranch includes retryFailed and would clear
+    // a genuine failure the instant it is set. Re-run when the unavailable
+    // / endpoint-error mask drops so a latched retryFailed cannot leak
+    // onto a recovered queue (suggestionQueriesErrored stays false on
+    // the UNAVAILABLE path).
+    const suggestionQueriesErrored = data.isError && findings.isError;
+    React.useEffect(() => {
+      if (!suggestionQueriesErrored) {
+        setRetryFailed(false);
+      }
+    }, [suggestionQueriesErrored, showUnavailableWarning, showEndpointErrorWarning]);
     // Criterion 4: suppress head-card body once the open cluster is known retired.
     const suppressRetiredHead =
       headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
 
-    const isInitialFailureBranch = data.hasInitialFailure && data.failureCount <= 2;
+    // Hide the queue only while a source is still failing-to-load without a
+    // settled assignment+merge error. RQ v5 failureCount stays 1 when
+    // retry:false, so a `failureCount <= 2` gate made the error Retry dead
+    // (REV4-02). Once data.isError is set, show the error branch. Stay on
+    // that surface while a local retry is in-flight — refetch can clear
+    // query isError before it settles. REV5-02: unavailable / endpoint-error
+    // EmptyStateWarning stays mounted across retry so the focused Retry is
+    // not swapped for the generic error-branch control.
+    const isErrorBranch =
+      !showUnavailableWarning &&
+      !showEndpointErrorWarning &&
+      (retrying || retryFailed || (data.isError && findings.isError));
+    const isInitialFailureBranch =
+      data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
-    const isErrorBranch = data.isError && findings.isError;
 
     // The current queue item resolves to a real card (its suggestion/cluster is in
     // the by-id map) — guards the rare projection race where an item is queued but
@@ -833,6 +894,34 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       [onCardPrimaryPresenceChange],
     );
 
+    if (isErrorBranch) {
+      return (
+        <div className="acx-review-queue acx-review-queue--error">
+          <div role="status" aria-live="polite">
+            <p id="acx-review-queue-error" className="acx-review-queue__status">
+              {retrying ? null : (
+                <>
+                  <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                  {retryFailed
+                    ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
+                    : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+                </>
+              )}
+            </p>
+          </div>
+          <QueryRetryButton
+            describedBy="acx-review-queue-error"
+            retrying={retrying}
+            retryingLabel={__(QUERY_RETRY_COPY.RETRYING_SUGGESTIONS, 'alt-context')}
+            statusId="acx-review-queue-retrying"
+            statusClassName="acx-review-queue__status"
+            onClick={retrySuggestionQueries}
+            className="button"
+          />
+        </div>
+      );
+    }
+
     if (isInitialFailureBranch) {
       return null;
     }
@@ -841,21 +930,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return (
         <div className="acx-review-queue acx-review-queue--loading" role="status" aria-live="polite">
           <p>{__('Loading review queue…', 'alt-context')}</p>
-        </div>
-      );
-    }
-
-    if (isErrorBranch) {
-      return (
-        <div className="acx-review-queue acx-review-queue--error">
-          <p>{__('Failed to load suggestions.', 'alt-context')}</p>
-          <button
-            type="button"
-            className="button"
-            onClick={() => void data.refetchAssignment().then(() => data.refetchMerge())}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
         </div>
       );
     }
@@ -1160,7 +1234,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'Check the recognition service connection, then retry loading suggestions.',
                 'alt-context',
               )}
-              onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
+              onRetry={retrySuggestionQueries}
+              retrying={retrying}
             />
           ) : showEndpointErrorWarning ? (
             <EmptyStateWarning
@@ -1169,7 +1244,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 'The recognition service responded with an error. Retry now or check the service logs.',
                 'alt-context',
               )}
-              onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
+              onRetry={retrySuggestionQueries}
+              retrying={retrying}
             />
           ) : length === 0 || !currentItem ? (
             // [rg-003] the outage and the Clear-filters escape hatch coexist: a
@@ -1209,9 +1285,30 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   </button>
                 </div>
               ) : data.isTopUnlabeledError ? null : (
-                <p className="acx-review-queue__empty">
-                  {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-                </p>
+                <>
+                  <p className="acx-review-queue__empty">
+                    {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                  </p>
+                  {findings.zeroEvidenceClusterCount > 0 ? (
+                    <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
+                      <p id="acx-review-queue-repair-copy">
+                        <AlertTriangle aria-hidden="true" size={16} />
+                        {gatedClusterCopy(
+                          findings.zeroEvidenceClusterCount,
+                          findings.topUnlabeledTruncated,
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => void data.refetchTopUnlabeled()}
+                        aria-describedby="acx-review-queue-repair-copy"
+                      >
+                        {__('Resync', 'alt-context')}
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </>
           ) : suppressRetiredHead ? (

@@ -11,10 +11,13 @@ import {
   buildReviewQueue,
   bulkSelectableIdsInFilters,
   clampQueueIndex,
+  CLUSTER_EVIDENCE,
+  clusterEvidence,
   filterReviewQueue,
   filterReviewQueueByBand,
   filterReviewQueueComposite,
   intersectSelectionWithFilters,
+  isZeroEvidenceCluster,
   matchesSimilarityBand,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
@@ -63,6 +66,13 @@ const makeName = (overrides: Partial<PendingNameSuggestion> = {}): PendingNameSu
   ...overrides,
 });
 
+const EVIDENCE_REPRESENTATIVE = {
+  id: 'rep-1',
+  media_id: 1,
+  is_pinned: false,
+  thumb_url: 'http://example.test/face.jpg',
+};
+
 const makeCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabeledCluster => ({
   id: 'top-1',
   tenant_id: 'test-tenant-id',
@@ -71,7 +81,7 @@ const makeCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabeled
   is_auto_label: false,
   identity_count: 3,
   user_confirmed: false,
-  representatives: [],
+  representatives: [EVIDENCE_REPRESENTATIVE],
   ...overrides,
 });
 
@@ -630,6 +640,88 @@ describe('PR-54 index semantics under removal', () => {
     expect(clampQueueIndex(5, 0)).toBe(0);
     expect(clampQueueIndex(-3, 0)).toBe(0);
     expect(clampQueueIndex(-1, 4)).toBe(0);
+  });
+});
+
+describe('buildReviewQueue — zero-evidence cluster gate (S2)', () => {
+  it('isZeroEvidenceCluster is true when identity_count === 0 even with representatives [TEST-15]', () => {
+    const cluster = makeCluster({
+      id: 'zero-count',
+      identity_count: 0,
+      representatives: [EVIDENCE_REPRESENTATIVE],
+    });
+    expect(isZeroEvidenceCluster(cluster)).toBe(true);
+    expect(clusterEvidence(cluster)).toBe(CLUSTER_EVIDENCE.ZERO);
+  });
+
+  it('isZeroEvidenceCluster is true when representatives is empty even with identity_count > 0 [TEST-15]', () => {
+    const cluster = makeCluster({
+      id: 'empty-reps',
+      identity_count: 4,
+      representatives: [],
+    });
+    expect(isZeroEvidenceCluster(cluster)).toBe(true);
+    expect(clusterEvidence(cluster)).toBe(CLUSTER_EVIDENCE.ZERO);
+  });
+
+  it('isZeroEvidenceCluster is true when representatives is absent [TEST-15]', () => {
+    const cluster = makeCluster({ id: 'absent-reps', identity_count: 2 });
+    // Simulate a wire payload that omitted representatives.
+    const absent = { ...cluster, representatives: undefined };
+    expect(isZeroEvidenceCluster(absent)).toBe(true);
+    expect(clusterEvidence(absent)).toBe(CLUSTER_EVIDENCE.ZERO);
+  });
+
+  it('excludes identity_count=0 clusters from the queue [TEST-15: kills ungated zero-count cards]', () => {
+    const queue = buildReviewQueue({
+      reviewItems: [],
+      mergeSuggestions: [],
+      nameSuggestions: [],
+      sortedClusters: [
+        makeCluster({
+          id: 'zero-count',
+          identity_count: 0,
+          representatives: [EVIDENCE_REPRESENTATIVE],
+        }),
+        makeCluster({ id: 'reviewable', identity_count: 5 }),
+      ],
+    });
+
+    expect(queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
+  });
+
+  it('excludes empty-representatives clusters from the queue [TEST-15: kills ungated empty-rep cards]', () => {
+    const queue = buildReviewQueue({
+      reviewItems: [],
+      mergeSuggestions: [],
+      nameSuggestions: [],
+      sortedClusters: [
+        makeCluster({ id: 'empty-reps', identity_count: 7, representatives: [] }),
+        makeCluster({ id: 'reviewable', identity_count: 2 }),
+      ],
+    });
+
+    expect(queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
+  });
+
+  it('keeps evidence clusters and assignment/merge/name items when mixed with zero-evidence', () => {
+    const queue = buildReviewQueue({
+      reviewItems: makeReviewItems(makeSuggestion({ id: 'a1', cluster_label: 'Ada' })),
+      mergeSuggestions: [makeMerge({ id: 'm1' })],
+      nameSuggestions: [makeName({ id: 'n1' })],
+      sortedClusters: [
+        makeCluster({ id: 'empty-reps', representatives: [] }),
+        makeCluster({ id: 'zero-count', identity_count: 0 }),
+        makeCluster({ id: 'reviewable', identity_count: 6 }),
+      ],
+    });
+
+    expect(queue.map((item) => ('suggestionId' in item ? item.suggestionId : item.clusterId))).toEqual([
+      'a1',
+      'm1',
+      'n1',
+      'reviewable',
+    ]);
   });
 });
 

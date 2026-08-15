@@ -28,6 +28,8 @@ const buildRepresentative = (overrides: Partial<DetectedIdentity> = {}): Detecte
   ...overrides,
 });
 
+const MISSING_REPRESENTATIVE_LABEL = 'Representative image unavailable';
+
 describe('ClusterPreview', () => {
   it('renders an explicit unavailable-image fallback when no usable image URL exists', () => {
     render(
@@ -37,8 +39,13 @@ describe('ClusterPreview', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAccessibleName(MISSING_REPRESENTATIVE_LABEL);
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
     expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByText(MISSING_REPRESENTATIVE_LABEL)).not.toBeInTheDocument();
+    expect(missing).toHaveClass('acx-avatar--hide-missing-label');
+    expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
   });
 
   it('renders an uncropped source when media_url is missing but a plain thumb_url remains [REV1-02]', () => {

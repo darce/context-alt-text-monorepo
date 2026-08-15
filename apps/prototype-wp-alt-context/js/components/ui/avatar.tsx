@@ -3,16 +3,28 @@
  *
  * Use for pre-cropped thumbnail URLs (e.g. representative_thumb_path).
  * For face bounding-box crops from full images, use FaceThumbnail instead.
+ *
+ * Four-state contract (B.4): loading / real / data-missing / error.
+ * Missing is expected and quiet; error is a real fault. Do not collapse them.
  */
 
 import * as React from 'react';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
+import { AlertTriangle, ImageOff } from 'lucide-react';
 import { __ } from '@wordpress/i18n';
 
-import { AVATAR_STATE, type AvatarState } from './faceThumbDisplay';
-
 export type AvatarSize = 'sm' | 'md' | 'lg';
-export { AVATAR_STATE, type AvatarState };
+
+export const AVATAR_STATES = {
+  loading: 'loading',
+  real: 'real',
+  dataMissing: 'data-missing',
+  error: 'error',
+} as const;
+
+export type AvatarState = (typeof AVATAR_STATES)[keyof typeof AVATAR_STATES];
+
+export type ImageLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 const sizeMap: Record<AvatarSize, number> = {
   sm: 32,
@@ -21,8 +33,8 @@ const sizeMap: Record<AvatarSize, number> = {
 };
 
 export interface AvatarProps {
-  /** Pre-cropped thumbnail URL. Null/empty is an explicit missing state. */
-  src?: string | null;
+  /** Pre-cropped thumbnail URL. Omit or pass empty for the data-missing branch. */
+  src?: string;
   /** Accessible alt text */
   alt?: string;
   /** Size variant */
@@ -33,10 +45,42 @@ export interface AvatarProps {
   shape?: 'circle' | 'square';
   /** Additional CSS class on the root element */
   className?: string;
-  /** Override the derived data-avatar-state (durable-thumb fallback). */
-  state?: AvatarState;
-  onLoad?: () => void;
-  onError?: () => void;
+  /** Accessible name for the data-missing branch (`aria-label`). Not visible copy. */
+  missingLabel?: string;
+  /** Visible missing-state micro-copy. Defaults to the short "No image" label. */
+  missingText?: string;
+  /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
+  hideMissingLabel?: boolean;
+}
+
+function hasAvatarSrc(src: string | undefined): src is string {
+  return typeof src === 'string' && src.trim() !== '';
+}
+
+function resolveAvatarState(src: string | undefined, loadStatus: ImageLoadingStatus): AvatarState {
+  if (!hasAvatarSrc(src)) {
+    return AVATAR_STATES.dataMissing;
+  }
+  if (loadStatus === 'loaded') {
+    return AVATAR_STATES.real;
+  }
+  if (loadStatus === 'error') {
+    return AVATAR_STATES.error;
+  }
+  return AVATAR_STATES.loading;
+}
+
+/**
+ * Swap-frame resolver: a new src must not inherit the previous identity's
+ * loaded/error status for even one render.
+ */
+export function resolveAvatarRenderState(
+  src: string | undefined,
+  previousSrc: string | undefined,
+  loadStatus: ImageLoadingStatus,
+): AvatarState {
+  const effectiveStatus = src !== previousSrc ? 'idle' : loadStatus;
+  return resolveAvatarState(src, effectiveStatus);
 }
 
 export const Avatar = ({
@@ -46,94 +90,62 @@ export const Avatar = ({
   sizePx,
   shape = 'circle',
   className = '',
-  state: stateOverride,
-  onLoad,
-  onError,
+  missingLabel = __('No image', 'alt-context'),
+  missingText = __('No image', 'alt-context'),
+  hideMissingLabel = false,
 }: AvatarProps): React.JSX.Element => {
   const displaySize = sizePx ?? sizeMap[size];
-  const trimmedSrc = typeof src === 'string' && src.trim() !== '' ? src : null;
-  const [loadState, setLoadState] = React.useState<AvatarState>(
-    trimmedSrc ? AVATAR_STATE.loading : AVATAR_STATE.missing,
-  );
-
-  React.useEffect(() => {
-    setLoadState(trimmedSrc ? AVATAR_STATE.loading : AVATAR_STATE.missing);
-  }, [trimmedSrc]);
-
-  const derivedState: AvatarState = !trimmedSrc ? AVATAR_STATE.missing : loadState;
-  const avatarState = stateOverride ?? derivedState;
+  const iconSize = Math.max(12, Math.round(displaySize * 0.35));
+  const [loadStatus, setLoadStatus] = React.useState<ImageLoadingStatus>('idle');
+  const [previousSrc, setPreviousSrc] = React.useState(src);
+  if (src !== previousSrc) {
+    setPreviousSrc(src);
+    setLoadStatus('idle');
+  }
+  const state = resolveAvatarRenderState(src, previousSrc, loadStatus);
   const baseClass = 'acx-avatar';
-  const stateClass = avatarState !== AVATAR_STATE.real ? `${baseClass}--${avatarState}` : '';
   const classes = [
     baseClass,
     `${baseClass}--${size}`,
     shape === 'square' ? `${baseClass}--square` : '',
-    stateClass,
+    hideMissingLabel ? `${baseClass}--hide-missing-label` : '',
     className,
   ]
     .filter(Boolean)
     .join(' ');
+  const rootStyle = { width: displaySize, height: displaySize };
 
-  const handleLoadingStatusChange = React.useCallback(
-    (status: 'idle' | 'loading' | 'loaded' | 'error') => {
-      if (status === 'loaded') {
-        setLoadState(AVATAR_STATE.real);
-        onLoad?.();
-        return;
-      }
-      if (status === 'error') {
-        setLoadState(AVATAR_STATE.error);
-        onError?.();
-      }
-    },
-    [onError, onLoad],
-  );
-
-  const handleNativeLoad = React.useCallback(() => {
-    setLoadState(AVATAR_STATE.real);
-    onLoad?.();
-  }, [onLoad]);
-
-  const handleNativeError = React.useCallback(() => {
-    setLoadState(AVATAR_STATE.error);
-    onError?.();
-  }, [onError]);
-
-  if (!trimmedSrc || avatarState === AVATAR_STATE.missing) {
+  if (state === AVATAR_STATES.dataMissing) {
     return (
-      <AvatarPrimitive.Root
+      <span
         className={classes}
-        style={{ width: displaySize, height: displaySize }}
-        data-avatar-state={AVATAR_STATE.missing}
+        data-avatar-state={AVATAR_STATES.dataMissing}
+        role="img"
+        aria-label={missingLabel}
+        style={rootStyle}
       >
-        <AvatarPrimitive.Fallback className={`${baseClass}__fallback`} delayMs={0}>
-          <span className="screen-reader-text">{__('Representative image unavailable', 'alt-context')}</span>
-        </AvatarPrimitive.Fallback>
-      </AvatarPrimitive.Root>
+        <ImageOff className={`${baseClass}__missing-icon`} size={iconSize} aria-hidden="true" />
+        <span className={`${baseClass}__missing-label`}>{missingText}</span>
+      </span>
     );
   }
 
   return (
-    <AvatarPrimitive.Root
-      className={classes}
-      style={{ width: displaySize, height: displaySize }}
-      data-avatar-state={avatarState}
-    >
+    <AvatarPrimitive.Root className={classes} data-avatar-state={state} style={rootStyle}>
       <AvatarPrimitive.Image
         className={`${baseClass}__image`}
-        src={trimmedSrc}
+        src={src}
         alt={alt}
-        onLoadingStatusChange={handleLoadingStatusChange}
-        onLoad={handleNativeLoad}
-        onError={handleNativeError}
+        onLoadingStatusChange={setLoadStatus}
       />
-      <AvatarPrimitive.Fallback className={`${baseClass}__fallback`} delayMs={300}>
-        <span className="screen-reader-text">
-          {avatarState === AVATAR_STATE.error
-            ? __('Image failed to load', 'alt-context')
-            : __('Image unavailable', 'alt-context')}
+      {state === AVATAR_STATES.loading ? <span className={`${baseClass}__skeleton`} aria-hidden="true" /> : null}
+      {state === AVATAR_STATES.error ? (
+        <span className={`${baseClass}__error`}>
+          <AlertTriangle className={`${baseClass}__warning-icon`} size={iconSize} aria-hidden="true" />
+          <ImageOff className={`${baseClass}__broken-icon`} size={iconSize} aria-hidden="true" />
+          <span className="screen-reader-text">{__('Image failed to load', 'alt-context')}</span>
         </span>
-      </AvatarPrimitive.Fallback>
+      ) : null}
     </AvatarPrimitive.Root>
   );
 };

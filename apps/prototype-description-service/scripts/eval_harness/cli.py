@@ -57,7 +57,6 @@ from .report import (
     build_reports,
     occlusion_inputs_from_record,
     score_face_run_record,
-    score_run_record,
 )
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
@@ -510,13 +509,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    scored = score_run_record(
-        record,
-        entries,
-        ignore_list=ignore_list,
-        score_manifest_sha256=manifest_sha,
-        manifest_roster=roster,
-    )
+    # Gate the published object, not a second score_run_record call. S2R4-02's
+    # identification override lives only in build_reports; a rescore can
+    # disagree about the report's own honesty field (S2R5-13 / rg-015).
+    scored = json.loads(json_doc)
     print(md_path)
     det = scored["faces"]["detection"]
     if det.get("refused"):

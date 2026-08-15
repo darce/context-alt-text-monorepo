@@ -140,6 +140,7 @@ export const IdentityClusterItem = ({
     atRestTotal = 0,
     atRestTruncated = false,
     atRestShown = 0,
+    isAtRestMode = false,
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
     enabled: editState.isEditing,
@@ -368,6 +369,7 @@ export const IdentityClusterItem = ({
             atRestTotal={atRestTotal}
             atRestTruncated={atRestTruncated}
             atRestShown={atRestShown}
+            isAtRestMode={isAtRestMode}
           />
         )}
       </div>

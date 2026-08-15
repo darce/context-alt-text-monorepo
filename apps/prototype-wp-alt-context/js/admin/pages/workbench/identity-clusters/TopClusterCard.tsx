@@ -5,10 +5,51 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { Avatar } from '../../../../components/ui/avatar';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
+import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { isHumanLabeledTarget } from './suggestionProjection';
+
+const resolveRepresentativeThumbUrl = (
+  representative: TopUnlabeledCluster['representatives'][number],
+): string | null => {
+  const rawUrl = representative.thumb_url ?? null;
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    return null;
+  }
+  return rawUrl;
+};
+
+const resolveRepresentativeCrop = (
+  representative: TopUnlabeledCluster['representatives'][number],
+): { mediaUrl: string; bbox: BoundingBox } | null => {
+  const mediaUrl = representative.media_url;
+  const bbox = representative.bbox;
+  if (typeof mediaUrl !== 'string' || mediaUrl.trim() === '' || !bbox) {
+    return null;
+  }
+
+  const coerced: BoundingBox = {
+    x: Number(bbox.x),
+    y: Number(bbox.y),
+    width: Number(bbox.width),
+    height: Number(bbox.height),
+  };
+
+  if (!isCroppableBbox(coerced)) {
+    return null;
+  }
+
+  return {
+    mediaUrl,
+    bbox: coerced,
+  };
+};
 
 const getMostRepresentative = (
   representatives: TopUnlabeledCluster['representatives'],
@@ -66,10 +107,8 @@ export const TopClusterCard = ({
   const gapPx = 2;
   const maxThumbs = 4;
   const faceCount = cluster.identity_count;
-  const trimmedSuggested =
-    typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
-  const suggestedLabel =
-    trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
+  const trimmedSuggested = typeof cluster.suggested_label === 'string' ? cluster.suggested_label.trim() : '';
+  const suggestedLabel = trimmedSuggested !== '' && isHumanLabeledTarget(trimmedSuggested) ? trimmedSuggested : null;
   const title = suggestedLabel
     ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
     : __('Name this person', 'alt-context');
@@ -82,6 +121,7 @@ export const TopClusterCard = ({
   const columnCount = reps.length <= 1 ? 1 : 2;
   const rowCount = reps.length <= 2 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
+  const hideMissingLabel = columnCount > 1;
   const gridHeight = cellSize * rowCount + gapPx * (rowCount - 1);
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
@@ -92,6 +132,7 @@ export const TopClusterCard = ({
   };
   const isBusy = isDismissing || isConfirming;
   const faceAltText = __('Face to label', 'alt-context');
+  const missingRepresentativeLabel = REPRESENTATIVE_VOCABULARY.imageUnavailable;
   const groupLabelId = `acx-cluster-pos-${cluster.id}`;
 
   const handleConfirmSuggestedLabelClick = () => {
@@ -123,26 +164,60 @@ export const TopClusterCard = ({
         {reps.length > 0 ? (
           <div className={gridClassName} style={gridStyle}>
             {reps.map((rep) => {
+              const cropData = resolveRepresentativeCrop(rep);
+              const thumbUrl = resolveRepresentativeThumbUrl(rep);
+              const useDedicatedThumb = isDedicatedFaceThumbUrl(thumbUrl);
               return (
                 <div key={rep.id} className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--frame">
-                  <DurableFaceThumb
-                    source={{
-                      thumbUrl: rep.thumb_url,
-                      attachmentUrl: rep.attachment_url,
-                      mediaUrl: rep.media_url,
-                      bbox: rep.bbox,
-                    }}
-                    sizePx={cellSize}
-                    shape="square"
-                    alt={faceAltText}
-                    className="acx-top-cluster-card__thumb-image"
-                  />
+                  {useDedicatedThumb && thumbUrl ? (
+                    <Avatar
+                      src={thumbUrl}
+                      sizePx={cellSize}
+                      shape="square"
+                      alt={faceAltText}
+                      missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
+                      className="acx-top-cluster-card__thumb-image"
+                    />
+                  ) : cropData ? (
+                    <FaceThumbnail
+                      mediaUrl={cropData.mediaUrl}
+                      bbox={cropData.bbox}
+                      sizePx={cellSize}
+                      shape="square"
+                      alt={faceAltText}
+                      className="acx-top-cluster-card__thumb-image"
+                    />
+                  ) : thumbUrl ? (
+                    <Avatar
+                      src={thumbUrl}
+                      sizePx={cellSize}
+                      shape="square"
+                      alt={faceAltText}
+                      missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
+                      className="acx-top-cluster-card__thumb-image"
+                    />
+                  ) : (
+                    <Avatar
+                      sizePx={cellSize}
+                      shape="square"
+                      missingLabel={missingRepresentativeLabel}
+                      hideMissingLabel={hideMissingLabel}
+                      className="acx-top-cluster-card__thumb-image"
+                    />
+                  )}
                 </div>
               );
             })}
           </div>
         ) : (
-          <span className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--placeholder" />
+          <Avatar
+            sizePx={gridSizePx}
+            shape="square"
+            missingLabel={missingRepresentativeLabel}
+            className="acx-top-cluster-card__thumb"
+          />
         )}
       </div>
 

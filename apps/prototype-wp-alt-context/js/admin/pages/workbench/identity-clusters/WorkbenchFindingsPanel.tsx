@@ -9,16 +9,32 @@
 
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
+import { AlertTriangle, Circle, ImageOff } from 'lucide-react';
 
-import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { Avatar } from '../../../../components/ui/avatar';
 import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import {
+  CLUSTER_EVIDENCE,
   NEXT_ACTION_KIND,
   useWorkbenchFindings,
   type WorkbenchFindingPreview,
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
+import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
+import { gatedClusterCopy, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
+import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+
+/** Panel-level fallback chain (design B.2). First match wins. */
+export const FINDINGS_PANEL_STATE = {
+  LOADING: 'loading',
+  ERROR: 'error',
+  UNAVAILABLE: 'unavailable',
+  DEGRADED: 'degraded',
+  EMPTY: 'empty',
+  DATA: 'data',
+} as const;
 
 interface WorkbenchFindingsPanelProps {
   /** Scrolls/focuses the detailed findings queues below the panel. */
@@ -34,18 +50,22 @@ interface WorkbenchFindingsPanelProps {
 export const FINDINGS_PREVIEW_SIZE_PX = 72;
 
 /** Stable region label for ScanTabContent aria-labelledby (L3V-01 / A11Y-04). */
-const FindingsRegionHeading = ({
-  visuallyHidden = false,
-}: {
-  visuallyHidden?: boolean;
-}): React.JSX.Element => (
+const FindingsRegionHeading = React.forwardRef<
+  HTMLHeadingElement,
+  {
+    visuallyHidden?: boolean;
+  }
+>(({ visuallyHidden = false }, ref) => (
   <h3
+    ref={ref}
     id="acx-workbench-findings-heading"
     className={visuallyHidden ? 'screen-reader-text' : 'acx-findings-panel__title'}
+    tabIndex={-1}
   >
     {__('Recognition findings', 'alt-context')}
   </h3>
-);
+));
+FindingsRegionHeading.displayName = 'FindingsRegionHeading';
 
 const nextActionHint = (action: WorkbenchNextAction): string | null => {
   switch (action.kind) {
@@ -81,28 +101,100 @@ const previewAltText = (preview: WorkbenchFindingPreview, cropped: boolean): str
   return cropped ? __('Detected face', 'alt-context') : __('Reference image', 'alt-context');
 };
 
+const usablePreviewUrl = (url: string | null | undefined): string | null => {
+  if (typeof url !== 'string') {
+    return null;
+  }
+  const trimmed = url.trim();
+  return trimmed === '' ? null : trimmed;
+};
+
+const FindingsPreviewMissing = (): React.JSX.Element => (
+  <div
+    className="acx-findings-panel__preview acx-findings-panel__preview--missing"
+    role="img"
+    aria-label={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+    style={{ width: FINDINGS_PREVIEW_SIZE_PX, height: FINDINGS_PREVIEW_SIZE_PX }}
+  >
+    <ImageOff aria-hidden="true" size={20} />
+    <span className="acx-findings-panel__preview-missing-label">{__('No image', 'alt-context')}</span>
+  </div>
+);
+
+const FINDINGS_RETRY_STATUS_ID = 'acx-findings-panel-retrying';
+
+/** Findings-panel Retry — shared busy contract, panel-specific status copy. */
+const FindingsRetryButton = ({
+  describedBy,
+  retrying,
+  onClick,
+  className,
+}: {
+  describedBy: string;
+  retrying: boolean;
+  onClick: () => void;
+  className: string;
+}): React.JSX.Element => (
+  <QueryRetryButton
+    describedBy={describedBy}
+    retrying={retrying}
+    retryingLabel={__(QUERY_RETRY_COPY.RETRYING_FINDINGS, 'alt-context')}
+    statusId={FINDINGS_RETRY_STATUS_ID}
+    statusClassName="acx-findings-panel__status"
+    onClick={onClick}
+    className={className}
+  />
+);
+
 /**
  * Renderer order mirrors TopClusterCard (dedicated thumb → CSS face crop →
  * uncropped fallback). Previews are non-interactive evidence chips (A11Y-14:
  * target-size floor applies to interactive controls; these remain display-only).
  */
 const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): React.JSX.Element => {
-  const hasSceneUrl =
-    (typeof preview.attachmentUrl === 'string' && preview.attachmentUrl.trim() !== '') ||
-    (typeof preview.mediaUrl === 'string' && preview.mediaUrl.trim() !== '');
-  const cropped = isDedicatedFaceThumbUrl(preview.thumbUrl) || (hasSceneUrl && isCroppableBbox(preview.bbox));
+  const useDedicatedThumb = isDedicatedFaceThumbUrl(preview.thumbUrl);
+  const canCrop =
+    typeof preview.mediaUrl === 'string' &&
+    preview.mediaUrl.trim() !== '' &&
+    isCroppableBbox(preview.bbox);
+
+  if (useDedicatedThumb && preview.thumbUrl) {
+    return (
+      <Avatar
+        src={preview.thumbUrl}
+        sizePx={FINDINGS_PREVIEW_SIZE_PX}
+        shape="square"
+        alt={previewAltText(preview, true)}
+        className="acx-findings-panel__preview"
+      />
+    );
+  }
+
+  if (canCrop && preview.mediaUrl && preview.bbox) {
+    return (
+      <FaceThumbnail
+        mediaUrl={preview.mediaUrl}
+        bbox={preview.bbox}
+        sizePx={FINDINGS_PREVIEW_SIZE_PX}
+        shape="square"
+        alt={previewAltText(preview, true)}
+        className="acx-findings-panel__preview"
+      />
+    );
+  }
+
+  const fallbackSrc = usablePreviewUrl(preview.thumbUrl) ?? usablePreviewUrl(preview.mediaUrl);
+  if (!fallbackSrc) {
+    return <FindingsPreviewMissing />;
+  }
+
   return (
-    <DurableFaceThumb
-      source={{
-        thumbUrl: preview.thumbUrl,
-        attachmentUrl: preview.attachmentUrl,
-        mediaUrl: preview.mediaUrl,
-        bbox: preview.bbox,
-      }}
+    <Avatar
+      src={fallbackSrc}
       sizePx={FINDINGS_PREVIEW_SIZE_PX}
       shape="square"
-      alt={previewAltText(preview, cropped)}
-      className="acx-findings-panel__preview"
+      alt={previewAltText(preview, false)}
+      className="acx-findings-panel__preview acx-findings-panel__preview--uncropped"
     />
   );
 };
@@ -111,24 +203,118 @@ export const WorkbenchFindingsPanel = ({
   onTargetFindings,
 }: WorkbenchFindingsPanelProps): React.JSX.Element => {
   const findings = useWorkbenchFindings();
+  const { assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
   const {
     counts,
     previews,
+    zeroEvidenceClusterCount,
+    topUnlabeledTruncated,
     hasFindings,
     isLoading,
     isError,
     isTopUnlabeledError,
+    isAssignmentError,
     isUnavailable,
     isReadOnly,
     nextAction,
   } = findings;
 
+  // REV2-05: RQ v5 isLoading is isPending && isFetching, so it stays false
+  // while an already-errored query refetches. Track retry locally.
+  const [retrying, setRetrying] = React.useState(false);
+  const [retryFailed, setRetryFailed] = React.useState(false);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  const reviewNextRef = React.useRef<HTMLButtonElement>(null);
+  const pendingRetryFocusRef = React.useRef(false);
+  const onErrorBranch = !hasFindings && isError;
+
+  // REV3-01: a later independent error is not a retried failure.
+  React.useEffect(() => {
+    if (!onErrorBranch) {
+      setRetryFailed(false);
+    }
+  }, [onErrorBranch]);
+
+  const restoreRetryFocus = (): void => {
+    const reviewNext = reviewNextRef.current;
+    if (reviewNext && !reviewNext.disabled) {
+      reviewNext.focus({ preventScroll: true });
+      return;
+    }
+    headingRef.current?.focus({ preventScroll: true });
+  };
+
+  // REV2-08: the control is labelled as reloading recognition findings, so it
+  // must refetch every source that feeds them — name suggestions included.
+  const handleRetryFindings = (options?: {
+    restoreFocus?: boolean;
+    restoreFocusOnSuccess?: boolean;
+  }): void => {
+    if (retrying) {
+      return;
+    }
+    setRetrying(true);
+    setRetryFailed(false);
+    // REV3-02: only the error-branch Retry should restore focus via the
+    // deferred [hasFindings, isError] effect. Degraded-chip Retry must not
+    // arm it. Assignment-outage Retry also must not arm it (REV3-02) — a
+    // successful recovery unmounts the button, so REV4-03 restores focus
+    // immediately in the settled .then instead.
+    if (options?.restoreFocus) {
+      pendingRetryFocusRef.current = true;
+    }
+    void Promise.all([
+      assignmentQuery.refetch(),
+      mergeQuery.refetch(),
+      nameQuery.refetch(),
+      topUnlabeledQuery.refetch(),
+    ])
+      .catch(() => undefined)
+      .then((results) => {
+        setRetrying(false);
+        // RQ v5 refetch() resolves on query error; inspect settled isError.
+        const failed = settledRefetchFailed(results);
+        setRetryFailed(failed);
+        if (failed) {
+          pendingRetryFocusRef.current = false;
+          return;
+        }
+        if (options?.restoreFocusOnSuccess) {
+          restoreRetryFocus();
+        }
+      });
+  };
+
+  const handleRetryTopUnlabeled = (): void => {
+    void topUnlabeledQuery.refetch();
+  };
+
+  React.useEffect(() => {
+    if (!pendingRetryFocusRef.current) {
+      return;
+    }
+    if (!hasFindings && isError) {
+      return;
+    }
+    pendingRetryFocusRef.current = false;
+    const reviewNext = reviewNextRef.current;
+    if (reviewNext && !reviewNext.disabled) {
+      reviewNext.focus({ preventScroll: true });
+      return;
+    }
+    headingRef.current?.focus({ preventScroll: true });
+  }, [hasFindings, isError]);
+
   if (!hasFindings && isLoading) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--loading">
+      <div
+        className="acx-findings-panel acx-findings-panel--loading"
+        data-findings-state={FINDINGS_PANEL_STATE.LOADING}
+      >
         {/* L3V-01: keep aria-labelledby target mounted in non-success early returns. */}
-        <FindingsRegionHeading visuallyHidden />
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
+          <div className="acx-findings-panel__skeleton-row" aria-hidden="true" />
           <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
         </div>
       </div>
@@ -141,22 +327,45 @@ export const WorkbenchFindingsPanel = ({
   // isError, so isError alone covers both failure modes here (UI-03 hook test).
   if (!hasFindings && isError) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--error">
-        <FindingsRegionHeading visuallyHidden />
+      <div
+        className="acx-findings-panel acx-findings-panel--error"
+        data-findings-state={FINDINGS_PANEL_STATE.ERROR}
+      >
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
-          <p className="acx-findings-panel__status">{__('Could not load recognition findings.', 'alt-context')}</p>
+          <p id="acx-findings-panel-error" className="acx-findings-panel__status">
+            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+            {retrying
+              ? null
+              : retryFailed
+                ? __(QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS, 'alt-context')
+                : __(QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS, 'alt-context')}
+          </p>
         </div>
+        <FindingsRetryButton
+          describedBy="acx-findings-panel-error"
+          retrying={retrying}
+          onClick={() => handleRetryFindings({ restoreFocus: true })}
+          className="acx-button acx-button--secondary"
+        />
       </div>
     );
   }
 
   if (!hasFindings && isUnavailable) {
     return (
-      <div className="acx-findings-panel acx-findings-panel--unavailable">
-        <FindingsRegionHeading visuallyHidden />
+      <div
+        className="acx-findings-panel acx-findings-panel--unavailable"
+        data-findings-state={FINDINGS_PANEL_STATE.UNAVAILABLE}
+      >
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
           <p className="acx-findings-panel__status">
+            <Circle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
             {__('Recognition findings are unavailable right now.', 'alt-context')}
+          </p>
+          <p className="acx-findings-panel__hint">
+            {__('Check the Service API URL in Recognition API Settings.', 'alt-context')}
           </p>
         </div>
       </div>
@@ -177,9 +386,15 @@ export const WorkbenchFindingsPanel = ({
   // positive total with an empty loaded page must not yield an enabled no-op button.
   const primaryDisabled = isReadOnly || nextAction.kind === NEXT_ACTION_KIND.NONE;
 
+  const panelState = isTopUnlabeledError ? FINDINGS_PANEL_STATE.DEGRADED : FINDINGS_PANEL_STATE.DATA;
+  // REV2-10: REPAIR was dead — hasFindings uses the server-wide total, and any
+  // loaded zero-evidence cluster forces total >= 1. Repair copy still mounts
+  // from zeroEvidenceClusterCount on the reachable data/degraded stamps.
+  const findingsState = !hasFindings ? FINDINGS_PANEL_STATE.EMPTY : panelState;
+
   return (
-    <div className="acx-findings-panel">
-      <FindingsRegionHeading />
+    <div className="acx-findings-panel" data-findings-state={findingsState}>
+      <FindingsRegionHeading ref={headingRef} />
 
       {isReadOnly && (
         <p className="acx-findings-panel__notice">
@@ -190,29 +405,61 @@ export const WorkbenchFindingsPanel = ({
         </p>
       )}
 
-      {/* Live region: announces findings appearing/updating after a scan without a reload.
-          Hidden when empty so only the empty-state region announces the zero state. */}
-      {hasFindings && (
+      {/* One live region for counts + repair copy. Hidden on true empty so only
+          the empty-state region announces the zero state. Resync stays outside. */}
+      {(hasFindings || zeroEvidenceClusterCount > 0) && (
         <div role="status" aria-live="polite">
-          <ul className="acx-findings-panel__counts">
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d to review', '%d to review', counts.assignments, 'alt-context'), counts.assignments)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d merge candidate', '%d merge candidates', counts.merges, 'alt-context'), counts.merges)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
-            </li>
-            <li className="acx-findings-panel__count">
-              {isTopUnlabeledError
-                ? __('Unlabeled groups unavailable', 'alt-context')
-                : sprintf(
+          {hasFindings && (
+            <ul className="acx-findings-panel__counts">
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d to review', '%d to review', counts.assignments, 'alt-context'), counts.assignments)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d merge candidate', '%d merge candidates', counts.merges, 'alt-context'), counts.merges)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {sprintf(_n('%d suggested name', '%d suggested names', counts.names, 'alt-context'), counts.names)}
+              </li>
+              <li className="acx-findings-panel__count">
+                {isTopUnlabeledError ? (
+                  <span
+                    id="acx-findings-panel-unlabeled-outage"
+                    className="acx-findings-panel__degraded-chip"
+                  >
+                    <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={14} />
+                    {__('Unlabeled groups unavailable', 'alt-context')}
+                  </span>
+                ) : (
+                  sprintf(
                     _n('%d unlabeled group', '%d unlabeled groups', counts.unlabeledClusters, 'alt-context'),
                     counts.unlabeledClusters,
-                  )}
-            </li>
-          </ul>
+                  )
+                )}
+              </li>
+            </ul>
+          )}
+          {zeroEvidenceClusterCount > 0 && (
+            <>
+              <p id="acx-findings-panel-repair-copy" className="acx-findings-panel__status">
+                <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+                {gatedClusterCopy(zeroEvidenceClusterCount, topUnlabeledTruncated)}
+              </p>
+              <p className="acx-findings-panel__hint">
+                {__('They are hidden from review until their faces sync.', 'alt-context')}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {isTopUnlabeledError && hasFindings && (
+        <div className="acx-findings-panel__repair">
+          <FindingsRetryButton
+            describedBy="acx-findings-panel-unlabeled-outage"
+            retrying={retrying}
+            onClick={() => handleRetryFindings()}
+            className="acx-button acx-button--secondary acx-button--small"
+          />
         </div>
       )}
 
@@ -224,9 +471,50 @@ export const WorkbenchFindingsPanel = ({
         </div>
       )}
 
+      {zeroEvidenceClusterCount > 0 && (
+        <div className="acx-findings-panel__repair" data-cluster-evidence={CLUSTER_EVIDENCE.ZERO}>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary acx-button--small"
+            onClick={handleRetryTopUnlabeled}
+            aria-describedby="acx-findings-panel-repair-copy"
+          >
+            {__('Resync', 'alt-context')}
+          </button>
+        </div>
+      )}
+
       {/* UI-04: empty drain copy is only for a successful zero — every failure
-          mode (including a zero-total top-unlabeled outage) returns above. */}
-      {!hasFindings && (
+          mode (including a zero-total top-unlabeled outage) returns above.
+          A zero-evidence-only backlog is a repair state, not "all caught up". */}
+      {/* REV2-01: an assignment-only outage leaves the other queues returning
+          successful empties, so hasFindings is false without isError ever being
+          set. Announcing "No findings yet" there tells the operator the backlog
+          is clear while the primary review queue is down. Same treatment as the
+          top-unlabeled degraded chip: name the outage, offer the retry. */}
+      {!hasFindings && zeroEvidenceClusterCount === 0 && isAssignmentError && (
+        <>
+          <p
+            id="acx-findings-panel-assignment-outage"
+            className="acx-findings-panel__status"
+            role="status"
+            aria-live="polite"
+          >
+            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
+            {__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
+          </p>
+          <div className="acx-findings-panel__repair">
+            <FindingsRetryButton
+              describedBy="acx-findings-panel-assignment-outage"
+              retrying={retrying}
+              onClick={() => handleRetryFindings({ restoreFocusOnSuccess: true })}
+              className="acx-button acx-button--secondary acx-button--small"
+            />
+          </div>
+        </>
+      )}
+
+      {!hasFindings && zeroEvidenceClusterCount === 0 && !isAssignmentError && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>
@@ -234,6 +522,7 @@ export const WorkbenchFindingsPanel = ({
 
       <div className="acx-findings-panel__actions">
         <button
+          ref={reviewNextRef}
           type="button"
           className="acx-button acx-button--primary"
           onClick={handleReviewNext}

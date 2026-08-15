@@ -19,6 +19,21 @@ The orchestration helpers in this repo now execute the installed `mcp-workbay-or
 package directly, including `python -m workbay_orchestrator_mcp.orchestration.lane_config`
 for lane/task manifest resolution.
 
+## check_published_head_sha.py
+
+Every committed eval run-record and report under `docs/` and `benchmarks/`
+must stamp a `head_sha` that exists in this repository. Harvest/rebase
+rewrites have previously left orphan SHAs in published artifacts.
+
+```bash
+python3 scripts/check_published_head_sha.py
+```
+
+The script walks tracked `docs/**` and `benchmarks/**` JSON/Markdown files,
+collects each published `head_sha`, and runs
+`git rev-parse --verify <sha>^{commit}` on each. Exit 0 if every stamp
+resolves; exit 1 if any SHA is missing. Wired into `make lint-scripts`.
+
 ## Test Placement Policy
 
 Root-level doc-lock tests stay in `scripts/` when they validate monorepo-wide

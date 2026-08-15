@@ -397,7 +397,7 @@
   "provenance": {
     "base_url": "fusion-runner://adhoc",
     "fusion_mode": "adhoc",
-    "head_sha": "44fb5271fbbe8ed4fdcb5932ce7bae8c7188603f",
+    "head_sha": "6688d4c904f4fa8031952dc5bae12582fcfee2c9",
     "manifest_sha256": "04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd",
     "started_at": "2026-08-15T01:32:34Z"
   },

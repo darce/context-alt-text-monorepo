@@ -208,6 +208,40 @@ def _entry_is_publishable(entry: dict[str, Any] | None) -> bool:
         return False
 
 
+def _refused_identification_metric(invariant: str) -> dict[str, Any]:
+    """Caption-path identification block when boxed GT is missing (EVAL-03)."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "precision": None,
+        "recall": None,
+        "macro_precision": None,
+        "macro_recall": None,
+        "per_identity": {},
+        "true_rejections": None,
+        "excluded_images": None,
+        "wrong_names": None,
+        "ignored_wrong_names": None,
+    }
+
+
+def _scored_identification_entries(
+    run_record: Mapping[str, Any],
+    manifest_entries: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Entries that would enter identification scoring (matched, non-error)."""
+    by_id = _entry_index(list(manifest_entries))
+    out: list[dict[str, Any]] = []
+    for item in run_record.get("items") or []:
+        if item.get("error"):
+            continue
+        entry = by_id.get(int(item["media_id"]))
+        if entry is None:
+            continue
+        out.append(entry)
+    return out
+
+
 def _filter_for_public_audience(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
@@ -677,10 +711,29 @@ def score_run_record(
     if ident is None:
         live_wrong: list[list[str]] = []
         ignored_wrong: list[list[str]] = []
+        identification_block = _refused_identification_metric(identification_invariant)
     else:
         ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
         live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
         ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
+        identification_block = {
+            **_pr_dict(ident.precision, ident.recall),
+            "macro_precision": ident.macro_precision,
+            "macro_recall": ident.macro_recall,
+            "per_identity": {
+                name: {
+                    **_pr_dict(pr.precision, pr.recall),
+                    "tp": pr.true_positives,
+                    "fp": pr.false_positives,
+                    "fn": pr.false_negatives,
+                }
+                for name, pr in ident.per_identity.items()
+            },
+            "true_rejections": ident.true_rejections,
+            "excluded_images": ident.excluded_images,
+            "wrong_names": live_wrong,
+            "ignored_wrong_names": ignored_wrong,
+        }
 
     fetch_provenance = dict(run_record["provenance"])
     provenance = {
@@ -751,40 +804,7 @@ def score_run_record(
                     "fn": det.false_negatives,
                 }
             ),
-            "identification": (
-                {
-                    "refused": True,
-                    "invariant": identification_invariant,
-                    "precision": None,
-                    "recall": None,
-                    "macro_precision": None,
-                    "macro_recall": None,
-                    "per_identity": {},
-                    "true_rejections": None,
-                    "excluded_images": None,
-                    "wrong_names": None,
-                    "ignored_wrong_names": None,
-                }
-                if ident is None
-                else {
-                    **_pr_dict(ident.precision, ident.recall),
-                    "macro_precision": ident.macro_precision,
-                    "macro_recall": ident.macro_recall,
-                    "per_identity": {
-                        name: {
-                            **_pr_dict(pr.precision, pr.recall),
-                            "tp": pr.true_positives,
-                            "fp": pr.false_positives,
-                            "fn": pr.false_negatives,
-                        }
-                        for name, pr in ident.per_identity.items()
-                    },
-                    "true_rejections": ident.true_rejections,
-                    "excluded_images": ident.excluded_images,
-                    "wrong_names": live_wrong,
-                    "ignored_wrong_names": ignored_wrong,
-                }
-            ),
+            "identification": identification_block,
         },
         "per_image": per_image,
         "failures": failures,
@@ -1063,7 +1083,21 @@ def build_reports(
     pre-audience contract. ``audience=PUBLIC`` filters to publishable items only
     (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
     so withheld local-only items are never silent.
+
+    Identification computability is evaluated against the UNFILTERED entry set
+    (S2R4-02). Withholding an unboxed sibling must not turn an uncomputable
+    metric into a published P/R.
     """
+    try:
+        require_boxed_identification_gt(
+            _scored_identification_entries(run_record, manifest_entries)
+        )
+    except ManifestError as exc:
+        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+            raise
+        unfiltered_id_invariant = exc.invariant
+    else:
+        unfiltered_id_invariant = None
     score_record = run_record
     score_entries = manifest_entries
     redaction: dict[str, Any] | None = None
@@ -1083,6 +1117,10 @@ def build_reports(
         manifest_roster=manifest_roster,
         annotation_mode=annotation_mode,
     )
+    if unfiltered_id_invariant is not None:
+        scored["faces"]["identification"] = _refused_identification_metric(
+            unfiltered_id_invariant
+        )
     if redaction is not None:
         scored["redaction"] = redaction
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)

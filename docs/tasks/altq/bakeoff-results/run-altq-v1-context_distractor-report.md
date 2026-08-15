@@ -8,6 +8,9 @@
 - score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-16T21:00:38Z
 - images: 37/37 scored, 0 failed
+- notes: S2R4-14 F23-G re-score: docs/tasks/altq/bakeoff-results/run-altq-v1-context_distractor.json against apps/prototype-description-service/scene/tests/seed/golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7. Identification was SCORED precision=None recall=0.0 per_identity=10; current scorer publishes REFUSED(identification_refuses_unboxed_identity_claims). Numbers are the scorer's output, not hand-edited.
+- notes: Provenance: fetch manifest_sha256=747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f score_manifest_sha256=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). The fetch-time manifest is a pre-v3 snapshot the current loader cannot load (manifest_version 3 only, e30a8ce0). This re-score uses the in-tree v3 descendant of the same file, not a different corpus. Previous published score SHA was fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d.
+- notes: Caption axes are unchanged versus the previously published report.
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
 - ⚠ eval_mode: **context_distractor** — context was transformed at fetch time; metrics are mode-specific, NOT comparable to standard runs.
 - prompt variant: `v1`
@@ -38,27 +41,7 @@
 
 ## Face identification (named assertions)
 
-- micro precision: null recall: 0.000
-- macro precision: null recall: 0.000
-- true rejections (strangers): 10
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=null recall=0.000 (tp=0 fp=0 fn=14)
-- Cristina Quintana: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ellyn Heald: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Kirstie Mccarrel: precision=null recall=0.000 (tp=0 fp=0 fn=5)
-- Liam Maloney: precision=null recall=0.000 (tp=0 fp=0 fn=2)
-- Maria Correonero: precision=null recall=0.000 (tp=0 fp=0 fn=7)
-- Ryann Wiseman: precision=null recall=0.000 (tp=0 fp=0 fn=3)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

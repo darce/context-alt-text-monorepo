@@ -8,6 +8,8 @@
 - score manifest_sha256: `73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539` (matches fetch: False)
 - started_at: 2026-07-07T18:56:35Z
 - images: 6/10 scored, 4 failed
+- notes: S2R4-14 F23-G re-score HELD: docs/tasks/vlm/VLM-2B-bakeoff-MiniCPM-V-4.5-run-record.json against apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7 exited 1 (partial-corpus: 6/10 scored, 4 failed — the same failures already listed in this artifact). regen_eval_report.py will not publish an exit-1 report (S2R4-03). faces.identification is therefore still the pre-S2R3-08 leftover (precision=null, recall=0.0, populated per-identity table). Do not read those rows as current-scorer identification P/R.
+- notes: Provenance unchanged: fetch=1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b score=73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539 (matches fetch: False). Caption numbers were not rewritten.
 - ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
 
 ## Caption metrics (deterministic tier)

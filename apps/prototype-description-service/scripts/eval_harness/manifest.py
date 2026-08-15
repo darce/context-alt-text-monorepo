@@ -80,6 +80,9 @@ LEGACY_IMPORT_LABELED_AT = "1970-01-01T00:00:00Z"  # unknown; epoch sentinel
 LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
 # Fail-closed: assume proposals were visible unless the record says otherwise.
 LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
+# Unknown occasion — pre-v3 boxes have no recoverable capture session.
+# Required so an in-tree boxed corpus can be flipped to exhaustive (S2R5-06).
+LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -547,11 +550,14 @@ def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
     ``decision`` is derived from the box's existing ``name`` (named vs
     stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
     ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
-    epoch sentinel (unknown). ``capture_session_id`` is omitted (roster_only).
+    epoch sentinel (unknown). ``capture_session_id`` is the unknown-occasion
+    sentinel so a boxed roster_only corpus can be flipped to exhaustive
+    without the loader rejecting the existing boxes (S2R5-06).
     """
     return {
         "labeler_id": LEGACY_IMPORT_LABELER_ID,
         "batch_id": LEGACY_IMPORT_BATCH_ID,
+        "capture_session_id": LEGACY_IMPORT_CAPTURE_SESSION_ID,
         "pass_index": 0,
         "labeled_at": LEGACY_IMPORT_LABELED_AT,
         "tool_version": LEGACY_IMPORT_TOOL_VERSION,

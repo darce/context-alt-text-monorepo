@@ -15,10 +15,22 @@ import pytest
 
 from pydantic import ValidationError
 
+from scripts.eval_harness.face_metrics import (
+    DETECTION_EMPTY_OBSERVATIONS_INVARIANT,
+    IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT,
+)
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
-from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, ManifestError, load_manifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    GoldenEntry,
+    ManifestError,
+    ScoreInvariant,
+    load_manifest,
+)
 from scripts.eval_harness.report import (
     ReportError,
+    _MODE_RESTRICTIVENESS,
+    _annotation_mode_of,
     _entries_as_dicts,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
@@ -117,6 +129,26 @@ def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
     assert entries[0]["annotation_mode"] == "roster_only"
 
 
+def test_fusion_flatten_preserves_face_boxes(tmp_path: Path) -> None:
+    """S2R4-05: flatten must keep box lineage so boxed GT still scores ID.
+
+    Dropping face_boxes made require_boxed_identification_gt refuse honest,
+    fully-boxed ground truth. The CLI flatten keeps boxes via model_dump.
+    """
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    entries = manifest_entries_as_dicts(manifest)
+    assert "face_boxes" in entries[0]
+    dumped = manifest.entries[0].model_dump()["face_boxes"]
+    assert entries[0]["face_boxes"] == dumped
+    assert dumped, "fixture must carry a named box"
+    assert any(box.get("name") == "Alice Example" for box in entries[0]["face_boxes"])
+    json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
+    ident = json.loads(json_doc)["faces"]["identification"]
+    assert ident.get("refused") is not True
+    assert ident["precision"] == 1.0
+    assert ident["recall"] == 1.0
+
+
 def test_fusion_runner_build_reports_refuses_roster_only_detection(tmp_path: Path) -> None:
     """Real in-tree entry: disk roster_only → flatten → build_reports (no kwarg).
 
@@ -127,7 +159,7 @@ def test_fusion_runner_build_reports_refuses_roster_only_detection(tmp_path: Pat
     json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
     det = json.loads(json_doc)["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert det["precision"] is None
     assert det["fp"] is None
 
@@ -148,7 +180,7 @@ def test_score_run_record_without_mode_or_stamp_refuses() -> None:
     scored = score_run_record(_OVERSHOOT_RECORD, entries)
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_requires_annotation_mode"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
     assert det["precision"] is None
     assert det["fp"] is None
 
@@ -185,16 +217,17 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     report = json.loads(record_path.with_name("run-report.json").read_text(encoding="utf-8"))
     det = report["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert det["precision"] is None
     md = record_path.with_name("run-report.md").read_text(encoding="utf-8")
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
-    assert "- REFUSED (detection_refuses_roster_only):" in det_section
-    assert "not computed" in det_section
-    assert "annotation_mode" in det_section
-    assert "exhaustive" in det_section
+    assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
+    assert (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+        in det_section
+    )
     captured = capsys.readouterr()
-    assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
+    assert f"detection=REFUSED({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY})" in captured.out
     assert "--allow-refused" in captured.err
 
 
@@ -219,7 +252,7 @@ def test_cli_score_allow_refused_exits_zero(
         ]
     )
     captured = capsys.readouterr()
-    assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
+    assert f"detection=REFUSED({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY})" in captured.out
     assert captured.err == ""
 
 
@@ -260,7 +293,7 @@ def test_explicit_exhaustive_cannot_widen_roster_only_stamp() -> None:
     )
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert det["precision"] is None
     assert det["fp"] is None
 
@@ -270,7 +303,7 @@ def test_stamped_roster_only_without_kwarg_refuses() -> None:
     scored = score_run_record(_OVERSHOOT_RECORD, _stamped("roster_only"))
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_refuses_roster_only"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert det["precision"] is None
 
 
@@ -300,7 +333,7 @@ def test_partial_stamp_does_not_promote_to_unstamped_siblings() -> None:
     scored = score_run_record(_OVERSHOOT_RECORD, entries)
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_requires_annotation_mode"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
     assert det["precision"] is None
 
 
@@ -313,7 +346,7 @@ def test_unrecognised_mode_has_own_invariant() -> None:
     )
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_unrecognised_annotation_mode"
+    assert det["invariant"] == ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE
     assert det["precision"] is None
 
 
@@ -337,19 +370,20 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R3-11: pin the reason detection was refused, not the constant.
+    """S2R4-11: pin the honest sentence, not three tokens the constant can lie with.
 
-    Importing DETECTION_REFUSED_EXPLANATION and asserting the markdown
-    contains it lets the constant lie. The report must say P/R is not
-    computed unless annotation_mode is exhaustive.
+    A sentence like "not computed: annotation_mode exhaustive path was used
+    anyway" keeps those tokens and must fail this pin.
     """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
-    assert "- REFUSED (detection_refuses_roster_only):" in det_section
-    assert "not computed" in det_section
-    assert "annotation_mode" in det_section
-    assert "exhaustive" in det_section
+    assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
+    assert (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+        in det_section
+    )
+    assert "used anyway" not in det_section
     assert "precision: null" not in det_section
 
 
@@ -377,7 +411,7 @@ def test_empty_entries_refuse_explicit_exhaustive() -> None:
     """
     with pytest.raises(ManifestError) as exc_info:
         _resolve_score_annotation_mode("exhaustive", [])
-    assert exc_info.value.invariant == "detection_refuses_empty_entries"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
 
 
 def test_empty_entries_score_run_record_refuses_explicit_exhaustive() -> None:
@@ -385,7 +419,7 @@ def test_empty_entries_score_run_record_refuses_explicit_exhaustive() -> None:
     scored = score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == "detection_refuses_empty_entries"
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
     assert det["precision"] is None
     assert det["fp"] is None
 
@@ -395,7 +429,68 @@ def test_empty_entries_hard_error_through_score_face() -> None:
     manifest = {"annotation_mode": "exhaustive", "roster": [], "entries": []}
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
-    assert exc_info.value.invariant == "detection_refuses_empty_entries"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
+
+
+def _zero_observation_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [],
+    }
+
+
+def test_zero_observations_against_nonempty_exhaustive_refuses() -> None:
+    """S2R4-08: empty items + nonempty exhaustive must not publish None/0.
+
+    The empty-entries invariant checks the manifest, not observations.
+    A run that scored nothing used to pass both the partial-corpus gate
+    and the refused-metric gate.
+    """
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {
+                    "x": 0.5,
+                    "y": 0.4,
+                    "w": 0.2,
+                    "h": 0.3,
+                    "name": "Alice Example",
+                }
+            ],
+            "annotation_mode": "exhaustive",
+        }
+    ]
+    scored = score_run_record(
+        _zero_observation_record(), entries, annotation_mode="exhaustive"
+    )
+    assert scored["counts"] == {"total": 0, "scored": 0, "failed": 0}
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == DETECTION_EMPTY_OBSERVATIONS_INVARIANT
+    assert det["precision"] is None
+    assert det["recall"] is None
+    assert det["tp"] is None
+    assert det["fp"] is None
+    assert det["fn"] is None
+    ident = scored["faces"]["identification"]
+    assert ident["refused"] is True
+    assert ident["invariant"] == IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
+    assert ident["precision"] is None
+    assert ident["recall"] is None
 
 
 def _mapping_entry(*, annotation_mode: object) -> dict:
@@ -447,7 +542,7 @@ def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
     assert entries[0]["annotation_mode"] == ""
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
-    assert exc_info.value.invariant == "detection_requires_annotation_mode"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
 
 
 def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> None:
@@ -468,7 +563,7 @@ def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> Non
     assert entries[0]["annotation_mode"] == "roster_only"
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
-    assert exc_info.value.invariant == "detection_refuses_roster_only"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
 
 
 def test_resolver_omitted_explicit_uses_data_stamp() -> None:
@@ -490,11 +585,60 @@ def test_resolver_omitted_explicit_uses_data_stamp() -> None:
     )
 
 
+def test_annotation_mode_of_mapping_key_beats_attribute() -> None:
+    """S2R4-12: dict-subclass attribute must not outrank the mapping key.
+
+    Most-restrictive-wins: roster_only in the mapping beats an exhaustive
+    attribute. Attribute-first resolution used to invent exhaustive.
+    """
+
+    class SplitMode(dict):
+        annotation_mode = AnnotationMode.EXHAUSTIVE
+
+    payload = SplitMode(
+        annotation_mode="roster_only",
+        roster=["Alice Example"],
+        entries=[_mapping_entry(annotation_mode="roster_only")],
+    )
+    assert _annotation_mode_of(payload) is AnnotationMode.ROSTER_ONLY
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(_face_run_record(), payload)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+
+
+def test_score_invariants_are_imported_not_respelt() -> None:
+    """S2R4-21: raise token and catch-set share ScoreInvariant members."""
+    assert ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES == "detection_refuses_empty_entries"
+    assert (
+        ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+        == "identification_refuses_unboxed_identity_claims"
+    )
+    scored = score_run_record(_OVERSHOOT_RECORD, [], annotation_mode="exhaustive")
+    assert (
+        scored["faces"]["detection"]["invariant"]
+        == ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES
+    )
+
+
+def test_mode_restrictiveness_covers_every_annotation_mode() -> None:
+    """S2R4-17: table must be the AnnotationMode key set.
+
+    Import-time also raises RuntimeError on drift. The test names the
+    equality so a lying extra/missing key cannot hide behind a score-time
+    KeyError that both suites never hit.
+    """
+    assert set(_MODE_RESTRICTIVENESS) == set(AnnotationMode)
+    assert (
+        _MODE_RESTRICTIVENESS[AnnotationMode.ROSTER_ONLY]
+        > _MODE_RESTRICTIVENESS[AnnotationMode.EXHAUSTIVE]
+    )
+
+
 def test_restrictiveness_unknown_mode_is_typed_refusal() -> None:
     """S2R3-13: unknown mode is a named ManifestError, not a bare KeyError."""
     with pytest.raises(ManifestError) as exc_info:
         _mode_restrictiveness("not-a-mode")  # type: ignore[arg-type]
-    assert exc_info.value.invariant == "detection_unrecognised_annotation_mode"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE
 
 
 def test_mixed_and_missing_reports_mixed() -> None:
@@ -529,7 +673,7 @@ def test_mixed_and_missing_reports_mixed() -> None:
     with pytest.raises(ReportError, match="mixed annotation_mode") as exc_info:
         score_run_record(_OVERSHOOT_RECORD, entries)
     assert "missing stamp" in str(exc_info.value)
-    assert exc_info.value.invariant == "detection_refuses_mixed_annotation_mode"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE
 
 
 def test_per_entry_lattice_is_raw_mapping_only() -> None:

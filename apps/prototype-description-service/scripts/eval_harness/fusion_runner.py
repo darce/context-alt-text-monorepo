@@ -674,16 +674,7 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
         else str(manifest.annotation_mode)
     )
     return [
-        {
-            "path": e.path,
-            "media_id": e.media_id,
-            "face_count": e.face_count,
-            "present_identities": list(e.present_identities),
-            "must_right": list(e.must_right),
-            "easy_wrong": list(e.easy_wrong),
-            "policy": {"recognition_enabled": e.policy.recognition_enabled},
-            "annotation_mode": mode,
-        }
+        {**e.model_dump(), "annotation_mode": mode}
         for e in manifest.entries
     ]
 

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_assignment import FaceDecision
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError
+from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
     UNLABELED_COHORT_KEY,
@@ -62,7 +62,7 @@ def test_detection_pr_raises_against_roster_only():
     items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=1)]
     with pytest.raises(ManifestError, match="detection_pr refuses roster_only") as exc_info:
         detection_pr(items, annotation_mode="roster_only")
-    assert exc_info.value.invariant == "detection_refuses_roster_only"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert "false positives" in str(exc_info.value)
 
 
@@ -77,11 +77,11 @@ def test_detection_pr_exhaustive_still_counts():
 @pytest.mark.parametrize(
     ("kwargs", "invariant"),
     [
-        ({}, "detection_requires_annotation_mode"),
-        ({"annotation_mode": None}, "detection_requires_annotation_mode"),
-        ({"annotation_mode": ""}, "detection_requires_annotation_mode"),
-        ({"annotation_mode": "foo"}, "detection_unrecognised_annotation_mode"),
-        ({"annotation_mode": "EXHAUSTIVE"}, "detection_unrecognised_annotation_mode"),
+        ({}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": None}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": ""}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": "foo"}, ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE),
+        ({"annotation_mode": "EXHAUSTIVE"}, ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE),
     ],
     ids=["omit", "None", "empty-str", "unrecognised-foo", "EXHAUSTIVE-upper"],
 )
@@ -120,7 +120,7 @@ def test_score_face_run_record_refuses_omitted_mode():
     }
     with pytest.raises(ManifestError, match="requires annotation_mode") as exc_info:
         score_face_run_record(record, manifest)
-    assert exc_info.value.invariant == "detection_requires_annotation_mode"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
 
 
 def test_score_face_run_record_raises_against_roster_only():
@@ -151,7 +151,7 @@ def test_score_face_run_record_raises_against_roster_only():
     }
     with pytest.raises(ManifestError, match="score_face_run_record refuses roster_only") as exc_info:
         score_face_run_record(record, manifest)
-    assert exc_info.value.invariant == "detection_refuses_roster_only"
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert "false positives" in str(exc_info.value)
 
 

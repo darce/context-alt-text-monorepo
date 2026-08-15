@@ -15,8 +15,15 @@ Usage (from repo root):
 
     python3 scripts/check_published_head_sha.py
 
-Exit 0 if every stamp resolves; 1 if any stamp is missing/unreadable or no
-artifact files were scanned; 2 if the git invocation itself fails.
+A shallow clone cannot see the commits it omitted. This guard then
+refuses to classify those stamps MISSING: it exits 1 with
+``cannot verify: shallow clone`` and tells the operator to
+``git fetch --unshallow``. Never report MISSING for a commit the
+object database merely cannot see.
+
+Exit 0 if every stamp resolves; 1 if any stamp is missing/unreadable,
+the clone is shallow, or no artifact files were scanned; 2 if the git
+invocation itself fails.
 """
 
 from __future__ import annotations
@@ -179,6 +186,24 @@ def resolve_commit(root: Path, sha: str) -> bool:
     return result.returncode == 0
 
 
+def is_shallow_repository(root: Path) -> bool:
+    """True when ``git rev-parse --is-shallow-repository`` reports true."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            ["git", "rev-parse", "--is-shallow-repository"],
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    return result.stdout.strip() == "true"
+
+
 def main() -> int:
     try:
         root = repo_root()
@@ -191,6 +216,20 @@ def main() -> int:
         print(
             "check_published_head_sha: no tracked docs/benchmarks artifact "
             "files scanned",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        shallow = is_shallow_repository(root)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"check_published_head_sha: git invocation failed: {exc}", file=sys.stderr)
+        return 2
+    if shallow:
+        print(
+            "check_published_head_sha: cannot verify: shallow clone; "
+            "run git fetch --unshallow (stamps are not reported MISSING "
+            "when this repository cannot see them)",
             file=sys.stderr,
         )
         return 1

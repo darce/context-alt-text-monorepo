@@ -5,6 +5,12 @@ Copies the run-record to a temp name whose stem matches the published report
 stem (so the CLI writes ``<stem>-report.json`` / ``.md``), scores it against
 the named manifest, and copies the outputs to the destination paths.
 
+The score CLI's exit code is the publication contract (rg-015): this script
+does not invent a reason. Exit 0 publishes a clean score. Exit 1 is a
+partial corpus and is never published. Exit 3 is a refused metric: publish
+only with ``--allow-refused`` (default off) and still exit 3. Any other
+nonzero exit is unrecognized and is not swallowed.
+
 Usage (from repo root):
 
     python3 scripts/regen_eval_report.py \\
@@ -22,7 +28,85 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+
+# Score CLI contract (scripts.eval_harness.cli): reason comes from the code.
+CLI_EXIT_CLEAN = 0
+CLI_EXIT_PARTIAL = 1
+CLI_EXIT_USAGE = 2
+CLI_EXIT_REFUSED = 3
+
+
+@dataclass(frozen=True)
+class ScoreExitDecision:
+    """Publication decision derived from the scorer's actual exit code."""
+
+    publish: bool
+    exit_code: int
+    reason: str
+    message: str
+
+
+def classify_score_exit(returncode: int, *, allow_refused: bool) -> ScoreExitDecision:
+    """Map a score-CLI exit code to publish/hold and this script's exit.
+
+    The reason string is selected by the numeric code the CLI actually
+    returned. Callers must not pass a guessed reason in.
+    """
+    if returncode == CLI_EXIT_CLEAN:
+        return ScoreExitDecision(
+            publish=True,
+            exit_code=CLI_EXIT_CLEAN,
+            reason="clean-score",
+            message="CLI exited 0 (clean score); publishing the written report",
+        )
+    if returncode == CLI_EXIT_PARTIAL:
+        return ScoreExitDecision(
+            publish=False,
+            exit_code=CLI_EXIT_PARTIAL,
+            reason="partial-corpus",
+            message=(
+                "CLI exited 1 (partial-corpus score gate); "
+                "not publishing the written report"
+            ),
+        )
+    if returncode == CLI_EXIT_USAGE:
+        return ScoreExitDecision(
+            publish=False,
+            exit_code=CLI_EXIT_USAGE,
+            reason="cli-usage",
+            message="CLI exited 2 (usage/argparse); not publishing the written report",
+        )
+    if returncode == CLI_EXIT_REFUSED:
+        if allow_refused:
+            return ScoreExitDecision(
+                publish=True,
+                exit_code=CLI_EXIT_REFUSED,
+                reason="refused-metrics",
+                message=(
+                    "CLI exited 3 (refused metrics); --allow-refused set, "
+                    "publishing the written report"
+                ),
+            )
+        return ScoreExitDecision(
+            publish=False,
+            exit_code=CLI_EXIT_REFUSED,
+            reason="refused-metrics",
+            message=(
+                "CLI exited 3 (refused metrics); not publishing the written "
+                "report (pass --allow-refused to publish a refused report)"
+            ),
+        )
+    return ScoreExitDecision(
+        publish=False,
+        exit_code=returncode,
+        reason="unrecognized-cli-exit",
+        message=(
+            f"CLI exited {returncode} (unrecognized); "
+            "not publishing the written report"
+        ),
+    )
 
 
 def repo_root() -> Path:
@@ -69,13 +153,24 @@ def md_detection_line(path: Path | None) -> str | None:
     return None
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-record", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out-json", required=True)
     parser.add_argument("--out-md", required=True)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--allow-refused",
+        action="store_true",
+        default=False,
+        help=(
+            "publish a report the scorer refused (CLI exit 3). "
+            "Default: hold the report and exit 3. Does not change the "
+            "partial-corpus gate (CLI exit 1). The script still exits 3 "
+            "so a refused publish is not a clean score."
+        ),
+    )
+    args = parser.parse_args(argv)
 
     root = repo_root()
     run_record = (root / args.run_record).resolve()
@@ -122,11 +217,12 @@ def main() -> int:
                 file=sys.stderr,
             )
             return proc.returncode or 2
-        if proc.returncode != 0:
-            print(
-                f"CLI exited {proc.returncode} after writing reports "
-                "(partial-corpus score gate); publishing the written report"
-            )
+        decision = classify_score_exit(
+            proc.returncode, allow_refused=args.allow_refused
+        )
+        print(decision.message)
+        if not decision.publish:
+            return decision.exit_code
         out_json.parent.mkdir(parents=True, exist_ok=True)
         out_md.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(tmp_json, out_json)
@@ -138,7 +234,7 @@ def main() -> int:
     print("AFTER_JSON", json.dumps(after_json, sort_keys=True))
     print("BEFORE_MD", before_md)
     print("AFTER_MD", after_md)
-    return 0
+    return decision.exit_code
 
 
 if __name__ == "__main__":

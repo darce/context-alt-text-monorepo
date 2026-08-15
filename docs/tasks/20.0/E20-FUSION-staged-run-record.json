@@ -387,9 +387,9 @@
   "provenance": {
     "base_url": "fusion-runner://staged",
     "fusion_mode": "staged",
-    "head_sha": "44fb5271fbbe8ed4fdcb5932ce7bae8c7188603f",
-    "manifest_sha256": "04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd",
-    "started_at": "2026-08-15T01:32:34Z"
+    "head_sha": "e4f1730f3c697f6abd6afefb817310de76f3f0c2",
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
+    "started_at": "2026-07-10T05:05:05Z"
   },
   "schema": "acx-eval/v1"
 }

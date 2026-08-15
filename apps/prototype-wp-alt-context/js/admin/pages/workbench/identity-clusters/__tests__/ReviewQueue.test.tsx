@@ -2455,8 +2455,57 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
-    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+  });
+
+  // REV2-09 / TEST-15: repair copy without Resync is a dead end. Dropping
+  // refetchTopUnlabeled (or omitting the button) leaves this call count at 1.
+  it('REV2-09: empty-queue Resync refetches top-unlabeled and keeps the drain confirmation', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero', media_id: 1, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
+    const resync = screen.getByRole('button', { name: 'Resync' });
+    expect(resync.closest('[role="status"]')).toBeNull();
+    expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
+    const callsBefore = topMock.mock.calls.length;
+
+    await userEvent.click(resync);
+
+    await waitFor(() => {
+      expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
   });
 
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.

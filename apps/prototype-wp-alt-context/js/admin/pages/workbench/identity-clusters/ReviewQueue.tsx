@@ -11,6 +11,7 @@
 
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
@@ -582,9 +583,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
           setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
         } else if (findings.zeroEvidenceClusterCount > 0) {
-          // REV1-02 / B.3: S2-gated zeros leave the queue empty while work exists.
+          // REV2-09: the queue is genuinely empty — keep the drain confirmation
+          // and name the gated clusters that still need a resync.
           setLiveMessage(
-            gatedClusterCopy(findings.zeroEvidenceClusterCount, findings.topUnlabeledTruncated),
+            `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
+              findings.zeroEvidenceClusterCount,
+              findings.topUnlabeledTruncated,
+            )}`,
           );
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
@@ -1223,17 +1228,31 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     {__('Clear filters', 'alt-context')}
                   </button>
                 </div>
-              ) : data.isTopUnlabeledError ? null : findings.zeroEvidenceClusterCount > 0 ? (
-                <p className="acx-review-queue__empty" data-testid="acx-review-queue-repair">
-                  {gatedClusterCopy(
-                    findings.zeroEvidenceClusterCount,
-                    findings.topUnlabeledTruncated,
-                  )}
-                </p>
-              ) : (
-                <p className="acx-review-queue__empty">
-                  {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-                </p>
+              ) : data.isTopUnlabeledError ? null : (
+                <>
+                  <p className="acx-review-queue__empty">
+                    {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                  </p>
+                  {findings.zeroEvidenceClusterCount > 0 ? (
+                    <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
+                      <p id="acx-review-queue-repair-copy">
+                        <AlertTriangle aria-hidden="true" size={16} />
+                        {gatedClusterCopy(
+                          findings.zeroEvidenceClusterCount,
+                          findings.topUnlabeledTruncated,
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => void data.refetchTopUnlabeled()}
+                        aria-describedby="acx-review-queue-repair-copy"
+                      >
+                        {__('Resync', 'alt-context')}
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </>
           ) : suppressRetiredHead ? (

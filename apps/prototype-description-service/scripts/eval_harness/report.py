@@ -67,6 +67,7 @@ from .manifest import (
     ScoreInvariant,
     SliceTag,
     parse_annotation_mode,
+    refusal_explanation,
 )
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
@@ -114,12 +115,18 @@ def _mode_restrictiveness(mode: AnnotationMode) -> int:
         )
     return rank
 
-DETECTION_REFUSED_EXPLANATION = (
-    "detection P/R is not computed unless annotation_mode is exhaustive"
+
+def _invariant_is(actual: object, *members: ScoreInvariant) -> bool:
+    """Identity match against canonical ScoreInvariant members (S2R5-08)."""
+    return any(actual is member for member in members)
+
+# Aliases for the two historical sentences. Markdown looks up by the fired
+# invariant via refusal_explanation — these names are not a default reason.
+DETECTION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
 )
-IDENTIFICATION_REFUSED_EXPLANATION = (
-    "identification P/R is not computed from identity claims that carry no "
-    "per-face box lineage"
+IDENTIFICATION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
 )
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
@@ -706,10 +713,11 @@ def score_run_record(
     try:
         mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
     except ManifestError as exc:
-        if exc.invariant not in {
+        if not _invariant_is(
+            exc.invariant,
             ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
             ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
-        }:
+        ):
             raise
         det = None
         detection_invariant = exc.invariant
@@ -718,7 +726,9 @@ def score_run_record(
             try:
                 require_exhaustive_box_coverage(manifest_entries)
             except ManifestError as exc:
-                if exc.invariant != DETECTION_UNCOVERED_FACE_COUNT_INVARIANT:
+                if not _invariant_is(
+                    exc.invariant, DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+                ):
                     raise
                 det = None
                 detection_invariant = exc.invariant
@@ -744,7 +754,7 @@ def score_run_record(
                 _identification_metric_entries(identification_entries)
             )
         except ManifestError as exc:
-            if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+            if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
                 raise
             ident = None
             identification_invariant = exc.invariant
@@ -951,6 +961,14 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"withheld {redaction['withheld_items']} of {redaction['total_items']} items "
             "(local-only / non-publishable)"
         )
+    estimand = scored.get("estimand")
+    if estimand:
+        lines.append(
+            f"- estimand: population=`{estimand.get('population')}` — "
+            f"annotation_mode and coverage resolved on `{estimand.get('resolved_on')}` "
+            f"({estimand.get('n_items')} items / {estimand.get('n_entries')} entries); "
+            "not the unfiltered corpus"
+        )
     if "seeded" in model.get("adapters", []):
         lines.append(
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
@@ -1067,7 +1085,7 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): {DETECTION_REFUSED_EXPLANATION}"
+            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "
@@ -1080,7 +1098,8 @@ def _markdown(scored: dict[str, Any]) -> str:
     ]
     if ident.get("refused"):
         lines.append(
-            f"- REFUSED ({ident.get('invariant')}): {IDENTIFICATION_REFUSED_EXPLANATION}"
+            f"- REFUSED ({ident.get('invariant')}): "
+            f"{refusal_explanation(ident.get('invariant'))}"
         )
     else:
         lines += [
@@ -1128,25 +1147,16 @@ def build_reports(
     (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
     so withheld local-only items are never silent.
 
-    Identification computability is evaluated against the UNFILTERED entry set
-    (S2R4-02). Withholding an unboxed sibling must not turn an uncomputable
-    metric into a published P/R.
+    A filtered artifact is a different estimand (S2R5-03). Annotation mode,
+    box coverage, and identification computability are resolved on the same
+    population the numbers are computed from. PUBLIC declares that population
+    in ``estimand``; it does not silently reuse an unfiltered refusal or
+    silently drop the evidence that would have refused a metric.
     """
-    try:
-        require_boxed_identification_gt(
-            _identification_metric_entries(
-                _scored_identification_entries(run_record, manifest_entries)
-            )
-        )
-    except ManifestError as exc:
-        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
-            raise
-        unfiltered_id_invariant = exc.invariant
-    else:
-        unfiltered_id_invariant = None
     score_record = run_record
     score_entries = manifest_entries
     redaction: dict[str, Any] | None = None
+    estimand: dict[str, Any] | None = None
     if audience is Audience.PUBLIC:
         total_items = len(run_record["items"])
         score_record, score_entries, withheld = _filter_for_public_audience(run_record, manifest_entries)
@@ -1154,6 +1164,15 @@ def build_reports(
             "audience": Audience.PUBLIC.value,
             "withheld_items": withheld,
             "total_items": total_items,
+        }
+        estimand = {
+            "audience": Audience.PUBLIC.value,
+            "population": "publishable_items",
+            "n_items": len(score_record["items"]),
+            "n_entries": len(score_entries),
+            "withheld_items": withheld,
+            "total_items": total_items,
+            "resolved_on": "publishable_items",
         }
     scored = score_run_record(
         score_record,
@@ -1163,12 +1182,10 @@ def build_reports(
         manifest_roster=manifest_roster,
         annotation_mode=annotation_mode,
     )
-    if unfiltered_id_invariant is not None:
-        scored["faces"]["identification"] = _refused_identification_metric(
-            unfiltered_id_invariant
-        )
     if redaction is not None:
         scored["redaction"] = redaction
+    if estimand is not None:
+        scored["estimand"] = estimand
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
 
 
@@ -1796,7 +1813,7 @@ def score_face_run_record(
             [entry_by_id[int(item["media_id"])] for item in scoreable]
         )
     except ManifestError as exc:
-        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+        if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
             raise
         identification_invariant = exc.invariant
     else:
@@ -2469,7 +2486,7 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     if hl.get("refused"):
         lines.append(
             f"- **headline_identification**: REFUSED ({hl.get('invariant')}): "
-            f"{IDENTIFICATION_REFUSED_EXPLANATION}"
+            f"{refusal_explanation(hl.get('invariant'))}"
         )
     else:
         lines.append(

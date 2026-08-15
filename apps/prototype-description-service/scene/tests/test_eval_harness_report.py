@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
 from scripts.eval_harness.report import (
     DIRECTIONAL_LABEL,
     FACE_BAKEOFF_CANON_VERSION,
@@ -748,6 +749,55 @@ def test_build_reports_scored_detection_public_redaction() -> None:
     assert _PUBLIC_NAME in json_doc
 
 
+def test_overshoot_markdown_names_fp() -> None:
+    """pred=3 labeled=1 must surface tp=1 fp=2 fn=0, not a refused block.
+
+    S2R6E-03 / S2R4-16: the existing scored-detection fixtures are balanced
+    at fp=0, fn=0, so a transposition is invisible there. This is the
+    scene-layer pin that can observe it.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice.jpg",
+                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "identities": ["Alice Example"],
+                "face_count": 3,
+                "error": None,
+            }
+        ],
+    }
+    entry = {
+        "path": "mock_images/alice.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [_named_box("Alice Example")],
+        "annotation_mode": "exhaustive",
+    }
+    json_doc, md = build_reports(record, [entry])
+    det = json.loads(json_doc)["faces"]["detection"]
+    assert det.get("refused") is not True
+    assert det["tp"] == 1
+    assert det["fp"] == 2
+    assert det["fn"] == 0
+    section = md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "REFUSED" not in section
+    assert "- precision: 0.333 recall: 1.000 (tp=1 fp=2 fn=0)" in section
+
+
 # --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
 
 
@@ -837,6 +887,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -849,6 +900,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -861,6 +913,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],  # stranger
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "localwp", "license": "consented", "publishable": False},
             },
         ],
@@ -926,7 +979,7 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     assert keys == sorted(keys)
 
 
-def test_zero_box_corpus_all_directional():
+def _zero_box_face_fixture(*, stamp: bool) -> tuple[dict, dict]:
     face_run = {
         "schema": "acx-eval/v1",
         "kind": DocKind.FACE_RUN_RECORD.value,
@@ -942,23 +995,45 @@ def test_zero_box_corpus_all_directional():
             }
         ],
     }
+    entry = {
+        "path": "x.jpg",
+        "media_id": 1,
+        "face_count": 0,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    if stamp:
+        entry["annotation_mode"] = "exhaustive"
     manifest = {
         "annotation_mode": "exhaustive",
         "roster": [],
         "roster_cohorts": {},
-        "entries": [
-            {
-                "path": "x.jpg",
-                "media_id": 1,
-                "face_count": 0,
-                "present_identities": [],
-                "must_right": [],
-                "easy_wrong": [],
-                "policy": {"recognition_enabled": True},
-                "face_boxes": [],
-            }
-        ],
+        "entries": [entry],
     }
+    return face_run, manifest
+
+
+def test_zero_box_corpus_all_directional():
+    """S2R3-02: parent exhaustive + unstamped 0-box entry must refuse.
+
+    A document-level mode is a caller assertion, not per-entry evidence.
+    The old expectation scored this fixture (fill minted exhaustive and
+    published directional zeros). The same unstamped entries through
+    score_run_record(..., annotation_mode='exhaustive') already refuse
+    with detection_requires_annotation_mode; the face path must match.
+    """
+    face_run, manifest = _zero_box_face_fixture(stamp=False)
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(face_run, manifest)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
+
+def test_stamped_zero_box_corpus_all_directional():
+    """Zero-box directional still holds when the entry carries exhaustive."""
+    face_run, manifest = _zero_box_face_fixture(stamp=True)
     scored = score_face_run_record(face_run, manifest)
     assert scored["provenance"]["zero_box_corpus"] is True
     assert scored["slices"]["headline_identification"]["directional"] is True
@@ -1012,6 +1087,7 @@ def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, name)],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
             }
         )
@@ -1119,6 +1195,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1144,6 +1221,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1174,6 +1252,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
                 _gt_box(0.25, 0.4, 0.3, 0.3, "Alice Example"),
                 _gt_box(0.7, 0.4, 0.3, 0.3, "Cara Example"),
             ],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1371,6 +1450,7 @@ def test_publishability_named_private_source_redacted():
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Jane Roster")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "operator", "license": "consented", "publishable": False},
             }
         )

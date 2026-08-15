@@ -14064,6 +14064,169 @@ class TestF20ComposedRemBoundsFailClosed:
                         seen += 1
         assert seen == 90
 
+    # Compact-head + underscore + long-glue seeds the R22-02 prefilter
+    # must not be able to walk around by padding the prefix.
+    R22_02_MATRIX_SEEDS: ClassVar[tuple[str, ...]] = (
+        "fastsam",
+        "yolor",
+        "yolov5",
+        "yolov8",
+        "arcface",
+        "scrfd",
+        "retinaface",
+        "vec2face",
+        "antelopev2",
+        "buffalo_l",
+        "buffalo_sc",
+        "insightface",
+        "ultralytics",
+    )
+    R22_02_PREFIX_LENS: ClassVar[tuple[int, ...]] = tuple(range(5, 41))
+    R22_02_REM_LENS: ClassVar[tuple[int, ...]] = (47, 48, 49, 50, 200, 2000)
+
+    @staticmethod
+    def _r22_02_composed_token(
+        seed: str, prefix_len: int, rem_len: int
+    ) -> str | None:
+        """``{seed}{pad}xyolox_v8_`` + ``a``*N so rem is multi-segment.
+
+        Prefix is the compact slice before the first ``yolox``. Rem is
+        ``v8`` + ``a``*N so last-segment-equals-rem misses and rem>48
+        takes the skip-peel path. Returns None when ``prefix_len``
+        cannot hold ``seed`` + the ``x`` junk infix.
+        """
+        seed_k = seed.replace("_", "")
+        # prefix = seed_k + pad + "x"
+        pad_len = prefix_len - len(seed_k) - 1
+        if pad_len < 0:
+            return None
+        n_a = rem_len - 2  # "v8" is two compact chars
+        if n_a < 0:
+            return None
+        return f"{seed}{'z' * pad_len}xyolox_v8_" + ("a" * n_a)
+
+    def test_r22_02_padded_prefix_past_16_with_long_rem_denies(self) -> None:
+        """R22-02: prefix=17 rem=49 must DENY (the documented cliff).
+
+        Production-shaped revert is re-gating the unpeeled owner on
+        ``len(prefix) <= 16``. buffalo_l is the wrong witness — the
+        underscore-head arm still names it past the cap.
+        """
+        for seed in ("fastsam", "yolor", "yolov5", "arcface", "scrfd"):
+            token = self._r22_02_composed_token(seed, 17, 49)
+            assert token is not None
+            compact = policy._compact_canonical(token)
+            idx = compact.find("yolox")
+            assert len(compact[:idx]) == 17
+            assert len(compact[idx + 5 :]) == 49
+            axis = (
+                "nc"
+                if seed in {"arcface", "scrfd"}
+                else "agpl"
+            )
+            self._assert_probe(token, seed, axis)
+        # Mid-token long seed: prefix length 22, rem 49.
+        mid = "abcdefghijultralyticsxyolox_v8_" + ("a" * 47)
+        compact = policy._compact_canonical(mid)
+        idx = compact.find("yolox")
+        assert len(compact[:idx]) == 22
+        assert len(compact[idx + 5 :]) == 49
+        self._assert_probe(mid, "ultralytics", "agpl")
+
+    @staticmethod
+    def _r22_02_stem_matches(got: str, seed: str) -> bool:
+        """True when ``got`` is ``seed`` or an honest spelling of it.
+
+        ``antelopev2`` compact-matches ``antelope_v2``. ``yolov8x`` is
+        the size-tag identity of prefix ``yolov8`` + ``x`` (no pad).
+        """
+        if got == seed:
+            return True
+        gk = got.replace("_", "")
+        sk = seed.replace("_", "")
+        if gk == sk:
+            return True
+        return gk.startswith(sk) and len(gk) <= len(sk) + 3
+
+    def test_r22_02_prefix_by_rem_matrix_denies(self) -> None:
+        """R22-02: prefix 5–40 × rem {47,48,49,50,200,2000} for in-class seeds.
+
+        Cells whose prefix cannot hold the seed + ``x`` infix are
+        skipped (the seed is not in the prefix). Every constructible
+        cell must DENY as that seed (or an honest spelling of it).
+        """
+        seen = 0
+        skipped = 0
+        nc_seeds = {
+            "arcface",
+            "scrfd",
+            "retinaface",
+            "vec2face",
+            "antelopev2",
+            "buffalo_l",
+            "buffalo_sc",
+            "insightface",
+        }
+        for seed in self.R22_02_MATRIX_SEEDS:
+            axis = "nc" if seed in nc_seeds else "agpl"
+            for prefix_len in self.R22_02_PREFIX_LENS:
+                for rem_len in self.R22_02_REM_LENS:
+                    token = self._r22_02_composed_token(
+                        seed, prefix_len, rem_len
+                    )
+                    if token is None:
+                        skipped += 1
+                        continue
+                    compact = policy._compact_canonical(token)
+                    idx = compact.find("yolox")
+                    assert idx > 0, token
+                    assert len(compact[:idx]) == prefix_len, (
+                        token,
+                        compact[:idx],
+                        prefix_len,
+                    )
+                    assert len(compact[idx + 5 :]) == rem_len, (
+                        token[:80],
+                        rem_len,
+                    )
+                    hit = policy._package_denylist_hit(token)
+                    assert hit is not None, (
+                        f"{token[:96]!r}… must DENY "
+                        f"(seed={seed} prefix={prefix_len} rem={rem_len})"
+                    )
+                    assert self._r22_02_stem_matches(hit.package_id, seed), (
+                        f"{token[:96]!r}…: expected stem {seed!r}, "
+                        f"got {hit.package_id!r}"
+                    )
+                    result = policy.audit_derived_from_model(token)
+                    assert result.ok is False, (
+                        f"{token[:96]!r}… door must DENY"
+                    )
+                    if axis == "nc":
+                        assert (
+                            result.reason
+                            is policy.RejectionReason.NC_MODEL_DERIVED
+                        ), (
+                            f"{token[:96]!r}…: expected nc door, "
+                            f"got {result.reason}"
+                        )
+                    else:
+                        assert (
+                            result.reason
+                            is policy.RejectionReason.DENYLISTED_PACKAGE
+                        ), (
+                            f"{token[:96]!r}…: expected agpl door, "
+                            f"got {result.reason}"
+                        )
+                    seen += 1
+        # 13 seeds × 36 prefix × 6 rem, minus cells that cannot hold
+        # the seed. Lower bound: every seed has prefix_len from
+        # len(seed_k)+1 to 40 (at least 20 cells) × 6 rem.
+        assert seen >= 13 * 20 * 6, (
+            f"R22-02 matrix too small: seen={seen} skipped={skipped}"
+        )
+        assert skipped > 0, "expected some prefix_len < seed+1 cells"
+
     def test_red_proof_composed_rem_len_cap_fail_open(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

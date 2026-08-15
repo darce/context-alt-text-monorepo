@@ -4888,6 +4888,49 @@ def _token_starts_with_underscore_deny_head(token: str) -> bool:
     return False
 
 
+def _long_composed_rem_unpeeled_owner(
+    token: str, prefix: str
+) -> PackageDenylistEntry | None:
+    """Owner for rem past the peel budget — never peel, never admit.
+
+    The peel of a 1200-``yolop`` chain is O(n²) across suffixes, so
+    rem longer than :data:`_MAX_COMPOSED_REM_COMPACT_LEN` skips peel
+    and names the owner from the unpeeled token / prefix.
+
+    R22-02: a ``len(prefix) <= 16`` gate on this path admitted every
+    compact-head seed once junk between the seed and the exception
+    spelling pushed the prefix past 16 (``fastsam`` + 9 junk +
+    ``xyolox_v8_`` + 47 ``a``). Prefix length is not a gate. The
+    cheap skips that remain cannot be walked around by padding:
+
+      * underscore-head → glued-owner (deep-chain ``yolox_`` does
+        not start with a deny/NC underscore head, so it never pays
+        this call on every suffix);
+      * exception-family head or exact-spelling prefix → skip
+        prefix-owner (``yolox`` / ``yolop`` deep-chain; also stops
+        fabricated ``yolo`` via (c) on an exception prefix).
+
+    Compact-head stems (``fastsam`` / ``yolor`` / ``arcface``) and
+    mid-token long seeds (``…ultralyticsx…``) have neither shape, so
+    :func:`_mid_exception_prefix_deny_owner` always sees them.
+    """
+    if not token:
+        return None
+    if _token_starts_with_underscore_deny_head(token):
+        owned = _underscore_preserving_glued_seed_owner(token)
+        if owned is not None:
+            return owned
+    if not prefix:
+        return None
+    spellings = _exception_compact_spelling_set()
+    if prefix in spellings:
+        return None
+    head_seg = token.split("_", 1)[0]
+    if head_seg in spellings:
+        return None
+    return _mid_exception_prefix_deny_owner(prefix)
+
+
 def _peel_composed_trailing_rem_segments(
     token: str, rem: str
 ) -> str | None:
@@ -4996,6 +5039,7 @@ def _compact_mid_exception_deny_adjacency(
     than the historical 48-char cliff skips the peel (the
     1200-``yolop`` pin's cost is the pre-existing scanner)
     and fail-closes via the unpeeled owner — never admit.
+    R22-02: that owner is not gated on prefix length.
     Separator-aligned deny forms (``my_yoloxyolo`` /
     ``buffalo_l_xyolox``) still hit earlier via (b) / suffix
     walk. Prefix ownership on the compact (no-``_``) path is
@@ -5036,43 +5080,19 @@ def _compact_mid_exception_deny_adjacency(
                     if _mid_exception_rem_is_trailing_segment(token, rem):
                         peeled = token[: token.rfind("_")].rstrip("_")
                     elif _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED:
-                        # R22: rem longer than the historical 48-char
-                        # cliff is mid-chain residue (1200-yolop) or a
-                        # long export tail. Unbounded peel of the
-                        # deep-chain is O(n²) across suffixes (~5 min
-                        # vs ~22 s). Skip peel and fail-close via the
-                        # unpeeled owner — never admit.
+                        # R22 / R22-02: rem longer than the historical
+                        # 48-char cliff is mid-chain residue (1200-yolop)
+                        # or a long export tail. Unbounded peel of the
+                        # deep-chain is O(n²) across suffixes. Skip peel
+                        # and fail-close via the unpeeled owner — never
+                        # admit. Prefix length is not a gate (R22-02).
                         if (
                             len(rem) > _MAX_COMPOSED_REM_COMPACT_LEN
                             and not _COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP
                         ):
-                            owned = None
-                            # Cheap prefilter: deep-chain (``yolox_``)
-                            # must not pay glued-owner on every suffix.
-                            if _token_starts_with_underscore_deny_head(
-                                token
-                            ):
-                                owned = (
-                                    _underscore_preserving_glued_seed_owner(
-                                        token
-                                    )
-                                )
-                            if owned is None:
-                                head_seg = token.split("_", 1)[0]
-                                spellings = (
-                                    _exception_compact_spelling_set()
-                                )
-                                if (
-                                    prefix
-                                    and len(prefix) <= 16
-                                    and prefix not in spellings
-                                    and head_seg not in spellings
-                                ):
-                                    owned = (
-                                        _mid_exception_prefix_deny_owner(
-                                            prefix
-                                        )
-                                    )
+                            owned = _long_composed_rem_unpeeled_owner(
+                                token, prefix
+                            )
                             if owned is not None:
                                 return owned
                             start = idx + 1

@@ -36,6 +36,10 @@ import numpy as np
 
 from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
 
+# Identification GT requires a named face box per claimed identity. Unboxed
+# present_identities may load (roster_only) but cannot be scored as labels.
+IDENTIFICATION_UNBOXED_INVARIANT = "identification_refuses_unboxed_identity_claims"
+
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
 # Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
@@ -179,6 +183,52 @@ def detection_pr(
         fp += max(item.pred_faces - item.labeled_faces, 0)
         fn += max(item.labeled_faces - item.pred_faces, 0)
     return PrResult(true_positives=tp, false_positives=fp, false_negatives=fn)
+
+
+def boxed_identity_names(entry: Mapping[str, Any]) -> frozenset[str]:
+    """Names that have a per-face box. Unnamed boxes are detection-only."""
+    names: set[str] = set()
+    for box in entry.get("face_boxes") or []:
+        name = box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None)
+        if name:
+            names.add(str(name))
+    return frozenset(names)
+
+
+def unboxed_identity_claims(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Identity claims in ``present_identities`` with no matching named box."""
+    boxed = boxed_identity_names(entry)
+    return tuple(
+        str(name) for name in (entry.get("present_identities") or []) if str(name) not in boxed
+    )
+
+
+def require_boxed_identification_gt(entries: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse identification scoring when any claim lacks per-face box lineage.
+
+    Does not drop the unboxed entries from the denominator and does not
+    substitute 0.0 — the metric is not computable honestly (EVAL-03).
+    """
+    holes: list[str] = []
+    first_index: int | None = None
+    first_path: str | None = None
+    for index, entry in enumerate(entries):
+        unboxed = unboxed_identity_claims(entry)
+        if not unboxed:
+            continue
+        path = str(entry.get("path", f"entry[{index}]"))
+        if first_index is None:
+            first_index = index
+            first_path = path
+        holes.append(f"{path} unboxed={list(unboxed)}")
+    if holes:
+        raise ManifestError(
+            "identification P/R cannot be computed from identity claims that "
+            "carry no per-face box lineage: " + "; ".join(holes),
+            invariant=IDENTIFICATION_UNBOXED_INVARIANT,
+            entry_index=first_index,
+            entry_path=first_path,
+        )
 
 
 def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:

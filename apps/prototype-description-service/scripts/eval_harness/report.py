@@ -44,6 +44,7 @@ from .face_metrics import (
     SAMPLING_FRAME_UNKNOWN_REJECTION,
     UNKNOWN_REJECTION_ERROR_TARGET,
     UNKNOWN_REJECTION_N_FLOOR,
+    IDENTIFICATION_UNBOXED_INVARIANT,
     ImageDetection,
     ImageIdentities,
     clustering_sweep,
@@ -52,6 +53,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    require_boxed_identification_gt,
 )
 from .manifest import (
     AnnotationMode,
@@ -91,6 +93,10 @@ _MODE_RESTRICTIVENESS = {
 
 DETECTION_REFUSED_EXPLANATION = (
     "detection P/R is not computed unless annotation_mode is exhaustive"
+)
+IDENTIFICATION_REFUSED_EXPLANATION = (
+    "identification P/R is not computed from identity claims that carry no "
+    "per-face box lineage"
 )
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
@@ -406,6 +412,7 @@ def score_run_record(
     per_image: list[dict[str, Any]] = []
     detections: list[ImageDetection] = []
     identifications: list[ImageIdentities] = []
+    identification_entries: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     distractor_injected = 0
     distractor_taken = 0
@@ -544,6 +551,7 @@ def score_run_record(
                 stranger_faces=stranger_faces,
             )
         )
+        identification_entries.append(entry)
         row: dict[str, Any] = {
             "path": path,
             "media_id": media_id,
@@ -608,11 +616,24 @@ def score_run_record(
         else:
             det = None
             detection_invariant = "detection_requires_annotation_mode"
-    ident = identification_pr(identifications)
+    try:
+        require_boxed_identification_gt(identification_entries)
+    except ManifestError as exc:
+        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+            raise
+        ident = None
+        identification_invariant = exc.invariant
+    else:
+        ident = identification_pr(identifications)
+        identification_invariant = None
 
-    ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
-    live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
-    ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
+    if ident is None:
+        live_wrong: list[list[str]] = []
+        ignored_wrong: list[list[str]] = []
+    else:
+        ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
+        live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
+        ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
 
     fetch_provenance = dict(run_record["provenance"])
     provenance = {
@@ -683,24 +704,40 @@ def score_run_record(
                     "fn": det.false_negatives,
                 }
             ),
-            "identification": {
-                **_pr_dict(ident.precision, ident.recall),
-                "macro_precision": ident.macro_precision,
-                "macro_recall": ident.macro_recall,
-                "per_identity": {
-                    name: {
-                        **_pr_dict(pr.precision, pr.recall),
-                        "tp": pr.true_positives,
-                        "fp": pr.false_positives,
-                        "fn": pr.false_negatives,
-                    }
-                    for name, pr in ident.per_identity.items()
-                },
-                "true_rejections": ident.true_rejections,
-                "excluded_images": ident.excluded_images,
-                "wrong_names": live_wrong,
-                "ignored_wrong_names": ignored_wrong,
-            },
+            "identification": (
+                {
+                    "refused": True,
+                    "invariant": identification_invariant,
+                    "precision": None,
+                    "recall": None,
+                    "macro_precision": None,
+                    "macro_recall": None,
+                    "per_identity": {},
+                    "true_rejections": None,
+                    "excluded_images": None,
+                    "wrong_names": None,
+                    "ignored_wrong_names": None,
+                }
+                if ident is None
+                else {
+                    **_pr_dict(ident.precision, ident.recall),
+                    "macro_precision": ident.macro_precision,
+                    "macro_recall": ident.macro_recall,
+                    "per_identity": {
+                        name: {
+                            **_pr_dict(pr.precision, pr.recall),
+                            "tp": pr.true_positives,
+                            "fp": pr.false_positives,
+                            "fn": pr.false_negatives,
+                        }
+                        for name, pr in ident.per_identity.items()
+                    },
+                    "true_rejections": ident.true_rejections,
+                    "excluded_images": ident.excluded_images,
+                    "wrong_names": live_wrong,
+                    "ignored_wrong_names": ignored_wrong,
+                }
+            ),
         },
         "per_image": per_image,
         "failures": failures,
@@ -929,24 +966,31 @@ def _markdown(scored: dict[str, Any]) -> str:
         "",
         "## Face identification (named assertions)",
         "",
-        f"- micro precision: {_fmt(ident['precision'])} recall: {_fmt(ident['recall'])}",
-        f"- macro precision: {_fmt(ident['macro_precision'])} recall: {_fmt(ident['macro_recall'])}",
-        f"- true rejections (strangers): {ident['true_rejections']}",
-        "",
-        "### Wrong-name errors (top product risk — every instance listed)",
-        "",
     ]
-    if ident["wrong_names"]:
-        lines += [f"- `{image}` → asserted **{name}**" for image, name in ident["wrong_names"]]
-    else:
-        lines.append("- none")
-    lines.append(f"- ignored (triaged): {len(ident['ignored_wrong_names'])}")
-    lines += ["", "### Per-identity (macro components)", ""]
-    for name, pr in ident["per_identity"].items():
+    if ident.get("refused"):
         lines.append(
-            f"- {name}: precision={_fmt(pr['precision'])} recall={_fmt(pr['recall'])} "
-            f"(tp={pr['tp']} fp={pr['fp']} fn={pr['fn']})"
+            f"- REFUSED ({ident.get('invariant')}): {IDENTIFICATION_REFUSED_EXPLANATION}"
         )
+    else:
+        lines += [
+            f"- micro precision: {_fmt(ident['precision'])} recall: {_fmt(ident['recall'])}",
+            f"- macro precision: {_fmt(ident['macro_precision'])} recall: {_fmt(ident['macro_recall'])}",
+            f"- true rejections (strangers): {ident['true_rejections']}",
+            "",
+            "### Wrong-name errors (top product risk — every instance listed)",
+            "",
+        ]
+        if ident["wrong_names"]:
+            lines += [f"- `{image}` → asserted **{name}**" for image, name in ident["wrong_names"]]
+        else:
+            lines.append("- none")
+        lines.append(f"- ignored (triaged): {len(ident['ignored_wrong_names'])}")
+        lines += ["", "### Per-identity (macro components)", ""]
+        for name, pr in ident["per_identity"].items():
+            lines.append(
+                f"- {name}: precision={_fmt(pr['precision'])} recall={_fmt(pr['recall'])} "
+                f"(tp={pr['tp']} fp={pr['fp']} fn={pr['fn']})"
+            )
     lines += ["", "## Per-item failures", ""]
     if scored["failures"]:
         lines += [f"- `{f['path']}` (media_id={f['media_id']}): {f['error']}" for f in scored["failures"]]

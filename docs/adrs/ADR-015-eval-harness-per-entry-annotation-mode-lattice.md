@@ -57,8 +57,8 @@ schema change cannot treat the pin as an accident.
 | --- | --- |
 | `GoldenManifest.annotation_mode` | Document-level required field. Every on-disk v3 manifest, including `scene/tests/seed/golden.json` (`roster_only`). |
 | `GoldenEntry` | **No field.** `extra="forbid"`. A JSON key `annotation_mode` on an entry fails validation. |
-| `cli._cmd_score` | Dumps typed entries and stamps the **parent** document mode onto every dict. Never reads a per-entry key from disk. |
-| `fusion_runner.manifest_entries_as_dicts` | Same: stamps `manifest.annotation_mode` onto every dumped entry. |
+| `cli._cmd_score` | Typed door: dumps typed entries and fills omitted stamps from the document mode; never overwrites a real per-entry stamp. Never reads a per-entry key from disk. |
+| `fusion_runner.manifest_entries_as_dicts` | Same typed-door fill from `manifest.annotation_mode`; does not overwrite a real per-entry stamp. |
 | `report._entries_as_dicts` / `_stamp_typed_document_mode` | Typed door: fills omitted stamps from the document mode; never overwrites a per-entry stamp. Raw-mapping door: does not fill; omission refuses (`detection_requires_annotation_mode`). Blank/whitespace is not omitted (S2R3-02). |
 | `report._resolve_score_annotation_mode` | The lattice. Reads `entry["annotation_mode"]` from raw mappings only. |
 | `score_run_record` / `score_face_run_record` | Consume the resolved mode. Roster-only / missing / mixed / empty → refuse (or raise on the face path). |
@@ -67,8 +67,11 @@ schema change cannot treat the pin as an accident.
 ### Raw-dict callers (the only way the lattice is reached)
 
 1. **Flatteners that homogenize a typed document** — `cli._cmd_score`,
-   `fusion_runner.manifest_entries_as_dicts`, `_entries_as_dicts`. These
-   always stamp one parent mode. They never produce mixed stamps.
+   `fusion_runner.manifest_entries_as_dicts`, `_entries_as_dicts`. The
+   typed door fills entries that carry no stamp from the document mode
+   and never overwrites a real per-entry stamp. The raw-mapping door
+   does not fill from the parent; an entry with no stamp refuses
+   (`detection_requires_annotation_mode`). Omission is not exhaustive.
 2. **Tests** — `test_score_roster_only_refusal.py`,
    `test_identification_boxed_gt.py`, `test_exhaustive_detection_arithmetic.py`,
    and several `scene/tests/test_eval_harness_*.py` helpers pass raw dicts

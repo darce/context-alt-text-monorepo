@@ -86,19 +86,19 @@ Copy a committed run-record out of tree so `score` does not write reports next t
 
 ```bash
 cd apps/prototype-description-service
-mkdir -p /tmp/acx-eval-score
-cp ../../docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json /tmp/acx-eval-score/run.json
+WORK=$(mktemp -d)
+cp ../../docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json "$WORK/run.json"
 uv run python -m scripts.eval_harness.cli score \
-  --run-record /tmp/acx-eval-score/run.json \
+  --run-record "$WORK/run.json" \
   --manifest scene/tests/seed/golden.json
-# expected: exit 3; report written at /tmp/acx-eval-score/run-report.{json,md}
+# expected: exit 3; report written at $WORK/run-report.{json,md}
 ```
 
 To accept the refused report (still no detection/identification numbers):
 
 ```bash
 uv run python -m scripts.eval_harness.cli score \
-  --run-record /tmp/acx-eval-score/run.json \
+  --run-record "$WORK/run.json" \
   --manifest scene/tests/seed/golden.json \
   --allow-refused
 # expected: exit 0; same refused JSON, different process status

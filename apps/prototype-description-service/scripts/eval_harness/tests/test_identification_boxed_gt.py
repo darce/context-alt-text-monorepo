@@ -15,7 +15,6 @@ from scripts.eval_harness.face_metrics import require_boxed_identification_gt
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     ManifestError,
-    REFUSAL_EXPLANATIONS,
     ScoreInvariant,
     load_manifest,
 )
@@ -207,6 +206,50 @@ def test_boxed_identity_still_scores_identification() -> None:
     assert ident["wrong_names"] == []
 
 
+def test_require_boxed_skips_policy_disabled_unboxed_claim() -> None:
+    """S2R4-06: the helper must use identification_pr's population.
+
+    A recognition_enabled=False unboxed row is not a live claim. The helper
+    used to refuse the whole score when one such row sat next to an honest
+    boxed sibling.
+    """
+    boxed = _boxed_alice()
+    disabled = {
+        "path": "mock_images/theo.jpg",
+        "media_id": 2,
+        "face_count": 1,
+        "present_identities": ["Theo Example"],
+        "policy": {"recognition_enabled": False},
+        "face_boxes": [],
+    }
+    require_boxed_identification_gt([boxed, disabled])
+    require_boxed_identification_gt([disabled])
+
+
+def test_require_boxed_still_refuses_enabled_unboxed_sibling() -> None:
+    """A live unboxed claim still refuses even when a disabled row is present."""
+    boxed = _boxed_alice()
+    disabled = {
+        "path": "mock_images/theo.jpg",
+        "media_id": 2,
+        "present_identities": ["Theo Example"],
+        "policy": {"recognition_enabled": False},
+        "face_boxes": [],
+    }
+    live = {
+        "path": "mock_images/bob.jpg",
+        "media_id": 3,
+        "present_identities": ["Bob Example"],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    with pytest.raises(ManifestError) as exc_info:
+        require_boxed_identification_gt([boxed, disabled, live])
+    assert exc_info.value.invariant == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+    assert "Bob Example" in str(exc_info.value)
+    assert "Theo Example" not in str(exc_info.value)
+
+
 def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
     """S2R4-06: a policy-disabled unboxed row is not a live identification claim."""
     boxed = _boxed_alice()
@@ -246,19 +289,23 @@ def test_policy_disabled_unboxed_does_not_refuse_identification() -> None:
 
 
 def test_markdown_names_refused_identification() -> None:
+    """S2R4-19: pin the explanation substance, not the production constant.
+
+    A lying sentence that keeps 'per-face box lineage' (e.g. 'identification
+    P/R is computed even when claims carry no per-face box lineage') must
+    fail this pin. Importing REFUSAL_EXPLANATIONS here would stay green.
+    """
     _json_doc, md = build_reports(_record(["Alice Example"]), [_unboxed_alice()])
+    face_id = md.split("## Face identification")[1]
     assert f"- REFUSED ({ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS}):" in md
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
-        in md
-    )
-    assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
-        not in md
-    )
-    face_id = md.split("## Face identification")[1]
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
+    ) in face_id
+    assert "identification P/R is not computed from zero scored observations" not in face_id
     assert "micro precision:" not in face_id
     assert "used anyway" not in face_id
+    assert "is computed even when" not in face_id
 
 
 def _unit(vec: list[float]) -> list[float]:

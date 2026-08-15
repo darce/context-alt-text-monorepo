@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -279,6 +279,92 @@ describe('IdentityThumbnail', () => {
       missingClick,
       'missing-media aria-hidden placeholder must not invoke onClick [A11Y-11]',
     ).not.toHaveBeenCalled();
+  });
+
+  it('names a claimed dedicated blob that 404s with no fallback [REV1-08]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{ media_id: 100, identity_id: 'expired-blob', thumb_url: DEDICATED_THUMB }}
+        size={96}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image).toHaveAttribute('src', DEDICATED_THUMB);
+    fireEvent.error(image);
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Image failed to load' })).toBeInTheDocument();
+    expect(screen.getByText('Image failed to load')).toBeInTheDocument();
+    expect(document.querySelector('[data-face-error="true"]')).not.toBeNull();
+    expect(document.querySelector('[data-face-missing="true"]')).toBeNull();
+  });
+
+  it('names a wrapping link after a claimed blob 404s [REV1-08]', () => {
+    render(
+      <a href="https://example.com/media/100">
+        <IdentityThumbnail
+          identity={{ media_id: 100, identity_id: 'expired-blob', thumb_url: DEDICATED_THUMB }}
+          size={96}
+        />
+      </a>,
+    );
+
+    fireEvent.error(screen.getByRole('img'));
+
+    expect(screen.getByRole('link')).toHaveAccessibleName('Image failed to load');
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('clears a fallback source img that 404s [REV1-08]', () => {
+    const fallback = 'https://example.com/expired-attachment.jpg';
+    render(
+      <IdentityThumbnail
+        identity={{
+          media_id: 100,
+          identity_id: 'fallback-404',
+          thumb_url: DEDICATED_THUMB,
+          attachment_url: fallback,
+          bbox: null,
+        }}
+        size={96}
+      />,
+    );
+
+    const dedicated = screen.getByRole('img');
+    expect(dedicated).toHaveAttribute('src', DEDICATED_THUMB);
+    fireEvent.error(dedicated);
+
+    const fallbackImg = screen.getByRole('img');
+    expect(fallbackImg).toHaveAttribute('src', fallback);
+    fireEvent.error(fallbackImg);
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Image failed to load' })).toBeInTheDocument();
+    expect(screen.getByText('Image failed to load')).toBeInTheDocument();
+  });
+
+  it('keeps decorative alt="" unnamed after a claimed blob 404 [REV1-08]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{ media_id: 100, thumb_url: DEDICATED_THUMB }}
+        alt=""
+        size={96}
+      />,
+    );
+
+    const image = document.querySelector('img');
+    expect(image).not.toBeNull();
+    if (!image) {
+      return;
+    }
+    fireEvent.error(image);
+
+    const placeholder = document.querySelector('.acx-cluster-card__face--placeholder');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder).toHaveAttribute('aria-hidden', 'true');
+    expect(placeholder?.getAttribute('role')).toBeNull();
+    expect(screen.queryByText('Image failed to load')).not.toBeInTheDocument();
   });
 
   describe('lazy canvas crop [page-load]', () => {

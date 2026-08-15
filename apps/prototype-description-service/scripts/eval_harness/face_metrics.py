@@ -223,10 +223,9 @@ def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> Non
     first_index: int | None = None
     first_path: str | None = None
     for index, entry in enumerate(entries):
-        # Fusion flatten (S2R4-05) still omits the key. A missing key is not
-        # a false witness — only a present box list can contradict face_count.
-        if "face_boxes" not in entry:
-            continue
+        # Absent key ≡ empty list. Fusion flatten and GoldenEntry.model_dump
+        # both emit face_boxes; a raw mapping that omits it cannot witness
+        # face_count (S2R5-07). 0 boxes vs face_count=0 is covered, not a hole.
         n_boxes = len(entry.get("face_boxes") or [])
         face_count = int(entry.get("face_count") or 0)
         if n_boxes == face_count:

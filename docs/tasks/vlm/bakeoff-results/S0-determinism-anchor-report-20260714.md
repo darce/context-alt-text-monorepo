@@ -8,6 +8,8 @@
 - score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-14T21:47:35Z
 - images: 37/37 scored, 0 failed
+- notes: S2R4-15 F23-G disclosure at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7: S2R4-18: S2R3-06 republish substituted today's golden (fc7ce548) for the fetch-time manifest (67040d45, matches fetch was True). The original was not roster_only-ambiguous. Current faces.identification is REFUSED(identification_refuses_unboxed_identity_claims); this wave did not re-score the run-record (already an honest refusal).
+- notes: S2R4-18 provenance: fetch=67040d4513998674151a48f49f59c7f19c59caf05d0949e7dffcb88199124332 score=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). S0-era golden.json is v2; current loader is v3-only so matches fetch cannot be restored without a scorer change.
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 - latency: per-image wall-clock p50 0.06s p95 0.416s (37 timed) · model calls/image: 1.0 (total 37)
 

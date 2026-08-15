@@ -8,6 +8,8 @@
 - score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-07T00:00:00Z
 - images: 37/37 scored, 0 failed
+- notes: S2R4-15 F23-G disclosure at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7: S2R4-18: S2R3-06/-07 republish substituted today's golden (fc7ce548) for the fetch-time manifest (003b4a52, matches fetch was True). The original was not roster_only-ambiguous; substitution was not required to refuse detection. Current faces.identification is REFUSED(identification_refuses_unboxed_identity_claims); this wave did not re-score the run-record (already an honest refusal).
+- notes: S2R4-18 provenance: fetch=003b4a52cbaceee8ef7e931917cb12ad7a41c42389dd967a14d781eca1c3bd64 score=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). 5559a1fc golden.json naive SHA 003b4a52 (v2); current loader is v3-only so matches fetch cannot be restored without a scorer change.
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)

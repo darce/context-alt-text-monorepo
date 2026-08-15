@@ -57,7 +57,6 @@ from .report import (
     build_face_reports,
     build_reports,
     occlusion_inputs_from_record,
-    score_face_run_record,
 )
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
@@ -898,17 +897,11 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    synth_pairs, real_pairs = occlusion_inputs_from_record(record, manifest)
-    scored = score_face_run_record(
-        record,
-        manifest,
-        score_manifest_sha256=manifest_sha,
-        occlusion_pairs_by_tag=synth_pairs,
-        real_occlusion_pairs_by_tag=real_pairs,
-    )
+    # Same published-object contract as ``score`` (S2R5-13): do not rescore.
+    scored = json.loads(json_doc)
     occlusion_eligible = sum(
         int((block.get("synthetic") or {}).get("n_eligible") or 0)
-        for block in (scored["slices"].get("occlusion") or {}).values()
+        for block in (scored.get("slices", {}).get("occlusion") or {}).values()
         if isinstance(block, dict)
     )
     print(md_path)
@@ -923,6 +916,9 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         sys.exit(
             f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})"
         )
+    raise_if_unconsented_refusals(
+        scored, getattr(args, "allow_refused", None), command="score-face"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1042,6 +1038,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="post-score redact via redact_face_report_for_public (never pre-score drop)",
     )
+    _allow_refused_flag(score_face_p)
     score_face_p.set_defaults(func=_cmd_score_face)
 
 

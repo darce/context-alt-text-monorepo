@@ -13963,9 +13963,10 @@ class TestF20ComposedRemBoundsFailClosed:
     def test_exception_spelling_in_rem_sweep(self) -> None:
         """R22-03: exception spelling in rem position cannot launder.
 
-        Floor names the seed. Door may be NC or AGPL-first unknown
-        residual (``yolop_tiny`` / ``yolof_tiny``) — same promotion
-        the R20 twin rem-tail pin documents.
+        Floor names the seed. Door reports that seed's licence class
+        (R23-03): NC seeds stay ``nc_model_derived`` even when rem is
+        ``yolop_tiny`` / ``yolof_tiny``; AGPL seeds stay
+        ``denylisted_package``.
         """
         seen = 0
         for seed in self.F17.MULTI_SEGMENT_SEEDS:
@@ -13981,6 +13982,23 @@ class TestF20ComposedRemBoundsFailClosed:
                     )
                     result = policy.audit_derived_from_model(token)
                     assert result.ok is False, f"{token!r} door must DENY"
+                    if seed == "fastsam":
+                        assert (
+                            result.reason
+                            is policy.RejectionReason.DENYLISTED_PACKAGE
+                        ), (
+                            f"{token!r}: AGPL seed door must stay "
+                            f"denylisted_package, got {result.reason}"
+                        )
+                    else:
+                        assert (
+                            result.reason
+                            is policy.RejectionReason.NC_MODEL_DERIVED
+                        ), (
+                            f"{token!r}: NC seed door must stay "
+                            f"nc_model_derived, got {result.reason} "
+                            f"({result.detail!r})"
+                        )
                     seen += 1
         assert seen == self.EXCEPTION_REM_SWEEP_ROWS, (
             f"exception-in-rem sweep must cover "
@@ -14467,6 +14485,92 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
             self._assert_seed_deny(f"fastsamxyolox_{tag}", "fastsam")
             seen += 1
         assert seen >= 20, f"catalogue sweep too small: {seen}"
+
+
+class TestF21NcSeedDoorReportsNcAxis:
+    """R23-03: NC-seeded tokens must not emit an AGPL-axis door reason.
+
+    ``buffalo_lxyolox_yolop_tiny`` floor-names buffalo_l (NC) but the
+    door used to report ``yolop_unknown_residual`` (denylisted_package)
+    because AGPL-first promotion treated the synthetic unknown-residual
+    gadget as a real AGPL package. The door must report the licence
+    class of the seed the floor identified. [AUDIT-08][PROV-01]
+    """
+
+    LISTED_ROWS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("buffalo_lxyolox_yolop_tiny", "buffalo_l"),
+        ("buffalo_lxyolox_yolof_tiny", "buffalo_l"),
+        ("buffalo_lxyolox_yolopv2_tiny", "buffalo_l"),
+        ("buffalo_l2xyolox_yolop_tiny", "buffalo_l2"),
+        ("buffalo_l2xyolox_yolof_tiny", "buffalo_l2"),
+        ("buffalo_l2xyolox_yolopv2_tiny", "buffalo_l2"),
+        ("buffalo_scxyolox_yolop_tiny", "buffalo_sc"),
+        ("buffalo_scxyolox_yolof_tiny", "buffalo_sc"),
+        ("buffalo_scxyolox_yolopv2_tiny", "buffalo_sc"),
+        ("insightfacexyolox_yolop_tiny", "insightface"),
+        ("arcfacexyolox_yolop_tiny", "arcface"),
+    )
+    CONTRAST_STILL_NC: ClassVar[tuple[str, ...]] = (
+        "buffalo_lxyolox_v8_tiny",
+        "buffalo_lxyolox_v8_yolop",
+    )
+    REAL_AGPL_STILL_AGPL: ClassVar[tuple[str, ...]] = (
+        "buffalo_l_ultralytics",
+        "arcface_ultralytics",
+        "ultralytics/buffalo_l",
+        "yolox_s_buffalo_l_ultralytics",
+        "fastsamxyolox_yolop_tiny",
+    )
+
+    def test_listed_nc_seed_exception_in_rem_door_is_nc(self) -> None:
+        for token, seed in self.LISTED_ROWS:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} must floor-DENY"
+            assert hit.package_id == seed
+            assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            for door in (
+                policy.audit_derived_from_model,
+                policy.audit_source,
+            ):
+                result = door(token)
+                assert result.ok is False, f"{token!r} door must DENY"
+                assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+                    f"{token!r}: door must report nc_model_derived "
+                    f"(floor seed {seed!r}), got {result.reason} "
+                    f"({result.detail!r})"
+                )
+                assert "unknown_residual" not in result.detail, (
+                    f"{token!r}: NC door must not name unknown_residual; "
+                    f"got {result.detail!r}"
+                )
+
+    def test_contrast_v8_rows_stay_nc(self) -> None:
+        for token in self.CONTRAST_STILL_NC:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None and hit.package_id == "buffalo_l"
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_real_agpl_residue_still_outranks_nc(self) -> None:
+        """AGPL-first is unchanged for a real AGPL package hit."""
+        for token in self.REAL_AGPL_STILL_AGPL:
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False, f"{token!r} door must DENY"
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE, (
+                f"{token!r}: real AGPL must stay denylisted_package, "
+                f"got {result.reason} ({result.detail!r})"
+            )
+
+    def test_unknown_residual_without_nc_seed_stays_agpl(self) -> None:
+        """No NC floor seed → unknown residual remains the AGPL landing."""
+        for token in ("yolop_z", "yolox_z", "yolof_z"):
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None
+            assert hit.package_id.endswith("_unknown_residual")
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
 
 class TestF17StackedExceptionStemAttribution:

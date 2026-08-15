@@ -5,14 +5,18 @@ Committed run-records and reports stamp ``provenance.head_sha``. A harvest or
 rebase that rewrites commits can leave those stamps pointing at a SHA that
 ``git rev-parse --verify <sha>^{commit}`` cannot resolve here. This guard
 walks tracked eval artifacts under ``docs/`` and ``benchmarks/`` and fails
-if any published ``head_sha`` is missing.
+if any published stamp is missing or unreadable.
+
+A present stamp that is not a resolvable commit (``unknown``, truncated,
+uppercase that does not resolve, or other garbage) is invalid — not absent.
+Zero matching artifact files is a failed scan, not a clean pass.
 
 Usage (from repo root):
 
     python3 scripts/check_published_head_sha.py
 
-Exit 0 if every stamp resolves; 1 if any stamp is missing; 2 if the git
-invocation itself fails.
+Exit 0 if every stamp resolves; 1 if any stamp is missing/unreadable or no
+artifact files were scanned; 2 if the git invocation itself fails.
 """
 
 from __future__ import annotations
@@ -21,17 +25,47 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-MD_HEAD_SHA_RE = re.compile(
-    r"head_sha:\s*`?([0-9a-f]{40})`?",
+SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+# JSON commit / labeled `commit:` values: hex or the report.py sentinel.
+SHA_OR_UNKNOWN_RE = re.compile(r"^(?:unknown|[0-9a-fA-F]{4,40})$", re.IGNORECASE)
+
+JSON_STAMP_RE = re.compile(r'"(head_sha|git_sha|commit)"\s*:\s*"([^"]*)"')
+MD_HEAD_OR_GIT_RE = re.compile(
+    r"(?m)^(?:[-*]\s*)?(head_sha|git_sha):\s*`?([^\s`]+)`?"
+)
+MD_COMMIT_LABELED_RE = re.compile(
+    r"(?m)^(?:[-*]\s*)?commit:\s*`?(unknown|[0-9a-fA-F]{4,40})`?",
     re.IGNORECASE,
 )
-JSON_HEAD_SHA_RE = re.compile(r'"head_sha"\s*:\s*"([0-9a-f]{40})"')
+MD_COMMIT_LINE_RE = re.compile(
+    r"(?m)^(?:[-*]\s*)?commit\s+`?(unknown|[0-9a-fA-F]{7,40})`?\s*$",
+    re.IGNORECASE,
+)
 
 SCAN_PREFIXES = ("docs/", "benchmarks/")
-SCAN_SUFFIXES = (".json", ".md")
+SCAN_SUFFIXES = (".json", ".md", ".html", ".htm")
+JSON_LIKE_SUFFIXES = (".json",)
+OPEN_KEYS = ("head_sha", "git_sha")
+COMMIT_KEY = "commit"
+
+
+@dataclass(frozen=True)
+class PublishedStamp:
+    """One published commit stamp. ``raw`` is the literal value in the file."""
+
+    raw: str
+    key: str
+
+    @property
+    def well_formed(self) -> bool:
+        return bool(SHA40_RE.fullmatch(self.raw))
+
+    @property
+    def normalized(self) -> str:
+        return self.raw.lower() if self.well_formed else self.raw
 
 
 def repo_root() -> Path:
@@ -64,29 +98,75 @@ def tracked_artifact_paths(root: Path) -> list[str]:
     return paths
 
 
-def extract_head_shas(path: Path) -> list[str]:
+def _is_commit_key_value(value: str) -> bool:
+    return bool(SHA_OR_UNKNOWN_RE.fullmatch(value))
+
+
+def _record_stamp(
+    found: list[PublishedStamp], seen: set[tuple[str, str]], key: str, raw: str
+) -> None:
+    value = raw.strip()
+    if not value:
+        return
+    if key == COMMIT_KEY and not _is_commit_key_value(value):
+        return
+    marker = (key, value)
+    if marker in seen:
+        return
+    seen.add(marker)
+    found.append(PublishedStamp(raw=value, key=key))
+
+
+def _walk_json_stamps(obj: object, found: list[PublishedStamp], seen: set[tuple[str, str]]) -> None:
+    if isinstance(obj, dict):
+        for key, val in obj.items():
+            if key in OPEN_KEYS and isinstance(val, str):
+                _record_stamp(found, seen, key, val)
+            elif key == COMMIT_KEY and isinstance(val, str):
+                _record_stamp(found, seen, key, val)
+            else:
+                _walk_json_stamps(val, found, seen)
+    elif isinstance(obj, list):
+        for item in obj:
+            _walk_json_stamps(item, found, seen)
+
+
+def _extract_text_stamps(text: str, found: list[PublishedStamp], seen: set[tuple[str, str]]) -> None:
+    for match in MD_HEAD_OR_GIT_RE.finditer(text):
+        _record_stamp(found, seen, match.group(1), match.group(2))
+    for match in MD_COMMIT_LABELED_RE.finditer(text):
+        _record_stamp(found, seen, COMMIT_KEY, match.group(1))
+    for match in MD_COMMIT_LINE_RE.finditer(text):
+        _record_stamp(found, seen, COMMIT_KEY, match.group(1))
+
+
+def extract_stamps(path: Path) -> list[PublishedStamp]:
     text = path.read_text(encoding="utf-8")
-    found: list[str] = []
-    if path.suffix == ".json":
+    found: list[PublishedStamp] = []
+    seen: set[tuple[str, str]] = set()
+    suffix = path.suffix.lower()
+    if suffix in JSON_LIKE_SUFFIXES:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError:
             payload = None
-        if isinstance(payload, dict):
-            prov = payload.get("provenance")
-            if isinstance(prov, dict):
-                sha = prov.get("head_sha")
-                if isinstance(sha, str) and SHA_RE.fullmatch(sha):
-                    found.append(sha)
-        # Belt: catch any other published head_sha string in the file.
-        for match in JSON_HEAD_SHA_RE.finditer(text):
-            if match.group(1) not in found:
-                found.append(match.group(1))
+        if payload is not None:
+            _walk_json_stamps(payload, found, seen)
+        for match in JSON_STAMP_RE.finditer(text):
+            _record_stamp(found, seen, match.group(1), match.group(2))
     else:
-        for match in MD_HEAD_SHA_RE.finditer(text):
-            if match.group(1) not in found:
-                found.append(match.group(1))
+        # Markdown/HTML labeled fields. Do not JSON-scan .md: schema prose
+        # like `"git_sha": "optional"` is not a published stamp.
+        _extract_text_stamps(text, found, seen)
+        if suffix in {".html", ".htm"}:
+            for match in JSON_STAMP_RE.finditer(text):
+                _record_stamp(found, seen, match.group(1), match.group(2))
     return found
+
+
+def extract_head_shas(path: Path) -> list[str]:
+    """Well-formed SHA strings only (legacy helper). Prefer ``extract_stamps``."""
+    return [stamp.normalized for stamp in extract_stamps(path) if stamp.well_formed]
 
 
 def resolve_commit(root: Path, sha: str) -> bool:
@@ -107,21 +187,35 @@ def main() -> int:
         print(f"check_published_head_sha: git invocation failed: {exc}", file=sys.stderr)
         return 2
 
-    checked = 0
-    missing: list[tuple[str, str]] = []
-    for rel in paths:
-        shas = extract_head_shas(root / rel)
-        for sha in shas:
-            checked += 1
-            if not resolve_commit(root, sha):
-                missing.append((rel, sha))
-
-    if missing:
+    if not paths:
         print(
-            f"check_published_head_sha: {len(missing)} unpublished head_sha "
-            f"stamp(s) (checked {checked} across {len(paths)} files)",
+            "check_published_head_sha: no tracked docs/benchmarks artifact "
+            "files scanned",
             file=sys.stderr,
         )
+        return 1
+
+    checked = 0
+    missing: list[tuple[str, str]] = []
+    unreadable: list[tuple[str, str, str]] = []
+    for rel in paths:
+        for stamp in extract_stamps(root / rel):
+            checked += 1
+            if not stamp.well_formed:
+                unreadable.append((rel, stamp.raw, stamp.key))
+                continue
+            if not resolve_commit(root, stamp.normalized):
+                missing.append((rel, stamp.normalized))
+
+    if missing or unreadable:
+        print(
+            f"check_published_head_sha: {len(missing) + len(unreadable)} "
+            f"unpublished or unreadable head_sha stamp(s) "
+            f"(checked {checked} across {len(paths)} files)",
+            file=sys.stderr,
+        )
+        for rel, raw, key in unreadable:
+            print(f"  UNREADABLE  {raw}  {rel}  ({key})", file=sys.stderr)
         for rel, sha in missing:
             print(f"  MISSING  {sha}  {rel}", file=sys.stderr)
         return 1

@@ -1,0 +1,459 @@
+"""S2R4-03 — regen_eval_report.py must not greenwash CLI exits (TEST-15).
+
+Drives the real repo-root script end to end. Refusal (3) and partial (1) are
+distinct: different messages, different outcomes, and publishing a refused
+report requires --allow-refused (default off). An unrecognized nonzero exit
+is not swallowed.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+_THIS = Path(__file__).resolve()
+_REPO_ROOT = _THIS.parents[5]
+_REGEN_SCRIPT = _REPO_ROOT / "scripts" / "regen_eval_report.py"
+
+_LINEAGE = {
+    "labeler_id": "test-labeler",
+    "batch_id": "test-batch",
+    "capture_session_id": "test-session",
+    "pass_index": 0,
+    "labeled_at": "2026-08-14T00:00:00Z",
+    "tool_version": "test",
+    "saw_machine_proposals": False,
+    "label_source": "operator_blind",
+    "decision": "named",
+    "confidence": "high",
+    "arbitration_of": None,
+}
+
+
+def _load_regen():
+    spec = importlib.util.spec_from_file_location(
+        "regen_eval_report_under_test", _REGEN_SCRIPT
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _roster_only_manifest() -> dict:
+    return {
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "mock_images/alice.jpg",
+                "sha256": "a" * 64,
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "base_caption": "Alice Example.",
+                "must_right": ["Alice Example"],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
+                "face_boxes": [
+                    {
+                        "x": 0.5,
+                        "y": 0.4,
+                        "w": 0.2,
+                        "h": 0.3,
+                        "name": "Alice Example",
+                        "source": "operator",
+                        "lineage": _LINEAGE,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _overshoot_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice.jpg",
+                "describe": {
+                    "alt_text_draft": "Alice Example by the pool.",
+                    "visual_facts": {"objects": []},
+                },
+                "identities": ["Alice Example"],
+                "face_count": 3,
+                "error": None,
+            }
+        ],
+    }
+
+
+def _failed_item_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "0" * 64,
+            "base_url": "x",
+            "head_sha": "f" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice.jpg",
+                "describe": None,
+                "identities": [],
+                "face_count": 0,
+                "error": "FileNotFoundError: missing",
+                "latency_s": None,
+            }
+        ],
+    }
+
+
+def _write_json(path: Path, payload: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _run_regen(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    merged = os.environ.copy()
+    if env:
+        merged.update(env)
+    return subprocess.run(
+        [sys.executable, str(_REGEN_SCRIPT), *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env=merged,
+    )
+
+
+def _real_inputs(tmp_path: Path, record: dict) -> tuple[Path, Path, Path, Path]:
+    run_record = _write_json(tmp_path / "run-record.json", record)
+    manifest = _write_json(tmp_path / "manifest.json", _roster_only_manifest())
+    out_json = tmp_path / "dest-report.json"
+    out_md = tmp_path / "dest-report.md"
+    return run_record, manifest, out_json, out_md
+
+
+def _assert_not_published(out_json: Path, out_md: Path, sentinel: str | None) -> None:
+    if sentinel is None:
+        assert not out_json.is_file(), "refused/partial/unrecognized must not publish JSON"
+        assert not out_md.is_file(), "refused/partial/unrecognized must not publish MD"
+        return
+    assert out_json.read_text(encoding="utf-8") == sentinel
+    assert out_md.read_text(encoding="utf-8") == sentinel
+
+
+# ---------------------------------------------------------------------------
+# Real score CLI (exit 3 refused, exit 1 partial)
+# ---------------------------------------------------------------------------
+
+
+def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
+    """VLM-2C class: full corpus, both metrics refused → exit 3, hold dest.
+
+    The pre-fix script printed 'partial-corpus' and returned 0 after
+    publishing. That swallow must stay red.
+    """
+    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    sentinel = '{"sentinel":"unpublished-refused"}'
+    out_json.write_text(sentinel, encoding="utf-8")
+    out_md.write_text(sentinel, encoding="utf-8")
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=_REPO_ROOT,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 3, combined
+    assert "refused metrics" in combined
+    assert "partial-corpus" not in combined
+    _assert_not_published(out_json, out_md, sentinel)
+
+
+def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
+    tmp_path: Path,
+) -> None:
+    """Consent publishes the refused report but must not greenwash to exit 0."""
+    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+            "--allow-refused",
+        ],
+        cwd=_REPO_ROOT,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 3, combined
+    assert "refused metrics" in combined
+    assert "--allow-refused" in combined
+    assert "partial-corpus" not in combined
+    assert out_json.is_file()
+    assert out_md.is_file()
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    assert report["faces"]["detection"]["refused"] is True
+
+
+def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
+    """failed>0 is the partial-corpus gate; it is not a refused-metrics exit."""
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _failed_item_record()
+    )
+    sentinel = '{"sentinel":"unpublished-partial"}'
+    out_json.write_text(sentinel, encoding="utf-8")
+    out_md.write_text(sentinel, encoding="utf-8")
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=_REPO_ROOT,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 1, combined
+    assert "partial-corpus" in combined
+    assert "refused metrics" not in combined
+    _assert_not_published(out_json, out_md, sentinel)
+
+
+def test_real_cli_partial_not_overridden_by_allow_refused(tmp_path: Path) -> None:
+    """--allow-refused is publisher consent for exit 3 only, not for exit 1."""
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _failed_item_record()
+    )
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+            "--allow-refused",
+        ],
+        cwd=_REPO_ROOT,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 1, combined
+    assert "partial-corpus" in combined
+    assert not out_json.is_file()
+    assert not out_md.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Scratch-repo stub CLI (unrecognized + clean + swallow walk-arounds)
+# ---------------------------------------------------------------------------
+
+
+def _scratch_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "scratch"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init"], cwd=repo, check=True, capture_output=True, text=True
+    )
+    subprocess.run(["git", "config", "user.email", "t@t.test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    return repo
+
+
+def _install_stub_python(repo: Path) -> Path:
+    python = repo / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    argv_log = repo / "stub-argv.txt"
+    python.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f"Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv), encoding='utf-8')\n"
+        "args = sys.argv\n"
+        "if '--run-record' in args:\n"
+        "    record = Path(args[args.index('--run-record') + 1])\n"
+        "    (record.parent / f'{record.stem}-report.json').write_text('{}\\n')\n"
+        "    (record.parent / f'{record.stem}-report.md').write_text('# stub\\n')\n"
+        "raise SystemExit(int(os.environ.get('STUB_SCORE_EXIT', '0')))\n",
+        encoding="utf-8",
+    )
+    python.chmod(python.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return argv_log
+
+
+def _stub_paths(repo: Path) -> tuple[Path, Path, Path, Path]:
+    run_record = _write_json(repo / "in" / "run.json", {"kind": "stub"})
+    manifest = _write_json(repo / "in" / "man.json", {"kind": "stub"})
+    out_json = repo / "out" / "report.json"
+    out_md = repo / "out" / "report.md"
+    return run_record, manifest, out_json, out_md
+
+
+def test_unrecognized_cli_exit_is_not_swallowed_or_published(tmp_path: Path) -> None:
+    """Exit 99 is not partial, not refused, not exit 0, and must not publish."""
+    repo = _scratch_repo(tmp_path)
+    argv_log = _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    sentinel = '{"sentinel":"hold-unrecognized"}'
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(sentinel, encoding="utf-8")
+    out_md.write_text(sentinel, encoding="utf-8")
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "99"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 99, combined
+    assert "unrecognized" in combined
+    assert "partial-corpus" not in combined
+    assert "refused metrics" not in combined
+    _assert_not_published(out_json, out_md, sentinel)
+    argv = argv_log.read_text(encoding="utf-8")
+    assert "--allow-refused" not in argv
+
+
+def test_stub_clean_score_publishes_and_exits_0(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "0"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert out_json.is_file()
+    assert out_md.is_file()
+
+
+def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
+    """Forwarding --allow-refused would make the CLI exit 0 and greenwash."""
+    repo = _scratch_repo(tmp_path)
+    argv_log = _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+            "--allow-refused",
+        ],
+        cwd=repo,
+        env={"STUB_SCORE_EXIT": "3"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 3, combined
+    argv = argv_log.read_text(encoding="utf-8")
+    assert "--allow-refused" not in argv
+    assert out_json.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Classifier: reason string is selected by the numeric exit, not a guess
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "allow", "publish", "exit_code", "reason", "must_have", "must_not"),
+    [
+        (0, False, True, 0, "clean-score", "clean score", "partial-corpus"),
+        (1, False, False, 1, "partial-corpus", "partial-corpus", "refused metrics"),
+        (1, True, False, 1, "partial-corpus", "partial-corpus", "refused metrics"),
+        (3, False, False, 3, "refused-metrics", "refused metrics", "partial-corpus"),
+        (3, True, True, 3, "refused-metrics", "refused metrics", "partial-corpus"),
+        (2, False, False, 2, "cli-usage", "usage/argparse", "partial-corpus"),
+        (7, False, False, 7, "unrecognized-cli-exit", "unrecognized", "partial-corpus"),
+        (7, True, False, 7, "unrecognized-cli-exit", "unrecognized", "partial-corpus"),
+    ],
+)
+def test_classify_score_exit_reason_comes_from_code(
+    code: int,
+    allow: bool,
+    publish: bool,
+    exit_code: int,
+    reason: str,
+    must_have: str,
+    must_not: str,
+) -> None:
+    regen = _load_regen()
+    decision = regen.classify_score_exit(code, allow_refused=allow)
+    assert decision.publish is publish
+    assert decision.exit_code == exit_code
+    assert decision.reason == reason
+    assert must_have in decision.message
+    assert must_not not in decision.message

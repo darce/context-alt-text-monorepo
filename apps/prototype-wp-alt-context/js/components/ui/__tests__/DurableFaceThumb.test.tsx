@@ -184,6 +184,24 @@ describe('DurableFaceThumb [TEST-15]', () => {
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
 
+  it('uncropped hop uses uncroppedAlt when supplied and the default swap when omitted [REV4-06]', () => {
+    const uncroppable = { mediaUrl: ATTACHMENT_URL, bbox: { x: 0, y: 0, width: 0, height: 0 } };
+    const { rerender } = render(
+      <DurableFaceThumb
+        source={uncroppable}
+        alt="Face image, possibly Ada Lovelace"
+        uncroppedAlt="Reference image, possibly Ada Lovelace"
+      />,
+    );
+
+    const labelled = screen.getByAltText('Reference image, possibly Ada Lovelace');
+    expect(labelled).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(screen.queryByAltText('Face image, possibly Ada Lovelace')).not.toBeInTheDocument();
+
+    rerender(<DurableFaceThumb source={uncroppable} />);
+    expect(screen.getByAltText('Reference image')).toHaveClass('acx-durable-face-thumb__uncropped');
+  });
+
   it('fallback-crop applies a CSS translate/scale so the bbox fills the frame [REV1-13]', async () => {
     const { container } = render(
       <DurableFaceThumb

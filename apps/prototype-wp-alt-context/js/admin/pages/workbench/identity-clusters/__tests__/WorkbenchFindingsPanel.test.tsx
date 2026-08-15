@@ -742,7 +742,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
+    expect(screen.getByAltText('Reference image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText('Ada Lovelace')).not.toBeInTheDocument();
   });
 

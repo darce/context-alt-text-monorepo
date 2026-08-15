@@ -480,3 +480,47 @@ def test_score_face_allow_refused_detection_does_not_consent_to_identification(
             ]
         )
     assert exc.value.code == 3
+
+
+# ---------------------------------------------------------------------------
+# S2R5-12 — an aborted run is not a corpus
+# ---------------------------------------------------------------------------
+
+
+def test_score_exits_1_when_run_record_is_aborted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One successful item + aborted=true used to pass the failed>0 gate.
+
+    Filename is run.json (not *-aborted.json) so a path-spelling check
+    cannot substitute for reading the flag.
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    record = _run_record(face_count=1)
+    record["aborted"] = True
+    man_path, rec_path = _write_score_inputs(
+        tmp_path, mode="exhaustive", boxed=True, record=record
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    assert exc.value.code == 1
+    assert "aborted" in capsys.readouterr().err
+    assert (rec_path.with_name("run-report.json")).is_file()
+
+
+def test_score_face_exits_1_when_run_record_is_aborted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _partial_id_face_inputs(tmp_path)
+    payload = json.loads(rec_path.read_text(encoding="utf-8"))
+    payload["aborted"] = True
+    rec_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    assert exc.value.code == 1
+    assert "aborted" in capsys.readouterr().err

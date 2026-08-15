@@ -71,3 +71,10 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 - Assertions deleted: `expect(result.current.atRestShown).toBe(40)` (useClusterSuggestionsLoader.test.tsx); `expect(result.current.atRestShown).toBe(50)` and `expect(result.current.atRestTotal).not.toBe(result.current.atRestShown)` (useClusterSuggestions.test.tsx envelope test); `expect(result.current.atRestShown).toBe(atRestPage.length - 1)` (useClusterSuggestions.test.tsx self-exclusion test; title no longer names atRestShown)
 - tsc --noEmit: EXIT 0
 - vitest identity-clusters + IdentityClusterList: EXIT 0, 41/621
+
+## REV3-02 — editable-cluster exclusion is pinned on the output
+- Fixture change: none needed — at-rest page already includes `id: 'cluster-self'` (`editableClusterId`) with distinctive label `Tory Guzman`
+- MUT-A (select filter deleted): PASSED — expected: `buildNamingOptions({ excludeClusterId })` still drops the editable cluster from hook output
+- MUT-B (both layers deleted): FAILED
+- Failing assertion: `expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);`
+- After restore: PASSED

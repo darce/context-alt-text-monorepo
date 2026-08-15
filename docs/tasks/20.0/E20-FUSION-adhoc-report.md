@@ -2,24 +2,32 @@
 
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `seeded` model(s): `fusion-eval-adhoc-stub` version(s): `1`
-- head_sha: `e4f1730f3c697f6abd6afefb817310de76f3f0c2`
+- head_sha: `44fb5271fbbe8ed4fdcb5932ce7bae8c7188603f`
 - base_url: fusion-runner://adhoc
-- fetch manifest_sha256: `2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9`
-- score manifest_sha256: `2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9` (matches fetch: True)
-- started_at: 2026-07-10T05:05:05Z
+- fetch manifest_sha256: `04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd`
+- score manifest_sha256: `04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd` (matches fetch: True)
+- started_at: 2026-08-15T01:32:34Z
 - images: 10/10 scored, 0 failed
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)
 
 - insertion rate: 1.000
+- name precision: 0.900 (wrong-name images: 1, rate: 0.100)
 - Must-Right failed images (hard gate): 0 (rubric-defined images: 8)
 - policy violations: 0
-- mean gated score: 0.900
+- mean gated score: 0.889
+
+## Quality axes (short surface, report-only signals)
+
+- meta-framing images: 2
+- mean context duplication: null
+- name front-loaded rate: 1.000
+- sentence band [1, 4] ok rate: 0.800
 
 ## Face detection (identity-agnostic)
 
-- precision: 1.000 recall: 0.882 (tp=15 fp=0 fn=2)
+- REFUSED (detection_refuses_roster_only): detection P/R is not computed unless annotation_mode is exhaustive
 
 ## Face identification (named assertions)
 

@@ -26,67 +26,17 @@
       "tp": null
     },
     "identification": {
-      "excluded_images": [
-        "mock_images/maria-pool.jpg"
-      ],
-      "ignored_wrong_names": [],
-      "macro_precision": 1.0,
-      "macro_recall": 0.8571428571428571,
-      "per_identity": {
-        "Bea Burke": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Caitlin Weaver": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 2
-        },
-        "Daniel Arce": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Erika Hansen Miller": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Kirstie Mccarrel": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Maria Correonero": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Ryann Wiseman": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 2
-        }
-      },
-      "precision": 1.0,
-      "recall": 0.8888888888888888,
-      "true_rejections": 2,
-      "wrong_names": []
+      "excluded_images": null,
+      "ignored_wrong_names": null,
+      "invariant": "identification_refuses_unboxed_identity_claims",
+      "macro_precision": null,
+      "macro_recall": null,
+      "per_identity": {},
+      "precision": null,
+      "recall": null,
+      "refused": true,
+      "true_rejections": null,
+      "wrong_names": null
     }
   },
   "failures": [],
@@ -94,7 +44,7 @@
   "per_image": [
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.75,
       "first_sentence_gist_ok": true,
       "fkre": 30.73,
       "gated_score": 1.0,
@@ -116,7 +66,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.7931,
       "first_sentence_gist_ok": true,
       "fkre": 89.81,
       "gated_score": 1.0,
@@ -138,7 +88,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.7931,
       "first_sentence_gist_ok": true,
       "fkre": 55.94,
       "gated_score": 1.0,
@@ -163,7 +113,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.6786,
       "first_sentence_gist_ok": true,
       "fkre": 75.41,
       "gated_score": 1.0,
@@ -186,7 +136,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.7857,
       "first_sentence_gist_ok": true,
       "fkre": 63.86,
       "gated_score": 1.0,
@@ -208,7 +158,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.75,
       "first_sentence_gist_ok": true,
       "fkre": 74.84,
       "gated_score": null,
@@ -230,7 +180,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.7857,
       "first_sentence_gist_ok": true,
       "fkre": 71.03,
       "gated_score": 0.0,
@@ -252,7 +202,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.7273,
       "first_sentence_gist_ok": true,
       "fkre": 58.36,
       "gated_score": 1.0,
@@ -274,7 +224,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.8519,
       "first_sentence_gist_ok": true,
       "fkre": 58.53,
       "gated_score": 1.0,
@@ -320,9 +270,9 @@
   "provenance": {
     "base_url": "fusion-runner://adhoc",
     "fusion_mode": "adhoc",
-    "head_sha": "6688d4c904f4fa8031952dc5bae12582fcfee2c9",
-    "manifest_matches_fetch": true,
-    "manifest_sha256": "04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd",
+    "head_sha": "e4f1730f3c697f6abd6afefb817310de76f3f0c2",
+    "manifest_matches_fetch": false,
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
     "model": {
       "adapters": [
         "seeded"
@@ -334,11 +284,11 @@
         "1"
       ]
     },
-    "score_manifest_sha256": "04d5712a8c8163d14e2fbed084739f1a701b112d96db95fb648ebfc096e78cfd",
-    "started_at": "2026-08-15T01:32:34Z"
+    "score_manifest_sha256": "73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539",
+    "started_at": "2026-07-10T05:05:05Z"
   },
   "quality": {
-    "mean_context_duplication": null,
+    "mean_context_duplication": 0.7684,
     "meta_framing_images": 2,
     "name_front_loaded_rate": 1.0,
     "sentence_band": [

@@ -121,6 +121,26 @@ def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
     assert entries[0]["annotation_mode"] == "roster_only"
 
 
+def test_fusion_flatten_preserves_face_boxes(tmp_path: Path) -> None:
+    """S2R4-05: flatten must keep box lineage so boxed GT still scores ID.
+
+    Dropping face_boxes made require_boxed_identification_gt refuse honest,
+    fully-boxed ground truth. The CLI flatten keeps boxes via model_dump.
+    """
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    entries = manifest_entries_as_dicts(manifest)
+    assert "face_boxes" in entries[0]
+    dumped = manifest.entries[0].model_dump()["face_boxes"]
+    assert entries[0]["face_boxes"] == dumped
+    assert dumped, "fixture must carry a named box"
+    assert any(box.get("name") == "Alice Example" for box in entries[0]["face_boxes"])
+    json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
+    ident = json.loads(json_doc)["faces"]["identification"]
+    assert ident.get("refused") is not True
+    assert ident["precision"] == 1.0
+    assert ident["recall"] == 1.0
+
+
 def test_fusion_runner_build_reports_refuses_roster_only_detection(tmp_path: Path) -> None:
     """Real in-tree entry: disk roster_only → flatten → build_reports (no kwarg).
 

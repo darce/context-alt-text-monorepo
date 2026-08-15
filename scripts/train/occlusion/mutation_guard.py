@@ -3865,6 +3865,19 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_composed_rem_len_cap_fail_open",
             "test_red_proof_composed_rem_segment_cap_fail_open",
             "test_red_proof_composed_rem_exception_spelling_fail_open",
+            # Wave F21 R23: prefix×rem matrix / legit-tag launder / NC-door.
+            "test_r22_02_padded_prefix_past_16_with_long_rem_denies",
+            "test_r22_02_prefix_by_rem_matrix_denies",
+            "test_listed_yolox_legit_tags_cannot_launder_compact_heads",
+            "test_extension_twins_cannot_launder",
+            "test_sibling_exception_families_cannot_launder",
+            "test_contrast_rows_still_deny",
+            "test_f13_exact_deny_prefix_stays_on_head_glue",
+            "test_catalogue_yolox_tags_on_fastsam_deny",
+            "test_listed_nc_seed_exception_in_rem_door_is_nc",
+            "test_contrast_v8_rows_stay_nc",
+            "test_real_agpl_residue_still_outranks_nc",
+            "test_unknown_residual_without_nc_seed_stays_agpl",
             # Wave F18 R20-02: F17 red-proofs / floor-miss contrast plus
             # two pre-F17 red-proofs that also die when hit always misses.
             "test_four_plus_suffix_junk_without_exception_is_floor_miss",
@@ -3963,6 +3976,20 @@ MUTATIONS: list[Mutation] = [
             "test_agpl_stem_junk_infix_exception_denies",
             "test_non_vendor_pp_yoloe_still_denies",
             "test_steal_names_fastsam_residual_honest",
+            # Wave F21 R23: door-reason pins (AUDIT-08). exception-in-rem
+            # sweep now asserts licence class, so it joins M16.
+            "test_exception_spelling_in_rem_sweep",
+            "test_r22_02_padded_prefix_past_16_with_long_rem_denies",
+            "test_r22_02_prefix_by_rem_matrix_denies",
+            "test_listed_yolox_legit_tags_cannot_launder_compact_heads",
+            "test_extension_twins_cannot_launder",
+            "test_sibling_exception_families_cannot_launder",
+            "test_contrast_rows_still_deny",
+            "test_catalogue_yolox_tags_on_fastsam_deny",
+            "test_listed_nc_seed_exception_in_rem_door_is_nc",
+            "test_contrast_v8_rows_stay_nc",
+            "test_real_agpl_residue_still_outranks_nc",
+            "test_unknown_residual_without_nc_seed_stays_agpl",
         ),
     ),
     Mutation(
@@ -4147,6 +4174,8 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_composed_rem_len_cap_fail_open",
             "test_red_proof_composed_rem_segment_cap_fail_open",
             "test_red_proof_composed_rem_exception_spelling_fail_open",
+            # Wave F21 R23-03: unknown-residual-without-NC-seed pin.
+            "test_unknown_residual_without_nc_seed_stays_agpl",
         ),
     ),
     Mutation(
@@ -4284,6 +4313,8 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_composed_rem_len_cap_fail_open",
             "test_red_proof_composed_rem_segment_cap_fail_open",
             "test_red_proof_composed_rem_exception_spelling_fail_open",
+            # Wave F21 R23-03: unknown-residual-without-NC-seed pin.
+            "test_unknown_residual_without_nc_seed_stays_agpl",
         ),
     ),
     Mutation(

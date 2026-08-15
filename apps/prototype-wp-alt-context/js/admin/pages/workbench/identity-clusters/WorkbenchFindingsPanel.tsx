@@ -22,6 +22,7 @@ import {
   type WorkbenchFindingPreview,
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
+import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { gatedClusterCopy, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
@@ -122,7 +123,7 @@ const FindingsPreviewMissing = (): React.JSX.Element => (
 
 const FINDINGS_RETRY_STATUS_ID = 'acx-findings-panel-retrying';
 
-/** Shared Retry control so every caller gets aria-busy + in-flight status. */
+/** Findings-panel Retry — shared busy contract, panel-specific status copy. */
 const FindingsRetryButton = ({
   describedBy,
   retrying,
@@ -134,27 +135,15 @@ const FindingsRetryButton = ({
   onClick: () => void;
   className: string;
 }): React.JSX.Element => (
-  <>
-    {retrying && (
-      <p
-        id={FINDINGS_RETRY_STATUS_ID}
-        className="acx-findings-panel__status"
-        role="status"
-        aria-live="polite"
-      >
-        {__('Retrying recognition findings…', 'alt-context')}
-      </p>
-    )}
-    <button
-      type="button"
-      className={className}
-      onClick={onClick}
-      aria-describedby={describedBy}
-      aria-busy={retrying || undefined}
-    >
-      {__('Retry', 'alt-context')}
-    </button>
-  </>
+  <QueryRetryButton
+    describedBy={describedBy}
+    retrying={retrying}
+    retryingLabel={__(QUERY_RETRY_COPY.RETRYING_FINDINGS, 'alt-context')}
+    statusId={FINDINGS_RETRY_STATUS_ID}
+    statusClassName="acx-findings-panel__status"
+    onClick={onClick}
+    className={className}
+  />
 );
 
 /**
@@ -284,8 +273,7 @@ export const WorkbenchFindingsPanel = ({
       .then((results) => {
         setRetrying(false);
         // RQ v5 refetch() resolves on query error; inspect settled isError.
-        const failed =
-          !Array.isArray(results) || results.some((result) => Boolean(result?.isError));
+        const failed = settledRefetchFailed(results);
         setRetryFailed(failed);
         if (failed) {
           pendingRetryFocusRef.current = false;
@@ -350,8 +338,8 @@ export const WorkbenchFindingsPanel = ({
             {retrying
               ? null
               : retryFailed
-                ? __('Retry failed. Could not load recognition findings.', 'alt-context')
-                : __('Could not load recognition findings.', 'alt-context')}
+                ? __(QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS, 'alt-context')
+                : __(QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS, 'alt-context')}
           </p>
         </div>
         <FindingsRetryButton

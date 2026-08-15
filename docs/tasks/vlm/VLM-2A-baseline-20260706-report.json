@@ -43,7 +43,8 @@
   "kind": "report",
   "notes": [
     "S2R4-15 F23-G disclosure at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7: S2R3-08 republish already refused identification; metrics not rewritten this wave. Current faces.identification is REFUSED(identification_refuses_unboxed_identity_claims); this wave did not re-score the run-record (already an honest refusal).",
-    "S2R4-18 provenance: fetch=9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c score=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). 5918693d golden.json naive SHA 9f9b134a (v1); current loader is v3-only."
+    "S2R4-18 provenance: fetch=9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c score=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). 5918693d golden.json naive SHA 9f9b134a (v1); current loader is v3-only.",
+    "FIR-11-S2R3-14 identification/caption rebaseline disclosed: against the current golden the detection-refusal wave scored faces.identification.true_rejections=10 (was 6) and caption.must_right_defined_images=37 / must_right_failed_images=34 (was 0 / 0). Those values are the current golden's score of the same run-record — the seed already carried 37 rubric rows. A later S2R3-08 refusal set identification to REFUSED so true_rejections is now null; the caption 37/34 numbers remain. This is a latent re-score drift the refusal wave surfaced, not a number the wave invented."
   ],
   "per_image": [
     {

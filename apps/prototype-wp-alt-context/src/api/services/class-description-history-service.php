@@ -334,7 +334,7 @@ class DescriptionHistoryService {
 						'Alt text was saved, but the decorative marker could not be cleared. Please try again so the image is treated as described.',
 						array(
 							'status'          => 500,
-							'stored_alt_text' => is_string( $current ) ? $current : ( is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text ),
+							'stored_alt_text' => $current,
 							// Clear failed: marker still '1' on disk [A-03][DATA-14].
 							'is_decorative'   => true,
 						)
@@ -345,7 +345,7 @@ class DescriptionHistoryService {
 					'Alt text was saved, but the stored value is non-empty so the decorative marker was not planted. Decorative requires empty alt; correct the stored alt or retry without decorative.',
 					array(
 						'status'          => 500,
-						'stored_alt_text' => is_string( $current ) ? $current : ( is_string( $expected_alt ) ? $expected_alt : $normalized_alt_text ),
+						'stored_alt_text' => $current,
 						// Marker clear verified; is_decorative from storage read-back [A-03].
 						'is_decorative'   => $this->read_decorative_marker( $media_id ),
 					)

@@ -15,6 +15,10 @@ import pytest
 
 from pydantic import ValidationError
 
+from scripts.eval_harness.face_metrics import (
+    DETECTION_EMPTY_OBSERVATIONS_INVARIANT,
+    IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT,
+)
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
 from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, ManifestError, load_manifest
 from scripts.eval_harness.report import (
@@ -396,6 +400,67 @@ def test_empty_entries_hard_error_through_score_face() -> None:
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
     assert exc_info.value.invariant == "detection_refuses_empty_entries"
+
+
+def _zero_observation_record() -> dict:
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [],
+    }
+
+
+def test_zero_observations_against_nonempty_exhaustive_refuses() -> None:
+    """S2R4-08: empty items + nonempty exhaustive must not publish None/0.
+
+    The empty-entries invariant checks the manifest, not observations.
+    A run that scored nothing used to pass both the partial-corpus gate
+    and the refused-metric gate.
+    """
+    entries = [
+        {
+            "path": "mock_images/alice.jpg",
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                {
+                    "x": 0.5,
+                    "y": 0.4,
+                    "w": 0.2,
+                    "h": 0.3,
+                    "name": "Alice Example",
+                }
+            ],
+            "annotation_mode": "exhaustive",
+        }
+    ]
+    scored = score_run_record(
+        _zero_observation_record(), entries, annotation_mode="exhaustive"
+    )
+    assert scored["counts"] == {"total": 0, "scored": 0, "failed": 0}
+    det = scored["faces"]["detection"]
+    assert det["refused"] is True
+    assert det["invariant"] == DETECTION_EMPTY_OBSERVATIONS_INVARIANT
+    assert det["precision"] is None
+    assert det["recall"] is None
+    assert det["tp"] is None
+    assert det["fp"] is None
+    assert det["fn"] is None
+    ident = scored["faces"]["identification"]
+    assert ident["refused"] is True
+    assert ident["invariant"] == IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
+    assert ident["precision"] is None
+    assert ident["recall"] is None
 
 
 def _mapping_entry(*, annotation_mode: object) -> dict:

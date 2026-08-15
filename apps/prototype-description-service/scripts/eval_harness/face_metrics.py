@@ -40,6 +40,8 @@ from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
 # present_identities may load (roster_only) but cannot be scored as labels.
 IDENTIFICATION_UNBOXED_INVARIANT = "identification_refuses_unboxed_identity_claims"
 DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = "detection_refuses_uncovered_face_count"
+DETECTION_EMPTY_OBSERVATIONS_INVARIANT = "detection_refuses_empty_observations"
+IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT = "identification_refuses_empty_observations"
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20

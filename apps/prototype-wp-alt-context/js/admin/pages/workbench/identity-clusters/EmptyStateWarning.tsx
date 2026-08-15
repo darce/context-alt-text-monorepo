@@ -7,7 +7,6 @@ interface EmptyStateWarningProps {
   title?: string;
   message: string;
   onRetry?: () => void;
-  retryLabel?: string;
   retrying?: boolean;
 }
 

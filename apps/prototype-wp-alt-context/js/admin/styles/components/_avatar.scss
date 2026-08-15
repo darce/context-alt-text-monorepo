@@ -7,6 +7,7 @@
   flex-shrink: 0;
   vertical-align: middle;
   background-color: var(--acx-color-data-placeholder);
+  container-type: size;
 
   &--sm {
     width: 32px;
@@ -59,6 +60,10 @@
     );
     background-size: 200% 100%;
     animation: acx-avatar-shimmer 1.2s ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
   }
 
   &[data-avatar-state='data-missing'],
@@ -87,6 +92,14 @@
     line-height: var(--acx-leading-tight);
     text-align: center;
     color: var(--acx-gray-600);
+    overflow-wrap: anywhere;
+    max-width: 100%;
+
+    // ClusterPreview chips are ~40px; icon + 2xs "No image" overflow that
+    // circle. Parent already exposes missingLabel as the accessible name.
+    @container (max-width: var(--acx-space-48)) {
+      display: none;
+    }
   }
 
   &__error {

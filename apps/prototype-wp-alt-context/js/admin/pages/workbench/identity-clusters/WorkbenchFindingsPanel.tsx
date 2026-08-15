@@ -171,6 +171,7 @@ const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): Rea
       sizePx={FINDINGS_PREVIEW_SIZE_PX}
       shape="square"
       alt={previewAltText(preview, true)}
+      uncroppedAlt={previewAltText(preview, false)}
       className="acx-findings-panel__preview"
     />
   );

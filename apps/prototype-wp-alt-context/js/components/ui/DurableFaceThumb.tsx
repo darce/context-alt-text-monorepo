@@ -24,6 +24,7 @@ const SIZE_PX: Record<AvatarSize, number> = {
 export interface DurableFaceThumbProps {
   source: FaceThumbSource;
   alt?: string;
+  uncroppedAlt?: string;
   size?: AvatarSize;
   sizePx?: number;
   shape?: 'circle' | 'square';
@@ -36,6 +37,7 @@ export interface DurableFaceThumbProps {
 export const DurableFaceThumb = ({
   source,
   alt,
+  uncroppedAlt: uncroppedAltProp,
   size = 'md',
   sizePx,
   shape = 'circle',
@@ -105,7 +107,9 @@ export const DurableFaceThumb = ({
 
   if (display.mode === FACE_THUMB_MODE.uncropped && display.src) {
     const displaySize = sizePx ?? SIZE_PX[size];
-    const uncroppedAlt = imageAlt === defaultDetectedAlt ? __('Reference image', 'alt-context') : imageAlt;
+    const uncroppedAlt =
+      uncroppedAltProp ??
+      (imageAlt === defaultDetectedAlt ? __('Reference image', 'alt-context') : imageAlt);
     return (
       <span
         className={classes}

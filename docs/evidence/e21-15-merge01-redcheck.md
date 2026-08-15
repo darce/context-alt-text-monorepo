@@ -164,3 +164,18 @@
 - MUT-A (transformOrigin deleted): FAILED
 - Failing assertion: expect(crop.getAttribute('style')).toMatch(/transform-origin:\s*top left/);
 - After restore: PASSED
+
+## REV4-01/REV4-03 — findings previews paint attachment-only imagery
+- Route taken: DurableFaceThumb — FindingsPreview already feeds thumb/attachment/media + bbox into DurableFaceThumb, so attachment-only URLs reuse the durable hop instead of a one-off in-place img
+- Missing-chip decision: kept FindingsPreviewMissing — DurableFaceThumb's missing span is a different surface and would change the pinned chip
+- MUT-C verdict: FAILED
+- Failing assertion: expect(screen.getByRole('img')).toHaveAttribute('src', attachmentUrl)
+- After restore: PASSED
+
+## REV4-06 — uncropped hop announces a reference image, not a face crop
+- Prop added: uncroppedAlt?: string;
+- Assertions restored: :721 `alt: suggested label on a crop is hedged` LEFT — preview has croppable bbox, hop is FaceThumbnail crop, Face image is correct; :745 `alt: suggested label on an uncropped fallback is hedged` RESTORED — bbox is null so hop is uncropped (`acx-durable-face-thumb__uncropped` / `data-avatar-state="uncropped"`), Reference image is required; :986 `alt: cluster suggested_label from buildWorkbenchFindings is hedged` LEFT — representative has croppable bbox, hop is crop, Face image is correct
+- MUT-A verdict: FAILED, failing assertion: expect(screen.getByAltText('Reference image, possibly Ada Lovelace')).toBeInTheDocument();
+- MUT-B verdict: FAILED, failing assertion: expect(screen.getByAltText('Reference image, possibly Ada Lovelace'))
+- After restore: PASSED
+- tsc: EXIT 0

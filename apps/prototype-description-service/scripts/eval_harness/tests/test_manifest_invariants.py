@@ -14,7 +14,9 @@ import pytest
 
 from scripts.eval_harness.manifest import (
     AnnotationMode,
+    LEGACY_IMPORT_CAPTURE_SESSION_ID,
     ManifestError,
+    legacy_import_lineage,
     load_legacy_manifest,
     load_manifest,
 )
@@ -397,3 +399,79 @@ def test_corpus646_retag_loads_as_roster_only() -> None:
         for box in entry.face_boxes:
             assert box.lineage is not None
             assert box.lineage.label_source.value == "legacy_import"
+            assert box.lineage.capture_session_id == LEGACY_IMPORT_CAPTURE_SESSION_ID
+
+
+def test_legacy_import_lineage_carries_unknown_session() -> None:
+    """S2R5-06: the migration helper must mint a writable occasion key."""
+    named = legacy_import_lineage(name="Alice Example")
+    stranger = legacy_import_lineage(name=None)
+    assert named["capture_session_id"] == LEGACY_IMPORT_CAPTURE_SESSION_ID
+    assert stranger["capture_session_id"] == LEGACY_IMPORT_CAPTURE_SESSION_ID
+    assert named["capture_session_id"]
+
+
+def test_in_tree_boxed_corpus_can_flip_to_exhaustive(tmp_path: Path) -> None:
+    """S2R5-06: documented exhaustive remedy is executable on a boxed corpus.
+
+    refetch6 already has boxes covering face_count. Before the session
+    backfill, flipping annotation_mode to exhaustive died in the loader.
+    """
+    src = Path(__file__).resolve().parents[1] / "refetch6-manifest-20260716.json"
+    doc = json.loads(src.read_text(encoding="utf-8"))
+    assert doc["annotation_mode"] == "roster_only"
+    doc["annotation_mode"] = "exhaustive"
+    path = tmp_path / "refetch6-exhaustive.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    manifest = load_manifest(str(path))
+    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+    n_boxes = 0
+    for entry in manifest.entries:
+        assert len(entry.face_boxes) == entry.face_count
+        for box in entry.face_boxes:
+            n_boxes += 1
+            assert box.lineage is not None
+            assert box.lineage.capture_session_id == LEGACY_IMPORT_CAPTURE_SESSION_ID
+    assert n_boxes == 9
+
+
+def test_legacy_import_helper_session_lets_exhaustive_load(tmp_path: Path) -> None:
+    """S2R5-06: a new exhaustive box built from the helper must load."""
+    doc = {
+        "manifest_version": 3,
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "mock_images/alice.jpg",
+                "sha256": "a" * 64,
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "base_caption": "Alice Example.",
+                "must_right": ["Alice Example"],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
+                "face_boxes": [
+                    {
+                        "x": 0.5,
+                        "y": 0.4,
+                        "w": 0.2,
+                        "h": 0.3,
+                        "name": "Alice Example",
+                        "source": "iptc",
+                        "lineage": legacy_import_lineage(name="Alice Example"),
+                    }
+                ],
+            }
+        ],
+    }
+    path = _write_manifest(tmp_path, doc, "legacy-exhaustive.json")
+    manifest = load_manifest(str(path))
+    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+    assert (
+        manifest.entries[0].face_boxes[0].lineage.capture_session_id
+        == LEGACY_IMPORT_CAPTURE_SESSION_ID
+    )

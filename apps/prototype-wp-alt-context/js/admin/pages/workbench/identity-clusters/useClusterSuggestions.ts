@@ -35,8 +35,6 @@ interface UseClusterSuggestionsReturn {
   atRestTotal: number;
   /** Envelope truncated flag from the at-rest labelled-cluster page. */
   atRestTruncated: boolean;
-  /** Filtered at-rest page size after excluding the editable cluster. */
-  atRestShown: number;
   /** True while the debounced input is below the typed-search minimum. */
   isAtRestMode: boolean;
 }
@@ -180,7 +178,6 @@ export const useClusterSuggestions = ({
     findClusterByLabel: findClusterByLabelRemote,
     atRestTotal,
     atRestTruncated,
-    atRestShown,
     isAtRestMode,
   } = useClusterSuggestionsLoader({
     identityId,
@@ -214,7 +211,6 @@ export const useClusterSuggestions = ({
     findClusterByLabel,
     atRestTotal,
     atRestTruncated,
-    atRestShown,
     isAtRestMode,
   };
 };

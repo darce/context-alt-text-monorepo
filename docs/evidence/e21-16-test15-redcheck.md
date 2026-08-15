@@ -65,3 +65,9 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 
 ## REV2-02 — hint is a description, not a second live region
 - Assertions touched: none
+
+## REV3-01 — atRestShown removed
+- Files touched: apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterSuggestionsLoader.ts, apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterSuggestions.ts, apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx, apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/useClusterSuggestions.test.tsx, apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/useClusterSuggestionsLoader.test.tsx, docs/evidence/e21-16-test15-redcheck.md
+- Assertions deleted: `expect(result.current.atRestShown).toBe(40)` (useClusterSuggestionsLoader.test.tsx); `expect(result.current.atRestShown).toBe(50)` and `expect(result.current.atRestTotal).not.toBe(result.current.atRestShown)` (useClusterSuggestions.test.tsx envelope test); `expect(result.current.atRestShown).toBe(atRestPage.length - 1)` (useClusterSuggestions.test.tsx self-exclusion test; title no longer names atRestShown)
+- tsc --noEmit: EXIT 0
+- vitest identity-clusters + IdentityClusterList: EXIT 0, 41/621

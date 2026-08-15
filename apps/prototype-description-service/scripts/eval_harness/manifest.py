@@ -622,9 +622,12 @@ class FaceBox(BaseModel):
 
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # annotation_mode is intentionally absent (S2R3-10): extra=forbid, no
-    # field. Per-entry stamps are raw-mapping-only; the document mode lives
-    # on GoldenManifest. Flatteners stamp that parent mode onto dumped dicts.
+    # annotation_mode is intentionally absent (S2R3-10 / S2R4-20): extra=forbid,
+    # no field. Persisted mode is document-level on GoldenManifest. The
+    # mixed-stamp / cannot-widen lattice is score-time raw-mapping only
+    # (report.py). The loader refuses an on-disk per-entry stamp by name
+    # (annotation_mode_is_document_level) rather than as an extra=forbid
+    # accident, so the contract is testable against real JSON.
 
     path: str
     sha256: str
@@ -813,6 +816,34 @@ class GoldenManifest(BaseModel):
         return self
 
 
+def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
+    """Persisted annotation_mode is document-level (S2R3-10 / S2R4-20).
+
+    A per-entry stamp in a JSON file is not a loadable contract. The
+    mixed-stamp lattice lives on raw mappings at score time; the loader
+    must not let pydantic extra=forbid be the only rejection, because
+    that makes the decision look like a missing field rather than a
+    named document-level rule (rg-009).
+    """
+    if not isinstance(entries_raw, list):
+        return
+    for index, raw_entry in enumerate(entries_raw):
+        if not isinstance(raw_entry, dict):
+            continue
+        if "annotation_mode" not in raw_entry:
+            continue
+        path = raw_entry.get("path")
+        entry_path = path if isinstance(path, str) else None
+        label = entry_path if entry_path else f"entry[{index}]"
+        raise ManifestError(
+            f"annotation_mode is document-level; per-entry stamp is not a "
+            f"persisted contract ({label})",
+            invariant="annotation_mode_is_document_level",
+            entry_index=index,
+            entry_path=entry_path,
+        )
+
+
 def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     """Load and validate a v3 golden manifest; optionally verify image hashes.
 
@@ -821,7 +852,8 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     independently produced numbers (see module docstring).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
-    violations, unsupported version, missing ``annotation_mode``, empty corpus,
+    violations, unsupported version, missing ``annotation_mode``, a
+    per-entry ``annotation_mode`` stamp (document-level only), empty corpus,
     duplicate media_id/path, identities outside the roster, roster_cohorts keys
     outside the roster, any entry missing ``provenance`` (FIR-11 Slice 1 —
     required, fail-closed; every offending path is named in one error), a box
@@ -918,6 +950,7 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             "annotation_mode is required (exhaustive|roster_only)",
             invariant="annotation_mode_required",
         )
+    _reject_per_entry_annotation_mode(entries_raw)
 
     try:
         manifest = GoldenManifest.model_validate(raw)
@@ -1027,6 +1060,7 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     if payload.get("annotation_mode") is None:
         # Documented default — v2 never claimed exhaustiveness (see docstring).
         payload["annotation_mode"] = AnnotationMode.ROSTER_ONLY
+    _reject_per_entry_annotation_mode(entries_raw)
 
     try:
         manifest = GoldenManifest.model_validate(payload, context={"legacy": True})

@@ -34,6 +34,11 @@ and write that N to
 scripts/eval-captions.sh
 ```
 
+On scorer exit 3 the wrapper prints each invariant the scorer produced
+(via `scripts/eval_refusal_message.py`) instead of one hardcoded cause.
+Several invariants share exit 3; the remedy is mapped to the name the
+scorer actually emitted.
+
 `make eval-captions` calls the same script. Consent for a refused
 no-score report is only at the call site:
 

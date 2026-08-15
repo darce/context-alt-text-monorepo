@@ -48,7 +48,12 @@ echo "== score =="
 score_ec=$?
 cp "$SVC/$RR" "$RESULTS/" 2>/dev/null
 if [ "$score_ec" -eq 3 ]; then
-  echo "score REFUSED (exit 3): detection/identification not computable honestly (roster_only / unboxed claims). This is not rubric-partial. Report is refused evidence, not a clean score. Add per-face boxes, or re-run score with --allow-refused if you consent to a no-score report."
+  echo "score REFUSED (exit 3): this is not rubric-partial. Report is refused evidence, not a clean score."
+  _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
+  _report_json="$SVC/${RR%.json}-report.json"
+  if [ -f "$_refusal_helper" ]; then
+    python3 "$_refusal_helper" --report "$_report_json"
+  fi
   mkdir -p "$RESULTS/refused"
   cp "$SVC/${RR%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
 elif [ "$score_ec" -ne 0 ]; then

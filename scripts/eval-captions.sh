@@ -30,4 +30,7 @@ set -e
 cat "$LOG_FILE"
 printf '%s\n' "$ec" > "$STATUS_FILE"
 printf 'eval-captions: scorer_exit=%s\n' "$ec"
+if [ "$ec" -eq 3 ]; then
+  python3 "$ROOT/scripts/eval_refusal_message.py" --log "$LOG_FILE" >&2
+fi
 exit "$ec"

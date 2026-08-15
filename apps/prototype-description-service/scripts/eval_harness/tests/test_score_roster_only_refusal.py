@@ -23,6 +23,7 @@ from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
 from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, ManifestError, load_manifest
 from scripts.eval_harness.report import (
     ReportError,
+    _annotation_mode_of,
     _entries_as_dicts,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
@@ -573,6 +574,27 @@ def test_resolver_omitted_explicit_uses_data_stamp() -> None:
         _resolve_score_annotation_mode(None, [{"annotation_mode": "exhaustive"}])
         is AnnotationMode.EXHAUSTIVE
     )
+
+
+def test_annotation_mode_of_mapping_key_beats_attribute() -> None:
+    """S2R4-12: dict-subclass attribute must not outrank the mapping key.
+
+    Most-restrictive-wins: roster_only in the mapping beats an exhaustive
+    attribute. Attribute-first resolution used to invent exhaustive.
+    """
+
+    class SplitMode(dict):
+        annotation_mode = AnnotationMode.EXHAUSTIVE
+
+    payload = SplitMode(
+        annotation_mode="roster_only",
+        roster=["Alice Example"],
+        entries=[_mapping_entry(annotation_mode="roster_only")],
+    )
+    assert _annotation_mode_of(payload) is AnnotationMode.ROSTER_ONLY
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(_face_run_record(), payload)
+    assert exc_info.value.invariant == "detection_refuses_roster_only"
 
 
 def test_restrictiveness_unknown_mode_is_typed_refusal() -> None:

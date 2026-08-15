@@ -283,8 +283,6 @@ export const ClusterEditForm = ({
           <p
             id={atRestHintId}
             className="acx-identity-cluster__at-rest-hint"
-            role="status"
-            aria-live="polite"
           >
             {sprintf(
               /* translators: 1: number of labels currently shown, 2: total labelled clusters */

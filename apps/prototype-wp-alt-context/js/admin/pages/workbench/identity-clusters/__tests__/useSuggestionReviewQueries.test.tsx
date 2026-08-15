@@ -119,4 +119,29 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       result.current.assignmentSuggestions?.some((s) => s.suggestionId === 'auto'),
     ).toBe(false);
   });
+
+  // REV2-04 / TEST-15: truncated must leave the queries hook. Dropping the
+  // field keeps repair copy unqualified even when the page is partial.
+  it('REV2-04: surfaces topUnlabeledTruncated from the envelope', async () => {
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: 'local_projection',
+    });
+    vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 42,
+      truncated: true,
+      singleton_count: 0,
+      data_source: 'local_projection',
+    });
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useSuggestionReviewQueries(), { wrapper });
+
+    await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+    expect(result.current.topUnlabeledTruncated).toBe(true);
+  });
 });

@@ -1,0 +1,76 @@
+E21-20-REV9 verify
+branch=feature/e21-20-fix1
+impl_commit=834bb56b134cf1a89ade1d345ceaeb0e5deca589
+consumer_test_commit=308be27e77af616c6153e11d129cb18db86f8e69
+head=ref: refs/heads/feature/e21-20-fix1
+repo_head=308be27e77af616c6153e11d129cb18db86f8e69
+cwd=/home/gate/grok-sandbox/feature-e21-20-fix1-9a60f8b3
+
+=== TEST-15 RED (before missingText; span rendered {missingLabel}) ===
+FAIL  js/components/ui/__tests__/avatar.test.tsx > Avatar four-state contract > data-missing: custom missingLabel is aria-only; visible span stays short default
+Error: expect(element).toHaveTextContent()
+
+Expected element to have text content:
+  No image
+Received:
+  Representative image unavailable
+ ❯ js/components/ui/__tests__/avatar.test.tsx:118:21
+    118|     expect(visible).toHaveTextContent('No image');
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Duration  3.17s
+
+=== TEST-15 GREEN (after missingText) ===
+ ✓ js/components/ui/__tests__/avatar.test.tsx (11 tests) 162ms
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Duration  1.27s
+
+=== tsc --noEmit -p tsconfig.json ===
+tsc_exit=0
+tsc_stdout=(empty; success)
+
+=== first full vitest (consumer tests still expected leaked visible label) ===
+ Test Files  2 failed | 88 passed (90)
+      Tests  2 failed | 1263 passed (1265)
+   Duration  152.10s
+vitest_exit=1
+FAIL ClusterPreview.test.tsx getByText('Representative image unavailable')
+FAIL TopClusterCard.test.tsx visible span textContent expected long label, received 'No image'
+Those two assertions were updated in 308be27; production call sites untouched.
+
+=== vitest run js/admin/styles js/components/ui js/admin/pages/workbench ===
+(node:4151651) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/__tests__/syncVocabulary.test.ts (2 tests) 11ms
+(node:4151659) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/__tests__/degradedModeBannerLogic.vocabularySource.test.ts (10 tests) 10ms
+(node:4151708) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/__tests__/mediaFooterCtaState.test.ts (7 tests) 10ms
+(node:4151716) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/styles/components/__tests__/review-queue-styles.test.ts (4 tests) 9ms
+(node:4151724) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/__tests__/degradedModeBannerLogic.test.ts (6 tests) 8ms
+(node:4151751) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts (4 tests) 9ms
+(node:4151782) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/admin/pages/workbench/identity-clusters/__tests__/personCommitVisibility.test.ts (4 tests) 8ms
+(node:4151793) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ js/components/ui/__tests__/isDedicatedFaceThumbUrl.test.ts (2 tests) 6ms
+
+ Test Files  90 passed (90)
+      Tests  1265 passed (1265)
+   Start at  07:38:29
+   Duration  151.49s (transform 4.96s, setup 16.64s, import 15.50s, tests 65.01s, environment 39.56s)
+
+
+tsc_exit=0
+vitest_exit=0
+combined_exit=0

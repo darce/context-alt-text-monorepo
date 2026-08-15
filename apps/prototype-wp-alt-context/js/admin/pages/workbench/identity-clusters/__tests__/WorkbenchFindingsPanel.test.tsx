@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,10 +23,18 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-const { faceThumbnailSpy, avatarSpy } = vi.hoisted(() => ({
-  faceThumbnailSpy: vi.fn(),
-  avatarSpy: vi.fn(),
-}));
+const { faceThumbnailSpy, avatarSpy, refetchAssignment, refetchMerge, refetchName, refetchTopUnlabeled } =
+  vi.hoisted(() => {
+    const refetchOk = (): Promise<{ isError: boolean }> => Promise.resolve({ isError: false });
+    return {
+      faceThumbnailSpy: vi.fn(),
+      avatarSpy: vi.fn(),
+      refetchAssignment: vi.fn(refetchOk),
+      refetchMerge: vi.fn(refetchOk),
+      refetchName: vi.fn(refetchOk),
+      refetchTopUnlabeled: vi.fn(refetchOk),
+    };
+  });
 
 // Radix Avatar's Image uses Image.onload which never fires in JSDOM.
 vi.mock('@radix-ui/react-avatar', async () => {
@@ -86,6 +94,15 @@ vi.mock('../useWorkbenchFindings', async () => {
   };
 });
 
+vi.mock('../useSuggestionReviewQueries', () => ({
+  useSuggestionReviewQueries: vi.fn(() => ({
+    assignmentQuery: { refetch: refetchAssignment },
+    mergeQuery: { refetch: refetchMerge },
+    nameQuery: { refetch: refetchName },
+    topUnlabeledQuery: { refetch: refetchTopUnlabeled },
+  })),
+}));
+
 const preview = (overrides: Partial<WorkbenchFindingPreview> & Pick<WorkbenchFindingPreview, 'key'>): WorkbenchFindingPreview => ({
   thumbUrl: null,
   mediaUrl: null,
@@ -98,10 +115,13 @@ const preview = (overrides: Partial<WorkbenchFindingPreview> & Pick<WorkbenchFin
 const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
+  zeroEvidenceClusterCount: 0,
+  topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,
@@ -114,6 +134,10 @@ describe('WorkbenchFindingsPanel', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchMerge.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchName.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchTopUnlabeled.mockImplementation(() => Promise.resolve({ isError: false }));
   });
 
   it('renders counts, previews, and an enabled primary action for populated findings', async () => {
@@ -193,6 +217,50 @@ describe('WorkbenchFindingsPanel', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
+  });
+
+  // REV2-01 / TEST-15: an assignment-only outage keeps hasAnyData true, so the
+  // hook's isError stays false and the panel used to render the all-clear over a
+  // dead primary queue. Reverting the isAssignmentError branch in
+  // WorkbenchFindingsPanel turns this red on the queryByText line.
+  it('REV2-01: assignment-only outage shows an outage notice, not "No findings yet"', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).toBeInTheDocument();
+
+    // The outage must be recoverable, and the control must sit outside the
+    // live region that announces it (REV2-03 treatment).
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchName).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('REV2-01: a genuine empty backlog still announces the all-clear', () => {
+    // Pins the other side of the branch: without this, hiding the empty copy
+    // unconditionally would satisfy the outage test above.
+    vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel({ isAssignmentError: false }));
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).not.toBeInTheDocument();
   });
 
   it('disables the primary action when server totals are positive but no queue items loaded', () => {
@@ -282,6 +350,7 @@ describe('WorkbenchFindingsPanel', () => {
       makeViewModel({
         isError: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
     );
@@ -300,6 +369,7 @@ describe('WorkbenchFindingsPanel', () => {
       makeViewModel({
         isError: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
       }),
     );
@@ -331,6 +401,7 @@ describe('WorkbenchFindingsPanel', () => {
         counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
         hasFindings: true,
         isTopUnlabeledError: true,
+        isAssignmentError: false,
         nextAction: {
           kind: NEXT_ACTION_KIND.ASSIGNMENT,
           suggestionId: 's1',
@@ -771,6 +842,7 @@ describe('WorkbenchFindingsPanel', () => {
         nameTotal: 0,
         topUnlabeledClusters: [],
         topUnlabeledTotal: 0,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -779,6 +851,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -829,6 +902,7 @@ describe('WorkbenchFindingsPanel', () => {
           },
         ],
         topUnlabeledTotal: 1,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -837,6 +911,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -885,6 +960,7 @@ describe('WorkbenchFindingsPanel', () => {
           },
         ],
         topUnlabeledTotal: 1,
+        topUnlabeledTruncated: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -893,6 +969,7 @@ describe('WorkbenchFindingsPanel', () => {
         isLoading: false,
         isError: false,
         isTopUnlabeledError: false,
+        isAssignmentError: false,
         queueSettled: true,
       },
     );
@@ -908,5 +985,837 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText(/cluster-9/)).not.toBeInTheDocument();
+  });
+
+  // S3 / TEST-15: kills the dead <p> error with no Retry / no refetch.
+  it('S3: error Retry fires assignment+merge+top-unlabeled refetch', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // E21-20-REV1-03 / TEST-15: chained .then() skips merge when assignment rejects.
+  it('REV1-03: error Retry still refetches merge and top-unlabeled when assignment rejects', async () => {
+    refetchAssignment.mockImplementationOnce(() => {
+      const assignmentFailure = Promise.reject(new Error('assignment refetch failed'));
+      void assignmentFailure.catch(() => undefined);
+      return assignmentFailure;
+    });
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // S3 / TEST-15: kills hint-less unavailable copy that never names the setting.
+  it('S3: unavailable state names the recognition-service setting', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isUnavailable: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.UNAVAILABLE },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Recognition findings are unavailable right now.')).toBeInTheDocument();
+    expect(screen.getByText(/Service API URL/)).toBeInTheDocument();
+    expect(screen.getByText(/Recognition API Settings/)).toBeInTheDocument();
+  });
+
+  // S3 / TEST-15: kills copy-only unlabeled outage with no retry action.
+  // REV1-03: every error-state Retry uses the shared Promise.all handler.
+  it('S3: degraded unlabeled chip Retry refetches all findings queries', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        isAssignmentError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalledTimes(1);
+      expect(refetchMerge).toHaveBeenCalledTimes(1);
+      // REV2-08: name suggestions feed counts.names and the queue, so a control
+      // labelled "reload recognition findings" must refetch them too.
+      expect(refetchName).toHaveBeenCalledTimes(1);
+      expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // S3 / TEST-15: kills Avatar src="" terminal branch.
+  it('S3: data-missing chip uses role/name when no usable preview url', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: null,
+            mediaUrl: null,
+            label: null,
+            bbox: null,
+          }),
+        ],
+        hasFindings: true,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: null,
+        },
+      }),
+    );
+
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(avatarSpy).not.toHaveBeenCalled();
+    expect(container.querySelector('img[src=""]')).toBeNull();
+  });
+
+  // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).
+  it('S2: aggregate repair row renders with the gated cluster count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 2,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
+    expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('S2: Resync on the aggregate repair row refetches top-unlabeled', async () => {
+    const model = buildWorkbenchFindings(
+      {
+        reviewItems: [],
+        assignmentTotal: 0,
+        mergeSuggestions: [],
+        mergeTotal: 0,
+        nameSuggestions: [],
+        nameTotal: 0,
+        topUnlabeledClusters: [
+          {
+            id: 'zero-a',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [{ id: 'rep-a', media_id: 1, is_pinned: false }],
+          },
+          {
+            id: 'zero-b',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 4,
+            representatives: [],
+          },
+          {
+            id: 'zero-c',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [],
+          },
+        ],
+        topUnlabeledTotal: 3,
+        topUnlabeledTruncated: false,
+      },
+      {
+        assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        nameDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        isLoading: false,
+        isError: false,
+        isTopUnlabeledError: false,
+        isAssignmentError: false,
+        queueSettled: true,
+      },
+    );
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
+    expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
+  });
+
+  // E21-20-REV2-02 / TEST-15: drive a producible envelope (server total >=
+  // loaded zeros). Assert the repair copy, not an unreachable 'repair' stamp.
+  it('REV2-02: producible zero-evidence envelope shows repair copy on the data stamp', () => {
+    const model = buildWorkbenchFindings(
+      {
+        reviewItems: [],
+        assignmentTotal: 0,
+        mergeSuggestions: [],
+        mergeTotal: 0,
+        nameSuggestions: [],
+        nameTotal: 0,
+        topUnlabeledClusters: [
+          {
+            id: 'zero-a',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [{ id: 'rep-a', media_id: 1, is_pinned: false }],
+          },
+          {
+            id: 'zero-b',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 2,
+            representatives: [],
+          },
+          {
+            id: 'zero-c',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [],
+          },
+        ],
+        topUnlabeledTotal: 3,
+        topUnlabeledTruncated: false,
+      },
+      {
+        assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        nameDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        isLoading: false,
+        isError: false,
+        isTopUnlabeledError: false,
+        isAssignmentError: false,
+        queueSettled: true,
+      },
+    );
+
+    expect(model.hasFindings).toBe(true);
+    expect(model.counts.total).toBe(3);
+    expect(model.zeroEvidenceClusterCount).toBe(3);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(container.querySelector('[data-findings-state]')).toHaveAttribute(
+      'data-findings-state',
+      'data',
+    );
+    expect(container.querySelector('[data-findings-state="empty"]')).toBeNull();
+    expect(container.querySelector('[data-findings-state="repair"]')).toBeNull();
+  });
+
+  it('S2: counts and previews exclude gated zero-evidence clusters [TEST-15]', () => {
+    const model = buildWorkbenchFindings(
+      {
+        reviewItems: [],
+        assignmentTotal: 0,
+        mergeSuggestions: [],
+        mergeTotal: 0,
+        nameSuggestions: [],
+        nameTotal: 0,
+        topUnlabeledClusters: [
+          {
+            id: 'zero-count',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 0,
+            representatives: [
+              {
+                id: 'rep-zero',
+                media_id: 11,
+                media_url: 'http://example.test/uploads/zero.jpg',
+                bbox: { x: 1, y: 2, width: 10, height: 10 },
+                is_pinned: false,
+              },
+            ],
+          },
+          {
+            id: 'empty-reps',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 5,
+            representatives: [],
+          },
+          {
+            id: 'reviewable',
+            tenant_id: 'test-tenant-id',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            user_confirmed: false,
+            identity_count: 4,
+            representatives: [
+              {
+                id: 'rep-ok',
+                media_id: 12,
+                media_url: 'http://example.test/uploads/ok.jpg',
+                bbox: { x: 10, y: 20, width: 80, height: 90 },
+                is_pinned: false,
+              },
+            ],
+          },
+        ],
+        topUnlabeledTotal: 3,
+        topUnlabeledTruncated: false,
+      },
+      {
+        assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        nameDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        topUnlabeledDataSource: DATA_SOURCE.LOCAL_PROJECTION,
+        isLoading: false,
+        isError: false,
+        isTopUnlabeledError: false,
+        isAssignmentError: false,
+        queueSettled: true,
+      },
+    );
+
+    expect(model.zeroEvidenceClusterCount).toBe(2);
+    expect(model.counts.unlabeledClusters).toBe(3);
+    expect(model.counts.total).toBe(3);
+    expect(model.previews.map((preview) => preview.key)).toEqual(['cluster-reviewable']);
+    expect(model.queue).toEqual([{ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'reviewable' }]);
+    expect(model.hasFindings).toBe(true);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 unlabeled groups')).toBeInTheDocument();
+    expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('1 unlabeled group')).not.toBeInTheDocument();
+  });
+
+  // E21-20-REV1-04 / TEST-15: repair copy lives in the counts status region;
+  // Resync stays outside any live region and is described by the sentence.
+  // REV2-03: the same contract applies to Retry — no interactive control may
+  // sit inside any role=status (error Retry and unlabeled-outage Retry too).
+  it('REV1-04: repair sentence shares the counts live region and Resync is described outside it', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 2,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(liveRegions[0]).toHaveTextContent('2 groups missing face data');
+    expect(liveRegions[0]).toHaveTextContent('1 to review');
+    expect(within(liveRegions[0]).queryByRole('button', { name: 'Resync' })).not.toBeInTheDocument();
+    for (const region of liveRegions) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
+
+    const resync = screen.getByRole('button', { name: 'Resync' });
+    expect(resync.closest('[role="status"]')).toBeNull();
+    expect(resync).toHaveAttribute('aria-describedby', 'acx-findings-panel-repair-copy');
+    const described = document.getElementById('acx-findings-panel-repair-copy');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('2 groups missing face data');
+    expect(resync.getAttribute('aria-describedby')).toBe(described?.id);
+  });
+
+  // REV2-03 / TEST-15: error Retry used to sit inside the status region.
+  // Moving the button back inside role=status fails the closest() assertion.
+  it('REV2-03: error Retry sits outside the live region and is described by the error copy', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    for (const region of screen.getAllByRole('status')) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    expect(retry).toHaveAttribute('aria-describedby', 'acx-findings-panel-error');
+    const described = document.getElementById('acx-findings-panel-error');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('Could not load recognition findings.');
+  });
+
+  // REV2-03 / TEST-15: unlabeled-outage chip Retry used to sit inside counts status.
+  it('REV2-03: unlabeled-outage Retry sits outside the counts live region', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        isAssignmentError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Unlabeled groups unavailable')).toBeInTheDocument();
+    for (const region of screen.getAllByRole('status')) {
+      expect(within(region).queryByRole('button')).not.toBeInTheDocument();
+      expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+    }
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="status"]')).toBeNull();
+    expect(retry).toHaveAttribute('aria-describedby', 'acx-findings-panel-unlabeled-outage');
+    const described = document.getElementById('acx-findings-panel-unlabeled-outage');
+    expect(described).not.toBeNull();
+    expect(described).toHaveTextContent('Unlabeled groups unavailable');
+  });
+
+  // REV2-05 / TEST-15: isLoading stays false on an already-errored refetch, so
+  // the live region must change from a local retrying flag. Restoring the
+  // original single error sentence (or gating on isLoading) leaves this red.
+  it('REV2-05: Retry announces in-progress then a distinct failure without using isLoading', async () => {
+    let resolveAssignment: (value?: void) => void = () => undefined;
+    const assignmentGate = new Promise<void>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate.then(() => ({ isError: true })));
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        isLoading: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load recognition findings.')).not.toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(document.activeElement).toBe(retry);
+
+    await act(async () => {
+      resolveAssignment();
+      await assignmentGate;
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load recognition findings.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retrying recognition findings…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Could not load recognition findings.')).not.toBeInTheDocument();
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
+  });
+
+  it('REV2-05: successful retry moves focus to Review next when the error tree unmounts', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+        isError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Review next/ }));
+    });
+  });
+
+  it('REV2-05: successful retry with an empty backlog focuses the panel heading', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: false,
+        hasFindings: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('heading', { name: 'Recognition findings' }),
+      );
+    });
+  });
+
+  // REV3-01 / REV4-01 / TEST-15: RQ v5 refetch() resolves on query error, so
+  // retryFailed must come from results.some(r => r.isError). The pin must
+  // observe the live-region copy WHILE the error view-model is still mounted —
+  // leaving the error branch clears retryFailed via onErrorBranch and hides
+  // a `const failed = true` mutation (REV4-01).
+  it('REV3-01 / REV4-01: successful retry while error view-model stays mounted shows plain load copy, not Retry failed', async () => {
+    const recovered = makeViewModel({
+      counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+      hasFindings: true,
+      isError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    let findings = makeViewModel({
+      isError: true,
+      nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+    });
+    vi.mocked(useWorkbenchFindings).mockImplementation(() => findings);
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchMerge.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchName.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchTopUnlabeled.mockImplementation(() => Promise.resolve({ isError: false }));
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalled();
+    });
+
+    // REV4-01: still on the error branch. All settled results are isError:false,
+    // so the live region must be the plain load sentence — not Retry failed.
+    await waitFor(() => {
+      expect(screen.queryByText('Retrying recognition findings…')).not.toBeInTheDocument();
+      expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retry failed. Could not load recognition findings.')).not.toBeInTheDocument();
+
+    findings = recovered;
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Review next/ })).toBeInTheDocument();
+
+    findings = makeViewModel({
+      isError: true,
+      hasFindings: false,
+      nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+    });
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+    expect(screen.queryByText('Retry failed. Could not load recognition findings.')).not.toBeInTheDocument();
+  });
+
+  // REV3-02 / TEST-15: degraded-chip Retry lives in the data branch, so
+  // pendingRetryFocusRef must stay unarmed. A later hasFindings flip is not a
+  // reason to jump focus to Review next.
+  it('REV3-02: degraded-chip Retry does not move focus when hasFindings later becomes true', async () => {
+    const degraded = makeViewModel({
+      counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+      hasFindings: true,
+      isTopUnlabeledError: true,
+      isAssignmentError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    vi.mocked(useWorkbenchFindings).mockReturnValue(degraded);
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalled();
+    });
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        hasFindings: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 1, total: 3 },
+        hasFindings: true,
+        isError: false,
+        isTopUnlabeledError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Review next/ }));
+    expect(document.activeElement).not.toBe(
+      screen.getByRole('heading', { name: 'Recognition findings' }),
+    );
+  });
+
+  // REV3-03 / TEST-15: degraded-chip and assignment-outage Retry must share
+  // the error-branch busy contract (in-flight status + aria-busy), and the
+  // control must stay outside its live region (REV2-03).
+  it('REV3-03: degraded-chip Retry announces in-flight via the shared busy contract', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 2, merges: 0, names: 0, unlabeledClusters: 0, total: 2 },
+        hasFindings: true,
+        isTopUnlabeledError: true,
+        isAssignmentError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry.closest('[role="status"]')).toBeNull();
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+  });
+
+  it('REV3-03: assignment-outage Retry announces in-flight via the shared busy contract', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry.closest('[role="status"]')).toBeNull();
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+  });
+
+  // REV4-03 / TEST-15: assignment-outage Retry must not arm pendingRetryFocusRef
+  // (REV3-02). On successful recovery the outage block unmounts with the
+  // focused Retry inside it, so focus is restored in the settled .then —
+  // Review next when enabled, else the panel heading — not via the deferred
+  // [hasFindings, isError] effect.
+  it('REV4-03: successful assignment-outage retry moves focus to Review next, not body', async () => {
+    let resolveAssignment!: (value: { isError: boolean }) => void;
+    const assignmentGate = new Promise<{ isError: boolean }>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    let findings = makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false });
+    vi.mocked(useWorkbenchFindings).mockImplementation(() => findings);
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    await userEvent.click(retry);
+
+    findings = makeViewModel({
+      counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+      hasFindings: true,
+      isAssignmentError: false,
+      isError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(
+      screen.queryByText('Face assignments unavailable — this is not an empty backlog.'),
+    ).not.toBeInTheDocument();
+    // REV3-02 must stay: outage Retry did not arm the deferred focus effect.
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: /Review next/ }));
+
+    await act(async () => {
+      resolveAssignment({ isError: false });
+      await assignmentGate;
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Review next/ }));
+    });
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is
+  // the whole backlog. Dropping the qualifier (or ignoring topUnlabeledTruncated)
+  // leaves this looking like the unqualified S2 copy.
+  it('REV2-04: truncated top-unlabeled page qualifies the gated-cluster count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 42, total: 42 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        topUnlabeledTruncated: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.getByText('42 unlabeled groups')).toBeInTheDocument();
   });
 });

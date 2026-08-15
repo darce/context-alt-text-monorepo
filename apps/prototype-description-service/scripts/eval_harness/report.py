@@ -372,6 +372,12 @@ def _resolve_score_annotation_mode(
     still emit a report. Face scoring raises; it already fail-closes on
     any non-exhaustive resolve. Not a hard load error: an empty filtered
     public slice is a valid (vacuous) score, not a corrupt document.
+
+    Per-entry lattice is raw-mapping-only by design (S2R3-10).
+    ``GoldenEntry`` forbids ``annotation_mode`` (``extra="forbid"``, no
+    field). Typed ``GoldenManifest`` is document-homogeneous: flatteners
+    stamp the parent mode onto dumped entries. Mixed / per-entry stamps
+    exist only on raw mappings passed to this resolver.
     """
     explicit = parse_annotation_mode(annotation_mode)
     if len(manifest_entries) == 0:
@@ -1278,7 +1284,13 @@ def _stamp_missing_annotation_mode(entries: list[dict[str, Any]], mode_value: st
 
 
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
-    """Normalize GoldenManifest | mapping | entry-list into plain dicts."""
+    """Normalize GoldenManifest | mapping | entry-list into plain dicts.
+
+    Typed ``GoldenEntry`` cannot carry a per-entry stamp (S2R3-10): the
+    field does not exist and ``extra="forbid"``. On a typed manifest this
+    therefore stamps the *document* mode onto every dumped entry. The
+    per-entry lattice (mixed / disagreeing stamps) is raw-mapping-only.
+    """
     mode = _annotation_mode_of(manifest)
     mode_value = None if mode is None else mode.value
     if hasattr(manifest, "entries") and hasattr(manifest, "roster"):

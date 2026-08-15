@@ -11,6 +11,7 @@ import {
   AVATAR_STATE,
   FACE_THUMB_MODE,
   type FaceThumbSource,
+  unavailableImageName,
 } from './faceThumbDisplay';
 import { useDurableFaceThumb } from './useDurableFaceThumb';
 
@@ -32,7 +33,7 @@ export interface DurableFaceThumbProps {
 
 export const DurableFaceThumb = ({
   source,
-  alt = __('Detected face', 'alt-context'),
+  alt,
   size = 'md',
   sizePx,
   shape = 'circle',
@@ -42,6 +43,8 @@ export const DurableFaceThumb = ({
   const { display, onBlobLoad, onBlobError, onCropLoad, onCropError, onUncroppedLoad, onUncroppedError } =
     useDurableFaceThumb(source);
   const defaultDetectedAlt = __('Detected face', 'alt-context');
+  const imageAlt = alt ?? defaultDetectedAlt;
+  const unavailableName = unavailableImageName(alt);
   const baseClass = 'acx-durable-face-thumb';
   const stateClass = display.state !== AVATAR_STATE.real ? `${baseClass}--${display.state}` : '';
   const errorClass = display.isLoudError ? `${baseClass}--error` : '';
@@ -55,7 +58,7 @@ export const DurableFaceThumb = ({
         className={classes}
         data-avatar-state={AVATAR_STATE.missing}
         role="img"
-        aria-label={__('Representative image unavailable', 'alt-context')}
+        aria-label={unavailableName}
       >
         <span className={`${baseClass}__fallback-label`}>{__('No image', 'alt-context')}</span>
       </span>
@@ -84,7 +87,7 @@ export const DurableFaceThumb = ({
           size={size}
           sizePx={sizePx}
           shape={shape}
-          alt={alt}
+          alt={imageAlt}
           loading={loading}
           className={`${baseClass}__crop`}
           onLoad={onCropLoad}
@@ -96,7 +99,7 @@ export const DurableFaceThumb = ({
 
   if (display.mode === FACE_THUMB_MODE.uncropped && display.src) {
     const displaySize = sizePx ?? SIZE_PX[size];
-    const uncroppedAlt = alt === defaultDetectedAlt ? __('Reference image', 'alt-context') : alt;
+    const uncroppedAlt = imageAlt === defaultDetectedAlt ? __('Reference image', 'alt-context') : imageAlt;
     return (
       <span
         className={classes}
@@ -122,7 +125,7 @@ export const DurableFaceThumb = ({
       <span className={classes} data-avatar-state={display.state}>
         <Avatar
           src={display.src}
-          alt={alt}
+          alt={imageAlt}
           size={size}
           sizePx={sizePx}
           shape={shape}
@@ -140,7 +143,7 @@ export const DurableFaceThumb = ({
       className={classes}
       data-avatar-state={display.state}
       role="img"
-      aria-label={__('Representative image unavailable', 'alt-context')}
+      aria-label={unavailableName}
     />
   );
 };

@@ -128,7 +128,7 @@ export const ClusterEditForm = ({
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
-  const atRestHintId = 'acx-identity-cluster-at-rest-hint';
+  const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
 
   // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
   // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.

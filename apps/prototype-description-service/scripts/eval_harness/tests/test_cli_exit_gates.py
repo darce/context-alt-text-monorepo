@@ -524,3 +524,71 @@ def test_score_face_exits_1_when_run_record_is_aborted(
         cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(rec_path)])
     assert exc.value.code == 1
     assert "aborted" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# S2R5-09 — fusion_runner is a publisher and must exit 3 on refusal
+# ---------------------------------------------------------------------------
+
+
+_BAKEOFF = (
+    Path(__file__).resolve().parents[3] / "scene" / "tests" / "seed" / "bakeoff_golden.json"
+)
+
+
+def test_fusion_runner_exits_3_on_roster_only_bakeoff(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.eval_harness.cli import REFUSED_METRIC_EXIT_CODE
+    from scripts.eval_harness.fusion_runner import main as fusion_main
+    from scripts.eval_harness.manifest import ScoreInvariant
+
+    code = fusion_main(
+        ["--manifest", str(_BAKEOFF), "--mode", "staged", "--out-dir", str(tmp_path)]
+    )
+    assert code == REFUSED_METRIC_EXIT_CODE
+    err = capsys.readouterr().err
+    assert "detection=" in err
+    assert ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY in err
+    report = json.loads((tmp_path / "E20-FUSION-staged-report.json").read_text(encoding="utf-8"))
+    assert report["faces"]["detection"]["refused"] is True
+
+
+def test_fusion_runner_allow_refused_detection_does_not_consent_to_identification(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.eval_harness.cli import REFUSED_METRIC_EXIT_CODE
+    from scripts.eval_harness.fusion_runner import main as fusion_main
+
+    code = fusion_main(
+        [
+            "--manifest",
+            str(_BAKEOFF),
+            "--mode",
+            "staged",
+            "--out-dir",
+            str(tmp_path),
+            "--allow-refused=detection",
+        ]
+    )
+    assert code == REFUSED_METRIC_EXIT_CODE
+    err = capsys.readouterr().err
+    assert "identification=" in err
+    assert "detection=" not in err.split("refused metric(s) (")[1].split(")")[0]
+
+
+def test_fusion_runner_bare_allow_refused_exits_zero(tmp_path: Path) -> None:
+    from scripts.eval_harness.fusion_runner import main as fusion_main
+
+    code = fusion_main(
+        [
+            "--manifest",
+            str(_BAKEOFF),
+            "--mode",
+            "staged",
+            "--out-dir",
+            str(tmp_path),
+            "--allow-refused",
+        ]
+    )
+    assert code == 0

@@ -226,7 +226,9 @@ def test_cli_writes_reports(tmp_path, manifest):
             str(tmp_path),
         ]
     )
-    assert code == 0
+    # bakeoff_golden is roster_only and unboxed — both metrics refuse.
+    # Reports are still written (CLI score contract); exit 3 is the gate.
+    assert code == 3
     for mode in ("staged", "adhoc"):
         assert (tmp_path / f"E20-FUSION-{mode}-run-record.json").is_file()
         assert (tmp_path / f"E20-FUSION-{mode}-report.json").is_file()

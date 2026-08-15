@@ -345,8 +345,25 @@ def _resolve_score_annotation_mode(
     stamp after that check — it may only *narrow* (most-restrictive-wins).
     Explicit ``exhaustive`` never overrides a ``roster_only`` stamp.
     Omission is not exhaustive.
+
+    Zero entries **refuses** (``detection_refuses_empty_entries``), it is
+    not scored as exhaustive. ``missing`` is only assigned inside the
+    per-entry loop; an empty list never enters that loop, so returning
+    ``explicit`` would fail-open an exhaustive request through the empty
+    lattice cell (S2R3-01). Caption scoring maps this invariant onto a
+    refused detection block — PUBLIC audience filtering can legitimately
+    produce an empty entry list after withholding, and that path must
+    still emit a report. Face scoring raises; it already fail-closes on
+    any non-exhaustive resolve. Not a hard load error: an empty filtered
+    public slice is a valid (vacuous) score, not a corrupt document.
     """
     explicit = parse_annotation_mode(annotation_mode)
+    if len(manifest_entries) == 0:
+        raise ManifestError(
+            "score entries are empty; zero entries cannot witness a "
+            "detection contract (refusing explicit exhaustive fail-open)",
+            invariant="detection_refuses_empty_entries",
+        )
     stamped: set[AnnotationMode] = set()
     missing = False
     for entry in manifest_entries:
@@ -594,7 +611,10 @@ def score_run_record(
     try:
         mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
     except ManifestError as exc:
-        if exc.invariant != "detection_unrecognised_annotation_mode":
+        if exc.invariant not in {
+            "detection_unrecognised_annotation_mode",
+            "detection_refuses_empty_entries",
+        }:
             raise
         det = None
         detection_invariant = exc.invariant

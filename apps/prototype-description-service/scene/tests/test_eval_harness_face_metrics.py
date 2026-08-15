@@ -133,7 +133,22 @@ def test_score_face_run_record_raises_against_roster_only():
         "provenance": {"manifest_sha256": "m" * 64, "head_sha": "0" * 40, "started_at": "t", "leg": "candidate"},
         "items": [],
     }
-    manifest = {"annotation_mode": "roster_only", "roster": [], "entries": []}
+    manifest = {
+        "annotation_mode": "roster_only",
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "x.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Example"}],
+            }
+        ],
+    }
     with pytest.raises(ManifestError, match="score_face_run_record refuses roster_only") as exc_info:
         score_face_run_record(record, manifest)
     assert exc_info.value.invariant == "detection_refuses_roster_only"

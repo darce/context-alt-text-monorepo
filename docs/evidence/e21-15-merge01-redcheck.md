@@ -192,7 +192,9 @@
 - phpunit: EXIT 0, 1757/8496
 - phpcs: EXIT 0
 - Suppression used: `$tag = '<script ...></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript`
-- MUT (positive-extent guard deleted) verdict: PASSED
-- Failing scenario: none
-- After restore: PASSED
-- MUT note: characterization rows omit `bbox_json` (stale members `[]`; unlabeled member has only `media_id`/`cluster_uuid`/`distance`), so `extract_bbox_pixels` returns null at the non-string/empty check and never reaches `$width <= 0 || $height <= 0`. The refreshed goldens pin missing-bbox → null, not the positive-extent guard. Regeneration did not erase a pin that these six scenarios never exercised.
+- MUT-1 (positive-extent guard deleted) verdict: PASSED — wrong guard. These characterization rows omit `bbox_json`, so `extract_bbox_pixels` returns at the first guard and never reaches `$width <= 0 || $height <= 0`. Not evidence for these goldens.
+- MUT-2 (first guard restored to the fabricated zero box, i.e. main's behaviour) verdict: FAILED
+- Failing scenarios: list_clusters_stale_projection_sync, list_clusters_stale_projection_sync_failed, list_top_unlabeled_local_projection
+- Failing assertion: Failed asserting that two strings are identical. Expected `"bbox":null`; actual `"bbox":{"x":0,"y":0,"width":0,"height":0}`.
+- After restore: PASSED, 26 tests
+- What the six goldens pin: missing/empty `bbox_json` maps to `null`, not a fabricated `{0,0,0,0}`. The non-numeric and non-positive-extent guards are covered separately by ClusterResponseMapperTest (REV4-02).

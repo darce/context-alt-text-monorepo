@@ -121,6 +121,8 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "path": "localwp/uploads/stranger-fn-miss.jpg",
         "kind": "HARM-05_pure_stranger_miss",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
+        # Machine-readable: report.py filters on this field (rg-009 — no kind/id match).
+        "affects": ["detection_fn"],
         "note": (
             "anonymous GT, zero detections; 1 of 4 detection FN on the freeze. "
             "Without this entry pre- and post-HARM-01 fn agree (blind freeze)."
@@ -131,6 +133,7 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "path": "localwp/uploads/mixed-fn-miss.jpg",
         "kind": "HARM-05_mixed_named_anonymous_miss",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
+        "affects": ["detection_fn"],
         "note": (
             "named Alice GT + anonymous GT, zero detections; contributes named FN "
             "plus stranger FN. Discriminates identity-agnostic vs named-only recall."
@@ -141,6 +144,7 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "path": "celebs01/y-missing-mixed-order.jpg",
         "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
         "trips": "labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual)",
+        "affects": ["identity_ordering"],
         "note": (
             "named box missing y alongside sibling named box with y; order_degraded "
             "observable so the disclosure counter cannot freeze at structural 0."

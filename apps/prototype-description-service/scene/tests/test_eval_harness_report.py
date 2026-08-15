@@ -13,6 +13,7 @@ import pytest
 
 from scripts.eval_harness.face_metrics import named_box_name
 from scripts.eval_harness.report import (
+    CORPUS_TRAP_AFFECTS_DETECTION_FN,
     DIRECTIONAL_LABEL,
     FACE_BAKEOFF_CANON_VERSION,
     GATE_PROPOSAL_RELEASE_SURFACE,
@@ -22,7 +23,9 @@ from scripts.eval_harness.report import (
     ReportError,
     ScoreVerdict,
     _build_single_subject_cohort_by_media,
+    _fixture_local_detection_caveat_line,
     _latency_summary,
+    _markdown_face,
     build_face_reports,
     build_real_occlusion_pairs,
     build_reports,
@@ -4432,6 +4435,91 @@ def test_face_detection_sampling_frame_discloses_geometry_incomplete():  # wH1 r
     face_run, manifest = _face_geometry_incomplete_fixture()
     scored = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
     assert scored["detection"]["sampling_frame"] == frame
+
+
+def _scored_face_md_stub(*, traps: list[dict] | None, fn: int = 5, scored: int = 11) -> dict:
+    """Minimal scored face report for MD-renderer unit tests (no live scorer)."""
+    return {
+        "schema": "acx-eval/v1",
+        "kind": "report",
+        "report_kind": "face_bakeoff",
+        "provenance": {"corpus_traps": traps or [], "head_sha": None, "started_at": None},
+        "detection": {
+            "precision": 0.857,
+            "recall": 0.545,
+            "tp": 6,
+            "fp": 1,
+            "fn": fn,
+            "sampling_frame": "all_gt_boxes_on_scoreable_media_via_association",
+        },
+        "counts": {"scored": scored, "total": scored, "failed": 0, "matched_faces": 0},
+        "slices": {},
+        "gate_proposal": {},
+    }
+
+
+def test_fixture_local_detection_caveat_filters_on_affects_only():  # VLM6-R2-C-02
+    """Renderer unit: caveat keys on affects=detection_fn, never kind/media id.
+
+    N is derived from the matching trap list. A trap whose kind looks like
+    HARM-05 but has no affects (or a different affect) must not emit the line.
+    """
+    assert CORPUS_TRAP_AFFECTS_DETECTION_FN == "detection_fn"
+    traps = [
+        {
+            "media_id": 99,
+            "path": "fixture/trap-a.jpg",
+            "kind": "NOT_A_HARM_TOKEN",
+            "affects": [CORPUS_TRAP_AFFECTS_DETECTION_FN],
+        },
+        {
+            "media_id": 11,
+            "path": "celebs01/y-missing-mixed-order.jpg",
+            "kind": "HARM-05_must_not_match_on_kind",
+            "affects": ["identity_ordering"],
+        },
+    ]
+    line = _fixture_local_detection_caveat_line(traps=traps, fn=5, scored_images=11)
+    assert line is not None
+    assert "fixture-local detection frame" in line
+    assert "recall is NOT a population estimate" in line
+    assert "1 of fn=5" in line  # N derived; only one trap declares detection_fn
+    assert "99 `fixture/trap-a.jpg`" in line
+    assert "y-missing-mixed-order.jpg" not in line
+    assert "synthetic determinism anchor (11 images)" in line
+
+    md = _markdown_face(_scored_face_md_stub(traps=traps, fn=5, scored=11))
+    assert line in md
+    # Immediately after the detection precision line (no geometry_incomplete here).
+    det_idx = md.index("precision: 0.857 recall: 0.545")
+    cav_idx = md.index("fixture-local detection frame")
+    assert cav_idx > det_idx
+
+    # Kind-only / media-id-only traps must not emit a phantom caveat (rg-009).
+    kind_only = [
+        {
+            "media_id": 9,
+            "path": "localwp/uploads/stranger-fn-miss.jpg",
+            "kind": "HARM-05_pure_stranger_miss",
+        },
+        {
+            "media_id": 10,
+            "path": "localwp/uploads/mixed-fn-miss.jpg",
+            "kind": "HARM-05_mixed_named_anonymous_miss",
+        },
+    ]
+    assert _fixture_local_detection_caveat_line(traps=kind_only, fn=5, scored_images=11) is None
+    assert "fixture-local detection frame" not in _markdown_face(
+        _scored_face_md_stub(traps=kind_only)
+    )
+    # Stripped affects (real corpus / can-fail control) emits nothing.
+    stripped = [{k: v for k, v in t.items() if k != "affects"} for t in traps]
+    assert _fixture_local_detection_caveat_line(traps=stripped, fn=5, scored_images=11) is None
+    assert "fixture-local detection frame" not in _markdown_face(
+        _scored_face_md_stub(traps=stripped)
+    )
+    assert _fixture_local_detection_caveat_line(traps=[], fn=5, scored_images=11) is None
+    assert _fixture_local_detection_caveat_line(traps=None, fn=5, scored_images=11) is None
 
 
 # ---------------------------------------------------------------------------

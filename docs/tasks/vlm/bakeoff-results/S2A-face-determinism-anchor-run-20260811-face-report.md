@@ -14,6 +14,7 @@
 
 - precision: 0.857 recall: 0.545 (tp=6 fp=1 fn=5 geometry_incomplete_gt=1 association_incomplete_media=1 association_complete=false) frame=`all_gt_boxes_on_scoreable_media_via_association: named and anonymous GT share one population (HARM-01 / EVAL-16); TP=IoU-matched pairs; FN=unmatched complete GT (named missed_gt + missed_stranger_gt); FP=unmatched detections; geometry_incomplete_gt = GT boxes excluded from IoU (null/invalid centre-y; not detector FN); tp+fn+geometry_incomplete_gt equals GT boxes that reached association; association_complete=false when geometry_incomplete_gt>0; error-item media excluded from association (listed in failures)`
 - ⚠ geometry-incomplete GT excluded from detection FN: geometry_incomplete_gt=1 (of n_gt=tp+fn+incomplete=12; association_incomplete_media=1; association_complete=false)
+- ⚠ fixture-local detection frame — recall is NOT a population estimate: 2 of fn=5 come from deliberate trap media (9 `localwp/uploads/stranger-fn-miss.jpg`, 10 `localwp/uploads/mixed-fn-miss.jpg`) added so the pre-HARM-01 named-only FN formula goes red; this corpus is a synthetic determinism anchor (11 images), not a sampled population.
 
 ## Identity ordering
 

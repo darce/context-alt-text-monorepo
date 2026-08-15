@@ -116,3 +116,11 @@
 - Already covered by existing test: yes (`keeps placeholder until crop is ready after intersection [S6-BR-02]`; also `does not paint a non-dedicated attachment thumb_url as a face chip [REV1-07]`; `does not construct Image before the host intersects`)
 - Failing assertion: `expect(document.querySelector('img')).toBeNull();`
 - After restore: PASSED
+
+## REV1-16 — malformed bbox_json must not fabricate a zero box
+- Mutation applied: deleted `if ( ! isset( $pixels['x'], $pixels['y'], $pixels['width'], $pixels['height'] ) ) { return null; }` and restored `absint( $pixels[...] ?? 0 )` zero-box fallback
+- Command: `cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit --filter ClusterResponseMapperTest`
+- Verdict: FAILED
+- Failing assertion: `Failed asserting that Array &0 [ 'x' => 1, 'y' => 2, 'width' => 3, 'height' => 0, ] is null.`
+- After restore: PASSED
+- map_media_identities / map_cluster_detail: added dedicated test `testMapClusterDetailEmitsBboxOnHappyPathAndNullWhenAbsent`; map_media_identities already covered by `testMapMediaIdentitiesGroupsByMediaId` and `testMapMediaIdentitiesFallsBackToClusterRepresentativeMetadata` in MemberResponseMapperTest (method lives on MemberResponseMapper, not ClusterResponseMapper)

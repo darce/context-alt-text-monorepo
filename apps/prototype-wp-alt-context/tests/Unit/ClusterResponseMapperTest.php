@@ -687,4 +687,159 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertArrayHasKey('person_uuid', $whitespace);
         $this->assertNull($whitespace['person_uuid']);
     }
+
+    public function testMapClusterListEmitsNullBboxWhenBboxJsonIsNotValidJson(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => 'not-json',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-1', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenPixelsOmitAnEdge(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-omit-height',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-omit-y',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":{"x":1,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-omit-height', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-omit-y', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenPixelsIsNotAnObject(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-scalar-pixels',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":5}',
+                ],
+                [
+                    'identity_uuid' => 'identity-list-pixels',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":[1,2,3,4]}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-scalar-pixels', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-list-pixels', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterDetailEmitsBboxOnHappyPathAndNullWhenAbsent(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $payload = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail-bbox',
+                'label' => 'Dana',
+                'identity_count' => 2,
+            ],
+            [
+                [
+                    'identity_uuid' => 'identity-with-bbox',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-without-bbox',
+                    'attachment_id' => 13,
+                ],
+            ]
+        );
+
+        $this->assertSame('cluster-detail-bbox', $payload['id']);
+        $this->assertSame('Dana', $payload['label']);
+        $this->assertSame('identity-with-bbox', $payload['sample_identities'][0]['identity_id']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload['sample_identities'][0]['bbox']
+        );
+        $this->assertSame('identity-without-bbox', $payload['sample_identities'][1]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload['sample_identities'][1]);
+        $this->assertNull($payload['sample_identities'][1]['bbox']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload['representative_identity']['bbox']
+        );
+    }
 }

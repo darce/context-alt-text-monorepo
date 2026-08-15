@@ -394,3 +394,24 @@ def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
     assert exc_info.value.invariant == "detection_requires_annotation_mode"
+
+
+def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> None:
+    """TEST-15 / S2R3-03: fill-missing must not overwrite a real stamp.
+
+    Mutating `_stamp_missing_annotation_mode` to always write
+    `entry["annotation_mode"] = mode_value` used to stay green: document
+    exhaustive + entry roster_only became exhaustive and
+    score_face_run_record returned zeros with no raise. This pin dies
+    on that overwrite mutant.
+    """
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Example"],
+        "entries": [_mapping_entry(annotation_mode="roster_only")],
+    }
+    entries, _, _ = _entries_as_dicts(manifest)
+    assert entries[0]["annotation_mode"] == "roster_only"
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(_face_run_record(), manifest)
+    assert exc_info.value.invariant == "detection_refuses_roster_only"

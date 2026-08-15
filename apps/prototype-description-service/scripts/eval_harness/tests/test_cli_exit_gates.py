@@ -317,3 +317,166 @@ def test_allow_refused_unknown_metric_is_usage_error(
     err = capsys.readouterr().err
     assert "caption" in err
     assert "detection" in err
+
+
+# ---------------------------------------------------------------------------
+# S2R5-02 — score-face publishes refused identification and must exit 3
+# ---------------------------------------------------------------------------
+
+
+def _unit(vec: list[float]) -> list[float]:
+    n = sum(v * v for v in vec) ** 0.5
+    return [v / n for v in vec]
+
+
+def _partial_id_face_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    """Exhaustive detection-complete group with two unboxed identity claims.
+
+    score_face_run_record publishes refused identification and scores
+    detection. Pre-fix score-face wrote that report and exited 0.
+    """
+    names = ["Alice Example", "Bob Builder", "Cara Cole"]
+    dim = 8
+
+    def _box(cx: float, name: str | None) -> dict[str, Any]:
+        return {
+            "x": cx,
+            "y": 0.5,
+            "w": 80 / 300,
+            "h": 0.8,
+            "name": name,
+            "source": "iptc",
+            "lineage": {
+                **_LINEAGE,
+                "decision": "named" if name else "stranger",
+            },
+        }
+
+    def _det(bbox: list[float], emb: list[float]) -> dict[str, Any]:
+        return {
+            "bbox_px": bbox,
+            "landmarks_px": [[0.0, 0.0]] * 5,
+            "embedding": emb,
+            "det_score": 0.95,
+        }
+
+    manifest = {
+        "manifest_version": 3,
+        "annotation_mode": "exhaustive",
+        "roster": names,
+        "entries": [
+            {
+                "path": "celebs01/group.jpg",
+                "sha256": "a" * 64,
+                "media_id": 1,
+                "face_count": 3,
+                "present_identities": names,
+                "context_pack": {"title": "t"},
+                "base_caption": "",
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
+                "face_boxes": [
+                    _box(50 / 300, names[0]),
+                    _box(150 / 300, None),
+                    _box(250 / 300, None),
+                ],
+            }
+        ],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "t",
+            "leg": "candidate",
+            "model_id": "ort-yunet-sface",
+            "embedding_dim": dim,
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "celebs01/group.jpg",
+                "model_id": "ort-yunet-sface",
+                "embedding_dim": dim,
+                "image_size": [300, 100],
+                "faces": [
+                    _det([10.0, 10.0, 80.0, 80.0], _unit([1.0] + [0.0] * (dim - 1))),
+                    _det([110.0, 10.0, 80.0, 80.0], _unit([0.0, 1.0] + [0.0] * (dim - 2))),
+                    _det([210.0, 10.0, 80.0, 80.0], _unit([0.0, 0.0, 1.0] + [0.0] * (dim - 3))),
+                ],
+            }
+        ],
+    }
+    man_path = tmp_path / "face-man.json"
+    rec_path = tmp_path / "face-run.json"
+    man_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rec_path.write_text(json.dumps(record), encoding="utf-8")
+    return man_path, rec_path
+
+
+def test_score_face_exits_3_on_refused_identification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2R5-02: a published refused ID slice is exit 3, not a clean 0."""
+    import scripts.eval_harness.cli as cli_mod
+    from scripts.eval_harness.manifest import ScoreInvariant
+
+    man_path, rec_path = _partial_id_face_inputs(tmp_path)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    assert exc.value.code == 3
+    published = json.loads(rec_path.with_name("face-run-face-report.json").read_text(encoding="utf-8"))
+    assert published["slices"]["full_corpus_identification"]["refused"] is True
+    assert (
+        published["slices"]["full_corpus_identification"]["invariant"]
+        == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+    )
+    assert published["detection"].get("refused") is not True
+
+
+def test_score_face_allow_refused_identification_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _partial_id_face_inputs(tmp_path)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(
+        [
+            "score-face",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(rec_path),
+            "--allow-refused=identification",
+        ]
+    )
+
+
+def test_score_face_allow_refused_detection_does_not_consent_to_identification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A faces.*-only gate would miss slice-level identification refusal
+    and treat --allow-refused=detection as enough. It must not.
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path, rec_path = _partial_id_face_inputs(tmp_path)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(
+            [
+                "score-face",
+                "--manifest",
+                str(man_path),
+                "--run-record",
+                str(rec_path),
+                "--allow-refused=detection",
+            ]
+        )
+    assert exc.value.code == 3

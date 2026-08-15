@@ -40,3 +40,31 @@
 - Verdict: FAILED
 - Failing assertion: `expect(assignmentModel.previews.map((preview) => preview.key)).toEqual(['assignment-attach-only']);`
 - After restore: PASSED
+
+## REV1-12/REV1-03 mutation M1 — swapping drawImage sx/sy inverts the source rect
+- Mutation applied: `ctx.drawImage(image, sx, sy, sWidth, sHeight, dx, dy, destWidth, destHeight);` -> `ctx.drawImage(image, sy, sx, sWidth, sHeight, dx, dy, destWidth, destHeight);`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/faceThumbDisplay.test.ts js/components/ui/__tests__/cropFaceFromImage.test.ts`
+- Verdict: FAILED
+- Failing assertion: `expect({ sx, sy, sWidth, sHeight }).toEqual(expected);`
+- After restore: PASSED
+
+## REV1-12/REV1-03 mutation M2 — default paddingRatio 0 drops FACE_CROP_PADDING_RATIO
+- Mutation applied: `paddingRatio = FACE_CROP_PADDING_RATIO` -> `paddingRatio = 0`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/faceThumbDisplay.test.ts js/components/ui/__tests__/cropFaceFromImage.test.ts`
+- Verdict: FAILED
+- Failing assertion: `expect({ sx, sy, sWidth, sHeight }).toEqual(expected);`
+- After restore: PASSED
+
+## REV1-12/REV1-03 mutation M3 — deleting the isCroppableBbox gate returns uncroppable crops
+- Mutation applied: `if (!mediaUrl || !isCroppableBbox(source.bbox)) {` -> `if (!mediaUrl) {`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/faceThumbDisplay.test.ts js/components/ui/__tests__/cropFaceFromImage.test.ts`
+- Verdict: FAILED
+- Failing assertion: `expect(resolveFaceThumbCrop({ attachmentUrl: ATTACHMENT_URL })).toBeNull();`
+- After restore: PASSED
+
+## REV1-12/REV1-03 mutation M4 — dropping the mediaUrl ternary arm returns null for media-only sources
+- Mutation applied: `nonemptyUrl(source.attachmentUrl) ? source.attachmentUrl : nonemptyUrl(source.mediaUrl) ? source.mediaUrl : null` -> `nonemptyUrl(source.attachmentUrl) ? source.attachmentUrl : null`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/faceThumbDisplay.test.ts js/components/ui/__tests__/cropFaceFromImage.test.ts`
+- Verdict: FAILED
+- Failing assertion: `expect(crop).toEqual({ mediaUrl, bbox: BBOX });`
+- After restore: PASSED

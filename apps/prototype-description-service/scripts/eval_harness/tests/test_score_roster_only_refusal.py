@@ -389,22 +389,23 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R4-11: pin the mapping entry, not three tokens the constant can lie with.
+    """S2R4-11: pin the published roster_only sentence as a literal.
 
-    A sentence like "not computed: annotation_mode exhaustive path was used
-    anyway" keeps those tokens and must fail this pin. Swapping this
-    invariant's explanation with another member's also dies here.
+    The invariant name comes from ScoreInvariant; the explanation is spelled
+    out. Importing REFUSAL_EXPLANATIONS stays green under a lying table.
+    A mutated roster_only sentence, or a swap with the empty-observations
+    sentence, dies here.
     """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        "detection P/R is not computed unless annotation_mode is exhaustive"
         in det_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        "detection P/R is not computed from zero scored observations"
         not in det_section
     )
     assert "used anyway" not in det_section
@@ -445,7 +446,8 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
 
     The two historical sentences name missing exhaustive mode and missing
     box lineage. This fixture has both. The fired invariants are the empty-
-    observation pair; the artifact must print those reasons.
+    observation pair; those published sentences are spelled out as literals.
+    A swap of the roster_only and empty-observations sentences dies here.
     """
     entries = [
         {
@@ -475,11 +477,11 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
     ident_section = md.split("## Face identification")[1].split("## Per-item failures")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS}):" in det_section
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        "detection P/R is not computed from zero scored observations"
         in det_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        "detection P/R is not computed unless annotation_mode is exhaustive"
         not in det_section
     )
     assert (
@@ -487,11 +489,12 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
         in ident_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
+        "identification P/R is not computed from zero scored observations"
         in ident_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
         not in ident_section
     )
 

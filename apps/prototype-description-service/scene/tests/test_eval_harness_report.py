@@ -207,7 +207,7 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "policy": {"recognition_enabled": True},
         }
     ]
-    scored = score_run_record(record, entries)
+    scored = score_run_record(record, entries, annotation_mode="exhaustive")
     det = scored["faces"]["detection"]
     # 3 predicted vs 3 labeled -> no false positives from the 2 strangers
     assert det["tp"] == 3 and det["fp"] == 0 and det["fn"] == 0

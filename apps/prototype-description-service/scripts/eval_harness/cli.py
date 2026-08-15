@@ -473,7 +473,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     record_path = Path(args.run_record)
     record = json.loads(record_path.read_text())
     manifest = load_manifest(args.manifest)
-    entries = [e.model_dump() for e in manifest.entries]
+    # Stamp annotation_mode onto every entry so a later caller that drops the
+    # kwarg still refuse-closes on roster_only (FIR-11-S2-01).
+    entries = [
+        {**e.model_dump(), "annotation_mode": manifest.annotation_mode}
+        for e in manifest.entries
+    ]
     # Stamp the report with the manifest actually scored against, and verify it
     # against the run record's fetch-time sha instead of copying it blind (S3-04).
     manifest_sha = _manifest_sha(manifest)

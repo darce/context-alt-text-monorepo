@@ -258,8 +258,9 @@ def test_v2_rejected_by_gate_loader(tmp_path: Path) -> None:
     doc = _load_json(PROVENANCED)
     doc["manifest_version"] = 2
     path = _write_manifest(tmp_path, doc)
-    with pytest.raises(ManifestError, match="manifest_version"):
+    with pytest.raises(ManifestError, match="unsupported manifest_version 2") as exc_info:
         load_manifest(str(path))
+    assert "version 3 only" in str(exc_info.value)
 
 
 def test_load_legacy_manifest_rejects_v3() -> None:
@@ -275,10 +276,68 @@ def test_provenanced_fixture_is_v3_roster_only() -> None:
     assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
 
 
-def test_cli_py_does_not_reference_load_legacy_manifest() -> None:
-    """Gate command path cannot reach the legacy loader (source-level)."""
-    cli_src = (Path(__file__).resolve().parents[1] / "cli.py").read_text(encoding="utf-8")
-    assert "load_legacy_manifest" not in cli_src
+def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behavioural: CLI score never reaches the legacy loader.
+
+    Replaces the source-text grep (FIR-11-S2-03). The sentinel must fire on
+    the audit-arm path and must stay silent on the gate path.
+    """
+    import scripts.eval_harness.cli as cli_mod
+    import scripts.eval_harness.manifest as man_mod
+
+    hits: list[object] = []
+
+    def _sentinel(*args: object, **kwargs: object) -> object:
+        hits.append((args, kwargs))
+        raise RuntimeError("legacy-sentinel-hit")
+
+    monkeypatch.setattr(man_mod, "load_legacy_manifest", _sentinel)
+    if hasattr(cli_mod, "load_legacy_manifest"):
+        monkeypatch.setattr(cli_mod, "load_legacy_manifest", _sentinel)
+
+    man_path = tmp_path / "golden.json"
+    man_path.write_text(PROVENANCED.read_text(encoding="utf-8"), encoding="utf-8")
+    record_path = tmp_path / "run.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "base_url": "x",
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 101,
+                        "path": "fixtures/ada_example_101.jpg",
+                        "describe": {"alt_text_draft": "Ada Example.", "visual_facts": {"objects": []}},
+                        "identities": ["Ada Example"],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 102,
+                        "path": "fixtures/bea_example_102.jpg",
+                        "describe": {"alt_text_draft": "Bea Example.", "visual_facts": {"objects": []}},
+                        "identities": ["Bea Example"],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert hits == []
+
+    with pytest.raises(RuntimeError, match="legacy-sentinel-hit"):
+        man_mod.load_legacy_manifest(str(_golden150_path()))
+    assert hits, "audit-arm path must reach load_legacy_manifest"
 
 
 def test_calibrate_strata_fixture_is_not_a_golden_manifest() -> None:
@@ -291,18 +350,23 @@ def test_calibrate_strata_fixture_is_not_a_golden_manifest() -> None:
     """
     strata = FIXTURES / "golden_manifest_strata.v1.json"
     assert strata.is_file()
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError, match="unsupported manifest_version 2") as gate:
         load_manifest(str(strata))
-    with pytest.raises(ManifestError):
+    assert "version 3 only" in str(gate.value)
+    with pytest.raises(ManifestError, match="base_caption") as legacy:
         load_legacy_manifest(str(strata))
+    assert "media_id=101" in str(legacy.value) or "fixtures/alice-bob-a.jpg" in str(legacy.value)
 
 
 def test_v3_min_fixture_is_bench_family_not_golden_manifest() -> None:
     """v3_min.json is the corpus-manifest-v3 bench family, not GoldenManifest."""
     v3_min = FIXTURES / "v3_min.json"
     assert v3_min.is_file()
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError, match="base_caption") as exc_info:
         load_manifest(str(v3_min))
+    message = str(exc_info.value)
+    assert "celebs/anne_hathaway_11.jpg" in message
+    assert "media_id=11" in message
 
 
 def test_corpus646_retag_loads_as_roster_only() -> None:

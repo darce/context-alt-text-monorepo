@@ -60,9 +60,10 @@ def test_detection_spurious_faces_on_empty_image():
 def test_detection_pr_raises_against_roster_only():
     """Negative: detection scoring against a roster_only manifest raises."""
     items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=1)]
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="detection_pr refuses roster_only") as exc_info:
         detection_pr(items, annotation_mode="roster_only")
     assert exc_info.value.invariant == "detection_refuses_roster_only"
+    assert "false positives" in str(exc_info.value)
 
 
 def test_detection_pr_exhaustive_still_counts():
@@ -84,9 +85,10 @@ def test_score_face_run_record_raises_against_roster_only():
         "items": [],
     }
     manifest = {"annotation_mode": "roster_only", "roster": [], "entries": []}
-    with pytest.raises(ManifestError) as exc_info:
+    with pytest.raises(ManifestError, match="score_face_run_record refuses roster_only") as exc_info:
         score_face_run_record(record, manifest)
     assert exc_info.value.invariant == "detection_refuses_roster_only"
+    assert "false positives" in str(exc_info.value)
 
 
 # --- identification level (named assertions vs labeled identities) ---

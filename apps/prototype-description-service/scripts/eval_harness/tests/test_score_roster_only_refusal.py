@@ -16,7 +16,6 @@ import pytest
 from scripts.eval_harness.fusion_runner import manifest_entries_as_dicts
 from scripts.eval_harness.manifest import AnnotationMode, load_manifest
 from scripts.eval_harness.report import (
-    DETECTION_REFUSED_EXPLANATION,
     ReportError,
     build_reports,
     score_run_record,
@@ -181,8 +180,11 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     assert det["invariant"] == "detection_refuses_roster_only"
     assert det["precision"] is None
     md = record_path.with_name("run-report.md").read_text(encoding="utf-8")
-    refused_line = f"- REFUSED (detection_refuses_roster_only): {DETECTION_REFUSED_EXPLANATION}"
-    assert refused_line in md
+    det_section = md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "- REFUSED (detection_refuses_roster_only):" in det_section
+    assert "not computed" in det_section
+    assert "annotation_mode" in det_section
+    assert "exhaustive" in det_section
     captured = capsys.readouterr()
     assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
 
@@ -288,8 +290,17 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R2-09: the human-readable refusal line is pinned, not only the JSON."""
+    """S2R3-11: pin the reason detection was refused, not the constant.
+
+    Importing DETECTION_REFUSED_EXPLANATION and asserting the markdown
+    contains it lets the constant lie. The report must say P/R is not
+    computed unless annotation_mode is exhaustive.
+    """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
-    assert f"- REFUSED (detection_refuses_roster_only): {DETECTION_REFUSED_EXPLANATION}" in md
-    assert "precision: null" not in md.split("## Face detection")[1].split("## Face identification")[0]
+    det_section = md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "- REFUSED (detection_refuses_roster_only):" in det_section
+    assert "not computed" in det_section
+    assert "annotation_mode" in det_section
+    assert "exhaustive" in det_section
+    assert "precision: null" not in det_section

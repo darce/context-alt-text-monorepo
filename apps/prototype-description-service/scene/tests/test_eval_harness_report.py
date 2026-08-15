@@ -683,6 +683,71 @@ def test_public_reports_deterministic():
     assert a_md == b_md
 
 
+def _exhaustive_audience_fixtures() -> tuple[dict, list[dict]]:
+    """Public + private entries stamped exhaustive with matching boxes."""
+    record, entries = _audience_fixtures()
+    for entry in entries:
+        entry["annotation_mode"] = "exhaustive"
+    return record, entries
+
+
+def _assert_scored_detection(det: dict, *, tp: int) -> None:
+    assert det.get("refused") is not True
+    assert det["tp"] == tp
+    assert det["fp"] == 0
+    assert det["fn"] == 0
+    assert det["precision"] == 1.0
+    assert det["recall"] == 1.0
+
+
+def test_build_reports_scored_detection_local_and_public() -> None:
+    """S2R4-16: build_reports must render a computed detection block.
+
+    Arithmetic tests only call score_run_record. PUBLIC rendering of a
+    scored (not refused) detection block lives here.
+    """
+    record, entries = _exhaustive_audience_fixtures()
+    local_json, local_md = build_reports(record, entries, audience=Audience.LOCAL)
+    public_json, public_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    _assert_scored_detection(json.loads(local_json)["faces"]["detection"], tp=2)
+    _assert_scored_detection(json.loads(public_json)["faces"]["detection"], tp=1)
+    local_det = local_md.split("## Face detection")[1].split("## Face identification")[0]
+    public_det = public_md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "precision:" in local_det and "recall:" in local_det
+    assert "precision:" in public_det and "recall:" in public_det
+    assert "REFUSED" not in local_det
+    assert "REFUSED" not in public_det
+    assert "(tp=2" in local_det
+    assert "(tp=1" in public_det
+
+
+def test_build_reports_scored_detection_is_deterministic() -> None:
+    record, entries = _exhaustive_audience_fixtures()
+    a_json, a_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    assert a_json == b_json
+    assert a_md == b_md
+    _assert_scored_detection(json.loads(a_json)["faces"]["detection"], tp=1)
+
+
+def test_build_reports_scored_detection_public_redaction() -> None:
+    """PUBLIC redaction of a scored detection block withholds the private item."""
+    record, entries = _exhaustive_audience_fixtures()
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    _assert_scored_detection(scored["faces"]["detection"], tp=1)
+    assert scored["redaction"] == {
+        "audience": "public",
+        "withheld_items": 1,
+        "total_items": 2,
+    }
+    assert _LOCAL_PATH not in json_doc
+    assert _LOCAL_NAME not in json_doc
+    assert _LOCAL_PATH not in md
+    assert _LOCAL_NAME not in md
+    assert _PUBLIC_NAME in json_doc
+
+
 # --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
 
 

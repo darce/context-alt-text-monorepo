@@ -467,7 +467,12 @@ def test_unstamped_entries_refuse_missing_mode() -> None:
     assert det["refused"] is True
     assert det["invariant"] == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
     assert det["tp"] is None
-    assert "REFUSED" in _detection_section(md)
+    section = _detection_section(md)
+    assert (
+        "- REFUSED (detection_requires_annotation_mode): "
+        "detection P/R is not computed without a resolved annotation_mode; "
+        "omission is not exhaustive"
+    ) in section
 
 
 def test_roster_only_stamp_refuses_detection() -> None:
@@ -477,7 +482,31 @@ def test_roster_only_stamp_refuses_detection() -> None:
     assert det["refused"] is True
     assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
     assert det["tp"] is None
-    assert "REFUSED" in _detection_section(md)
+    section = _detection_section(md)
+    assert (
+        "- REFUSED (detection_refuses_roster_only): "
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+    ) in section
+
+
+def test_markdown_names_refused_detection_explanation_literally() -> None:
+    """S2R3-11: pin the published sentence, not the production constant.
+
+    Mutating the explanation to 'detection scored normally; refusal is
+    cosmetic' must fail this pin. Importing DETECTION_REFUSED_EXPLANATION
+    or REFUSAL_EXPLANATIONS would stay green.
+    """
+    _json_doc, md = build_reports(_run_record(), _manifest_entries(mode="roster_only"))
+    section = _detection_section(md)
+    assert (
+        "- REFUSED (detection_refuses_roster_only): "
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+    ) in section
+    assert "detection scored normally" not in section
+    assert "refusal is cosmetic" not in section
+    assert "used anyway" not in section
+    assert "zero scored observations" not in section
+    assert "precision: null" not in section
 
 
 def test_all_failed_items_refuse_empty_observations() -> None:
@@ -490,5 +519,9 @@ def test_all_failed_items_refuse_empty_observations() -> None:
     assert det["refused"] is True
     assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS
     assert det["precision"] is None
-    assert "REFUSED" in _detection_section(md)
+    section = _detection_section(md)
+    assert (
+        "- REFUSED (detection_refuses_empty_observations): "
+        "detection P/R is not computed from zero scored observations"
+    ) in section
     assert json.loads(json_doc)["counts"]["scored"] == 0

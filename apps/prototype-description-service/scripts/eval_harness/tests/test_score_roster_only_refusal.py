@@ -222,9 +222,10 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     md = record_path.with_name("run-report.md").read_text(encoding="utf-8")
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
-    assert "not computed" in det_section
-    assert "annotation_mode" in det_section
-    assert "exhaustive" in det_section
+    assert (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+        in det_section
+    )
     captured = capsys.readouterr()
     assert f"detection=REFUSED({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY})" in captured.out
     assert "--allow-refused" in captured.err
@@ -369,19 +370,20 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R3-11: pin the reason detection was refused, not the constant.
+    """S2R4-11: pin the honest sentence, not three tokens the constant can lie with.
 
-    Importing DETECTION_REFUSED_EXPLANATION and asserting the markdown
-    contains it lets the constant lie. The report must say P/R is not
-    computed unless annotation_mode is exhaustive.
+    A sentence like "not computed: annotation_mode exhaustive path was used
+    anyway" keeps those tokens and must fail this pin.
     """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
-    assert "not computed" in det_section
-    assert "annotation_mode" in det_section
-    assert "exhaustive" in det_section
+    assert (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+        in det_section
+    )
+    assert "used anyway" not in det_section
     assert "precision: null" not in det_section
 
 

@@ -31,27 +31,7 @@
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 1.000
-- macro precision: 1.000 recall: 1.000
-- true rejections (strangers): 10
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Caitlin Weaver: precision=1.000 recall=1.000 (tp=14 fp=0 fn=0)
-- Cristina Quintana: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Daniel Arce: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Erika Hansen Miller: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Kirstie Mccarrel: precision=1.000 recall=1.000 (tp=5 fp=0 fn=0)
-- Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
-- Maria Correonero: precision=1.000 recall=1.000 (tp=7 fp=0 fn=0)
-- Ryann Wiseman: precision=1.000 recall=1.000 (tp=3 fp=0 fn=0)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

@@ -14401,6 +14401,7 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
         "yolov6",
         "yolov7",
         "yolov9",
+        "yolov10",
         "yolo11",
         "yolo12",
         "arcface",
@@ -14412,29 +14413,14 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
     NC_SEEDS: ClassVar[frozenset[str]] = frozenset(
         {"arcface", "scrfd", "retinaface", "vec2face", "antelopev2"}
     )
-    # Finding-listed tags plus every yolox family/export tag. Class
-    # coverage, not a fitted probe list.
-    YOLOX_LEGIT_TAGS: ClassVar[tuple[str, ...]] = (
-        "tiny",
-        "s",
-        "m",
-        "l",
-        "x",
-        "nano",
-        "onnx",
-        "trt",
-        "int8",
-        "fp16",
-        "pt",
-        "engine",
-        "darknet",
-        "darknet53",
-        "coco",
-        "voc",
-        "8xb8",
-        "pth",
-        "bin",
+    SIBLING_FAMILIES: ClassVar[tuple[str, ...]] = (
+        "yolos",
+        "yolop",
+        "yolof",
+        "ppyolo",
     )
+    # Finding-listed sibling spellings. The generated family-tag sweep
+    # must include these rows — they are not a substitute for it.
     SIBLING_SHAPES: ClassVar[tuple[tuple[str, str], ...]] = (
         ("fastsamxyolos_tiny", "fastsam"),
         ("fastsamxppyolo_s", "fastsam"),
@@ -14453,6 +14439,29 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
         ("insightfacexyolox_tiny", "insightface", "nc"),
     )
     EXTENSION_TWINS: ClassVar[tuple[str, ...]] = (".onnx", ".pt")
+    # 13 yolox separator tags ∪ 23 shield tags. A catalogue edit must
+    # update this constant — silent growth is how a fitted list returns.
+    YOLOX_SHIELD_TAG_COUNT: ClassVar[int] = 36
+    # 16 compact-head seeds × 36 catalogue tags.
+    LEGIT_TAG_SWEEP_ROWS: ClassVar[int] = 576
+    # Same axes × {".onnx", ".pt"}.
+    EXT_TWIN_SWEEP_ROWS: ClassVar[int] = 1152
+    # 16 seeds × (4 yolos + 2 yolop + 11 yolof + 38 ppyolo) = 880.
+    SIBLING_SWEEP_ROWS: ClassVar[int] = 880
+
+    @staticmethod
+    def _yolox_shield_tag_catalogue() -> tuple[str, ...]:
+        """Yolox separator inventory ∪ export/shield tags (generated)."""
+        tags = set(policy._EXCEPTION_FAMILY_SEPARATOR_TAGS["yolox"])
+        tags |= set(policy._NC_TRAILING_SHIELD_TAGS)
+        tags.discard("")
+        return tuple(sorted(tags))
+
+    @staticmethod
+    def _family_tag_catalogue(family: str) -> tuple[str, ...]:
+        tags = set(policy._EXCEPTION_FAMILY_SEPARATOR_TAGS[family])
+        tags.discard("")
+        return tuple(sorted(tags))
 
     @staticmethod
     def _stem_matches(got: str, seed: str) -> bool:
@@ -14478,23 +14487,86 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
             ), f"{token!r}: expected agpl door, got {result.reason}"
 
     def test_listed_yolox_legit_tags_cannot_launder_compact_heads(self) -> None:
-        """Every listed tag × compact-head seed denies as the seed."""
+        """Generated yolox/shield catalogue × compact-head seeds must DENY.
+
+        R23-01 is a primitive over the whole tag catalogue, not a
+        fitted 19-token list. Row count is the product of the live
+        catalogue and the seed tuple — a tag add/remove must retune
+        ``LEGIT_TAG_SWEEP_ROWS`` the same way ``MULTI_SEGMENT_SWEEP_ROWS``
+        is retuned.
+        """
+        tags = self._yolox_shield_tag_catalogue()
+        assert len(tags) == self.YOLOX_SHIELD_TAG_COUNT, (
+            f"yolox∪shield catalogue is {len(tags)} tags {tags!r}; "
+            f"expected {self.YOLOX_SHIELD_TAG_COUNT}"
+        )
+        expected = len(self.COMPACT_HEAD_SEEDS) * len(tags)
+        assert expected == self.LEGIT_TAG_SWEEP_ROWS, (
+            f"product {expected} != LEGIT_TAG_SWEEP_ROWS "
+            f"{self.LEGIT_TAG_SWEEP_ROWS}"
+        )
         seen = 0
         for seed in self.COMPACT_HEAD_SEEDS:
-            for tag in self.YOLOX_LEGIT_TAGS:
+            for tag in tags:
                 self._assert_seed_deny(f"{seed}xyolox_{tag}", seed)
                 seen += 1
-        assert seen == len(self.COMPACT_HEAD_SEEDS) * len(self.YOLOX_LEGIT_TAGS)
+        assert seen == self.LEGIT_TAG_SWEEP_ROWS, (
+            f"R23-01 catalogue sweep must cover {self.LEGIT_TAG_SWEEP_ROWS} "
+            f"rows, got {seen}"
+        )
 
     def test_extension_twins_cannot_launder(self) -> None:
-        """``.onnx`` / ``.pt`` twins strip to the same deny."""
-        for seed in ("fastsam", "arcface", "yolov5", "scrfd"):
-            for tag in ("tiny", "s", "onnx", "pt"):
+        """``.onnx`` / ``.pt`` twins of every catalogue row strip to deny."""
+        tags = self._yolox_shield_tag_catalogue()
+        expected = (
+            len(self.COMPACT_HEAD_SEEDS) * len(tags) * len(self.EXTENSION_TWINS)
+        )
+        assert expected == self.EXT_TWIN_SWEEP_ROWS, (
+            f"product {expected} != EXT_TWIN_SWEEP_ROWS "
+            f"{self.EXT_TWIN_SWEEP_ROWS}"
+        )
+        seen = 0
+        for seed in self.COMPACT_HEAD_SEEDS:
+            for tag in tags:
                 for ext in self.EXTENSION_TWINS:
                     self._assert_seed_deny(f"{seed}xyolox_{tag}{ext}", seed)
+                    seen += 1
+        assert seen == self.EXT_TWIN_SWEEP_ROWS, (
+            f"R23-01 twin sweep must cover {self.EXT_TWIN_SWEEP_ROWS} "
+            f"rows, got {seen}"
+        )
 
     def test_sibling_exception_families_cannot_launder(self) -> None:
+        """Generated sibling-family tag catalogue × compact-head seeds."""
+        family_tags = {
+            family: self._family_tag_catalogue(family)
+            for family in self.SIBLING_FAMILIES
+        }
+        expected = len(self.COMPACT_HEAD_SEEDS) * sum(
+            len(tags) for tags in family_tags.values()
+        )
+        per_family = {k: len(v) for k, v in family_tags.items()}
+        assert expected == self.SIBLING_SWEEP_ROWS, (
+            f"product {expected} != SIBLING_SWEEP_ROWS "
+            f"{self.SIBLING_SWEEP_ROWS} (per-family {per_family})"
+        )
+        seen = 0
+        generated: set[str] = set()
+        for seed in self.COMPACT_HEAD_SEEDS:
+            for family, tags in family_tags.items():
+                for tag in tags:
+                    token = f"{seed}x{family}_{tag}"
+                    self._assert_seed_deny(token, seed)
+                    generated.add(token)
+                    seen += 1
+        assert seen == self.SIBLING_SWEEP_ROWS, (
+            f"R23-01 sibling sweep must cover {self.SIBLING_SWEEP_ROWS} "
+            f"rows, got {seen}"
+        )
         for token, seed in self.SIBLING_SHAPES:
+            assert token in generated, (
+                f"listed sibling {token!r} missing from generated sweep"
+            )
             self._assert_seed_deny(token, seed)
 
     def test_contrast_rows_still_deny(self) -> None:
@@ -14531,19 +14603,17 @@ class TestF21LegitimateTagCannotLaunderCompactHead:
             )
 
     def test_catalogue_yolox_tags_on_fastsam_deny(self) -> None:
-        """Whole yolox separator inventory + shield tags, not a fitted list."""
-        tags = set(policy._EXCEPTION_FAMILY_SEPARATOR_TAGS["yolox"])
-        tags |= set(policy._NC_TRAILING_SHIELD_TAGS)
-        tags.discard("")
+        """Whole yolox∪shield catalogue on fastsam — exact count, not ≥20."""
+        tags = self._yolox_shield_tag_catalogue()
+        assert len(tags) == self.YOLOX_SHIELD_TAG_COUNT
         seen = 0
-        for tag in sorted(tags):
-            if not tag.isalnum() and tag not in {"8xb8", "8x8"}:
-                # fold may rewrite punctuation; skip exotic
-                if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789" for ch in tag):
-                    continue
+        for tag in tags:
             self._assert_seed_deny(f"fastsamxyolox_{tag}", "fastsam")
             seen += 1
-        assert seen >= 20, f"catalogue sweep too small: {seen}"
+        assert seen == self.YOLOX_SHIELD_TAG_COUNT, (
+            f"fastsam catalogue sweep must cover {self.YOLOX_SHIELD_TAG_COUNT} "
+            f"rows, got {seen}"
+        )
 
 
 class TestF21NcSeedDoorReportsNcAxis:

@@ -55,6 +55,11 @@ dated Jul 7, `bench.sh` Aug 4, no llama/vlm/qwen process is running, and no shel
 or systemd unit references it. Its 2.8 G (`Qwen3VL-4B-Instruct-Q4_K_M.gguf` +
 `mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf`) is reclaimable and re-downloadable.
 
+**`vlm2b` deleted 2026-08-15** on operator instruction (`54 G → 57 G` free, 71%).
+`models/` 2.8 G and `bin/` 31 M (a local llama.cpp aarch64 build) are gone; both are
+rebuildable or re-downloadable. `logs/` and `bench.sh` — the bake-off measurement record
+— were archived first to `/home/ubuntu/vlm2b-bench-logs.tgz` (16 K) and kept.
+
 ## Regression: OPS-1's documented trap was tripped
 
 OPS-1 warned in writing that `docker image prune -a --filter until=<age>` is the wrong

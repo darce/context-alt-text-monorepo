@@ -230,6 +230,70 @@ class ScoreInvariant(StrEnum):
     IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
 
 
+# Published markdown explanation per fired invariant (S2R5-04). A refusal
+# reason that names a condition that did not fire is worse than no reason.
+REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
+    ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE: (
+        "detection P/R is not computed without a resolved annotation_mode; "
+        "omission is not exhaustive"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY: (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+    ),
+    ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE: (
+        "detection P/R is not computed from an unrecognised annotation_mode token"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES: (
+        "detection P/R is not computed from zero score entries; "
+        "an empty entry list cannot witness a detection contract"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE: (
+        "detection P/R is not computed from mixed annotation_mode stamps; "
+        "the scorer will not guess which detection contract applies"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS: (
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT: (
+        "detection P/R is not computed from an exhaustive stamp whose boxes "
+        "do not cover face_count"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS: (
+        "detection P/R is not computed from zero scored observations"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS: (
+        "identification P/R is not computed from zero scored observations"
+    ),
+}
+if frozenset(REFUSAL_EXPLANATIONS) != frozenset(ScoreInvariant):
+    raise RuntimeError(
+        "REFUSAL_EXPLANATIONS keys drifted from ScoreInvariant: "
+        f"table={sorted(member.value for member in REFUSAL_EXPLANATIONS)} "
+        f"enum={sorted(member.value for member in ScoreInvariant)}"
+    )
+
+
+def refusal_explanation(invariant: object) -> str:
+    """Return the published sentence for the invariant that actually fired.
+
+    Unknown tokens raise. Never substitute a neighbouring metric's reason.
+    """
+    if isinstance(invariant, ScoreInvariant):
+        member = invariant
+    else:
+        try:
+            member = ScoreInvariant(invariant)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise ManifestError(
+                f"no refusal explanation for invariant {invariant!r}"
+            ) from None
+    text = REFUSAL_EXPLANATIONS.get(member)
+    if text is None:
+        raise ManifestError(f"no refusal explanation for invariant {member!r}")
+    return text
+
+
 def parse_annotation_mode(value: object) -> AnnotationMode | None:
     """Return the enum member, or None when the value is omitted.
 

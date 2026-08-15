@@ -67,6 +67,7 @@ from .manifest import (
     ScoreInvariant,
     SliceTag,
     parse_annotation_mode,
+    refusal_explanation,
 )
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
@@ -114,12 +115,13 @@ def _mode_restrictiveness(mode: AnnotationMode) -> int:
         )
     return rank
 
-DETECTION_REFUSED_EXPLANATION = (
-    "detection P/R is not computed unless annotation_mode is exhaustive"
+# Aliases for the two historical sentences. Markdown looks up by the fired
+# invariant via refusal_explanation — these names are not a default reason.
+DETECTION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
 )
-IDENTIFICATION_REFUSED_EXPLANATION = (
-    "identification P/R is not computed from identity claims that carry no "
-    "per-face box lineage"
+IDENTIFICATION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
 )
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
@@ -1067,7 +1069,7 @@ def _markdown(scored: dict[str, Any]) -> str:
         "## Face detection (identity-agnostic)",
         "",
         (
-            f"- REFUSED ({det.get('invariant')}): {DETECTION_REFUSED_EXPLANATION}"
+            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
             if det.get("refused")
             else (
                 f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "
@@ -1080,7 +1082,8 @@ def _markdown(scored: dict[str, Any]) -> str:
     ]
     if ident.get("refused"):
         lines.append(
-            f"- REFUSED ({ident.get('invariant')}): {IDENTIFICATION_REFUSED_EXPLANATION}"
+            f"- REFUSED ({ident.get('invariant')}): "
+            f"{refusal_explanation(ident.get('invariant'))}"
         )
     else:
         lines += [
@@ -2469,7 +2472,7 @@ def _markdown_face(scored: dict[str, Any]) -> str:
     if hl.get("refused"):
         lines.append(
             f"- **headline_identification**: REFUSED ({hl.get('invariant')}): "
-            f"{IDENTIFICATION_REFUSED_EXPLANATION}"
+            f"{refusal_explanation(hl.get('invariant'))}"
         )
     else:
         lines.append(

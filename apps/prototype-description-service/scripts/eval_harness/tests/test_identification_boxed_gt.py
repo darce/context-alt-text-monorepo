@@ -12,7 +12,13 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness.face_metrics import require_boxed_identification_gt
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant, load_manifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    ManifestError,
+    REFUSAL_EXPLANATIONS,
+    ScoreInvariant,
+    load_manifest,
+)
 from scripts.eval_harness.report import (
     Audience,
     build_reports,
@@ -243,9 +249,13 @@ def test_markdown_names_refused_identification() -> None:
     _json_doc, md = build_reports(_record(["Alice Example"]), [_unboxed_alice()])
     assert f"- REFUSED ({ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS}):" in md
     assert (
-        "identification P/R is not computed from identity claims that carry no "
-        "per-face box lineage"
-    ) in md
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
+        in md
+    )
+    assert (
+        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
+        not in md
+    )
     face_id = md.split("## Face identification")[1]
     assert "micro precision:" not in face_id
     assert "used anyway" not in face_id

@@ -442,3 +442,38 @@ def test_restrictiveness_unknown_mode_is_typed_refusal() -> None:
     with pytest.raises(ManifestError) as exc_info:
         _mode_restrictiveness("not-a-mode")  # type: ignore[arg-type]
     assert exc_info.value.invariant == "detection_unrecognised_annotation_mode"
+
+
+def test_mixed_and_missing_reports_mixed() -> None:
+    """S2R3-09: mixed is more dangerous than missing; do not mask it.
+
+    A document that is both missing a stamp on one entry and mixed
+    across the others used to return the missing-stamp refusal only.
+    Mixed must win, and the message must also name the missing stamps.
+    """
+    entries = [
+        {**_stamped("exhaustive")[0], "media_id": 1},
+        {
+            "path": "mock_images/other.jpg",
+            "media_id": 99,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "annotation_mode": "roster_only",
+        },
+        {
+            "path": "mock_images/unstamped.jpg",
+            "media_id": 100,
+            "face_count": 1,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+        },
+    ]
+    with pytest.raises(ReportError, match="mixed annotation_mode") as exc_info:
+        score_run_record(_OVERSHOOT_RECORD, entries)
+    assert "missing stamp" in str(exc_info.value)
+    assert exc_info.value.invariant == "detection_refuses_mixed_annotation_mode"

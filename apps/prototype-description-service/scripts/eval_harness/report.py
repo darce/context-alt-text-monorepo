@@ -176,6 +176,10 @@ class ReportError(Exception):
     """The run record cannot be scored: wrong document kind, unknown schema, or a
     run-record item whose media_id is absent from the score-time manifest."""
 
+    def __init__(self, message: str, *, invariant: str | None = None) -> None:
+        super().__init__(message)
+        self.invariant = invariant
+
 
 def _entry_index(manifest_entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     return {int(e["media_id"]): e for e in manifest_entries}
@@ -385,14 +389,19 @@ def _resolve_score_annotation_mode(
             missing = True
         else:
             stamped.add(parsed)
-    if missing:
-        return None
+    # Mixed is strictly more dangerous than missing (S2R3-09): a document
+    # that is both missing a stamp and mixed across the others must not
+    # collapse to the missing-stamp refusal. Report both; mixed wins.
     if len(stamped) > 1:
+        missing_note = "; also missing stamp on one or more entries" if missing else ""
         raise ReportError(
             f"mixed annotation_mode on score entries: "
-            f"{sorted(member.value for member in stamped)}; "
-            "refusing to guess which detection contract applies"
+            f"{sorted(member.value for member in stamped)}{missing_note}; "
+            "refusing to guess which detection contract applies",
+            invariant="detection_refuses_mixed_annotation_mode",
         )
+    if missing:
+        return None
     if not stamped:
         return explicit
     data = next(iter(stamped))

@@ -102,11 +102,18 @@ def _write_journal(dest: Path, ns: promote.PromoteNamespace, payload: dict) -> N
     (dest / ns.journal_name).write_text(json.dumps(body, sort_keys=True) + "\n")
 
 
-def test_s4_02_pre_fix_naive_loop_leaves_mixed(tmp_path: Path) -> None:
-    """RED condition: bare per-file promote without journal leaves mixed dest.
+def test_naive_per_file_replace_is_mixed_documents_why_journaling_is_needed(
+    tmp_path: Path,
+) -> None:
+    """Pins the MOTIVATING FAILURE MODE, not production behaviour.
 
-    Encodes the failure gx4 closed — permanent so a reintroduction of the naive
-    loop is caught. This is the pre-fix path, not the production API.
+    Real S4-02 guards: test_s4_02_crash_mid_install_recover_yields_all_new,
+    test_s4_02_crash_before_install_recover_yields_all_old,
+    test_s4_02_hand_built_installing_journal_recover_all_new,
+    test_s4_02_clean_promote_leaves_no_journal,
+    test_s4_02_face_twin_recover_installing_all_new.
+    A bare per-file os.replace loop leaves dest mixed after a mid-loop crash;
+    this documents why journaled promote is required.
     """
     dest = tmp_path / "dest"
     src = tmp_path / "src"

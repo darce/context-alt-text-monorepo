@@ -178,39 +178,46 @@ def test_restoring_qwen36_row_fails(tmp_path: Path, raw_registry: dict[str, Any]
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
-# llama.cpp rows whose vision floor is unpublished in
+# Rows whose vision floor is unpublished in
 # infra/oci/incidents/a10-multimodel-bakeoff.sh:11-14 (rg-015: do not invent).
+# phi4-mm is listed because this repo documents no vLLM version anywhere.
 _MIN_RUNTIME_BUILD_EXCEPTIONS = frozenset(
     {
         "minicpm-v-45",
         "minicpm-v-46",
         "kimi-vl-a3b",
         "gemma-4-12b",
+        "phi4-mm",
     }
 )
 
 
 def test_llama_cpp_min_runtime_build_or_documented_exception(registry) -> None:
-    llama_ids: set[str] = set()
+    by_id = {entry.id: entry for entry in registry.entries}
+    for exception_id in _MIN_RUNTIME_BUILD_EXCEPTIONS:
+        assert exception_id in by_id
+        assert by_id[exception_id].recipe.min_runtime_build is None
     for entry in registry.entries:
-        if entry.recipe.stack is not ServingStack.LLAMA_CPP:
-            assert entry.recipe.min_runtime_build is None
-            continue
-        llama_ids.add(entry.id)
-        if entry.recipe.min_runtime_build is None:
+        if entry.recipe.stack is ServingStack.LLAMA_CPP and entry.recipe.min_runtime_build is None:
             assert entry.id in _MIN_RUNTIME_BUILD_EXCEPTIONS
+        if entry.recipe.min_runtime_build is None:
             continue
         pin = entry.recipe.min_runtime_build.lower()
         assert "todo" not in pin
         assert "tbd" not in pin
-    assert llama_ids >= _MIN_RUNTIME_BUILD_EXCEPTIONS
+        if entry.recipe.stack is ServingStack.LLAMA_CPP:
+            assert pin.startswith("b") and pin[1:].isdigit()
+        elif entry.recipe.stack is ServingStack.VLLM:
+            assert pin[0].isdigit()
 
 
 def test_qwen_min_runtime_build_matches_incident_source(registry) -> None:
     qwen_vl = next(e for e in registry.entries if e.id == "qwen3-vl-30b-a3b")
     assert qwen_vl.recipe.min_runtime_build == "b6887"
+    assert qwen_vl.recipe.min_runtime_build_is_lower_bound is False
     qwen38 = next(e for e in registry.entries if e.id == QWEN38_ROW_ID)
-    assert qwen38.recipe.min_runtime_build == "newer than b6887"
+    assert qwen38.recipe.min_runtime_build == "b6887"
+    assert qwen38.recipe.min_runtime_build_is_lower_bound is True
 
 
 def test_min_runtime_build_todo_rejected(
@@ -230,6 +237,17 @@ def test_min_runtime_build_tbd_rejected(
     row = next(e for e in payload["entries"] if e["id"] == "qwen3-vl-30b-a3b")
     row["recipe"]["min_runtime_build"] = "tbd"
     with pytest.raises(RegistryError, match="TODO placeholder"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_min_runtime_build_prose_rejected(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    row = next(e for e in payload["entries"] if e["id"] == QWEN38_ROW_ID)
+    row["recipe"]["min_runtime_build"] = "newer than b6887"
+    row["recipe"].pop("min_runtime_build_is_lower_bound", None)
+    with pytest.raises(RegistryError, match="newer than b6887"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 

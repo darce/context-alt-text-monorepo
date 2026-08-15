@@ -181,11 +181,6 @@ def extract_stamps(path: Path) -> list[PublishedStamp]:
     return found
 
 
-def extract_head_shas(path: Path) -> list[str]:
-    """Well-formed SHA strings only (legacy helper). Prefer ``extract_stamps``."""
-    return [stamp.normalized for stamp in extract_stamps(path) if stamp.well_formed]
-
-
 def resolve_commit(root: Path, sha: str) -> bool:
     result = subprocess.run(
         ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],

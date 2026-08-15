@@ -81,8 +81,15 @@ LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
 # Fail-closed: assume proposals were visible unless the record says otherwise.
 LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
 # Unknown occasion — pre-v3 boxes have no recoverable capture session.
-# Required so an in-tree boxed corpus can be flipped to exhaustive (S2R5-06).
+# This token means "there is no occasion key". It must not satisfy the
+# exhaustive capture-session gate (S2R6-01); roster_only may still carry it.
 LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
+
+# Recorded decision (S2R4-20): persisted annotation_mode is document-level.
+# S2R3-10 closed by extra=forbid + a comment left the mixed-stamp lattice
+# unreachable from any on-disk file and unrecorded outside those remarks.
+# The loader now refuses a per-entry stamp under this named invariant.
+ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT = "annotation_mode_is_document_level"
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -551,8 +558,8 @@ def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
     stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
     ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
     epoch sentinel (unknown). ``capture_session_id`` is the unknown-occasion
-    sentinel so a boxed roster_only corpus can be flipped to exhaustive
-    without the loader rejecting the existing boxes (S2R5-06).
+    sentinel: it records that no session is recoverable. The exhaustive
+    gate rejects this token (S2R6-01); it does not mint an occasion key.
     """
     return {
         "labeler_id": LEGACY_IMPORT_LABELER_ID,
@@ -621,9 +628,12 @@ class FaceBox(BaseModel):
 
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # annotation_mode is intentionally absent (S2R3-10): extra=forbid, no
-    # field. Per-entry stamps are raw-mapping-only; the document mode lives
-    # on GoldenManifest. Flatteners stamp that parent mode onto dumped dicts.
+    # annotation_mode is intentionally absent (S2R3-10 / S2R4-20): extra=forbid,
+    # no field. Persisted mode is document-level on GoldenManifest. The
+    # mixed-stamp / cannot-widen lattice is score-time raw-mapping only
+    # (report.py). The loader refuses an on-disk per-entry stamp by name
+    # (annotation_mode_is_document_level) rather than as an extra=forbid
+    # accident, so the contract is testable against real JSON.
 
     path: str
     sha256: str
@@ -773,16 +783,29 @@ class GoldenManifest(BaseModel):
                     )
 
     def _capture_session_required_when_exhaustive(self) -> None:
-        """Occasion key must be writable on every exhaustive box."""
+        """Occasion key must be a real session on every exhaustive box.
+
+        ``LEGACY_IMPORT_CAPTURE_SESSION_ID`` is not a session — it is the
+        documented unknown-occasion marker minted for pre-v3 boxes. A
+        truthy sentinel must not clear this gate (S2R6-01 / rg-015).
+        """
         if self.annotation_mode is not AnnotationMode.EXHAUSTIVE:
             return
         for index, entry in enumerate(self.entries):
             for box_index, box in enumerate(entry.face_boxes):
                 session = None if box.lineage is None else box.lineage.capture_session_id
-                if not session:
+                if not session or session == LEGACY_IMPORT_CAPTURE_SESSION_ID:
+                    detail = (
+                        "is missing capture_session_id"
+                        if not session
+                        else (
+                            f"carries unknown-occasion sentinel "
+                            f"{LEGACY_IMPORT_CAPTURE_SESSION_ID!r}"
+                        )
+                    )
                     raise ManifestError(
                         f"capture_session_id_required: exhaustive entry[{index}] "
-                        f"{entry.path} box[{box_index}] is missing capture_session_id",
+                        f"{entry.path} box[{box_index}] {detail}",
                         invariant="capture_session_id_required",
                         entry_index=index,
                         entry_path=entry.path,
@@ -799,6 +822,34 @@ class GoldenManifest(BaseModel):
         return self
 
 
+def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
+    """Persisted annotation_mode is document-level (S2R3-10 / S2R4-20).
+
+    A per-entry stamp in a JSON file is not a loadable contract. The
+    mixed-stamp lattice lives on raw mappings at score time; the loader
+    must not let pydantic extra=forbid be the only rejection, because
+    that makes the decision look like a missing field rather than a
+    named document-level rule (rg-009).
+    """
+    if not isinstance(entries_raw, list):
+        return
+    for index, raw_entry in enumerate(entries_raw):
+        if not isinstance(raw_entry, dict):
+            continue
+        if "annotation_mode" not in raw_entry:
+            continue
+        path = raw_entry.get("path")
+        entry_path = path if isinstance(path, str) else None
+        label = entry_path if entry_path else f"entry[{index}]"
+        raise ManifestError(
+            f"annotation_mode is document-level; per-entry stamp is not a "
+            f"persisted contract ({label})",
+            invariant=ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT,
+            entry_index=index,
+            entry_path=entry_path,
+        )
+
+
 def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     """Load and validate a v3 golden manifest; optionally verify image hashes.
 
@@ -807,12 +858,14 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
     independently produced numbers (see module docstring).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
-    violations, unsupported version, missing ``annotation_mode``, empty corpus,
+    violations, unsupported version, missing ``annotation_mode``, a
+    per-entry ``annotation_mode`` stamp (document-level only), empty corpus,
     duplicate media_id/path, identities outside the roster, roster_cohorts keys
     outside the roster, any entry missing ``provenance`` (FIR-11 Slice 1 —
     required, fail-closed; every offending path is named in one error), a box
-    without ``LabelLineage``, an ``exhaustive`` box missing
-    ``capture_session_id``, a coverage mismatch under the declared
+    without ``LabelLineage``, an ``exhaustive`` box missing a real
+    ``capture_session_id`` (the legacy-import unknown-occasion sentinel
+    is rejected, not treated as a session), a coverage mismatch under the declared
     ``annotation_mode``, and (when ``images_dir`` is given) missing image files
     or sha256 mismatches. Emits ``RubricEmptyWarning`` if the corpus defines no
     Must-Right/Easy-Wrong entries — the caption hard gate is then vacuous but
@@ -903,6 +956,7 @@ def load_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
             "annotation_mode is required (exhaustive|roster_only)",
             invariant="annotation_mode_required",
         )
+    _reject_per_entry_annotation_mode(entries_raw)
 
     try:
         manifest = GoldenManifest.model_validate(raw)
@@ -1012,6 +1066,7 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     if payload.get("annotation_mode") is None:
         # Documented default — v2 never claimed exhaustiveness (see docstring).
         payload["annotation_mode"] = AnnotationMode.ROSTER_ONLY
+    _reject_per_entry_annotation_mode(entries_raw)
 
     try:
         manifest = GoldenManifest.model_validate(payload, context={"legacy": True})

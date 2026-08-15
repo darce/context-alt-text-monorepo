@@ -8,6 +8,7 @@
 - score manifest_sha256: `73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539` (matches fetch: False)
 - started_at: 2026-07-10T05:05:05Z
 - images: 10/10 scored, 0 failed
+- notes: S2R4-15 S2R3-08 (commit 8a9db2c2) re-scored this report against bakeoff_golden.json: faces.identification p=1.0 r=0.889 true_rejections=2 per_identity=7 → REFUSED(identification_refuses_unboxed_identity_claims); score_manifest 04d5712a→73cbe113 (matches fetch True→False). Caption axes were not rewritten. Run-record producer stamps were restored separately (S2R3-15).
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)

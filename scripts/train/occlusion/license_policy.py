@@ -4186,6 +4186,22 @@ def _unknown_exception_residual_entry(
     )
 
 
+def _is_synthetic_unknown_residual_entry(
+    entry: PackageDenylistEntry,
+) -> bool:
+    """True when ``entry`` is the fail-closed unknown-residual gadget.
+
+    These are not a real AGPL package — they are the honest landing
+    for unclassified exception debris. Door promotion must not report
+    them as an AGPL-axis hit when the unfiltered floor already named
+    an NC seed (R23-03 / AUDIT-08 / PROV-01).
+    """
+    return (
+        entry.spdx_id == "FAIL-CLOSED"
+        and entry.package_id.endswith("_unknown_residual")
+    )
+
+
 # Honest ultralytics compact remainders (1–3 alnum). ``seg`` / ``sg``
 # are real YOLO-Seg spellings that share an initial letter with the
 # yolos exception seed; fabricated rem (``xpt`` / ``spt`` / ``xz``)
@@ -5982,10 +5998,24 @@ def _door_package_floor_promotion(
     Compact AGPL-adjacent glue on long denylist stems (``ultralyticsplus``
     — FIR-7-B13-5) is an AGPL floor hit via elevated compact-prefix glue.
     Bare NC seeds (``buffalo_l``) stay ``nc_model_derived``.
+
+    R23-03: a synthetic ``<family>_unknown_residual`` hit is not a
+    real AGPL package. When the unfiltered floor already named an NC
+    seed (``buffalo_lxyolox_yolop_tiny``), the door reports that NC
+    licence class — never an AGPL-axis unknown-residual note that
+    sends a consumer down the wrong remediation path. Real AGPL
+    packages (``buffalo_l_ultralytics`` / ``fastsam…``) still win.
     """
     agpl_reasons = frozenset({RejectionReason.DENYLISTED_PACKAGE})
     agpl = _package_denylist_hit(value, reasons=agpl_reasons)
     if agpl is not None:
+        if _is_synthetic_unknown_residual_entry(agpl):
+            unfiltered = _package_denylist_hit(value)
+            if (
+                unfiltered is not None
+                and unfiltered.reason is RejectionReason.NC_MODEL_DERIVED
+            ):
+                return unfiltered
         return agpl
     nc = _whole_component_nc_package_hit(value)
     if nc is not None:

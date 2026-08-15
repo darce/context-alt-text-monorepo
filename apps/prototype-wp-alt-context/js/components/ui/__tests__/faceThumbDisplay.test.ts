@@ -28,6 +28,41 @@ describe('resolveFaceThumbCrop', () => {
   it('returns null when attachment and bbox are both missing', () => {
     expect(resolveFaceThumbCrop({ thumbUrl: BLOB_URL })).toBeNull();
   });
+
+  it('returns null when attachment_url is set but bbox is missing', () => {
+    expect(resolveFaceThumbCrop({ attachmentUrl: ATTACHMENT_URL })).toBeNull();
+    expect(resolveFaceThumbCrop({ attachmentUrl: ATTACHMENT_URL, bbox: null })).toBeNull();
+  });
+
+  it('returns null when attachment_url is set but bbox has zero extent', () => {
+    expect(
+      resolveFaceThumbCrop({
+        attachmentUrl: ATTACHMENT_URL,
+        bbox: { x: 0, y: 0, width: 0, height: 0 },
+      }),
+    ).toBeNull();
+  });
+
+  it('uses media_url when attachment_url is missing and the bbox is croppable', () => {
+    const mediaUrl = 'https://example.test/uploads/legacy.jpg';
+    expect(
+      resolveFaceThumbCrop({
+        mediaUrl,
+        bbox: BBOX,
+      }),
+    ).toEqual({ mediaUrl, bbox: BBOX });
+  });
+
+  it('treats a whitespace attachment_url as empty and keeps the source bbox', () => {
+    const mediaUrl = 'https://example.test/uploads/legacy.jpg';
+    const crop = resolveFaceThumbCrop({
+      attachmentUrl: ' ',
+      mediaUrl,
+      bbox: BBOX,
+    });
+    expect(crop).toEqual({ mediaUrl, bbox: BBOX });
+    expect(crop?.bbox).toBe(BBOX);
+  });
 });
 
 describe('resolveFaceThumbDisplay [TEST-15]', () => {

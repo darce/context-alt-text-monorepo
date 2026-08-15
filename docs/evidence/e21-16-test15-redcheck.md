@@ -41,3 +41,10 @@ Edit 2: yes — the 25-row at-rest test pins the unsliced page; it failed after 
 - Verdict: FAILED
 - Failing assertion: `expect(screen.getByText(\`Showing ${renderedOptionRows.length} of 80 labels — type to search for more\`)).toBeInTheDocument();` — Unable to find an element with the text: Showing 5 of 80 labels — type to search for more.
 - After restore: PASSED
+
+## ORCH-13 — hint id is per instance
+- Mutation applied: `` `acx-identity-cluster-at-rest-hint-${React.useId()}` `` -> `'acx-identity-cluster-at-rest-hint'`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx -t "scopes the at-rest hint id per form instance"`
+- Verdict: FAILED
+- Failing assertion: `AssertionError: expected 'acx-identity-cluster-at-rest-hint' not to be 'acx-identity-cluster-at-rest-hint' // Object.is equality`
+- After restore: PASSED

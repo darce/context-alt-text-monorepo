@@ -11,10 +11,7 @@ import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { AlertTriangle, Circle, ImageOff } from 'lucide-react';
 
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import { Avatar } from '../../../../components/ui/avatar';
-import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
-import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
+import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import {
   CLUSTER_EVIDENCE,
   NEXT_ACTION_KIND,
@@ -147,54 +144,34 @@ const FindingsRetryButton = ({
 );
 
 /**
- * Renderer order mirrors TopClusterCard (dedicated thumb → CSS face crop →
- * uncropped fallback). Previews are non-interactive evidence chips (A11Y-14:
- * target-size floor applies to interactive controls; these remain display-only).
+ * Durable hop (dedicated blob → attachment/media crop → uncropped fallback).
+ * Previews are non-interactive evidence chips (A11Y-14: target-size floor
+ * applies to interactive controls; these remain display-only).
  */
 const FindingsPreview = ({ preview }: { preview: WorkbenchFindingPreview }): React.JSX.Element => {
-  const useDedicatedThumb = isDedicatedFaceThumbUrl(preview.thumbUrl);
-  const canCrop =
-    typeof preview.mediaUrl === 'string' &&
-    preview.mediaUrl.trim() !== '' &&
-    isCroppableBbox(preview.bbox);
-
-  if (useDedicatedThumb && preview.thumbUrl) {
-    return (
-      <Avatar
-        src={preview.thumbUrl}
-        sizePx={FINDINGS_PREVIEW_SIZE_PX}
-        shape="square"
-        alt={previewAltText(preview, true)}
-        className="acx-findings-panel__preview"
-      />
-    );
-  }
-
-  if (canCrop && preview.mediaUrl && preview.bbox) {
-    return (
-      <FaceThumbnail
-        mediaUrl={preview.mediaUrl}
-        bbox={preview.bbox}
-        sizePx={FINDINGS_PREVIEW_SIZE_PX}
-        shape="square"
-        alt={previewAltText(preview, true)}
-        className="acx-findings-panel__preview"
-      />
-    );
-  }
-
-  const fallbackSrc = usablePreviewUrl(preview.thumbUrl) ?? usablePreviewUrl(preview.mediaUrl);
-  if (!fallbackSrc) {
+  const hasImagery =
+    usablePreviewUrl(preview.thumbUrl) !== null ||
+    usablePreviewUrl(preview.attachmentUrl) !== null ||
+    usablePreviewUrl(preview.mediaUrl) !== null;
+  // Panel missing chip (ImageOff + Representative image unavailable) is the
+  // existing empty-state contract. DurableFaceThumb also has a missing span,
+  // but that is a different surface and would change the pinned chip.
+  if (!hasImagery) {
     return <FindingsPreviewMissing />;
   }
 
   return (
-    <Avatar
-      src={fallbackSrc}
+    <DurableFaceThumb
+      source={{
+        thumbUrl: preview.thumbUrl,
+        attachmentUrl: preview.attachmentUrl,
+        mediaUrl: preview.mediaUrl,
+        bbox: preview.bbox,
+      }}
       sizePx={FINDINGS_PREVIEW_SIZE_PX}
       shape="square"
-      alt={previewAltText(preview, false)}
-      className="acx-findings-panel__preview acx-findings-panel__preview--uncropped"
+      alt={previewAltText(preview, true)}
+      className="acx-findings-panel__preview"
     />
   );
 };

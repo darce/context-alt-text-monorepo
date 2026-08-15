@@ -178,11 +178,11 @@ describe('WorkbenchFindingsPanel', () => {
     expect(previewImgs).toHaveLength(2);
     expect(previewImgs[0]).toHaveAttribute('src', 'http://example.test/face-1.jpg');
     expect(previewImgs[0]).toHaveAttribute('alt', 'Grace Hopper');
-    expect(previewImgs[0]).toHaveClass('acx-avatar__image');
+    expect(previewImgs[0]).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(previewImgs[1]).toHaveAttribute('src', 'http://example.test/face-2.jpg');
     expect(previewImgs[1]).toHaveAttribute('alt', 'Reference image');
-    expect(previewImgs[1]).toHaveClass('acx-avatar__image');
-    expect(avatarSpy).toHaveBeenCalled();
+    expect(previewImgs[1]).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(avatarSpy).not.toHaveBeenCalled();
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
 
     const primary = screen.getByRole('button', { name: /Review next/ });
@@ -742,7 +742,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByAltText('Reference image, possibly Ada Lovelace')).toBeInTheDocument();
+    expect(screen.getByAltText('Face image, possibly Ada Lovelace')).toBeInTheDocument();
     expect(screen.queryByAltText('Ada Lovelace')).not.toBeInTheDocument();
   });
 
@@ -810,18 +810,11 @@ describe('WorkbenchFindingsPanel', () => {
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
-    expect(avatarSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        src: mediaUrl,
-        sizePx: FINDINGS_PREVIEW_SIZE_PX,
-        alt: 'Reference image',
-        className: 'acx-findings-panel__preview acx-findings-panel__preview--uncropped',
-      }),
-    );
+    expect(avatarSpy).not.toHaveBeenCalled();
     const image = screen.getByAltText('Reference image');
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('src', mediaUrl);
-    expect(image).toHaveClass('acx-avatar__image');
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(container.querySelector('.acx-findings-panel__preview--uncropped')).toBeInTheDocument();
   });
@@ -1122,6 +1115,35 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('No image')).toBeInTheDocument();
     expect(avatarSpy).not.toHaveBeenCalled();
     expect(container.querySelector('img[src=""]')).toBeNull();
+  });
+
+  it('REV4-01: attachment-only preview paints the attachment URL', () => {
+    const attachmentUrl = 'http://example.test/uploads/attachment-only.jpg';
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        previews: [
+          preview({
+            key: 'assignment-attach-only',
+            thumbUrl: null,
+            mediaUrl: null,
+            attachmentUrl,
+            bbox: null,
+          }),
+        ],
+        hasFindings: true,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: null,
+        },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('img')).toHaveAttribute('src', attachmentUrl);
   });
 
   // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).

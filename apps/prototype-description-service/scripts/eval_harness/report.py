@@ -229,6 +229,14 @@ def _refused_identification_metric(invariant: str) -> dict[str, Any]:
     }
 
 
+def _entry_recognition_enabled(entry: Mapping[str, Any]) -> bool:
+    """Match identification_pr: policy-disabled rows are not live claims."""
+    policy = entry.get("policy") or {}
+    if isinstance(policy, Mapping):
+        return bool(policy.get("recognition_enabled", True))
+    return bool(getattr(policy, "recognition_enabled", True))
+
+
 def _scored_identification_entries(
     run_record: Mapping[str, Any],
     manifest_entries: Sequence[Mapping[str, Any]],
@@ -244,6 +252,13 @@ def _scored_identification_entries(
             continue
         out.append(entry)
     return out
+
+
+def _identification_metric_entries(
+    entries: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Population identification_pr actually scores (recognition enabled)."""
+    return [entry for entry in entries if _entry_recognition_enabled(entry)]
 
 
 def _filter_for_public_audience(
@@ -718,7 +733,9 @@ def score_run_record(
         identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
     else:
         try:
-            require_boxed_identification_gt(identification_entries)
+            require_boxed_identification_gt(
+                _identification_metric_entries(identification_entries)
+            )
         except ManifestError as exc:
             if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
                 raise
@@ -1110,7 +1127,9 @@ def build_reports(
     """
     try:
         require_boxed_identification_gt(
-            _scored_identification_entries(run_record, manifest_entries)
+            _identification_metric_entries(
+                _scored_identification_entries(run_record, manifest_entries)
+            )
         )
     except ManifestError as exc:
         if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:

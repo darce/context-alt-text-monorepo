@@ -49,18 +49,22 @@ interface WorkbenchFindingsPanelProps {
 export const FINDINGS_PREVIEW_SIZE_PX = 72;
 
 /** Stable region label for ScanTabContent aria-labelledby (L3V-01 / A11Y-04). */
-const FindingsRegionHeading = ({
-  visuallyHidden = false,
-}: {
-  visuallyHidden?: boolean;
-}): React.JSX.Element => (
+const FindingsRegionHeading = React.forwardRef<
+  HTMLHeadingElement,
+  {
+    visuallyHidden?: boolean;
+  }
+>(({ visuallyHidden = false }, ref) => (
   <h3
+    ref={ref}
     id="acx-workbench-findings-heading"
     className={visuallyHidden ? 'screen-reader-text' : 'acx-findings-panel__title'}
+    tabIndex={-1}
   >
     {__('Recognition findings', 'alt-context')}
   </h3>
-);
+));
+FindingsRegionHeading.displayName = 'FindingsRegionHeading';
 
 const nextActionHint = (action: WorkbenchNextAction): string | null => {
   switch (action.kind) {
@@ -189,20 +193,55 @@ export const WorkbenchFindingsPanel = ({
     nextAction,
   } = findings;
 
+  // REV2-05: RQ v5 isLoading is isPending && isFetching, so it stays false
+  // while an already-errored query refetches. Track retry locally.
+  const [retrying, setRetrying] = React.useState(false);
+  const [retryFailed, setRetryFailed] = React.useState(false);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  const reviewNextRef = React.useRef<HTMLButtonElement>(null);
+  const pendingRetryFocusRef = React.useRef(false);
+
   // REV2-08: the control is labelled as reloading recognition findings, so it
   // must refetch every source that feeds them — name suggestions included.
   const handleRetryFindings = (): void => {
+    if (retrying) {
+      return;
+    }
+    setRetrying(true);
+    setRetryFailed(false);
+    pendingRetryFocusRef.current = true;
     void Promise.all([
       assignmentQuery.refetch(),
       mergeQuery.refetch(),
       nameQuery.refetch(),
       topUnlabeledQuery.refetch(),
-    ]).catch(() => undefined);
+    ])
+      .catch(() => undefined)
+      .then(() => {
+        setRetrying(false);
+        setRetryFailed(true);
+      });
   };
 
   const handleRetryTopUnlabeled = (): void => {
     void topUnlabeledQuery.refetch();
   };
+
+  React.useEffect(() => {
+    if (!pendingRetryFocusRef.current) {
+      return;
+    }
+    if (!hasFindings && isError) {
+      return;
+    }
+    pendingRetryFocusRef.current = false;
+    const reviewNext = reviewNextRef.current;
+    if (reviewNext && !reviewNext.disabled) {
+      reviewNext.focus({ preventScroll: true });
+      return;
+    }
+    headingRef.current?.focus({ preventScroll: true });
+  }, [hasFindings, isError]);
 
   if (!hasFindings && isLoading) {
     return (
@@ -211,7 +250,7 @@ export const WorkbenchFindingsPanel = ({
         data-findings-state={FINDINGS_PANEL_STATE.LOADING}
       >
         {/* L3V-01: keep aria-labelledby target mounted in non-success early returns. */}
-        <FindingsRegionHeading visuallyHidden />
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
           <div className="acx-findings-panel__skeleton-row" aria-hidden="true" />
           <p className="acx-findings-panel__status">{__('Checking recognition findings…', 'alt-context')}</p>
@@ -230,11 +269,15 @@ export const WorkbenchFindingsPanel = ({
         className="acx-findings-panel acx-findings-panel--error"
         data-findings-state={FINDINGS_PANEL_STATE.ERROR}
       >
-        <FindingsRegionHeading visuallyHidden />
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
           <p id="acx-findings-panel-error" className="acx-findings-panel__status">
             <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-            {__('Could not load recognition findings.', 'alt-context')}
+            {retrying
+              ? __('Retrying recognition findings…', 'alt-context')
+              : retryFailed
+                ? __('Retry failed. Could not load recognition findings.', 'alt-context')
+                : __('Could not load recognition findings.', 'alt-context')}
           </p>
         </div>
         <button
@@ -242,6 +285,7 @@ export const WorkbenchFindingsPanel = ({
           className="acx-button acx-button--secondary"
           onClick={handleRetryFindings}
           aria-describedby="acx-findings-panel-error"
+          aria-busy={retrying || undefined}
         >
           {__('Retry', 'alt-context')}
         </button>
@@ -255,7 +299,7 @@ export const WorkbenchFindingsPanel = ({
         className="acx-findings-panel acx-findings-panel--unavailable"
         data-findings-state={FINDINGS_PANEL_STATE.UNAVAILABLE}
       >
-        <FindingsRegionHeading visuallyHidden />
+        <FindingsRegionHeading ref={headingRef} visuallyHidden />
         <div role="status" aria-live="polite">
           <p className="acx-findings-panel__status">
             <Circle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
@@ -291,7 +335,7 @@ export const WorkbenchFindingsPanel = ({
 
   return (
     <div className="acx-findings-panel" data-findings-state={findingsState}>
-      <FindingsRegionHeading />
+      <FindingsRegionHeading ref={headingRef} />
 
       {isReadOnly && (
         <p className="acx-findings-panel__notice">
@@ -423,6 +467,7 @@ export const WorkbenchFindingsPanel = ({
 
       <div className="acx-findings-panel__actions">
         <button
+          ref={reviewNextRef}
           type="button"
           className="acx-button acx-button--primary"
           onClick={handleReviewNext}

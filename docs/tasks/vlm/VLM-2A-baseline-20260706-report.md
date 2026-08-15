@@ -5,9 +5,11 @@
 - head_sha: `2fe574fac42acc260afd04ccfb2fdb68774459d8`
 - base_url: https://api.altcontext.com
 - fetch manifest_sha256: `9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c`
-- score manifest_sha256: `None` (matches fetch: None)
+- score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-06T20:11:45Z
 - images: 37/37 scored, 0 failed
+- notes: Score-time fingerprint restored: numbers produced by scoring docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json against apps/prototype-description-service/scene/tests/seed/golden.json (score_manifest_sha256=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d) at code commit 45ee9e2ebe4d77d6df9cc9e97000b96c066e7d89. Fetch-time head_sha and started_at remain the original producer stamps. manifest_matches_fetch is false because the current golden differs from the fetch-time manifest.
+- notes: Identification/caption rebaseline disclosed: against the current golden this run scores faces.identification.true_rejections=10 (was 6) and caption.must_right_defined_images=37 / must_right_failed_images=34 (was 0 / 0). Those values are the current golden's score of the same run-record — the seed already carried 37 rubric rows. A detection-refusal republish also updated these axes; they are not a detection-metric change.
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)
@@ -21,7 +23,7 @@
 ## Quality axes (short surface, report-only signals)
 
 - meta-framing images: 0
-- mean context duplication: null
+- mean context duplication: 0.000
 - name front-loaded rate: 0.000
 - sentence band [1, 4] ok rate: 1.000
 

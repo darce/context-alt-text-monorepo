@@ -110,10 +110,14 @@
   },
   "failures": [],
   "kind": "report",
+  "notes": [
+    "Score-time fingerprint restored: numbers produced by scoring docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json against apps/prototype-description-service/scene/tests/seed/golden.json (score_manifest_sha256=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d) at code commit 45ee9e2ebe4d77d6df9cc9e97000b96c066e7d89. Fetch-time head_sha and started_at remain the original producer stamps. manifest_matches_fetch is false because the current golden differs from the fetch-time manifest.",
+    "Identification/caption rebaseline disclosed: against the current golden this run scores faces.identification.true_rejections=10 (was 6) and caption.must_right_defined_images=37 / must_right_failed_images=34 (was 0 / 0). Those values are the current golden's score of the same run-record — the seed already carried 37 rubric rows. A detection-refusal republish also updated these axes; they are not a detection-metric change."
+  ],
   "per_image": [
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -137,7 +141,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -161,7 +165,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -185,7 +189,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -209,7 +213,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 78.87,
       "gated_score": 0.0,
@@ -235,7 +239,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -259,7 +263,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -283,7 +287,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -307,7 +311,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -331,7 +335,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -355,7 +359,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -379,7 +383,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -403,7 +407,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 31.55,
       "gated_score": 0.0,
@@ -427,7 +431,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -451,7 +455,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -475,7 +479,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -499,7 +503,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -523,7 +527,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -547,7 +551,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -571,7 +575,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -595,7 +599,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -619,7 +623,7 @@
     },
     {
       "cache_hit": true,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -645,7 +649,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 31.55,
       "gated_score": 0.0,
@@ -669,7 +673,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 88.0,
       "gated_score": 0.0,
@@ -693,7 +697,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -717,7 +721,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 1.0,
@@ -737,7 +741,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 88.0,
       "gated_score": 0.0,
@@ -761,7 +765,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 71.82,
       "gated_score": 0.0,
@@ -785,7 +789,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 45.65,
       "gated_score": 0.0,
@@ -809,7 +813,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 88.0,
       "gated_score": 0.0,
@@ -833,7 +837,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -857,7 +861,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 0.0,
@@ -881,7 +885,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 31.55,
       "gated_score": 1.0,
@@ -901,7 +905,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 92.97,
       "gated_score": 1.0,
@@ -921,7 +925,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 78.87,
       "gated_score": 0.0,
@@ -945,7 +949,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 50.67,
       "gated_score": 0.0,
@@ -969,7 +973,7 @@
     },
     {
       "cache_hit": false,
-      "context_duplication_ratio": null,
+      "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
       "fkre": 75.5,
       "gated_score": 0.0,
@@ -995,7 +999,7 @@
   "provenance": {
     "base_url": "https://api.altcontext.com",
     "head_sha": "2fe574fac42acc260afd04ccfb2fdb68774459d8",
-    "manifest_matches_fetch": null,
+    "manifest_matches_fetch": false,
     "manifest_sha256": "9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c",
     "model": {
       "adapters": [
@@ -1008,11 +1012,11 @@
         "1"
       ]
     },
-    "score_manifest_sha256": null,
+    "score_manifest_sha256": "fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d",
     "started_at": "2026-07-06T20:11:45Z"
   },
   "quality": {
-    "mean_context_duplication": null,
+    "mean_context_duplication": 0.0,
     "meta_framing_images": 0,
     "name_front_loaded_rate": 0.0,
     "sentence_band": [

@@ -419,6 +419,7 @@ lint-dashboard-txt:
 lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
+	@python3 scripts/check_published_head_sha.py
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy

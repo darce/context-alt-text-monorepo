@@ -374,6 +374,65 @@ describe('buildWorkbenchFindings', () => {
     expect(model.previews[0].thumbUrl).toBe('http://example.test/assign-thumb.jpg');
   });
 
+  it('keeps a preview whose only imagery is an attachment URL and still drops rows with no imagery', () => {
+    const assignmentOnly = 'http://example.test/assign-attachment.jpg';
+    const clusterOnly = 'http://example.test/cluster-attachment.jpg';
+
+    const assignmentModel = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'attach-only',
+            identity_id: 'identity-attach',
+            suggested_cluster_id: 'cluster-attach',
+            identity_attachment_url: assignmentOnly,
+          }),
+        ),
+        assignmentTotal: 1,
+        nameSuggestions: [makeName()],
+        nameTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(assignmentModel.previews.map((preview) => preview.key)).toEqual(['assignment-attach-only']);
+    expect(assignmentModel.previews[0].thumbUrl).toBeNull();
+    expect(assignmentModel.previews[0].mediaUrl).toBeNull();
+    expect(assignmentModel.previews[0].attachmentUrl).toBe(assignmentOnly);
+
+    const clusterModel = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'attach-only',
+            identity_count: 4,
+            representatives: [
+              {
+                id: 'rep-attach',
+                media_id: 12,
+                thumb_url: null,
+                media_url: null,
+                attachment_url: clusterOnly,
+                is_pinned: false,
+              },
+            ],
+          }),
+          makeCluster({
+            id: 'no-imagery',
+            identity_count: 3,
+            representatives: [{ id: 'rep-empty', media_id: 13, thumb_url: null, media_url: null, is_pinned: false }],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    expect(clusterModel.previews.map((preview) => preview.key)).toEqual(['cluster-attach-only']);
+    expect(clusterModel.previews[0].thumbUrl).toBeNull();
+    expect(clusterModel.previews[0].mediaUrl).toBeNull();
+    expect(clusterModel.previews[0].attachmentUrl).toBe(clusterOnly);
+  });
+
   const FACE_BBOX = { x: 12, y: 24, width: 80, height: 96 };
 
   // HAI-01: every preview source must retain its bbox so the strip can crop to a face.

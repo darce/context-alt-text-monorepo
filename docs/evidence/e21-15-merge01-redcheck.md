@@ -33,3 +33,10 @@
 - Verdict: FAILED
 - Failing assertion: `expect(projected.enrichment).toEqual({ identityAttachmentUrl: ATTACHMENT_ONLY_URL });`
 - After restore: PASSED
+
+## REV1-15 mutation 4 — attachment-only preview survives the filter
+- Mutation applied: `(preview) => preview.thumbUrl !== null || preview.mediaUrl !== null || preview.attachmentUrl != null` -> `(preview) => preview.thumbUrl !== null || preview.mediaUrl !== null`
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/admin/pages/workbench/identity-clusters/__tests__/useWorkbenchFindings.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/suggestionProjection.test.ts`
+- Verdict: FAILED
+- Failing assertion: `expect(assignmentModel.previews.map((preview) => preview.key)).toEqual(['assignment-attach-only']);`
+- After restore: PASSED

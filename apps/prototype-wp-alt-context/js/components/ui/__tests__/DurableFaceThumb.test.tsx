@@ -183,4 +183,47 @@ describe('DurableFaceThumb [TEST-15]', () => {
     expect(screen.queryByRole('img', { name: 'Representative image unavailable' })).not.toBeInTheDocument();
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
+
+  it('fallback-crop applies a CSS translate/scale so the bbox fills the frame [REV1-13]', async () => {
+    const { container } = render(
+      <DurableFaceThumb
+        source={{ thumbUrl: BLOB_URL, attachmentUrl: ATTACHMENT_URL, bbox: BBOX }}
+        alt="Face to label"
+      />,
+    );
+
+    fireEvent.error(screen.getByRole('img'));
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-avatar-state="fallback-crop"]')).toBeInTheDocument();
+    });
+
+    const crop = screen.getByAltText('Face to label');
+    expect(crop).toHaveAttribute('src', ATTACHMENT_URL);
+    expect(crop.closest('.acx-face-thumbnail')).toBeInTheDocument();
+    expect(crop.getAttribute('style')).toContain('translate(-4.799999999999999px, -19.2px)');
+    expect(crop.getAttribute('style')).toContain('scale(0.96)');
+  });
+
+  it('a loaded dedicated blob stays real, not fallback-crop [REV1-13]', async () => {
+    const { container } = render(
+      <DurableFaceThumb
+        source={{ thumbUrl: BLOB_URL, attachmentUrl: ATTACHMENT_URL, bbox: BBOX }}
+        alt="Face to label"
+      />,
+    );
+
+    fireEvent.load(screen.getByRole('img'));
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-durable-face-thumb')).toHaveAttribute('data-avatar-state', 'real');
+    });
+
+    expect(container.querySelector('.acx-durable-face-thumb')).not.toHaveAttribute(
+      'data-avatar-state',
+      'fallback-crop',
+    );
+    expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
+    expect(screen.getByRole('img')).toHaveAttribute('src', BLOB_URL);
+  });
 });

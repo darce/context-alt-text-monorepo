@@ -69,29 +69,29 @@
 - Failing assertion: `expect(crop).toEqual({ mediaUrl, bbox: BBOX });`
 - After restore: PASSED
 
-## REV1-13 mutation M1 — pending
-- Mutation applied: pending
+## REV1-13 mutation M1 — crop is not actually a crop
+- Mutation applied: FaceThumbnail img style dropped `transform: translate(...) scale(...)` and `transformOrigin: 'top left'` so the full source image paints unscaled inside `.acx-face-thumbnail`
 - Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
-- Verdict: PENDING
-- Already covered by existing test: pending
-- Failing assertion: pending
-- After restore: pending
+- Verdict: FAILED
+- Already covered by existing test: no
+- Failing assertion: `expect(crop.getAttribute('style')).toContain('translate(-4.799999999999999px, -19.2px)');`
+- After restore: PASSED
 
-## REV1-13 mutation M2 — pending
-- Mutation applied: pending
+## REV1-13 mutation M2 — a degenerate box becomes a crop
+- Mutation applied: DurableFaceThumb forced a FaceThumbnail crop whenever `source.bbox` plus attachment/media URL existed, including `{x:0,y:0,width:0,height:0}`, instead of rejecting the zero-extent box
 - Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
-- Verdict: PENDING
-- Already covered by existing test: pending
-- Failing assertion: pending
-- After restore: pending
+- Verdict: FAILED
+- Already covered by existing test: yes (`renders a real uncropped img when mediaUrl has no croppable bbox [REV1-02]`)
+- Failing assertion: `const image = screen.getByAltText('Reference image');`
+- After restore: PASSED
 
-## REV1-13 mutation M3 — pending
-- Mutation applied: pending
+## REV1-13 mutation M3 — the loaded blob is misreported
+- Mutation applied: DurableFaceThumb avatar path `data-avatar-state={display.state}` -> `data-avatar-state={display.state === AVATAR_STATE.real ? AVATAR_STATE.fallbackCrop : display.state}`
 - Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
-- Verdict: PENDING
-- Already covered by existing test: pending
-- Failing assertion: pending
-- After restore: pending
+- Verdict: FAILED
+- Already covered by existing test: no
+- Failing assertion: `expect(container.querySelector('.acx-durable-face-thumb')).toHaveAttribute('data-avatar-state', 'real');`
+- After restore: PASSED
 
 ## REV1-14 mutation M1 — dropping attachment_url from the source chain loses crop source
 - Mutation applied: `const sourceUrl = mediaMeta?.url ?? identity.attachment_url ?? identity.media_url ?? null;` -> `const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;`

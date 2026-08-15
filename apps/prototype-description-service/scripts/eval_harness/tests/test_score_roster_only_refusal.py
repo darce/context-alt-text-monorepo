@@ -415,3 +415,22 @@ def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> Non
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(_face_run_record(), manifest)
     assert exc_info.value.invariant == "detection_refuses_roster_only"
+
+
+def test_resolver_omitted_explicit_uses_data_stamp() -> None:
+    """S2R3-18: CLI omit-kwarg contract, pinned on the resolver.
+
+    Lane C owns cli.py, so this pin is the resolver contract `_cmd_score`
+    relies on: omitted explicit + stamp → data wins. Mutating the resolver
+    to invent exhaustive on omission dies here. A `_cmd_score(...,
+    annotation_mode="exhaustive")` revert cannot be red-proofed without
+    editing cli.py.
+    """
+    assert (
+        _resolve_score_annotation_mode(None, [{"annotation_mode": "roster_only"}])
+        is AnnotationMode.ROSTER_ONLY
+    )
+    assert (
+        _resolve_score_annotation_mode(None, [{"annotation_mode": "exhaustive"}])
+        is AnnotationMode.EXHAUSTIVE
+    )

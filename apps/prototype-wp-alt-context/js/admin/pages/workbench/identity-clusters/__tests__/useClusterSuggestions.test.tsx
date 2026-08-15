@@ -774,13 +774,23 @@ describe('useClusterSuggestions', () => {
     it('renders a labelled cluster at rest with no matching roster person', async () => {
       // Predicted first failure (pre-fix): Tory Guzman absent — labelled search
       // is disabled until 2+ chars, so at-rest union is suggestions + roster only.
+      // 25-row fixture: dropping loader `limit: null` re-slices to 20 and this goes red.
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      const labeledPage = [
+        { ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 },
+        ...Array.from({ length: 24 }, (_, index) => ({
+          ...baseCluster,
+          id: `cluster-extra-${index}`,
+          label: `Labelled ${index}`,
+          identity_count: 1,
+        })),
+      ];
       listRecognitionClustersMock.mockResolvedValue({
-        clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+        clusters: labeledPage,
         limit: 50,
-        total: 1,
+        total: 25,
         truncated: false,
       });
 
@@ -792,26 +802,23 @@ describe('useClusterSuggestions', () => {
       await waitFor(() =>
         expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
       );
-      expect(result.current.options.some((option) => option.source === 'person' && option.label === 'Tory Guzman')).toBe(
-        false,
-      );
       expect(
         result.current.options.some(
           (option) => option.value === namingOptionValue('cluster', 'cluster-tory') && option.group === NAMING_GROUP_ALL_LABELS,
         ),
       ).toBe(true);
-      expect(listRecognitionClustersMock).toHaveBeenCalledWith({
-        limit: 50,
-        offset: 0,
-        labeled_only: true,
-      });
+      const optionLabels = result.current.options.map((option) => option.label);
+      expect(optionLabels).toEqual(expect.arrayContaining(labeledPage.map((cluster) => cluster.label)));
+      expect(optionLabels).toHaveLength(25);
 
       queryClient.clear();
     });
 
     it('does not render auto cluster-* labels from the at-rest labelled list', async () => {
-      // Predicted first failure (pre-fix): human-labelled sibling missing at rest;
-      // after an unfiltered at-rest fetch, cluster-1234 would also leak.
+      // Predicted first failure (pre-fix): Dana Ruiz is absent because nothing is
+      // fetched at rest. cluster-1234 cannot leak pre-fix — no at-rest fetch runs.
+      // The auto-label exclusion is the pre-existing BR-17 gate in buildNamingOptions
+      // (`if (!isHumanLabeledTarget(label)) continue`), not the new at-rest query.
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
@@ -842,8 +849,9 @@ describe('useClusterSuggestions', () => {
     });
 
     it('still triggers the >=2-char search query and merges those hits', async () => {
-      // Predicted first failure (pre-fix): at-rest Tory never appears. Search path
-      // must keep firing with the typed term so totals beyond the at-rest page merge.
+      // Predicted first failure: Maya never appears if the memo ternary is frozen
+      // on atRestLabeledClusters, or if the search `enabled` threshold moves to
+      // >= 3 (typed 'Ma' is length 2 and already enabled the pre-change query).
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
@@ -887,6 +895,8 @@ describe('useClusterSuggestions', () => {
       await waitFor(() =>
         expect(result.current.options.some((option) => option.label === 'Maya Chen')).toBe(true),
       );
+      // Production replaces the at-rest page rather than unioning it with search hits.
+      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
 
       queryClient.clear();
     });

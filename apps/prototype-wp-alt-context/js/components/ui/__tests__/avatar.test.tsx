@@ -31,6 +31,12 @@ vi.mock('@radix-ui/react-avatar', async () => {
         if (typeof onLoadingStatusChange !== 'function' || typeof src !== 'string') {
           return;
         }
+        // status=hold: src changed but the new image has not reported yet.
+        // Lets the swap-frame test observe the first paint without a stale
+        // loaded/error callback from the previous identity.
+        if (src.includes('status=hold')) {
+          return;
+        }
         const status = src.includes('status=error')
           ? 'error'
           : src.includes('status=loading')
@@ -162,5 +168,42 @@ describe('Avatar four-state contract', () => {
     expect(swapFrame).toBe(AVATAR_STATES.loading);
     expect(swapFrame).not.toBe(AVATAR_STATES.error);
     expect(swapFrame).not.toBe(AVATAR_STATES.real);
+  });
+
+  // E21-20-REV2-07 / TEST-15: the REV1-05 cases only call the pure helper.
+  // A component that stopped calling resolveAvatarRenderState and read the
+  // stale loadStatus would keep those green. Rerender <Avatar> with a new
+  // src that has not reported yet and assert the DOM is not the previous
+  // identity's real/error frame.
+  it('swap frame: rerendering Avatar with a new src does not keep data-avatar-state=real', () => {
+    const { container, rerender } = render(
+      <Avatar src="https://example.com/a.jpg?status=loaded" alt="Ada" />,
+    );
+    expect(container.querySelector('[data-avatar-state]')).toHaveAttribute(
+      'data-avatar-state',
+      AVATAR_STATES.real,
+    );
+
+    rerender(<Avatar src="https://example.com/b.jpg?status=hold" alt="Grace" />);
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
+    expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
+    expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
+  });
+
+  it('swap frame: rerendering Avatar with a new src does not keep data-avatar-state=error', () => {
+    const { container, rerender } = render(
+      <Avatar src="https://example.com/a.jpg?status=error" alt="Broken" />,
+    );
+    expect(container.querySelector('[data-avatar-state]')).toHaveAttribute(
+      'data-avatar-state',
+      AVATAR_STATES.error,
+    );
+
+    rerender(<Avatar src="https://example.com/b.jpg?status=hold" alt="Grace" />);
+    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
+    expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
+    expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
   });
 });

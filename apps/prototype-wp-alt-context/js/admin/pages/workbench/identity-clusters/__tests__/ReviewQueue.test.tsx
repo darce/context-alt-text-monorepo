@@ -2638,6 +2638,85 @@ describe('ReviewQueue', () => {
     expect(within(live).getByText('Retry failed. Could not load suggestions.')).toBeInTheDocument();
   });
 
+  // REV6-01 / TEST-15: queue Retry latches retryFailed while the unavailable
+  // EmptyStateWarning still masks isErrorBranch. A later sibling panel Retry
+  // refetches the same four queries to success. Without a reset keyed on
+  // data.isError && findings.isError, retryFailed stays true and the queue
+  // swaps to "Retry failed. Could not load suggestions." over live counts.
+  it('REV6-01: sibling recovery after a masked unavailable Retry does not keep retry-failed copy', async () => {
+    const unavailable: PendingSuggestionsResponse = {
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    };
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue(unavailable);
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    const { queryClient } = renderQueue();
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment still down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockRejectedValue(new Error('merge still down'));
+    vi.mocked(fetchPendingNameSuggestions).mockRejectedValue(new Error('name still down'));
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(new Error('top still down'));
+
+    await userEvent.click(retry);
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchPendingSuggestions).mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(screen.getByText('Suggestion service not configured')).toBeInTheDocument();
+    expect(screen.queryByText('Retry failed. Could not load suggestions.')).not.toBeInTheDocument();
+
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-recovered',
+          identity_id: 'identity-recovered',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    // Panel Retry refetches the same queries without calling retrySuggestionQueries.
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Retry failed. Could not load suggestions.')).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
+  });
+
   it('BR-31: CLUSTER card renders Review members affordance and drives onReview', async () => {
     const onReview = vi.fn();
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

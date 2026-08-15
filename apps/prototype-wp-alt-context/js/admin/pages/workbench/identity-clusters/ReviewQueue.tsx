@@ -785,6 +785,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       length === 0 && data.assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
     const showEndpointErrorWarning =
       length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
+    // REV6-01: retryFailed is local. A sibling findings-panel retry can
+    // recover the same four queries without touching this latch. Reset
+    // when the query-error boolean is false. Key on that boolean, not
+    // isErrorBranch — isErrorBranch includes retryFailed and would clear
+    // a genuine failure the instant it is set. Re-run when the unavailable
+    // / endpoint-error mask drops so a latched retryFailed cannot leak
+    // onto a recovered queue (suggestionQueriesErrored stays false on
+    // the UNAVAILABLE path).
+    const suggestionQueriesErrored = data.isError && findings.isError;
+    React.useEffect(() => {
+      if (!suggestionQueriesErrored) {
+        setRetryFailed(false);
+      }
+    }, [suggestionQueriesErrored, showUnavailableWarning, showEndpointErrorWarning]);
     // Criterion 4: suppress head-card body once the open cluster is known retired.
     const suppressRetiredHead =
       headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');

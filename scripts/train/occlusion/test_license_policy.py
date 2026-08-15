@@ -7336,6 +7336,10 @@ class TestB802IterativeFailClosedBounds:
         hit = policy._package_denylist_hit(token)
         assert hit is not None, "deep chain must DENY (not admit, not crash)"
         assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        assert hit.package_id == "ultralytics", (
+            "deep chain must name ultralytics, not a fabricated owner "
+            f"(got {hit.package_id!r})"
+        )
 
     def test_deep_chain_denies_on_all_four_doors(self) -> None:
         token = self._deep_chain()

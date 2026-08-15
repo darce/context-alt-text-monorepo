@@ -13,6 +13,9 @@ const identity: ClusterIdentity = {
   bbox: { x: 0, y: 0, width: 20, height: 40 },
 };
 
+const DEDICATED_THUMB = 'https://example.test/wp-content/uploads/recognition/face-thumbs/rep-1.jpg';
+const ATTACHMENT_AS_THUMB = 'https://example.com/thumb.jpg';
+
 /**
  * Interactive-element contract for !namedPending placeholders [A11Y-11][TEST-17].
  * Pins "must not be interactive" rather than a specific tagName (div vs span are
@@ -100,18 +103,35 @@ describe('IdentityThumbnail', () => {
     expect(container.querySelector('.acx-cluster-card__face--placeholder')).toBeInTheDocument();
   });
 
-  it('uses backend-provided thumbnail when available', () => {
-    render(<IdentityThumbnail identity={{ ...identity, thumb_url: 'https://example.com/thumb.jpg' }} size={96} />);
+  it('uses a dedicated face-thumb blob when available [REV1-07]', () => {
+    render(<IdentityThumbnail identity={{ ...identity, thumb_url: DEDICATED_THUMB }} size={96} />);
     const image = screen.getByRole('img');
-    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+    expect(image).toHaveAttribute('src', DEDICATED_THUMB);
+  });
+
+  it('does not paint a non-dedicated attachment thumb_url as a face chip [REV1-07]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{
+          ...identity,
+          thumb_url: ATTACHMENT_AS_THUMB,
+          attachment_url: 'https://example.com/full-res.jpg',
+        }}
+        size={96}
+      />,
+    );
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector(`img[src="${ATTACHMENT_AS_THUMB}"]`)).toBeNull();
+    expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
   });
 
   it('calls onClick when provided', async () => {
     const onClick = vi.fn();
-    // thumb_url path paints a real <img> immediately (no canvas-crop wait).
+    // Dedicated thumb_url path paints a real <img> immediately (no canvas-crop wait).
     render(
       <IdentityThumbnail
-        identity={{ ...identity, thumb_url: 'https://example.com/thumb.jpg' }}
+        identity={{ ...identity, thumb_url: DEDICATED_THUMB }}
         onClick={onClick}
       />,
     );
@@ -400,19 +420,35 @@ describe('IdentityThumbnail', () => {
       });
     });
 
-    it('does not construct Image for thumb_url path (no canvas crop)', () => {
+    it('does not construct Image for a dedicated face-thumb blob (no canvas crop) [REV1-07]', () => {
       render(
         <IdentityThumbnail
           identity={{
             ...identity,
-            thumb_url: 'https://example.com/thumb.jpg',
+            thumb_url: DEDICATED_THUMB,
             media_url: 'https://example.com/full-res.jpg',
           }}
           size={32}
         />,
       );
       expect(imageConstructCount).toBe(0);
-      expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+      expect(screen.getByRole('img')).toHaveAttribute('src', DEDICATED_THUMB);
+    });
+
+    it('crops a non-dedicated attachment thumb_url instead of painting the scene [REV1-07]', () => {
+      render(
+        <IdentityThumbnail
+          identity={{
+            ...identity,
+            thumb_url: ATTACHMENT_AS_THUMB,
+            attachment_url: 'https://example.com/full-res.jpg',
+          }}
+          size={32}
+        />,
+      );
+      expect(imageConstructCount).toBe(0);
+      expect(document.querySelector('img')).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
     });
 
     it('pending crop inside a wrapping link keeps accessible name from default alt [A11Y-02]', () => {

@@ -16,6 +16,7 @@
   /* Component sizing tokens (--acx-thumb-size-*)
    * Duty: fixed control/thumbnail dimensions (not spacing scale steps).
    * Keep named family; do not rename to space-* (distinct duty). */
+  --acx-thumb-size-sm: var(--acx-space-32);
   --acx-thumb-size-md: var(--acx-space-80);
 
   /* Workbench two-pane layout (--acx-pane-*, --acx-splitter-*)

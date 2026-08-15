@@ -583,13 +583,16 @@ def _cmd_score(args: argparse.Namespace) -> None:
     record_path = Path(args.run_record)
     record = json.loads(record_path.read_text())
     manifest = load_manifest(args.manifest)
-    # Stamp annotation_mode onto every entry. The resolver reads the stamp
-    # (data wins); this function does not pass an explicit kwarg, so the
-    # stamp is the only score-time source (FIR-11-S2-01 / S2R2-10).
-    entries = [
-        {**e.model_dump(), "annotation_mode": manifest.annotation_mode}
-        for e in manifest.entries
-    ]
+    # Fill document annotation_mode only when the dump has no stamp.
+    # Unconditional assign clobbers a real per-entry stamp (S2R6E-04).
+    # No explicit kwarg — the stamp is the only score-time source
+    # (FIR-11-S2-01 / S2R2-10).
+    entries = []
+    for e in manifest.entries:
+        row = e.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
     # Stamp the report with the manifest actually scored against, and verify it
     # against the run record's fetch-time sha instead of copying it blind (S3-04).
     manifest_sha = _manifest_sha(manifest)

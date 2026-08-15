@@ -237,6 +237,9 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
     assert out_md.is_file()
     report = json.loads(out_json.read_text(encoding="utf-8"))
     assert report["faces"]["detection"]["refused"] is True
+    assert "REFUSED (detection_refuses_roster_only)" in out_md.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
@@ -331,6 +334,16 @@ def _install_stub_python(repo: Path) -> Path:
     return argv_log
 
 
+_STUB_PUBLISHED_JSON = "{}\n"
+_STUB_PUBLISHED_MD = "# stub\n"
+
+
+def _assert_stub_published(out_json: Path, out_md: Path) -> None:
+    """S2R5-15: a publish is the destination bytes, not dest.is_file()."""
+    assert out_json.read_text(encoding="utf-8") == _STUB_PUBLISHED_JSON
+    assert out_md.read_text(encoding="utf-8") == _STUB_PUBLISHED_MD
+
+
 def _stub_paths(repo: Path) -> tuple[Path, Path, Path, Path]:
     run_record = _write_json(repo / "in" / "run.json", {"kind": "stub"})
     manifest = _write_json(repo / "in" / "man.json", {"kind": "stub"})
@@ -392,8 +405,7 @@ def test_stub_clean_score_publishes_and_exits_0(tmp_path: Path) -> None:
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 0, combined
-    assert out_json.is_file()
-    assert out_md.is_file()
+    _assert_stub_published(out_json, out_md)
 
 
 def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
@@ -418,9 +430,10 @@ def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
+    assert "refused metrics" in combined
     argv = argv_log.read_text(encoding="utf-8")
     assert "--allow-refused" not in argv
-    assert out_json.is_file()
+    _assert_stub_published(out_json, out_md)
 
 
 # ---------------------------------------------------------------------------

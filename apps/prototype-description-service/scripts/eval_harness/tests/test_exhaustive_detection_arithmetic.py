@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.eval_harness.face_metrics import DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
-from scripts.eval_harness.manifest import ManifestError
+from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
 from scripts.eval_harness.report import score_face_run_record, score_run_record
 from scripts.eval_harness.schema import DocKind
 
@@ -129,7 +128,7 @@ def test_exhaustive_stamp_without_box_coverage_refuses_detection() -> None:
     )
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
     assert det["precision"] is None
     assert det["recall"] is None
     assert det["tp"] is None
@@ -148,7 +147,7 @@ def test_exhaustive_extra_boxes_beyond_face_count_refuses_detection() -> None:
     )
     det = scored["faces"]["detection"]
     assert det["refused"] is True
-    assert det["invariant"] == DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+    assert det["invariant"] == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
     assert det["precision"] is None
     assert det["recall"] is None
     assert det["precision"] != 1.0
@@ -170,4 +169,4 @@ def test_score_face_run_record_raises_on_uncovered_exhaustive() -> None:
     }
     with pytest.raises(ManifestError) as exc_info:
         score_face_run_record(face_run, manifest)
-    assert exc_info.value.invariant == DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT

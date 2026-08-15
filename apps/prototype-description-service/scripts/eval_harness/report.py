@@ -64,6 +64,7 @@ from .manifest import (
     ManifestError,
     Provenance,
     ProvenanceSource,
+    ScoreInvariant,
     SliceTag,
     parse_annotation_mode,
 )
@@ -109,7 +110,7 @@ def _mode_restrictiveness(mode: AnnotationMode) -> int:
         raise ManifestError(
             f"unrecognised annotation_mode {mode!r}; "
             f"expected one of {[member.value for member in AnnotationMode]}",
-            invariant="detection_unrecognised_annotation_mode",
+            invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
         )
     return rank
 
@@ -449,7 +450,7 @@ def _resolve_score_annotation_mode(
         raise ManifestError(
             "score entries are empty; zero entries cannot witness a "
             "detection contract (refusing explicit exhaustive fail-open)",
-            invariant="detection_refuses_empty_entries",
+            invariant=ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
         )
     stamped: set[AnnotationMode] = set()
     missing = False
@@ -469,7 +470,7 @@ def _resolve_score_annotation_mode(
             f"mixed annotation_mode on score entries: "
             f"{sorted(member.value for member in stamped)}{missing_note}; "
             "refusing to guess which detection contract applies",
-            invariant="detection_refuses_mixed_annotation_mode",
+            invariant=ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE,
         )
     if missing:
         return None
@@ -706,8 +707,8 @@ def score_run_record(
         mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
     except ManifestError as exc:
         if exc.invariant not in {
-            "detection_unrecognised_annotation_mode",
-            "detection_refuses_empty_entries",
+            ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+            ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
         }:
             raise
         det = None
@@ -730,10 +731,10 @@ def score_run_record(
                     detection_invariant = None
         elif mode is AnnotationMode.ROSTER_ONLY:
             det = None
-            detection_invariant = "detection_refuses_roster_only"
+            detection_invariant = ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
         else:
             det = None
-            detection_invariant = "detection_requires_annotation_mode"
+            detection_invariant = ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
     if not identification_entries:
         ident = None
         identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
@@ -1746,12 +1747,12 @@ def score_face_run_record(
             raise ManifestError(
                 "score_face_run_record refuses roster_only manifests; unlabeled "
                 "non-roster faces would be scored as false positives",
-                invariant="detection_refuses_roster_only",
+                invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
             )
         raise ManifestError(
             "score_face_run_record requires annotation_mode=exhaustive; "
             "omission is not exhaustive",
-            invariant="detection_requires_annotation_mode",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
         )
     require_exhaustive_box_coverage(entries)
     entry_by_id = _entry_index(entries)

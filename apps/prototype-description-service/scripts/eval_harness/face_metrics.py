@@ -34,14 +34,20 @@ from typing import Any
 
 import numpy as np
 
-from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
+from .manifest import AnnotationMode, ManifestError, ScoreInvariant, parse_annotation_mode
 
-# Identification GT requires a named face box per claimed identity. Unboxed
-# present_identities may load (roster_only) but cannot be scored as labels.
-IDENTIFICATION_UNBOXED_INVARIANT = "identification_refuses_unboxed_identity_claims"
-DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = "detection_refuses_uncovered_face_count"
-DETECTION_EMPTY_OBSERVATIONS_INVARIANT = "detection_refuses_empty_observations"
-IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT = "identification_refuses_empty_observations"
+# Re-exports of the canonical ScoreInvariant members. New call sites should
+# import ScoreInvariant directly.
+IDENTIFICATION_UNBOXED_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+)
+DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = (
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
+)
+DETECTION_EMPTY_OBSERVATIONS_INVARIANT = ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS
+IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS
+)
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
@@ -172,13 +178,13 @@ def detection_pr(
     if mode is None:
         raise ManifestError(
             "detection_pr requires annotation_mode; omission is not exhaustive",
-            invariant="detection_requires_annotation_mode",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
         )
     if mode is not AnnotationMode.EXHAUSTIVE:
         raise ManifestError(
             "detection_pr refuses roster_only manifests; unlabeled non-roster "
             "faces would be scored as false positives",
-            invariant="detection_refuses_roster_only",
+            invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
         )
     tp = fp = fn = 0
     for item in items:

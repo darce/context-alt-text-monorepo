@@ -82,6 +82,33 @@ def _run_record() -> dict:
     }
 
 
+_TEST_LINEAGE = {
+    "labeler_id": "test-labeler",
+    "batch_id": "test-batch",
+    "capture_session_id": "test-session",
+    "pass_index": 0,
+    "labeled_at": "2026-08-14T00:00:00Z",
+    "tool_version": "test",
+    "saw_machine_proposals": False,
+    "label_source": "operator_blind",
+    "decision": "named",
+    "confidence": "high",
+    "arbitration_of": None,
+}
+
+
+def _named_box(name: str) -> dict:
+    return {
+        "x": 0.5,
+        "y": 0.4,
+        "w": 0.2,
+        "h": 0.3,
+        "name": name,
+        "source": "operator",
+        "lineage": _TEST_LINEAGE,
+    }
+
+
 def _manifest_entries() -> list[dict]:
     return [
         {
@@ -92,6 +119,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": ["Alice Example"],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Alice Example")],
         },
         {
             "path": "mock_images/bob-beach.jpg",
@@ -101,6 +129,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Bob Builder")],
         },
         {
             "path": "mock_images/glacier.jpg",
@@ -110,6 +139,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [],
         },
     ]
 
@@ -205,6 +235,7 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Ryann Wiseman")],
         }
     ]
     entries[0]["annotation_mode"] = "exhaustive"
@@ -514,6 +545,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
             "must_right": [_PUBLIC_NAME],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box(_PUBLIC_NAME)],
             "provenance": {
                 "source": "celeb",
                 "license": "public_domain",
@@ -528,6 +560,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box(_LOCAL_NAME)],
             "provenance": {
                 "source": "localwp",
                 "license": "consented",

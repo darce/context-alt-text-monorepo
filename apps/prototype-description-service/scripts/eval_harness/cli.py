@@ -64,6 +64,9 @@ from .seed_roster import seed, seed_scenes
 
 DEFAULT_KEEP = 10
 DEFAULT_STALL_LIMIT = 5
+# Refused detection/identification is not clean eval evidence. CI that checks
+# only process status must see a non-zero exit unless the caller opts in.
+REFUSED_METRIC_EXIT_CODE = 3
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
 _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
@@ -523,10 +526,15 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"detection_p={det.get('precision')} "
             f"detection_r={det.get('recall')}"
         )
+    ident = scored["faces"]["identification"]
+    if ident.get("refused"):
+        id_bit = f"identification=REFUSED({ident.get('invariant')})"
+    else:
+        id_bit = f"wrong_names={len(ident['wrong_names'])}"
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"insertion_rate={scored['caption']['insertion_rate']} "
-        f"wrong_names={len(scored['faces']['identification']['wrong_names'])} "
+        f"{id_bit} "
         f"{det_bit}"
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
@@ -537,6 +545,22 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score gate failed: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
+    if not getattr(args, "allow_refused", False):
+        refused: list[str] = []
+        if det.get("refused"):
+            refused.append(f"detection={det.get('invariant')}")
+        if ident.get("refused"):
+            refused.append(f"identification={ident.get('invariant')}")
+        if refused:
+            print(
+                "score gate failed: refused metric(s) ("
+                + ", ".join(refused)
+                + "); pass --allow-refused to accept a run with no score "
+                "for those metrics",
+                file=sys.stderr,
+            )
+            raise SystemExit(REFUSED_METRIC_EXIT_CODE)
+
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -861,14 +885,28 @@ def main(argv: list[str] | None = None) -> None:
     _provider_flags(fetch_p)
     fetch_p.set_defaults(func=_cmd_fetch)
 
+    def _allow_refused_flag(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--allow-refused",
+            action="store_true",
+            help=(
+                "exit 0 when detection or identification is REFUSED "
+                "(roster_only / unboxed identity claims). "
+                "Default: refused metrics exit 3 — a missing score is not "
+                "clean evaluation evidence"
+            ),
+        )
+
     score_p = sub.add_parser("score", help="run record -> reports (pure, offline)")
     _common(score_p)
     score_p.add_argument("--run-record", required=True)
+    _allow_refused_flag(score_p)
     score_p.set_defaults(func=_cmd_score)
 
     run_p = sub.add_parser("run", help="fetch then score")
     _common(run_p)
     _provider_flags(run_p)
+    _allow_refused_flag(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")

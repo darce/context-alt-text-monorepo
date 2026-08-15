@@ -902,7 +902,9 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
         )
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert exc.value.code == 3
     assert hits == []
 
     face_record_path = tmp_path / "face-run.json"

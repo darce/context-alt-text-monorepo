@@ -94,10 +94,25 @@ def test_golden150_draft_fails_naming_all_six_unprovenanced_paths() -> None:
     message = str(exc_info.value)
     assert "provenance is required" not in message
     # Frozen bytes stay v2 — the legacy reader is the audit-arm path.
+    # S2R3-17: pin real entry content a three-field stub cannot fake.
     legacy = load_legacy_manifest(str(path))
     assert legacy.manifest_version == 2
     assert legacy.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert len(legacy.entries) == 150
+    by_path = {entry.path: entry for entry in legacy.entries}
+    for expected_path, expected_id in zip(
+        GOLDEN150_UNPROVENANCED_PATHS, GOLDEN150_UNPROVENANCED_MEDIA_IDS, strict=True
+    ):
+        assert expected_path in by_path
+        hole = by_path[expected_path]
+        assert hole.media_id == expected_id
+        assert hole.provenance is None
+    anne = by_path["celebs/anne_hathaway_11.jpg"]
+    assert anne.media_id == 11
+    assert anne.present_identities == ["Anne Hathaway"]
+    assert anne.face_count == 1
+    assert anne.sha256 == "235a11ac83ceb929fbcdcb9b15ccbb280177a6bff16885978cffeffc073524e5"
+    assert by_path["personal/unlabeled_0603.jpg"].face_count == 9
 
 
 def test_null_provenance_is_treated_as_missing(tmp_path: Path) -> None:
@@ -334,7 +349,9 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert exc.value.code == 3
     assert hits == []
 
 

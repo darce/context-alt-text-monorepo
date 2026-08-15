@@ -80,6 +80,9 @@ LEGACY_IMPORT_LABELED_AT = "1970-01-01T00:00:00Z"  # unknown; epoch sentinel
 LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
 # Fail-closed: assume proposals were visible unless the record says otherwise.
 LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
+# Unknown occasion — pre-v3 boxes have no recoverable capture session.
+# Required so an in-tree boxed corpus can be flipped to exhaustive (S2R5-06).
+LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
 
 
 # --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
@@ -228,6 +231,70 @@ class ScoreInvariant(StrEnum):
     DETECTION_REFUSES_UNCOVERED_FACE_COUNT = "detection_refuses_uncovered_face_count"
     DETECTION_REFUSES_EMPTY_OBSERVATIONS = "detection_refuses_empty_observations"
     IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
+
+
+# Published markdown explanation per fired invariant (S2R5-04). A refusal
+# reason that names a condition that did not fire is worse than no reason.
+REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
+    ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE: (
+        "detection P/R is not computed without a resolved annotation_mode; "
+        "omission is not exhaustive"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY: (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+    ),
+    ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE: (
+        "detection P/R is not computed from an unrecognised annotation_mode token"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES: (
+        "detection P/R is not computed from zero score entries; "
+        "an empty entry list cannot witness a detection contract"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE: (
+        "detection P/R is not computed from mixed annotation_mode stamps; "
+        "the scorer will not guess which detection contract applies"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS: (
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT: (
+        "detection P/R is not computed from an exhaustive stamp whose boxes "
+        "do not cover face_count"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS: (
+        "detection P/R is not computed from zero scored observations"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS: (
+        "identification P/R is not computed from zero scored observations"
+    ),
+}
+if frozenset(REFUSAL_EXPLANATIONS) != frozenset(ScoreInvariant):
+    raise RuntimeError(
+        "REFUSAL_EXPLANATIONS keys drifted from ScoreInvariant: "
+        f"table={sorted(member.value for member in REFUSAL_EXPLANATIONS)} "
+        f"enum={sorted(member.value for member in ScoreInvariant)}"
+    )
+
+
+def refusal_explanation(invariant: object) -> str:
+    """Return the published sentence for the invariant that actually fired.
+
+    Unknown tokens raise. Never substitute a neighbouring metric's reason.
+    """
+    if isinstance(invariant, ScoreInvariant):
+        member = invariant
+    else:
+        try:
+            member = ScoreInvariant(invariant)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise ManifestError(
+                f"no refusal explanation for invariant {invariant!r}"
+            ) from None
+    text = REFUSAL_EXPLANATIONS.get(member)
+    if text is None:
+        raise ManifestError(f"no refusal explanation for invariant {member!r}")
+    return text
 
 
 def parse_annotation_mode(value: object) -> AnnotationMode | None:
@@ -483,11 +550,14 @@ def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
     ``decision`` is derived from the box's existing ``name`` (named vs
     stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
     ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
-    epoch sentinel (unknown). ``capture_session_id`` is omitted (roster_only).
+    epoch sentinel (unknown). ``capture_session_id`` is the unknown-occasion
+    sentinel so a boxed roster_only corpus can be flipped to exhaustive
+    without the loader rejecting the existing boxes (S2R5-06).
     """
     return {
         "labeler_id": LEGACY_IMPORT_LABELER_ID,
         "batch_id": LEGACY_IMPORT_BATCH_ID,
+        "capture_session_id": LEGACY_IMPORT_CAPTURE_SESSION_ID,
         "pass_index": 0,
         "labeled_at": LEGACY_IMPORT_LABELED_AT,
         "tool_version": LEGACY_IMPORT_TOOL_VERSION,

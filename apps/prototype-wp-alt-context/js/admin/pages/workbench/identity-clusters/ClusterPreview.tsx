@@ -6,7 +6,9 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { DetectedIdentity } from '../../../api/recognition';
-import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
+import { Avatar } from '../../../../components/ui/avatar';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 
 interface ClusterPreviewProps {
   /** First member to show as representative thumbnail */
@@ -21,19 +23,29 @@ interface ClusterPreviewProps {
  * Pin control removed (UXA-07) — mutation/API retained for a deferred relocation.
  */
 export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
+  const mediaUrl = representative?.media_url;
+  const bbox = representative?.bbox;
+  const hasValidThumbnail = Boolean(mediaUrl && bbox);
+  const unavailableImageLabel = REPRESENTATIVE_VOCABULARY.imageUnavailable;
+
   return (
     <div className="acx-identity-cluster__preview">
-      <DurableFaceThumb
-        source={{
-          thumbUrl: representative?.thumb_url,
-          attachmentUrl: representative?.attachment_url,
-          mediaUrl: representative?.media_url,
-          bbox: representative?.bbox,
-        }}
-        size="md"
-        alt={__('Detected identity thumbnail', 'alt-context')}
-        className="acx-identity-cluster__thumb"
-      />
+      {hasValidThumbnail && mediaUrl && bbox ? (
+        <FaceThumbnail
+          mediaUrl={mediaUrl}
+          bbox={bbox}
+          size="md"
+          alt={__('Detected identity thumbnail', 'alt-context')}
+          className="acx-identity-cluster__thumb"
+        />
+      ) : (
+        <Avatar
+          sizePx={40}
+          missingLabel={unavailableImageLabel}
+          hideMissingLabel
+          className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder"
+        />
+      )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
     </div>
   );

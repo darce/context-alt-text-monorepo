@@ -1,11 +1,12 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
-import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
-import type { FaceThumbSource } from '../../../../components/ui/faceThumbDisplay';
+import { Avatar } from '../../../../components/ui/avatar';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 import { isHumanLabeledTarget } from './suggestionProjection';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { isValidQueueOrdinal, isValidQueueOrdinalPair } from './reviewQueueDriver';
 
 export interface MergeSuggestionCardProps {
@@ -32,33 +33,44 @@ export interface MergeSuggestionCardProps {
 }
 
 const FaceCropControl = ({
-  source,
+  mediaUrl,
+  bbox,
   alt,
   controlAriaLabel,
   onOpen,
 }: {
-  source: FaceThumbSource;
+  mediaUrl: string;
+  bbox: NonNullable<PendingMergeSuggestion['cluster_a_representative_bbox']>;
   alt: string;
   controlAriaLabel: string;
   onOpen?: (target: FaceOriginalTarget) => void;
 }): React.JSX.Element => {
-  const thumb = (
-    <DurableFaceThumb source={source} size="md" alt={alt} className="acx-suggestion-card__thumb" />
-  );
-  const originalUrl = source.attachmentUrl ?? source.mediaUrl;
-  const bbox = source.bbox;
-  if (!onOpen || !originalUrl || !bbox) {
-    return thumb;
+  if (!onOpen) {
+    return (
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    );
   }
 
   return (
     <button
       type="button"
       className="acx-face-crop-control"
-      onClick={() => onOpen({ mediaUrl: originalUrl, bbox, label: alt })}
+      onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
       aria-label={controlAriaLabel}
     >
-      {thumb}
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
     </button>
   );
 };
@@ -125,18 +137,12 @@ export const MergeSuggestionCard = ({
         __('View original photo, %s', 'alt-context'),
         __('second face', 'alt-context'),
       );
-  const clusterASource: FaceThumbSource = {
-    thumbUrl: suggestion.cluster_a_representative_thumb_url,
-    attachmentUrl: suggestion.cluster_a_representative_attachment_url,
-    mediaUrl: suggestion.cluster_a_representative_media_url,
-    bbox: suggestion.cluster_a_representative_bbox,
-  };
-  const clusterBSource: FaceThumbSource = {
-    thumbUrl: suggestion.cluster_b_representative_thumb_url,
-    attachmentUrl: suggestion.cluster_b_representative_attachment_url,
-    mediaUrl: suggestion.cluster_b_representative_media_url,
-    bbox: suggestion.cluster_b_representative_bbox,
-  };
+  const hasClusterAFace = Boolean(
+    suggestion.cluster_a_representative_media_url && suggestion.cluster_a_representative_bbox,
+  );
+  const hasClusterBFace = Boolean(
+    suggestion.cluster_b_representative_media_url && suggestion.cluster_b_representative_bbox,
+  );
   const clusterACount = suggestion.cluster_a_identity_count;
   const clusterBCount = suggestion.cluster_b_identity_count;
 
@@ -188,24 +194,42 @@ export const MergeSuggestionCard = ({
     >
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face">
-          <FaceCropControl
-            source={clusterASource}
-            alt={clusterAAlt}
-            controlAriaLabel={faceControlALabel}
-            onOpen={onOpenOriginal}
-          />
+          {hasClusterAFace ? (
+            <FaceCropControl
+              mediaUrl={suggestion.cluster_a_representative_media_url!}
+              bbox={suggestion.cluster_a_representative_bbox!}
+              alt={clusterAAlt}
+              controlAriaLabel={faceControlALabel}
+              onOpen={onOpenOriginal}
+            />
+          ) : (
+            <Avatar
+              size="md"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
+          )}
           <span className="acx-suggestion-card__face-label">
             {clusterALabel}
             {clusterACount ? ` (${clusterACount})` : ''}
           </span>
         </div>
         <div className="acx-suggestion-card__face">
-          <FaceCropControl
-            source={clusterBSource}
-            alt={clusterBAlt}
-            controlAriaLabel={faceControlBLabel}
-            onOpen={onOpenOriginal}
-          />
+          {hasClusterBFace ? (
+            <FaceCropControl
+              mediaUrl={suggestion.cluster_b_representative_media_url!}
+              bbox={suggestion.cluster_b_representative_bbox!}
+              alt={clusterBAlt}
+              controlAriaLabel={faceControlBLabel}
+              onOpen={onOpenOriginal}
+            />
+          ) : (
+            <Avatar
+              size="md"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
+          )}
           <span className="acx-suggestion-card__face-label">
             {clusterBLabel}
             {clusterBCount ? ` (${clusterBCount})` : ''}

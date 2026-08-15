@@ -1,10 +1,11 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
-import type { FaceThumbSource } from '../../../../components/ui/faceThumbDisplay';
+import { Avatar } from '../../../../components/ui/avatar';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -54,31 +55,42 @@ function assertTruthyLabel(label: string | null | undefined): asserts label is s
 }
 
 const FaceCropControl = ({
-  source,
+  mediaUrl,
+  bbox,
   alt,
   onOpen,
 }: {
-  source: FaceThumbSource;
+  mediaUrl: string;
+  bbox: BoundingBox;
   alt: string;
   onOpen?: (target: FaceOriginalTarget) => void;
 }): React.JSX.Element => {
-  const thumb = (
-    <DurableFaceThumb source={source} size="md" alt={alt} className="acx-suggestion-card__thumb" />
-  );
-  const originalUrl = source.attachmentUrl ?? source.mediaUrl;
-  const bbox = source.bbox;
-  if (!onOpen || !originalUrl || !bbox) {
-    return thumb;
+  if (!onOpen) {
+    return (
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
+    );
   }
 
   return (
     <button
       type="button"
       className="acx-face-crop-control"
-      onClick={() => onOpen({ mediaUrl: originalUrl, bbox, label: alt })}
+      onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
       aria-label={__('View original photo', 'alt-context')}
     >
-      {thumb}
+      <FaceThumbnail
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        size="md"
+        alt={alt}
+        className="acx-suggestion-card__thumb"
+      />
     </button>
   );
 };
@@ -103,18 +115,20 @@ export const SuggestionCard = ({
   const displayLabel = suggestion.label;
   const matchPercent = Math.round(suggestion.similarity * 100);
   const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
-  const identitySource: FaceThumbSource = {
-    thumbUrl: suggestion.enrichment?.identityThumbUrl,
-    attachmentUrl: suggestion.enrichment?.identityAttachmentUrl,
-    mediaUrl: suggestion.enrichment?.identityMediaUrl,
-    bbox: suggestion.enrichment?.identityBbox,
-  };
-  const representativeSource: FaceThumbSource = {
-    thumbUrl: suggestion.enrichment?.representativeThumbUrl,
-    attachmentUrl: suggestion.enrichment?.representativeAttachmentUrl,
-    mediaUrl: suggestion.enrichment?.representativeMediaUrl,
-    bbox: suggestion.enrichment?.representativeBbox,
-  };
+  const identityFace =
+    suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox
+      ? { mediaUrl: suggestion.enrichment.identityMediaUrl, bbox: suggestion.enrichment.identityBbox }
+      : null;
+  const representativeFace =
+    suggestion.enrichment?.representativeMediaUrl && suggestion.enrichment?.representativeBbox
+      ? {
+          mediaUrl: suggestion.enrichment.representativeMediaUrl,
+          bbox: suggestion.enrichment.representativeBbox,
+        }
+      : null;
+  const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
+  const representativeThumbUrl =
+    suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
   const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
 
   return (
@@ -129,16 +143,52 @@ export const SuggestionCard = ({
     >
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face">
-          <FaceCropControl
-            source={identitySource}
-            alt={__('Candidate face', 'alt-context')}
-            onOpen={onOpenOriginal}
-          />
+          {identityFace ? (
+            <FaceCropControl
+              mediaUrl={identityFace.mediaUrl}
+              bbox={identityFace.bbox}
+              alt={__('Candidate face', 'alt-context')}
+              onOpen={onOpenOriginal}
+            />
+          ) : identityThumbUrl ? (
+            <Avatar
+              src={identityThumbUrl}
+              size="lg"
+              alt={__('Candidate face', 'alt-context')}
+              className="acx-suggestion-card__thumb"
+            />
+          ) : (
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
+          )}
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
 
         <div className="acx-suggestion-card__face">
-          <FaceCropControl source={representativeSource} alt={displayLabel} onOpen={onOpenOriginal} />
+          {representativeFace ? (
+            <FaceCropControl
+              mediaUrl={representativeFace.mediaUrl}
+              bbox={representativeFace.bbox}
+              alt={displayLabel}
+              onOpen={onOpenOriginal}
+            />
+          ) : representativeThumbUrl ? (
+            <Avatar
+              src={representativeThumbUrl}
+              size="lg"
+              alt={displayLabel}
+              className="acx-suggestion-card__thumb"
+            />
+          ) : (
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
+          )}
           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
         </div>
       </div>

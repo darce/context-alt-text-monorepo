@@ -37,7 +37,6 @@ from scripts.eval_harness.report import (
     _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
-    _stamp_missing_annotation_mode,
     build_reports,
     score_face_run_record,
     score_run_record,
@@ -390,22 +389,23 @@ def test_mixed_stamps_still_fail_loud_with_explicit_exhaustive() -> None:
 
 
 def test_markdown_names_refused_detection() -> None:
-    """S2R4-11: pin the mapping entry, not three tokens the constant can lie with.
+    """S2R4-11: pin the published roster_only sentence as a literal.
 
-    A sentence like "not computed: annotation_mode exhaustive path was used
-    anyway" keeps those tokens and must fail this pin. Swapping this
-    invariant's explanation with another member's also dies here.
+    The invariant name comes from ScoreInvariant; the explanation is spelled
+    out. Importing REFUSAL_EXPLANATIONS stays green under a lying table.
+    A mutated roster_only sentence, or a swap with the empty-observations
+    sentence, dies here.
     """
     manifest_entries = _stamped("roster_only")
     _json_doc, md = build_reports(_OVERSHOOT_RECORD, manifest_entries)
     det_section = md.split("## Face detection")[1].split("## Face identification")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY}):" in det_section
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        "detection P/R is not computed unless annotation_mode is exhaustive"
         in det_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        "detection P/R is not computed from zero scored observations"
         not in det_section
     )
     assert "used anyway" not in det_section
@@ -446,7 +446,8 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
 
     The two historical sentences name missing exhaustive mode and missing
     box lineage. This fixture has both. The fired invariants are the empty-
-    observation pair; the artifact must print those reasons.
+    observation pair; those published sentences are spelled out as literals.
+    A swap of the roster_only and empty-observations sentences dies here.
     """
     entries = [
         {
@@ -476,11 +477,11 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
     ident_section = md.split("## Face identification")[1].split("## Per-item failures")[0]
     assert f"- REFUSED ({ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS}):" in det_section
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS]
+        "detection P/R is not computed from zero scored observations"
         in det_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY]
+        "detection P/R is not computed unless annotation_mode is exhaustive"
         not in det_section
     )
     assert (
@@ -488,11 +489,12 @@ def test_markdown_refusal_matches_fired_invariant_not_stock_sentences() -> None:
         in ident_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS]
+        "identification P/R is not computed from zero scored observations"
         in ident_section
     )
     assert (
-        REFUSAL_EXPLANATIONS[ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS]
+        "identification P/R is not computed from identity claims that carry no "
+        "per-face box lineage"
         not in ident_section
     )
 
@@ -623,18 +625,28 @@ _OMIT = object()
 
 
 def test_stamp_does_not_fill_blank_or_whitespace_entry_mode() -> None:
-    """S2R3-02: blank/whitespace is not inheritable; only omitted/None fill."""
-    entries = [
-        {"annotation_mode": ""},
-        {"annotation_mode": "   "},
-        {"annotation_mode": None},
-        {},
-    ]
-    _stamp_missing_annotation_mode(entries, "exhaustive")
+    """S2R3-02: a raw-mapping parent mode is not per-entry evidence.
+
+    Previously None / omitted were filled to the parent (exhaustive),
+    which is the same widening ``score_run_record(..., annotation_mode=
+    'exhaustive')`` already refuses. Blank/whitespace stay explicit
+    empty tokens. None / omitted stay absent — they are not inherited.
+    """
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": [],
+        "entries": [
+            {"annotation_mode": ""},
+            {"annotation_mode": "   "},
+            {"annotation_mode": None},
+            {},
+        ],
+    }
+    entries, _, _ = _entries_as_dicts(manifest)
     assert entries[0]["annotation_mode"] == ""
     assert entries[1]["annotation_mode"] == "   "
-    assert entries[2]["annotation_mode"] == "exhaustive"
-    assert entries[3]["annotation_mode"] == "exhaustive"
+    assert entries[2]["annotation_mode"] is None
+    assert "annotation_mode" not in entries[3]
 
 
 def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
@@ -656,13 +668,11 @@ def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
 
 
 def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> None:
-    """TEST-15 / S2R3-03: fill-missing must not overwrite a real stamp.
+    """TEST-15 / S2R3-03: a raw-mapping flatten must not overwrite a real stamp.
 
-    Mutating `_stamp_missing_annotation_mode` to always write
-    `entry["annotation_mode"] = mode_value` used to stay green: document
-    exhaustive + entry roster_only became exhaustive and
-    score_face_run_record returned zeros with no raise. This pin dies
-    on that overwrite mutant.
+    Stamping the parent exhaustive onto a roster_only entry would hide
+    the conflict and let score_face_run_record publish zeros. This pin
+    dies on that overwrite mutant.
     """
     manifest = {
         "annotation_mode": "exhaustive",

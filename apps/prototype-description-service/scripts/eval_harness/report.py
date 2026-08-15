@@ -4136,6 +4136,55 @@ def _fmt_rate_n_over_n(rate: Any, num: Any, den: Any) -> str:
     return f"{_fmt(rate)} ({_fmt_prov(num)}/{_fmt_prov(den)})"
 
 
+# Contract token on provenance.corpus_traps[].affects (VLM6-R2-C-02 / EVAL-03).
+# Renderers filter on this field — never on kind strings or media ids (rg-009).
+CORPUS_TRAP_AFFECTS_DETECTION_FN = "detection_fn"
+
+
+def _corpus_traps_with_affect(traps: object, affect: str) -> list[Mapping[str, Any]]:
+    """Return trap entries whose machine-readable ``affects`` list includes ``affect``."""
+    if not isinstance(traps, list):
+        return []
+    matched: list[Mapping[str, Any]] = []
+    for trap in traps:
+        if not isinstance(trap, Mapping):
+            continue
+        affects = trap.get("affects")
+        if isinstance(affects, (list, tuple, set)) and affect in affects:
+            matched.append(trap)
+    return matched
+
+
+def _fixture_local_detection_caveat_line(
+    *,
+    traps: object,
+    fn: object,
+    scored_images: object,
+) -> str | None:
+    """EVAL-03 / VLM6-R2-C-02: disclose fixture-local detection FN traps.
+
+    Filters solely on ``affects`` containing ``detection_fn``. Absent that tag,
+    emit nothing so a real population corpus cannot grow a phantom caveat.
+    ``N`` is the number of matching trap entries, not a hardcoded count.
+    """
+    traps_fn = _corpus_traps_with_affect(traps, CORPUS_TRAP_AFFECTS_DETECTION_FN)
+    if not traps_fn:
+        return None
+    ordered = sorted(
+        traps_fn,
+        key=lambda t: (int(t.get("media_id") or 0), str(t.get("path") or "")),
+    )
+    media_bits = ", ".join(f"{t.get('media_id')} `{t.get('path')}`" for t in ordered)
+    n = len(ordered)
+    return (
+        "- ⚠ fixture-local detection frame — recall is NOT a population estimate: "
+        f"{n} of fn={_fmt_prov(fn)} come from deliberate trap media ({media_bits}) "
+        "added so the pre-HARM-01 named-only FN formula goes red; this corpus is a "
+        f"synthetic determinism anchor ({_fmt_prov(scored_images)} images), not a "
+        "sampled population."
+    )
+
+
 def _markdown_face(scored: dict[str, Any]) -> str:
     prov = scored.get("provenance") or {}
     model = prov.get("model") or {}
@@ -4187,6 +4236,15 @@ def _markdown_face(scored: dict[str, Any]) -> str:
             f"{_fmt_prov(det.get('association_incomplete_media'))}; "
             f"association_complete={_fmt_prov(det.get('association_complete'))})"
         )
+    # VLM6-R2-C-02 / EVAL-03: fixture-local detection frame. Filter on
+    # corpus_traps[].affects only — never kind / media id (rg-009).
+    caveat = _fixture_local_detection_caveat_line(
+        traps=prov.get("corpus_traps"),
+        fn=det.get("fn"),
+        scored_images=counts.get("scored"),
+    )
+    if caveat:
+        lines.append(caveat)
     # VLM6-R2-G-01 / wG1: GT-side y-missing + predicted stamp disclosure (same
     # field names as caption faces.identity_ordering). Denominator = counts.scored.
     ordering = scored.get("identity_ordering") if isinstance(scored.get("identity_ordering"), Mapping) else {}

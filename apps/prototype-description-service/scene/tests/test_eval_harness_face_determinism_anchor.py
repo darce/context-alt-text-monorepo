@@ -76,11 +76,14 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # identity_ordering, wG2 detection.fn/recall (Alice null-y excluded), wH1
 # geometry_incomplete_* / association_complete + corrected detection sampling_frame.
 # Report digests only — man+run pins unchanged (wF4 inputs).
+# Regenerated VLM6-R2-C-02: corpus_traps[].affects + fixture-local detection
+# caveat in the face MD. Manifest digest unchanged (corpus body identical);
+# run/report/md moved (affects stamp + caveat line).
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
-    _RUN.name: "20ed14fe53bf1554f0aa348f5b0270d426e68f31d9db9fec97f6bdfcee01adab",
-    _REPORT_JSON.name: "c8e174db92b47d746c2497074d77f3197b016e4eec761ec1d5739488766058f6",
-    _REPORT_MD.name: "ff108e77facba690b79c94b5acaf37edbe5bf01784f526cccad80f4e3e5b8899",
+    _RUN.name: "5a589466630eb7dc9296f7a947563b06d1e3908dbdb905123b4d334a291ac8f4",
+    _REPORT_JSON.name: "cd56435dca8542f915a4decb9955e95c750ab1560bc8399521d8b361d08a32e9",
+    _REPORT_MD.name: "92c464416b961622a0a31606e865dad6cca749d4c3abe30849a59faa61a2d3c2",
 }
 
 
@@ -395,6 +398,9 @@ def test_corpus_traps_disclose_deliberate_trap_media() -> None:
         assert kind_substr in str(t.get("kind") or ""), t
         assert t.get("trips"), f"media {required_id} must name the gate/formula it trips"
         assert t.get("path"), f"media {required_id} must name its path"
+    assert by_id[9].get("affects") == ["detection_fn"]
+    assert by_id[10].get("affects") == ["detection_fn"]
+    assert by_id[11].get("affects") == ["identity_ordering"]
 
     # Every disclosed trap media must exist in the manifest.
     man_ids = {int(e["media_id"]) for e in raw["entries"]}
@@ -405,6 +411,46 @@ def test_corpus_traps_disclose_deliberate_trap_media() -> None:
     committed = json.loads(_RUN.read_text())
     committed_traps = list((committed.get("provenance") or {}).get("corpus_traps") or [])
     assert {int(t["media_id"]) for t in committed_traps} >= {9, 10, 11}
+
+
+def test_fixture_local_detection_caveat_present_and_disappears_without_affects() -> None:
+    """VLM6-R2-C-02 / TEST-15: published MD caveat must be able to go red.
+
+    Presence-only is rejected: re-render the committed run after stripping
+    ``affects`` and the fixture-local line must vanish. A real corpus with no
+    ``detection_fn`` traps must not grow a phantom caveat.
+    """
+    md = _REPORT_MD.read_text()
+    assert "fixture-local detection frame" in md
+    assert "recall is NOT a population estimate" in md
+    assert "9 `localwp/uploads/stranger-fn-miss.jpg`" in md
+    assert "10 `localwp/uploads/mixed-fn-miss.jpg`" in md
+    assert "2 of fn=5" in md
+    assert "synthetic determinism anchor (11 images)" in md
+
+    record = json.loads(_RUN.read_text())
+    traps = list((record.get("provenance") or {}).get("corpus_traps") or [])
+    assert traps, "committed run must disclose corpus_traps"
+    for trap in traps:
+        trap.pop("affects", None)
+    record["provenance"]["corpus_traps"] = traps
+
+    manifest = load_manifest(str(_MANIFEST), skip_hash_verification=True)
+    synth, real = occlusion_inputs_from_record(record, manifest)
+    _json_doc, stripped_md = build_face_reports(
+        record,
+        manifest,
+        score_manifest_sha256=_manifest_sha(manifest),
+        occlusion_pairs_by_tag=synth,
+        real_occlusion_pairs_by_tag=real,
+        public=False,
+    )
+    assert "fixture-local detection frame" not in stripped_md
+    assert "NOT a population estimate" not in stripped_md
+    # Detection numbers themselves stay; only the caveat is gated on affects.
+    assert "precision: 0.857 recall: 0.545 (tp=6 fp=1 fn=5" in stripped_md
+    # Committed freeze still has the caveat (control must not rewrite it).
+    assert "fixture-local detection frame" in _REPORT_MD.read_text()
 
 
 def test_pre_harm01_detection_formula_goes_red_on_extended_freeze(

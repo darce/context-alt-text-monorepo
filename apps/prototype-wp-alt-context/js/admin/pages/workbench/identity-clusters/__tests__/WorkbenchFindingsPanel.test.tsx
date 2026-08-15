@@ -24,14 +24,17 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 const { faceThumbnailSpy, avatarSpy, refetchAssignment, refetchMerge, refetchName, refetchTopUnlabeled } =
-  vi.hoisted(() => ({
-    faceThumbnailSpy: vi.fn(),
-    avatarSpy: vi.fn(),
-    refetchAssignment: vi.fn(() => Promise.resolve()),
-    refetchMerge: vi.fn(() => Promise.resolve()),
-    refetchName: vi.fn(() => Promise.resolve()),
-    refetchTopUnlabeled: vi.fn(() => Promise.resolve()),
-  }));
+  vi.hoisted(() => {
+    const refetchOk = (): Promise<{ isError: boolean }> => Promise.resolve({ isError: false });
+    return {
+      faceThumbnailSpy: vi.fn(),
+      avatarSpy: vi.fn(),
+      refetchAssignment: vi.fn(refetchOk),
+      refetchMerge: vi.fn(refetchOk),
+      refetchName: vi.fn(refetchOk),
+      refetchTopUnlabeled: vi.fn(refetchOk),
+    };
+  });
 
 // Radix Avatar's Image uses Image.onload which never fires in JSDOM.
 vi.mock('@radix-ui/react-avatar', async () => {
@@ -131,10 +134,10 @@ describe('WorkbenchFindingsPanel', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    refetchAssignment.mockImplementation(() => Promise.resolve());
-    refetchMerge.mockImplementation(() => Promise.resolve());
-    refetchName.mockImplementation(() => Promise.resolve());
-    refetchTopUnlabeled.mockImplementation(() => Promise.resolve());
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchMerge.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchName.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchTopUnlabeled.mockImplementation(() => Promise.resolve({ isError: false }));
   });
 
   it('renders counts, previews, and an enabled primary action for populated findings', async () => {
@@ -1480,7 +1483,7 @@ describe('WorkbenchFindingsPanel', () => {
     const assignmentGate = new Promise<void>((resolve) => {
       resolveAssignment = resolve;
     });
-    refetchAssignment.mockImplementation(() => assignmentGate);
+    refetchAssignment.mockImplementation(() => assignmentGate.then(() => ({ isError: true })));
 
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
@@ -1510,7 +1513,7 @@ describe('WorkbenchFindingsPanel', () => {
     });
     expect(screen.queryByText('Retrying recognition findings…')).not.toBeInTheDocument();
     expect(screen.queryByText('Could not load recognition findings.')).not.toBeInTheDocument();
-    refetchAssignment.mockImplementation(() => Promise.resolve());
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
   });
 
   it('REV2-05: successful retry moves focus to Review next when the error tree unmounts', async () => {
@@ -1569,6 +1572,54 @@ describe('WorkbenchFindingsPanel', () => {
         screen.getByRole('heading', { name: 'Recognition findings' }),
       );
     });
+  });
+
+  // REV3-01 / TEST-15: RQ v5 refetch() resolves on query error, so retryFailed
+  // must come from results.some(r => r.isError) and clear when the error
+  // branch unmounts. A later background invalidation is not a retried failure.
+  it('REV3-01: successful retry then later background error shows plain load copy, not Retry failed', async () => {
+    const recovered = makeViewModel({
+      counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+      hasFindings: true,
+      isError: false,
+      nextAction: {
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 's1',
+        clusterId: 'c1',
+        label: 'Ada',
+      },
+    });
+    let findings = makeViewModel({
+      isError: true,
+      nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+    });
+    vi.mocked(useWorkbenchFindings).mockImplementation(() => findings);
+    refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchMerge.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchName.mockImplementation(() => Promise.resolve({ isError: false }));
+    refetchTopUnlabeled.mockImplementation(() => Promise.resolve({ isError: false }));
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(refetchAssignment).toHaveBeenCalled();
+    });
+
+    findings = recovered;
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Review next/ })).toBeInTheDocument();
+
+    findings = makeViewModel({
+      isError: true,
+      hasFindings: false,
+      nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+    });
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
+    expect(screen.queryByText('Retry failed. Could not load recognition findings.')).not.toBeInTheDocument();
   });
 
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is

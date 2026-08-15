@@ -200,6 +200,14 @@ export const WorkbenchFindingsPanel = ({
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   const reviewNextRef = React.useRef<HTMLButtonElement>(null);
   const pendingRetryFocusRef = React.useRef(false);
+  const onErrorBranch = !hasFindings && isError;
+
+  // REV3-01: a later independent error is not a retried failure.
+  React.useEffect(() => {
+    if (!onErrorBranch) {
+      setRetryFailed(false);
+    }
+  }, [onErrorBranch]);
 
   // REV2-08: the control is labelled as reloading recognition findings, so it
   // must refetch every source that feeds them — name suggestions included.
@@ -217,9 +225,12 @@ export const WorkbenchFindingsPanel = ({
       topUnlabeledQuery.refetch(),
     ])
       .catch(() => undefined)
-      .then(() => {
+      .then((results) => {
         setRetrying(false);
-        setRetryFailed(true);
+        // RQ v5 refetch() resolves on query error; inspect settled isError.
+        const failed =
+          !Array.isArray(results) || results.some((result) => Boolean(result?.isError));
+        setRetryFailed(failed);
       });
   };
 

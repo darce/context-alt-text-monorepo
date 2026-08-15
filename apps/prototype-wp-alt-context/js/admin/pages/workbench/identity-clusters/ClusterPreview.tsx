@@ -42,7 +42,8 @@ export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewPr
         <Avatar
           sizePx={40}
           missingLabel={unavailableImageLabel}
-          className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder acx-identity-cluster__thumb--unavailable"
+          hideMissingLabel
+          className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder"
         />
       )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}

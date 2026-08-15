@@ -44,7 +44,12 @@ for entry in "two_pass|--prompt-variant v2 --two-pass" "dual_length|--prompt-var
     score_ec=$?
     cp "$SVC/$rr" "$RESULTS/" 2>/dev/null
     if [ "$score_ec" -eq 3 ]; then
-      echo "  REFUSED (exit 3) — detection/identification not scored (roster_only / unboxed claims). Not copying the report as a scored result. Add per-face boxes, or re-run this cell with --allow-refused if you consent to a no-score report."
+      echo "  REFUSED (exit 3) — not copying the report as a scored result."
+      _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
+      _report_json="$SVC/${rr%.json}-report.json"
+      if [ -f "$_refusal_helper" ]; then
+        python3 "$_refusal_helper" --report "$_report_json" --log-text "$(cat "$SVC/out/${tag}.err" 2>/dev/null)"
+      fi
       mkdir -p "$RESULTS/refused"
       cp "$SVC/${rr%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
       note_score_ec 3

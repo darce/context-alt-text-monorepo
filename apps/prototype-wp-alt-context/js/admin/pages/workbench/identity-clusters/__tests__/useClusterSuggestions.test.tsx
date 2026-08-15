@@ -1038,5 +1038,148 @@ describe('useClusterSuggestions', () => {
 
       queryClient.clear();
     });
+
+    it('treats a one-character query as at-rest and does not search', async () => {
+      // Existing coverage is 0 chars (at-rest) and 2 chars (search). A gate written
+      // as `<= 1` or `> 1` would pass those; one character is the missing edge.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      listRecognitionClustersMock.mockResolvedValue({
+        clusters: [{ ...baseCluster, id: 'cluster-maya', label: 'Maya Chen', identity_count: 3 }],
+        limit: 50,
+        total: 1,
+        truncated: false,
+      });
+
+      const { result, rerender } = renderHook(
+        ({ labelInput }: { labelInput: string }) =>
+          useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput, debounceMs: 300 }),
+        { wrapper, initialProps: { labelInput: '' } },
+      );
+
+      await waitFor(() => expect(listRecognitionClustersMock).toHaveBeenCalled());
+      expect(result.current.isAtRestMode).toBe(true);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      rerender({ labelInput: 'M' });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(result.current.isAtRestMode).toBe(true);
+      expect(listRecognitionClustersMock).toHaveBeenCalledWith({
+        limit: 50,
+        offset: 0,
+        labeled_only: true,
+      });
+      expect(
+        listRecognitionClustersMock.mock.calls.some((call) => {
+          const params = call[0];
+          return Boolean(params && 'search' in params && params.search === 'M');
+        }),
+      ).toBe(false);
+
+      vi.useRealTimers();
+      queryClient.clear();
+    });
+
+    it('drops the editable cluster from atRestShown while preserving envelope total', async () => {
+      // Self-exclusion is locked twice: the at-rest select filter and
+      // buildNamingOptions({ excludeClusterId }). atRestShown is post-filter
+      // page length; atRestTotal is the envelope total. Together they pin the
+      // select lock independently of the builder.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      const atRestPage = [
+        { ...baseCluster, id: 'cluster-self', label: 'Tory Guzman', identity_count: 4 },
+        { ...baseCluster, id: 'cluster-other', label: 'Pat Nguyen', identity_count: 6 },
+        { ...baseCluster, id: 'cluster-third', label: 'Dana Ruiz', identity_count: 2 },
+      ];
+      listRecognitionClustersMock.mockResolvedValue({
+        clusters: atRestPage,
+        limit: 50,
+        total: 12,
+        truncated: false,
+      });
+
+      const { result } = renderHook(
+        () =>
+          useClusterSuggestions({
+            identityId: 'identity-1',
+            enabled: true,
+            labelInput: '',
+            debounceMs: 0,
+            editableClusterId: 'cluster-self',
+          }),
+        { wrapper },
+      );
+
+      await waitFor(() => expect(result.current.atRestShown).toBe(atRestPage.length - 1));
+      expect(result.current.atRestTotal).toBe(12);
+
+      queryClient.clear();
+    });
+
+    it('keeps a labelled cluster past the at-rest page unreachable until the operator types', async () => {
+      // Existing coverage only spies the at-rest `limit` argument. A row that
+      // is not on the 50-row page must stay absent until typed search runs.
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
+      const atRestPage = Array.from({ length: 50 }, (_, index) => ({
+        ...baseCluster,
+        id: `cluster-${index}`,
+        label: `Label ${index}`,
+        identity_count: 1,
+      }));
+
+      listRecognitionClustersMock.mockImplementation(async (params) => {
+        if (params?.search && String(params.search).length >= 2) {
+          return {
+            clusters: [{ ...baseCluster, id: 'cluster-zenobia', label: 'Zenobia Vance', identity_count: 5 }],
+            limit: 20,
+            total: 1,
+            truncated: false,
+          };
+        }
+        return {
+          clusters: atRestPage,
+          limit: 50,
+          total: 80,
+          truncated: true,
+        };
+      });
+
+      const { result, rerender } = renderHook(
+        ({ labelInput }: { labelInput: string }) =>
+          useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput, debounceMs: 300 }),
+        { wrapper, initialProps: { labelInput: '' } },
+      );
+
+      await waitFor(() => expect(result.current.atRestTruncated).toBe(true));
+      expect(result.current.options.some((option) => option.label === 'Zenobia Vance')).toBe(false);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      rerender({ labelInput: 'Ze' });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      vi.useRealTimers();
+
+      await waitFor(() =>
+        expect(result.current.options.some((option) => option.label === 'Zenobia Vance')).toBe(true),
+      );
+
+      queryClient.clear();
+    });
   });
 });

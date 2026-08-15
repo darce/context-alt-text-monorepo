@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -131,6 +131,10 @@ describe('WorkbenchFindingsPanel', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    refetchAssignment.mockImplementation(() => Promise.resolve());
+    refetchMerge.mockImplementation(() => Promise.resolve());
+    refetchName.mockImplementation(() => Promise.resolve());
+    refetchTopUnlabeled.mockImplementation(() => Promise.resolve());
   });
 
   it('renders counts, previews, and an enabled primary action for populated findings', async () => {
@@ -1466,6 +1470,105 @@ describe('WorkbenchFindingsPanel', () => {
     const described = document.getElementById('acx-findings-panel-unlabeled-outage');
     expect(described).not.toBeNull();
     expect(described).toHaveTextContent('Unlabeled groups unavailable');
+  });
+
+  // REV2-05 / TEST-15: isLoading stays false on an already-errored refetch, so
+  // the live region must change from a local retrying flag. Restoring the
+  // original single error sentence (or gating on isLoading) leaves this red.
+  it('REV2-05: Retry announces in-progress then a distinct failure without using isLoading', async () => {
+    let resolveAssignment: (value?: void) => void = () => undefined;
+    const assignmentGate = new Promise<void>((resolve) => {
+      resolveAssignment = resolve;
+    });
+    refetchAssignment.mockImplementation(() => assignmentGate);
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        isLoading: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    retry.focus();
+    await userEvent.click(retry);
+
+    expect(screen.getByText('Retrying recognition findings…')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load recognition findings.')).not.toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(document.activeElement).toBe(retry);
+
+    await act(async () => {
+      resolveAssignment();
+      await assignmentGate;
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Retry failed. Could not load recognition findings.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Retrying recognition findings…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Could not load recognition findings.')).not.toBeInTheDocument();
+    refetchAssignment.mockImplementation(() => Promise.resolve());
+  });
+
+  it('REV2-05: successful retry moves focus to Review next when the error tree unmounts', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
+        hasFindings: true,
+        isError: false,
+        nextAction: {
+          kind: NEXT_ACTION_KIND.ASSIGNMENT,
+          suggestionId: 's1',
+          clusterId: 'c1',
+          label: 'Ada',
+        },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Review next/ }));
+    });
+  });
+
+  it('REV2-05: successful retry with an empty backlog focuses the panel heading', async () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: true,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR },
+      }),
+    );
+
+    const { rerender } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        isError: false,
+        hasFindings: false,
+        nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
+      }),
+    );
+    rerender(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('heading', { name: 'Recognition findings' }),
+      );
+    });
   });
 
   // REV2-04 / TEST-15: a truncated page must not say "3 groups" as if that is

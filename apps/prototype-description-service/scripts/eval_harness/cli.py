@@ -523,10 +523,15 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"detection_p={det.get('precision')} "
             f"detection_r={det.get('recall')}"
         )
+    ident = scored["faces"]["identification"]
+    if ident.get("refused"):
+        id_bit = f"identification=REFUSED({ident.get('invariant')})"
+    else:
+        id_bit = f"wrong_names={len(ident['wrong_names'])}"
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"insertion_rate={scored['caption']['insertion_rate']} "
-        f"wrong_names={len(scored['faces']['identification']['wrong_names'])} "
+        f"{id_bit} "
         f"{det_bit}"
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run

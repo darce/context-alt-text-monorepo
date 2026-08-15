@@ -131,6 +131,64 @@ def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
     assert entries[0]["annotation_mode"] == "roster_only"
 
 
+class _DumpEntry:
+    """Stand-in whose model_dump can carry annotation_mode (GoldenEntry cannot)."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def model_dump(self) -> dict:
+        return dict(self._payload)
+
+
+class _FusionManifest:
+    def __init__(self, mode: str, entries: list) -> None:
+        self.annotation_mode = mode
+        self.entries = entries
+
+
+def test_fusion_flatten_fill_only_preserves_per_entry_stamp() -> None:
+    """S2R6E-04 sibling: fusion flatten fills missing stamps and never overwrites.
+
+    GoldenEntry has no annotation_mode field, so the collision uses a
+    stand-in dump. Both halves are required: overwrite-all stays green
+    on fill-only, and a no-op door stays green on preserve-only.
+    """
+    stamped = {
+        "path": "mock_images/stamped.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+        "context_pack": {},
+        "provenance": None,
+        "annotation_mode": "roster_only",
+    }
+    unstamped = {
+        "path": "mock_images/unstamped.jpg",
+        "media_id": 2,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+        "context_pack": {},
+        "provenance": None,
+    }
+    rows = manifest_entries_as_dicts(
+        _FusionManifest(
+            "exhaustive",
+            [_DumpEntry(stamped), _DumpEntry(unstamped)],
+        )
+    )
+    assert rows[0]["annotation_mode"] == "roster_only"
+    assert rows[1]["annotation_mode"] == "exhaustive"
+
+
 def test_fusion_flatten_projects_scorer_contract_keys_only(tmp_path: Path) -> None:
     """S2R5-10: flatten is an explicit projection, not a silent model_dump widen.
 

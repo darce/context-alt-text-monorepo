@@ -210,3 +210,137 @@ def test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode() -> None:
     unstamped = [{"media_id": "m1", "face_count": 1}]
     out, _, _ = _entries_as_dicts(_DuckManifest([dict(e) for e in unstamped]))
     assert out[0]["annotation_mode"] == "exhaustive"
+
+
+class _DumpEntry:
+    """Stand-in whose model_dump can carry annotation_mode (GoldenEntry cannot)."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def model_dump(self) -> dict:
+        return dict(self._payload)
+
+
+class _CliScoreManifest:
+    """Typed manifest wrapper so _cmd_score can see a per-entry dump stamp."""
+
+    def __init__(self, inner: object, entries: list) -> None:
+        self._inner = inner
+        self.entries = entries
+        self.annotation_mode = getattr(inner, "annotation_mode")
+        self.roster = getattr(inner, "roster")
+
+    def model_dump(self) -> dict:
+        return getattr(self._inner, "model_dump")()
+
+
+def _two_entry_exhaustive_doc() -> dict:
+    box = {
+        "x": 0.5,
+        "y": 0.4,
+        "w": 0.2,
+        "h": 0.3,
+        "name": "Alice Example",
+        "source": "operator",
+        "lineage": _LINEAGE,
+    }
+    return {
+        "manifest_version": 3,
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "mock_images/stamped.jpg",
+                "sha256": "a" * 64,
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "base_caption": "Alice Example.",
+                "must_right": ["Alice Example"],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
+                "face_boxes": [box],
+            },
+            {
+                "path": "mock_images/unstamped.jpg",
+                "sha256": "b" * 64,
+                "media_id": 2,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "context_pack": {"title": "t"},
+                "base_caption": "Alice Example.",
+                "must_right": ["Alice Example"],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
+                "face_boxes": [box],
+            },
+        ],
+    }
+
+
+def test_cmd_score_fill_only_preserves_per_entry_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2R6E-04 sibling: _cmd_score fills missing stamps and never overwrites.
+
+    GoldenEntry has no annotation_mode field, so the collision uses a
+    stand-in dump. Both halves are required: overwrite-all stays green
+    on fill-only, and a no-op door stays green on preserve-only.
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path = tmp_path / "golden.json"
+    rec_path = tmp_path / "run.json"
+    man_path.write_text(json.dumps(_two_entry_exhaustive_doc()), encoding="utf-8")
+    rec_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "base_url": "x",
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                },
+                "items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    real_load = cli_mod.load_manifest
+
+    def fake_load(path: str) -> _CliScoreManifest:
+        typed = real_load(path)
+        stamped = {**typed.entries[0].model_dump(), "annotation_mode": "roster_only"}
+        return _CliScoreManifest(typed, [_DumpEntry(stamped), typed.entries[1]])
+
+    captured: list[list] = []
+    real_build = cli_mod.build_reports
+
+    def wrap(record: dict, entries: list, **kwargs: object) -> tuple[str, str]:
+        captured.append(entries)
+        return real_build(record, entries, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "load_manifest", fake_load)
+    monkeypatch.setattr(cli_mod, "build_reports", wrap)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(
+            ["score", "--manifest", str(man_path), "--run-record", str(rec_path)]
+        )
+
+    assert captured, "build_reports was never called"
+    rows = captured[0]
+    assert rows[0]["annotation_mode"] == "roster_only"
+    filled = rows[1]["annotation_mode"]
+    assert (filled.value if hasattr(filled, "value") else filled) == "exhaustive"
+    # Mixed stamps refuse by published invariant, not a zeroed metric block.
+    assert exc_info.value.code != 0
+    assert "detection_refuses_mixed_annotation_mode" in str(exc_info.value)

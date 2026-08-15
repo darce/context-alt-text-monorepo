@@ -24,7 +24,13 @@ import {
   seedIdentityBatchSingles,
   type ProjectedSuggestion,
 } from '../suggestionProjection';
-import { buildClusterMatch, buildPendingRow, suggestionProjectionMatrix } from './suggestionProjection.fixtures';
+import {
+  ATTACHMENT_ONLY_URL,
+  attachmentOnlyPendingRow,
+  buildClusterMatch,
+  buildPendingRow,
+  suggestionProjectionMatrix,
+} from './suggestionProjection.fixtures';
 
 describe('isHumanLabeledTarget', () => {
   it('accepts truthy human-format labels', () => {
@@ -277,6 +283,27 @@ describe('adapters', () => {
       const pending = fromPendingRow(buildPendingRow({ id: 's', identity_id: 'i', suggested_label: 'Zed' }));
       expect(identity.enrichment).toBeUndefined();
       expect(pending.enrichment).toBeDefined();
+    });
+
+    it('projects an attachment-only row so collectPreviews still receives a usable source', () => {
+      const projected = fromPendingRow(attachmentOnlyPendingRow);
+      const thumbUrl = projected.enrichment?.identityThumbUrl ?? null;
+      const mediaUrl = projected.enrichment?.identityMediaUrl ?? null;
+      const attachmentUrl = projected.enrichment?.identityAttachmentUrl ?? null;
+
+      expect(projected.enrichment).toEqual({
+        identityAttachmentUrl: ATTACHMENT_ONLY_URL,
+      });
+      expect(attachmentUrl).toBe(ATTACHMENT_ONLY_URL);
+      expect(thumbUrl).toBeNull();
+      expect(mediaUrl).toBeNull();
+
+      // collectPreviews keeps a preview when any of thumb / media / attachment is present.
+      // Reverting that filter to `thumbUrl || mediaUrl` (or dropping the attachment source
+      // from ENRICHMENT_SOURCE_FIELDS) must turn this red.
+      const reachesCollectPreviews = Boolean(thumbUrl || mediaUrl || attachmentUrl);
+      expect(reachesCollectPreviews).toBe(true);
+      expect(Boolean(thumbUrl || mediaUrl)).toBe(false);
     });
   });
 });

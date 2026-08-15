@@ -3,6 +3,10 @@
 # caption) with curated identities, via the tailscale jump. ~62 min GPU.
 #   Usage: bash a10-interleave-646.sh <A10_PRIVATE_IP>
 set -uo pipefail
+_CONTRACT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_exit_contract.env"
+# shellcheck disable=SC1090
+[ -f "$_CONTRACT" ] && . "$_CONTRACT"
+EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 
 PRIV_IP="${1:?usage: a10-interleave-646.sh <A10_PRIVATE_IP>}"
 PORT=8000
@@ -47,7 +51,7 @@ echo "== score =="
 ( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score --run-record "$RR" --manifest "$MANIFEST" )
 score_ec=$?
 cp "$SVC/$RR" "$RESULTS/" 2>/dev/null
-if [ "$score_ec" -eq 3 ]; then
+if [ "$score_ec" -eq "$EVAL_EXIT_REFUSED" ]; then
   echo "score REFUSED (exit 3): this is not rubric-partial. Report is refused evidence, not a clean score."
   _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
   _report_json="$SVC/${RR%.json}-report.json"

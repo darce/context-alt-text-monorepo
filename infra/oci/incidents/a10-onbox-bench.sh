@@ -9,6 +9,11 @@
 # through the jump; the harness runs laptop-side from the altq-1 worktree so
 # run-records + reports land in-repo. Every launch pairs with a terminate.
 set -uo pipefail
+_CONTRACT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_exit_contract.env"
+# shellcheck disable=SC1090
+[ -f "$_CONTRACT" ] && . "$_CONTRACT"
+EVAL_EXIT_PARTIAL="${EVAL_EXIT_PARTIAL:-1}"
+EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 
 PRIV_IP="${1:-10.0.1.68}"
 export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$HOME/Development/eval-fixtures}"
@@ -61,10 +66,10 @@ START=$(date +%s)
 worst_ec=0
 note_score_ec() {
   local ec="$1"
-  if [ "$ec" -eq 1 ]; then
-    worst_ec=1
-  elif [ "$ec" -eq 3 ] && [ "$worst_ec" -ne 1 ]; then
-    worst_ec=3
+  if [ "$ec" -eq "$EVAL_EXIT_PARTIAL" ]; then
+    worst_ec="$EVAL_EXIT_PARTIAL"
+  elif [ "$ec" -eq "$EVAL_EXIT_REFUSED" ] && [ "$worst_ec" -ne "$EVAL_EXIT_PARTIAL" ]; then
+    worst_ec="$EVAL_EXIT_REFUSED"
   elif [ "$ec" -ne 0 ] && [ "$worst_ec" -eq 0 ]; then
     worst_ec="$ec"
   fi
@@ -84,7 +89,7 @@ for entry in "${CONFIGS[@]}"; do
           --run-record "$rr" --manifest "$MANIFEST" )
       score_ec=$?
       cp "$SVC/$rr" "$RESULTS/" 2>/dev/null
-      if [ "$score_ec" -eq 3 ]; then
+      if [ "$score_ec" -eq "$EVAL_EXIT_REFUSED" ]; then
         echo "  REFUSED (exit 3) — not copying the report as a scored result."
         _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
         _report_json="$SVC/${rr%.json}-report.json"

@@ -19,6 +19,10 @@
 ROOT_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 ROOT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(ROOT_MAKEFILE)))
 
+# Scorer 0/1/2/3 contract shared with scripts/eval_exit_contract.py.
+# GNU Make still collapses every failed recipe to process exit 2.
+include $(ROOT_MAKEFILE_DIR)/scripts/eval_exit_contract.env
+
 # --- Git / Orchestrator detection ---
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)

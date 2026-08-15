@@ -391,7 +391,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
           user_confirmed: false,
           suggested_label: 'Alex',
           suggested_target_cluster_id: null,
-          representatives: [],
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
         },
       ],
       limit: 20,

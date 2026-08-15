@@ -28,12 +28,19 @@ const buildRepresentative = (overrides: Partial<DetectedIdentity> = {}): Detecte
   ...overrides,
 });
 
+const MISSING_REPRESENTATIVE_LABEL = 'Representative image unavailable';
+
 describe('ClusterPreview', () => {
   it('renders an explicit unavailable-image fallback when representative crop data is missing', () => {
     render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
 
-    expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAccessibleName(MISSING_REPRESENTATIVE_LABEL);
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
     expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByText(MISSING_REPRESENTATIVE_LABEL)).not.toBeInTheDocument();
+    expect(missing).toHaveClass('acx-avatar--hide-missing-label');
+    expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
   });
 
   it('does not render a pin control (UXA-07)', () => {

@@ -150,10 +150,13 @@ type ScanOutcome = 'success' | 'error';
 const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
+  zeroEvidenceClusterCount: 0,
+  topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,

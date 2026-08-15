@@ -186,3 +186,27 @@ def test_r6e1_typed_manifest_flatten_stamps_document_mode(tmp_path: Path) -> Non
     assert "annotation_mode" not in typed.entries[0].model_dump()
     entries, _, _ = _entries_as_dicts(typed)
     assert entries[0]["annotation_mode"] == AnnotationMode.EXHAUSTIVE.value
+
+
+class _DuckManifest:
+    """Duck-typed door: .entries + .roster, entries are plain dicts."""
+
+    def __init__(self, entries: list) -> None:
+        self.annotation_mode = "exhaustive"
+        self.roster: list = []
+        self.roster_cohorts: dict = {}
+        self.entries = entries
+
+
+def test_r6e1_duck_typed_pre_stamped_roster_only_is_not_overwritten() -> None:
+    """Document exhaustive must not overwrite a genuine per-entry roster_only stamp."""
+    stamped = [{"media_id": "m1", "annotation_mode": "roster_only", "face_count": 1}]
+    out, _, _ = _entries_as_dicts(_DuckManifest([dict(e) for e in stamped]))
+    assert out[0]["annotation_mode"] == "roster_only"
+
+
+def test_r6e1_duck_typed_unstamped_entry_still_receives_document_mode() -> None:
+    """Fill must still fire when a duck-typed entry has no stamp (RV3 load-bearing)."""
+    unstamped = [{"media_id": "m1", "face_count": 1}]
+    out, _, _ = _entries_as_dicts(_DuckManifest([dict(e) for e in unstamped]))
+    assert out[0]["annotation_mode"] == "exhaustive"

@@ -1469,7 +1469,8 @@ def _stamp_typed_document_mode(entries: list[dict[str, Any]], mode_value: str) -
     mappings never enter this helper (S2R3-02).
     """
     for entry in entries:
-        entry["annotation_mode"] = mode_value
+        if entry.get("annotation_mode") is None:
+            entry["annotation_mode"] = mode_value
 
 
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:

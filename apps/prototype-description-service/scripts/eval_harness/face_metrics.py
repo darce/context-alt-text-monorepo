@@ -34,11 +34,20 @@ from typing import Any
 
 import numpy as np
 
-from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
+from .manifest import AnnotationMode, ManifestError, ScoreInvariant, parse_annotation_mode
 
-# Identification GT requires a named face box per claimed identity. Unboxed
-# present_identities may load (roster_only) but cannot be scored as labels.
-IDENTIFICATION_UNBOXED_INVARIANT = "identification_refuses_unboxed_identity_claims"
+# Re-exports of the canonical ScoreInvariant members. New call sites should
+# import ScoreInvariant directly.
+IDENTIFICATION_UNBOXED_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+)
+DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = (
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
+)
+DETECTION_EMPTY_OBSERVATIONS_INVARIANT = ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS
+IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS
+)
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
@@ -169,13 +178,13 @@ def detection_pr(
     if mode is None:
         raise ManifestError(
             "detection_pr requires annotation_mode; omission is not exhaustive",
-            invariant="detection_requires_annotation_mode",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
         )
     if mode is not AnnotationMode.EXHAUSTIVE:
         raise ManifestError(
             "detection_pr refuses roster_only manifests; unlabeled non-roster "
             "faces would be scored as false positives",
-            invariant="detection_refuses_roster_only",
+            invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
         )
     tp = fp = fn = 0
     for item in items:
@@ -201,6 +210,40 @@ def unboxed_identity_claims(entry: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(
         str(name) for name in (entry.get("present_identities") or []) if str(name) not in boxed
     )
+
+
+def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse exhaustive detection when boxes cannot witness ``face_count``.
+
+    An ``exhaustive`` stamp whose ``len(face_boxes) != face_count`` is not a
+    coverage witness. Load-time already checks this; the raw-mapping lattice
+    must not trust the stamp alone (S2R4-04).
+    """
+    holes: list[str] = []
+    first_index: int | None = None
+    first_path: str | None = None
+    for index, entry in enumerate(entries):
+        # Fusion flatten (S2R4-05) still omits the key. A missing key is not
+        # a false witness — only a present box list can contradict face_count.
+        if "face_boxes" not in entry:
+            continue
+        n_boxes = len(entry.get("face_boxes") or [])
+        face_count = int(entry.get("face_count") or 0)
+        if n_boxes == face_count:
+            continue
+        path = str(entry.get("path", f"entry[{index}]"))
+        if first_index is None:
+            first_index = index
+            first_path = path
+        holes.append(f"{path} len(face_boxes)={n_boxes} != face_count={face_count}")
+    if holes:
+        raise ManifestError(
+            "detection P/R cannot be computed from an exhaustive stamp whose "
+            "boxes do not cover face_count: " + "; ".join(holes),
+            invariant=DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            entry_index=first_index,
+            entry_path=first_path,
+        )
 
 
 def require_boxed_identification_gt(entries: Sequence[Mapping[str, Any]]) -> None:

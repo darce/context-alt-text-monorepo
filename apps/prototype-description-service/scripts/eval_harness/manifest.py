@@ -214,6 +214,22 @@ class AnnotationMode(StrEnum):
     ROSTER_ONLY = "roster_only"
 
 
+class ScoreInvariant(StrEnum):
+    """Canonical names for score-time refusals. Import this; do not re-spell."""
+
+    DETECTION_REQUIRES_ANNOTATION_MODE = "detection_requires_annotation_mode"
+    DETECTION_REFUSES_ROSTER_ONLY = "detection_refuses_roster_only"
+    DETECTION_UNRECOGNISED_ANNOTATION_MODE = "detection_unrecognised_annotation_mode"
+    DETECTION_REFUSES_EMPTY_ENTRIES = "detection_refuses_empty_entries"
+    DETECTION_REFUSES_MIXED_ANNOTATION_MODE = "detection_refuses_mixed_annotation_mode"
+    IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS = (
+        "identification_refuses_unboxed_identity_claims"
+    )
+    DETECTION_REFUSES_UNCOVERED_FACE_COUNT = "detection_refuses_uncovered_face_count"
+    DETECTION_REFUSES_EMPTY_OBSERVATIONS = "detection_refuses_empty_observations"
+    IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
+
+
 def parse_annotation_mode(value: object) -> AnnotationMode | None:
     """Return the enum member, or None when the value is omitted.
 
@@ -235,12 +251,12 @@ def parse_annotation_mode(value: object) -> AnnotationMode | None:
             raise ManifestError(
                 f"unrecognised annotation_mode {value!r}; "
                 f"expected one of {[member.value for member in AnnotationMode]}",
-                invariant="detection_unrecognised_annotation_mode",
+                invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
             ) from None
     raise ManifestError(
         f"unrecognised annotation_mode {value!r}; "
         f"expected one of {[member.value for member in AnnotationMode]}",
-        invariant="detection_unrecognised_annotation_mode",
+        invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
     )
 
 

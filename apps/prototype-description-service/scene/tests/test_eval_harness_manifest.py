@@ -16,6 +16,7 @@ from scripts.eval_harness.manifest import (
     ManifestError,
     ReferenceFact,
     RubricEmptyWarning,
+    ScoreInvariant,
     SliceTag,
     load_manifest,
 )
@@ -924,7 +925,7 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
         )
     )
     # roster_only score-face raises via the CLI wrapper; pin the invariant.
-    with pytest.raises(SystemExit, match="detection_refuses_roster_only") as exc_info:
+    with pytest.raises(SystemExit, match=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY) as exc_info:
         cli_mod.main(
             ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
         )

@@ -137,6 +137,9 @@ export const IdentityClusterItem = ({
     options,
     isLoading: suggestionsLoading,
     findClusterByLabel,
+    atRestTotal = 0,
+    atRestTruncated = false,
+    atRestShown = 0,
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
     enabled: editState.isEditing,
@@ -362,6 +365,9 @@ export const IdentityClusterItem = ({
             onCancel={handleCancel}
             onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}
             saveLabel={saveLabel}
+            atRestTotal={atRestTotal}
+            atRestTruncated={atRestTruncated}
+            atRestShown={atRestShown}
           />
         )}
       </div>

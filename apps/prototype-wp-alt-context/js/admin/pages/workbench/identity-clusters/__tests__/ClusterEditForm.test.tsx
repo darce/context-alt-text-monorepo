@@ -303,6 +303,48 @@ describe('ClusterEditForm', () => {
     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
   });
 
+  it('shows an at-rest incomplete-list hint from envelope total, not option count (REV1-01)', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        atRestTruncated
+        atRestShown={50}
+        atRestTotal={80}
+      />,
+    );
+
+    expect(screen.getByText('Showing 50 of 80 labels — type to search for more')).toBeInTheDocument();
+  });
+
+  it('hides the at-rest incomplete-list hint once the operator types 2+ characters', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="To"
+        atRestTruncated
+        atRestShown={50}
+        atRestTotal={80}
+      />,
+    );
+
+    expect(screen.queryByText('Showing 50 of 80 labels — type to search for more')).not.toBeInTheDocument();
+  });
+
+  it('does not invent an incomplete-list hint when the at-rest page is complete', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        atRestTruncated={false}
+        atRestShown={12}
+        atRestTotal={12}
+      />,
+    );
+
+    expect(screen.queryByText(/Showing \d+ of \d+ labels/)).not.toBeInTheDocument();
+  });
+
   it('threads option.suggestion_id into onConfirmSuggestion (BR-16 / L1R-01)', async () => {
     // Predicted first failure on f54f7c87 production: called with (clusterId, label) only —
     // confirm branch dropped option.suggestion_id so the pending row was never resolved by id.

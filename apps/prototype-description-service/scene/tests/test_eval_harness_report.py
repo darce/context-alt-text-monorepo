@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
 from scripts.eval_harness.report import (
     DIRECTIONAL_LABEL,
     FACE_BAKEOFF_CANON_VERSION,
@@ -837,6 +838,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -849,6 +851,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -861,6 +864,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],  # stranger
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "localwp", "license": "consented", "publishable": False},
             },
         ],
@@ -926,7 +930,7 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     assert keys == sorted(keys)
 
 
-def test_zero_box_corpus_all_directional():
+def _zero_box_face_fixture(*, stamp: bool) -> tuple[dict, dict]:
     face_run = {
         "schema": "acx-eval/v1",
         "kind": DocKind.FACE_RUN_RECORD.value,
@@ -942,23 +946,45 @@ def test_zero_box_corpus_all_directional():
             }
         ],
     }
+    entry = {
+        "path": "x.jpg",
+        "media_id": 1,
+        "face_count": 0,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    if stamp:
+        entry["annotation_mode"] = "exhaustive"
     manifest = {
         "annotation_mode": "exhaustive",
         "roster": [],
         "roster_cohorts": {},
-        "entries": [
-            {
-                "path": "x.jpg",
-                "media_id": 1,
-                "face_count": 0,
-                "present_identities": [],
-                "must_right": [],
-                "easy_wrong": [],
-                "policy": {"recognition_enabled": True},
-                "face_boxes": [],
-            }
-        ],
+        "entries": [entry],
     }
+    return face_run, manifest
+
+
+def test_zero_box_corpus_all_directional():
+    """S2R3-02: parent exhaustive + unstamped 0-box entry must refuse.
+
+    A document-level mode is a caller assertion, not per-entry evidence.
+    The old expectation scored this fixture (fill minted exhaustive and
+    published directional zeros). The same unstamped entries through
+    score_run_record(..., annotation_mode='exhaustive') already refuse
+    with detection_requires_annotation_mode; the face path must match.
+    """
+    face_run, manifest = _zero_box_face_fixture(stamp=False)
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(face_run, manifest)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
+
+def test_stamped_zero_box_corpus_all_directional():
+    """Zero-box directional still holds when the entry carries exhaustive."""
+    face_run, manifest = _zero_box_face_fixture(stamp=True)
     scored = score_face_run_record(face_run, manifest)
     assert scored["provenance"]["zero_box_corpus"] is True
     assert scored["slices"]["headline_identification"]["directional"] is True
@@ -1012,6 +1038,7 @@ def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, name)],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
             }
         )
@@ -1119,6 +1146,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1144,6 +1172,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1174,6 +1203,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
                 _gt_box(0.25, 0.4, 0.3, 0.3, "Alice Example"),
                 _gt_box(0.7, 0.4, 0.3, 0.3, "Cara Example"),
             ],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1371,6 +1401,7 @@ def test_publishability_named_private_source_redacted():
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Jane Roster")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "operator", "license": "consented", "publishable": False},
             }
         )

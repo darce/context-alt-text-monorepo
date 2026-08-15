@@ -37,7 +37,6 @@ from scripts.eval_harness.report import (
     _invariant_is,
     _mode_restrictiveness,
     _resolve_score_annotation_mode,
-    _stamp_missing_annotation_mode,
     build_reports,
     score_face_run_record,
     score_run_record,
@@ -623,18 +622,28 @@ _OMIT = object()
 
 
 def test_stamp_does_not_fill_blank_or_whitespace_entry_mode() -> None:
-    """S2R3-02: blank/whitespace is not inheritable; only omitted/None fill."""
-    entries = [
-        {"annotation_mode": ""},
-        {"annotation_mode": "   "},
-        {"annotation_mode": None},
-        {},
-    ]
-    _stamp_missing_annotation_mode(entries, "exhaustive")
+    """S2R3-02: a raw-mapping parent mode is not per-entry evidence.
+
+    Previously None / omitted were filled to the parent (exhaustive),
+    which is the same widening ``score_run_record(..., annotation_mode=
+    'exhaustive')`` already refuses. Blank/whitespace stay explicit
+    empty tokens. None / omitted stay absent — they are not inherited.
+    """
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": [],
+        "entries": [
+            {"annotation_mode": ""},
+            {"annotation_mode": "   "},
+            {"annotation_mode": None},
+            {},
+        ],
+    }
+    entries, _, _ = _entries_as_dicts(manifest)
     assert entries[0]["annotation_mode"] == ""
     assert entries[1]["annotation_mode"] == "   "
-    assert entries[2]["annotation_mode"] == "exhaustive"
-    assert entries[3]["annotation_mode"] == "exhaustive"
+    assert entries[2]["annotation_mode"] is None
+    assert "annotation_mode" not in entries[3]
 
 
 def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
@@ -656,13 +665,11 @@ def test_blank_entry_stamp_is_not_inherited_from_exhaustive_parent() -> None:
 
 
 def test_stamp_does_not_overwrite_roster_only_when_parent_is_exhaustive() -> None:
-    """TEST-15 / S2R3-03: fill-missing must not overwrite a real stamp.
+    """TEST-15 / S2R3-03: a raw-mapping flatten must not overwrite a real stamp.
 
-    Mutating `_stamp_missing_annotation_mode` to always write
-    `entry["annotation_mode"] = mode_value` used to stay green: document
-    exhaustive + entry roster_only became exhaustive and
-    score_face_run_record returned zeros with no raise. This pin dies
-    on that overwrite mutant.
+    Stamping the parent exhaustive onto a roster_only entry would hide
+    the conflict and let score_face_run_record publish zeros. This pin
+    dies on that overwrite mutant.
     """
     manifest = {
         "annotation_mode": "exhaustive",

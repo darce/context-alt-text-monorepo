@@ -1458,21 +1458,18 @@ def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
     return parse_annotation_mode(raw)
 
 
-def _stamp_missing_annotation_mode(entries: list[dict[str, Any]], mode_value: str) -> None:
-    """Fill omitted entry stamps from the document mode. Never overwrite.
+def _stamp_typed_document_mode(entries: list[dict[str, Any]], mode_value: str) -> None:
+    """Stamp the loaded document mode onto GoldenEntry dumps.
 
-    A blank or whitespace-only string is not omitted: it is an explicit
-    empty token and is not inheritable (S2R3-02). Filling it would mint
-    the parent mode onto an entry that never carried it and reopen
-    exhaustive scoring on the face path. Leave the blank in place so the
-    resolver treats it as missing (same as omitted-after-resolve) and
-    refuses. Only a missing key or an explicit ``None`` is filled.
-    Overwriting a real stamp would hide a conflict; leaving a disagreeing
-    stamp lets the shared resolver apply most-restrictive-wins.
+    ``GoldenEntry`` has no ``annotation_mode`` field (S2R3-10). The
+    document-level field on a typed ``GoldenManifest`` *is* the loaded
+    contract (ADR-015). CLI ``_face_score_once`` passes that object
+    straight into ``build_face_reports``; without this stamp every
+    score-face run would refuse. This is a flatten, not a fill: raw
+    mappings never enter this helper (S2R3-02).
     """
     for entry in entries:
-        if entry.get("annotation_mode") is None:
-            entry["annotation_mode"] = mode_value
+        entry["annotation_mode"] = mode_value
 
 
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
@@ -1480,7 +1477,9 @@ def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, st
 
     Typed ``GoldenEntry`` cannot carry a per-entry stamp (S2R3-10): the
     field does not exist and ``extra="forbid"``. On a typed manifest this
-    therefore stamps the *document* mode onto every dumped entry. The
+    therefore stamps the *document* mode onto every dumped entry. A raw
+    mapping's parent ``annotation_mode`` is a caller assertion, not
+    per-entry evidence — it is not copied downward (S2R3-02). The
     per-entry lattice (mixed / disagreeing stamps) is raw-mapping-only.
     """
     mode = _annotation_mode_of(manifest)
@@ -1490,13 +1489,11 @@ def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, st
         roster_cohorts = dict(getattr(manifest, "roster_cohorts", {}) or {})
         roster = list(getattr(manifest, "roster", []) or [])
         if mode_value is not None:
-            _stamp_missing_annotation_mode(entries, mode_value)
+            _stamp_typed_document_mode(entries, mode_value)
         return entries, roster_cohorts, roster
     if isinstance(manifest, Mapping):
         raw_entries = list(manifest.get("entries") or [])
         entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in raw_entries]
-        if mode_value is not None:
-            _stamp_missing_annotation_mode(entries, mode_value)
         return entries, dict(manifest.get("roster_cohorts") or {}), list(manifest.get("roster") or [])
     # bare entry list
     entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in manifest]
@@ -1758,9 +1755,13 @@ def score_face_run_record(
     """
     _validate_face_record_kind(face_run_record)
     entries, roster_cohorts, _roster = _entries_as_dicts(manifest)
-    mode = _resolve_score_annotation_mode(_annotation_mode_of(manifest), entries)
+    parent = _annotation_mode_of(manifest)
+    mode = _resolve_score_annotation_mode(parent, entries)
     if mode is not AnnotationMode.EXHAUSTIVE:
-        if mode is AnnotationMode.ROSTER_ONLY:
+        # Parent roster_only may only *narrow* (fail closed). It must not
+        # mint exhaustive, but it still names the more specific refusal
+        # when raw-mapping entries carry no stamp of their own (S2R3-02).
+        if mode is AnnotationMode.ROSTER_ONLY or parent is AnnotationMode.ROSTER_ONLY:
             raise ManifestError(
                 "score_face_run_record refuses roster_only manifests; unlabeled "
                 "non-roster faces would be scored as false positives",

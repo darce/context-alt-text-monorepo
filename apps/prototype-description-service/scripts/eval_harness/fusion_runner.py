@@ -683,9 +683,10 @@ SCORER_ENTRY_KEYS: frozenset[str] = frozenset(
 def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     """Shapes expected by ``report.score_run_record`` / ``build_reports``.
 
-    Projects the scorer-contract keys and stamps the parent
-    ``annotation_mode``. The resolver reads the stamp (data wins); an
-    explicit kwarg cannot widen a ``roster_only`` stamp to exhaustive.
+    Projects the scorer-contract keys and fill-stamps the parent
+    ``annotation_mode`` only when the dump has no stamp of its own.
+    The resolver reads the stamp (data wins); an explicit kwarg cannot
+    widen a ``roster_only`` stamp to exhaustive.
     """
     mode = (
         manifest.annotation_mode.value
@@ -696,7 +697,8 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     for entry in manifest.entries:
         dumped = entry.model_dump()
         row = {key: dumped[key] for key in SCORER_ENTRY_KEYS if key in dumped}
-        row["annotation_mode"] = mode
+        stamp = dumped.get("annotation_mode")
+        row["annotation_mode"] = mode if stamp is None else stamp
         projected.append(row)
     return projected
 

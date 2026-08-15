@@ -19,6 +19,8 @@ Production modules **not** edited (gx4 / hx1 ownership): `describe_baseline.py`,
 
 **RED** (pre-fix bare per-file loop; permanent test `test_s4_02_pre_fix_naive_loop_leaves_mixed` encodes this path; GREEN production path is separate):
 
+> Rename note (VLM6-S6-02): that test is now `test_naive_per_file_replace_is_mixed_documents_why_journaling_is_needed`. It documents the motivating failure mode, not production behaviour; the real S4-02 guards are the sibling GREEN tests.
+
 ```
 === S4-02 RED (pre-fix bare per-file loop) ===
 raised: KeyboardInterrupt: kill after replace #1

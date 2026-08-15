@@ -8,8 +8,6 @@
 - score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-06T20:11:45Z
 - images: 37/37 scored, 0 failed
-- notes: Score-time fingerprint restored: numbers produced by scoring docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json against apps/prototype-description-service/scene/tests/seed/golden.json (score_manifest_sha256=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d) at code commit 45ee9e2ebe4d77d6df9cc9e97000b96c066e7d89. Fetch-time head_sha and started_at remain the original producer stamps. manifest_matches_fetch is false because the current golden differs from the fetch-time manifest.
-- notes: Identification/caption rebaseline disclosed: against the current golden this run scores faces.identification.true_rejections=10 (was 6) and caption.must_right_defined_images=37 / must_right_failed_images=34 (was 0 / 0). Those values are the current golden's score of the same run-record — the seed already carried 37 rubric rows. A detection-refusal republish also updated these axes; they are not a detection-metric change.
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
 
 ## Caption metrics (deterministic tier)
@@ -33,27 +31,7 @@
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 0.306
-- macro precision: 1.000 recall: 0.338
-- true rejections (strangers): 10
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=1.000 recall=0.071 (tp=1 fp=0 fn=13)
-- Cristina Quintana: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Kirstie Mccarrel: precision=1.000 recall=0.400 (tp=2 fp=0 fn=3)
-- Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
-- Maria Correonero: precision=1.000 recall=0.571 (tp=4 fp=0 fn=3)
-- Ryann Wiseman: precision=1.000 recall=0.333 (tp=1 fp=0 fn=2)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

@@ -22,6 +22,7 @@ from scripts.eval_harness.scan_stale_reports import (
     EXIT_CLEAN,
     EXIT_STALE,
     IdentVerdict,
+    REFUSED_IDENTIFICATION_KEYS,
     _has_metric_fields,
     classify_identification,
     provenance_contradictions,
@@ -119,6 +120,34 @@ def _refused_ident() -> dict:
         "precision": None,
         "recall": None,
         "per_identity": {},
+    }
+
+
+def _greenwashed_ident() -> dict:
+    """Refused stamp plus leftover identification metrics (F23-SCAN-01)."""
+    return {
+        "refused": True,
+        "invariant": "identification_refuses_unboxed_identity_claims",
+        "precision": None,
+        "recall": None,
+        "per_identity": {},
+        "macro_recall": 0.0,
+        "true_rejections": 1,
+        "wrong_names": ["Ada was called Bob"],
+        "tp": 0,
+        "fp": 2,
+        "fn": 1,
+    }
+
+
+def _refused_with_macro_precision() -> dict:
+    return {
+        "refused": True,
+        "invariant": "identification_refuses_unboxed_identity_claims",
+        "precision": None,
+        "recall": None,
+        "per_identity": {},
+        "macro_precision": 0.75,
     }
 
 
@@ -358,6 +387,134 @@ def test_has_metric_fields_is_key_presence_not_precision_value() -> None:
     assert leftover["precision"] is None
     assert _has_metric_fields(leftover) is True
     assert _has_metric_fields({"refused": True, "invariant": "x"}) is False
+
+
+def test_greenwashed_refusal_is_unrecognized(tmp_path: Path) -> None:
+    """A refused stamp that still names people it got wrong is not clean."""
+    repo = _init_repo(tmp_path)
+    _track(
+        repo,
+        "docs/tasks/vlm/greenwash-report.json",
+        _report(ident=_greenwashed_ident()),
+    )
+    _commit(repo, "add greenwash")
+    proc = _run_scanner(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == EXIT_STALE, combined
+    assert "UNRECOGNIZED" in combined
+    assert "greenwash-report.json" in combined
+    assert "still publishes" in combined
+    assert "macro_recall" in combined
+    assert "wrong_names" in combined
+    assert "true_rejections" in combined
+    assert "tp" in combined
+
+
+def test_classifier_flags_greenwashed_refusal() -> None:
+    verdict, reason = classify_identification(_greenwashed_ident())
+    assert verdict is IdentVerdict.UNRECOGNIZED
+    assert reason == (
+        "refused block still publishes fn, fp, macro_recall, "
+        "tp, true_rejections, wrong_names"
+    )
+
+
+def test_refused_with_macro_precision_is_unrecognized(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _track(
+        repo,
+        "docs/tasks/vlm/macro-greenwash-report.json",
+        _report(ident=_refused_with_macro_precision()),
+    )
+    _commit(repo, "add macro greenwash")
+    proc = _run_scanner(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == EXIT_STALE, combined
+    assert "UNRECOGNIZED" in combined
+    assert "macro-greenwash-report.json" in combined
+    assert "refused block still publishes macro_precision" in combined
+
+
+def test_classifier_flags_refused_macro_precision() -> None:
+    verdict, reason = classify_identification(_refused_with_macro_precision())
+    assert verdict is IdentVerdict.UNRECOGNIZED
+    assert reason == "refused block still publishes macro_precision"
+
+
+def test_refused_whitelist_tracks_scorer_emitted_keys() -> None:
+    """rg-015: scanner whitelist must match report.py's refused shape."""
+    from scripts.eval_harness.report import _refused_identification_metric
+
+    emitted = frozenset(
+        _refused_identification_metric(
+            "identification_refuses_unboxed_identity_claims"
+        )
+    )
+    expected = frozenset(
+        {
+            "refused",
+            "invariant",
+            "precision",
+            "recall",
+            "macro_precision",
+            "macro_recall",
+            "per_identity",
+            "true_rejections",
+            "excluded_images",
+            "wrong_names",
+            "ignored_wrong_names",
+        }
+    )
+    assert emitted == expected
+    assert REFUSED_IDENTIFICATION_KEYS == expected
+
+
+def test_scorer_emitted_refusal_classifies_clean() -> None:
+    from scripts.eval_harness.report import _refused_identification_metric
+
+    block = _refused_identification_metric(
+        "identification_refuses_unboxed_identity_claims"
+    )
+    verdict, reason = classify_identification(block)
+    assert verdict is IdentVerdict.REFUSED
+    assert reason == "explicit refusal"
+
+
+def test_absent_manifest_sha_is_not_a_contradiction(tmp_path: Path) -> None:
+    """Two reports that both omit score_manifest_sha256 do not share a SHA."""
+    repo = _init_repo(tmp_path)
+    _track(
+        repo,
+        "docs/tasks/vlm/a-report.json",
+        _report(ident=_refused_ident()),
+    )
+    _track(
+        repo,
+        "docs/tasks/vlm/b-report.json",
+        _report(ident=_leftover_ident()),
+    )
+    _commit(repo, "add unprovenanced pair")
+    proc = _run_scanner(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == EXIT_STALE, combined
+    assert "SCORED" in combined
+    assert "PROVENANCE CONTRADICTIONS" not in combined
+    assert "sha256=(missing)" not in combined
+
+
+def test_provenance_helper_does_not_group_missing_sha() -> None:
+    refused = scan_payload(
+        "docs/a-report.json",
+        {"faces": {"identification": _refused_ident()}},
+    )
+    scored = scan_payload(
+        "docs/b-report.json",
+        {"faces": {"identification": _leftover_ident()}},
+    )
+    assert refused is not None and scored is not None
+    assert refused.score_manifest_sha256 is None
+    assert scored.score_manifest_sha256 is None
+    assert provenance_contradictions([refused, scored]) == {}
 
 
 def test_lazy_precision_predicate_misses_leftover_and_cannot_pass() -> None:

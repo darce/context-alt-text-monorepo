@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flag published eval reports whose identification block is still scored.
+"""Flag leftover uncomputed identification blocks in published reports.
 
 S2R3-08 closed in code: identification P/R must be refused when identity
 claims have no per-face box lineage. An earlier audit walked
@@ -8,18 +8,21 @@ claims have no per-face box lineage. An earlier audit walked
 ``precision: null`` with ``recall: 0.0`` and a populated per-identity
 table, so that scan reported clean.
 
-This guard flags **any** identification block that is not an explicit
-refusal (``refused is True``). A missing ``refused`` key, ``refused:
-null``, or ``refused: false`` is scored — including the
-``precision: null, recall: 0.0`` shape.
+This guard flags that leftover shape: an identification block that is
+not an explicit refusal (``refused is True``) and has ``precision``
+null. A numeric precision is a published score. The report JSON does
+not embed annotation_mode, box coverage, or lineage, so this scan
+**cannot** decide whether that score was honest — it only rejects the
+pre-S2R3-08 uncomputed leftover.
 
 Usage (from repo root):
 
     python3 scripts/check_published_identification.py
 
-Exit 0 if every published identification block is refused or absent;
-1 if any scored block is found or no report files were scanned; 2 if
-the git invocation itself fails.
+Exit 0 if every published identification block is an explicit refusal,
+absent, or a numeric score; 1 if any leftover uncomputed block is
+found or no report files were scanned; 2 if the git invocation itself
+fails.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def is_report_json(rel: str) -> bool:
 
 @dataclass(frozen=True)
 class IdentificationHit:
-    """One published identification block that is not an explicit refusal."""
+    """One leftover uncomputed identification block (null P, not refused)."""
 
     rel: str
     precision: Any
@@ -102,8 +105,21 @@ def identification_block(payload: Mapping[str, Any]) -> Mapping[str, Any] | None
 
 
 def is_refused_identification(ident: Mapping[str, Any]) -> bool:
-    """True only for an explicit refusal. Missing/null/false are scored."""
+    """True only for an explicit refusal. Missing/null/false are not."""
     return ident.get("refused") is True
+
+
+def is_leftover_uncomputed_identification(ident: Mapping[str, Any]) -> bool:
+    """True for the pre-S2R3-08 leftover: not refused, precision is null.
+
+    A numeric precision is a score. Honesty of that score (annotation
+    mode, box coverage, lineage) cannot be judged from the report
+    artifact alone — those fields live on the manifest, which published
+    reports do not embed.
+    """
+    if is_refused_identification(ident):
+        return False
+    return ident.get("precision") is None
 
 
 def per_identity_rows(ident: Mapping[str, Any]) -> int:
@@ -131,6 +147,8 @@ def scan_payload(rel: str, payload: Any) -> IdentificationHit | None:
     if ident is None:
         return None
     if is_refused_identification(ident):
+        return None
+    if not is_leftover_uncomputed_identification(ident):
         return None
     return scored_identification_hit(rel, ident)
 
@@ -187,9 +205,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if hits:
         print(
-            f"check_published_identification: {len(hits)} scored "
-            f"identification block(s) (examined {examined} across "
-            f"{len(paths)} files)",
+            f"check_published_identification: {len(hits)} leftover "
+            f"uncomputed identification block(s) (null precision, not "
+            f"refused; examined {examined} across {len(paths)} files). "
+            f"This scan does not judge honesty of a numeric score — "
+            f"the report does not embed annotation_mode / boxes / lineage.",
             file=sys.stderr,
         )
         for hit in hits:
@@ -198,7 +218,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"check_published_identification: ok — {examined} identification "
-        f"block(s) refused or absent ({len(paths)} report files scanned)"
+        f"block(s) refused, absent, or numeric "
+        f"({len(paths)} report files scanned; numeric scores are not "
+        f"judged honest from the report alone)"
     )
     return 0
 

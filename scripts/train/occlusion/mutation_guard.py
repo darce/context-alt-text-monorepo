@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2364  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2399  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1926,6 +1926,41 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_lxyolox_s-buffalo_l]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_scabcyolox:v0.3.0-buffalo_sc]',
     'test_license_policy.py::TestF17UnderscoreNcSeedGluedException::test_variant_shapes_deny[buffalo_sx_yoloxs-buffalo_s]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_a3_attributions_and_r21_gadgets_still_hold',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_additional_benign_names_still_admit',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_boundary_len_48_and_49_both_deny',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_boundary_segment_8_and_9_both_deny',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_exception_spelling_in_rem_sweep',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_extreme_unbounded_tokens_deny',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_glued_rem_after_peel_denies[buffalo_lxyoloxextra_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_glued_rem_after_peel_denies[buffalo_lxyoloxv8_3-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_glued_rem_after_peel_denies[fastsamxyoloxextra_v8-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_glued_rem_without_tail_stays_unknown_residual',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyolox_1_2_3_4_5_6_7_8_9-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyolox_onnxruntime_quantized_dynamic_opset_seventeen_batchsize-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyolox_tensorrt_fp16_engine_workspace_4096_calibration_entropy-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyolox_v8_3_onnx_tiny_extra_v9_fp16_trt_pt-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyolox_v8_tiny_onnx_int8_fp16_cpu_gpu_trt_final-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyoloxextra_v8-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_lxyoloxv8_3-buffalo_l-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[buffalo_scxyolox_onnx_tiny_int8_fp16_cpu_gpu_trt_final_v2-buffalo_sc-nc]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_a_b_c_d_e_f_g_h-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_ppyolo-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_ppyoloeplus-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_tiny-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yolof-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yolop-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yolopv2-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yolos-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yolox-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yoloxs-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_yolos_tiny-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyoloxextra_v8-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_exception_spelling_fail_open',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_len_cap_fail_open',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_segment_cap_fail_open',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_rem_length_span_sweep',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_wide_multi_segment_long_tail_sweep',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_absent_license_does_not_waive_the_denylist',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_registry_sourced_row_without_license_key_passes',
     'test_license_policy.py::TestFloorLicenceIsOptionalNotWaived::test_unregistered_id_without_license_still_fails_closed',
@@ -3804,6 +3839,20 @@ MUTATIONS: list[Mutation] = [
             "test_listed_multi_segment_rem_tail_gadgets_deny",
             "test_multi_segment_rem_tail_cross_product_sweep_denies",
             "test_red_proof_multi_segment_rem_owner_neuter",
+            # Wave F20 R22: fail-closed bound probes / sweeps / red-proofs.
+            "test_listed_r22_probes_deny",
+            "test_glued_rem_after_peel_denies",
+            "test_glued_rem_without_tail_stays_unknown_residual",
+            "test_extreme_unbounded_tokens_deny",
+            "test_boundary_len_48_and_49_both_deny",
+            "test_boundary_segment_8_and_9_both_deny",
+            "test_exception_spelling_in_rem_sweep",
+            "test_rem_length_span_sweep",
+            "test_wide_multi_segment_long_tail_sweep",
+            "test_a3_attributions_and_r21_gadgets_still_hold",
+            "test_red_proof_composed_rem_len_cap_fail_open",
+            "test_red_proof_composed_rem_segment_cap_fail_open",
+            "test_red_proof_composed_rem_exception_spelling_fail_open",
             # Wave F18 R20-02: F17 red-proofs / floor-miss contrast plus
             # two pre-F17 red-proofs that also die when hit always misses.
             "test_four_plus_suffix_junk_without_exception_is_floor_miss",
@@ -3888,6 +3937,14 @@ MUTATIONS: list[Mutation] = [
             "test_listed_rem_tail_gadgets_deny",
             # Wave F19 R21-01: listed multi-seg rem includes AGPL fastsam row.
             "test_listed_multi_segment_rem_tail_gadgets_deny",
+            # Wave F20 R22: AGPL fastsam probes/sweeps assert denylisted_package.
+            "test_listed_r22_probes_deny",
+            "test_glued_rem_after_peel_denies",
+            "test_extreme_unbounded_tokens_deny",
+            "test_multi_segment_rem_tail_cross_product_sweep_denies",
+            "test_rem_length_span_sweep",
+            "test_wide_multi_segment_long_tail_sweep",
+            "test_a3_attributions_and_r21_gadgets_still_hold",
             "test_fastsam_stacked_exception_names_stem",
             "test_yolobuffalo_l_is_yolo_head_plus_known_rem",
             "test_deny_seed_plus_pd_extension_still_denies",
@@ -4072,6 +4129,12 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_separate_rem_owner_neuter",
             # Wave F19 R21-01: multi-seg rem red-proof also pins glued rem.
             "test_red_proof_multi_segment_rem_owner_neuter",
+            # Wave F20 R22: red-proofs / A.3 pin also precondition on
+            # classify-owned glued rem (buffalo_lxyoloxextra).
+            "test_glued_rem_without_tail_stays_unknown_residual",
+            "test_red_proof_composed_rem_len_cap_fail_open",
+            "test_red_proof_composed_rem_segment_cap_fail_open",
+            "test_red_proof_composed_rem_exception_spelling_fail_open",
         ),
     ),
     Mutation(
@@ -4203,6 +4266,12 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_separate_rem_owner_neuter",
             # Wave F19 R21-01: multi-seg rem red-proof also pins glued rem.
             "test_red_proof_multi_segment_rem_owner_neuter",
+            # Wave F20 R22: red-proofs / A.3 pin also precondition on
+            # classify-owned glued rem (buffalo_lxyoloxextra).
+            "test_glued_rem_without_tail_stays_unknown_residual",
+            "test_red_proof_composed_rem_len_cap_fail_open",
+            "test_red_proof_composed_rem_segment_cap_fail_open",
+            "test_red_proof_composed_rem_exception_spelling_fail_open",
         ),
     ),
     Mutation(

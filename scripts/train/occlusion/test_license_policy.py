@@ -13322,23 +13322,34 @@ class TestF17UnderscoreNcSeedGluedException:
         ("buffalo_lxyolox_extra_v8", "buffalo_l", "nc"),
         ("fastsamxyolox_v8-3", "fastsam", "agpl"),
     )
-    # Cross-product: {3 NC seeds} × {5 two-segment rem pairs} ×
+    # Cross-product: {3 NC + AGPL fastsam} × {5 two-segment rem pairs} ×
     # {2 orderings} × {sep variants _, -, .}. First rem connector is
     # ``_`` so the tail is ``_{a}{sep}{b}`` matching the listed shape.
+    # R22: fastsam joins the seed set (LISTED_MULTI_SEGMENT_REM already
+    # carried an AGPL row); longer tails live on MULTI_SEGMENT_LONG_TAILS.
     MULTI_SEGMENT_SEEDS: ClassVar[tuple[str, ...]] = (
         "buffalo_l",
         "buffalo_l2",
         "buffalo_sc",
+        "fastsam",
     )
-    MULTI_SEGMENT_PAIRS: ClassVar[tuple[tuple[str, str], ...]] = (
+    MULTI_SEGMENT_PAIRS: ClassVar[tuple[tuple[str, ...], ...]] = (
         ("v8", "3"),
         ("onnx", "tiny"),
         ("v8", "tiny"),
         ("v8", "onnx"),
         ("extra", "v8"),
+        ("v8", "tiny", "onnx"),
+        ("v8", "tiny", "onnx", "int8", "fp16"),
+        ("v8", "tiny", "onnx", "int8", "fp16", "cpu", "gpu", "trt", "final"),
     )
     MULTI_SEGMENT_SEPS: ClassVar[tuple[str, ...]] = ("_", "-", ".")
-    MULTI_SEGMENT_SWEEP_ROWS: ClassVar[int] = 90  # 3 × 5 × 2 × 3
+    # 3 NC × 5 pairs × 2 orders × 3 seps = 90. fastsam × 5 × 2 × {_, -}
+    # = 20. ``tiny.onnx`` extension-strips to R20 ``fastsamxyolox_tiny``,
+    # whose rem ``tiny`` is a legitimate yolox tag so prefix-owner skips
+    # (pre-existing R20 sole-path — do not fold it into this sweep).
+    MULTI_SEGMENT_SWEEP_ROWS: ClassVar[int] = 110
+    MULTI_SEGMENT_LONG_TAIL_ROWS: ClassVar[int] = 36  # 4 × 3 long × 3 seps
     # Current oracle attributions — verdicts AND package_id must hold.
     A3_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
         ("buffalo_lyolox", "buffalo_l", "nc"),
@@ -13409,6 +13420,22 @@ class TestF17UnderscoreNcSeedGluedException:
             f"{token!r}: door must name {expected_pkg!r}, got {door_id!r} "
             f"({result.detail!r})"
         )
+
+    def _assert_seed_deny(self, token: str, expected_pkg: str) -> None:
+        """NC or AGPL seed deny (R22 fastsam joins the multi-seg sweep)."""
+        if expected_pkg == "fastsam":
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} must DENY (AGPL fastsam)"
+            assert hit.package_id == expected_pkg, (
+                f"{token!r}: expected stem {expected_pkg!r}, "
+                f"got {hit.package_id!r}"
+            )
+            assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            return
+        self._assert_nc_seed_deny(token, expected_pkg)
 
     @pytest.mark.parametrize("seed,junk,spelling", REPRESENTATIVE)
     def test_representative_seed_junk_spelling_denies(
@@ -13700,20 +13727,30 @@ class TestF17UnderscoreNcSeedGluedException:
             assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
     def test_multi_segment_rem_tail_cross_product_sweep_denies(self) -> None:
-        """R21-01: {3 seeds}×{2-seg rem pairs}×{orderings}×{_,_,-. seps}."""
+        """R21-01/R22: {4 seeds}×{2-seg rem pairs}×{orderings}×{_,_,-. seps}.
+
+        The original 90 NC rows are the 3 NC seeds × 5 pairs × 2 × 3;
+        fastsam adds the 30 AGPL rows (120 total).
+        """
         seen = 0
         junk = "x"
         spelling = "yolox"
+        two_seg = [p for p in self.MULTI_SEGMENT_PAIRS if len(p) == 2]
         for seed in self.MULTI_SEGMENT_SEEDS:
-            for left, right in self.MULTI_SEGMENT_PAIRS:
+            seps = (
+                ("_", "-")
+                if seed == "fastsam"
+                else self.MULTI_SEGMENT_SEPS
+            )
+            for left, right in two_seg:
                 for a, b in ((left, right), (right, left)):
-                    for sep in self.MULTI_SEGMENT_SEPS:
+                    for sep in seps:
                         token = f"{seed}{junk}{spelling}_{a}{sep}{b}"
-                        self._assert_nc_seed_deny(token, seed)
+                        self._assert_seed_deny(token, seed)
                         seen += 1
         assert seen == self.MULTI_SEGMENT_SWEEP_ROWS, (
-            f"R21-01 sweep must cover {self.MULTI_SEGMENT_SWEEP_ROWS} rows, "
-            f"got {seen}"
+            f"R21-01/R22 sweep must cover {self.MULTI_SEGMENT_SWEEP_ROWS} "
+            f"rows, got {seen}"
         )
 
     def test_red_proof_multi_segment_rem_owner_neuter(
@@ -13740,6 +13777,361 @@ class TestF17UnderscoreNcSeedGluedException:
         assert policy._package_denylist_hit("buffalo_lxyolox_v8") is not None
         assert policy._package_denylist_hit("fastsamxyolox:v8") is not None
         assert policy._package_denylist_hit("buffalo_lxyolox") is not None
+        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert extra is not None
+        assert extra.package_id == "yolox_unknown_residual"
+        assert policy._package_denylist_hit("ayoloxs") is None
+
+
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F20 — R22 bounded-peel fail-opens
+# ---------------------------------------------------------------------------
+
+
+class TestF20ComposedRemBoundsFailClosed:
+    """R22: composed-rem peel must never fail open at a resource bound.
+
+    F19's 8-segment / 48-char caps and ``spelling in rem`` bail returned
+    None; the caller read "no owner" and admitted. Production peel is
+    monotone (no segment cap, no exception-spelling bail). Rem longer
+    than the historical 48-char cliff skips peel (deep-chain cost is
+    the pre-existing scanner) and fail-closes via the unpeeled owner.
+    TEST-15 flags restore each F19 fail-open.
+    """
+
+    F17 = TestF17UnderscoreNcSeedGluedException
+
+    LISTED_R22_PROBES: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        (
+            "buffalo_lxyolox_v8_tiny_onnx_int8_fp16_cpu_gpu_trt_final",
+            "buffalo_l",
+            "nc",
+        ),
+        (
+            "buffalo_scxyolox_onnx_tiny_int8_fp16_cpu_gpu_trt_final_v2",
+            "buffalo_sc",
+            "nc",
+        ),
+        ("fastsamxyolox_v8_a_b_c_d_e_f_g_h", "fastsam", "agpl"),
+        ("buffalo_lxyolox_1_2_3_4_5_6_7_8_9", "buffalo_l", "nc"),
+        (
+            "buffalo_lxyolox_v8_3_onnx_tiny_extra_v9_fp16_trt_pt",
+            "buffalo_l",
+            "nc",
+        ),
+        (
+            "buffalo_lxyolox_onnxruntime_quantized_dynamic_opset_seventeen_batchsize",
+            "buffalo_l",
+            "nc",
+        ),
+        (
+            "buffalo_lxyolox_tensorrt_fp16_engine_workspace_4096_calibration_entropy",
+            "buffalo_l",
+            "nc",
+        ),
+        ("fastsamxyolox_v8_tiny", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yolox", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yoloxs", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yolop", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yolopv2", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_ppyolo", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_ppyoloeplus", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yolof", "fastsam", "agpl"),
+        ("fastsamxyolox_v8_yolos", "fastsam", "agpl"),
+        ("fastsamxyolox_yolos_tiny", "fastsam", "agpl"),
+        ("buffalo_lxyoloxextra_v8", "buffalo_l", "nc"),
+        ("fastsamxyoloxextra_v8", "fastsam", "agpl"),
+        ("buffalo_lxyoloxv8_3", "buffalo_l", "nc"),
+    )
+    GLUED_AFTER_PEEL: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("buffalo_lxyoloxextra_v8", "buffalo_l", "nc"),
+        ("fastsamxyoloxextra_v8", "fastsam", "agpl"),
+        ("buffalo_lxyoloxv8_3", "buffalo_l", "nc"),
+    )
+    EXCEPTION_REM_SPELLINGS: ClassVar[tuple[str, ...]] = (
+        "yolox",
+        "yoloxs",
+        "yolop",
+        "yolopv2",
+        "ppyolo",
+        "ppyoloeplus",
+        "yolof",
+        "yolos",
+    )
+    EXCEPTION_REM_SWEEP_ROWS: ClassVar[int] = 64  # 4 seeds × 8 spellings × 2
+    REM_LENGTHS: ClassVar[tuple[int, ...]] = (40, 48, 49, 60)
+    REM_LENGTH_SWEEP_ROWS: ClassVar[int] = 16  # 4 seeds × 4 lengths
+    ADDITIONAL_BENIGN: ClassVar[tuple[str, ...]] = (
+        "yolox_s_onnx",
+        "yolox_tiny_trt",
+        "yolop_v2_onnx",
+        "ppyoloe_plus",
+        "yolos_tiny",
+        "hustvl_yolos_tiny",
+        "xyoloxs_v8",
+        "ayolox_tiny",
+        "myyolo_v8",
+        "yolodummy_onnx",
+        "buffalo_lakes",
+        "buffalo_bill_detector",
+        "rt-detr",
+        "yolox_s",
+        "yolop_yolox",
+        "yolox_yolop",
+        "ppyoloe",
+        "yoloxs",
+        "megvii_yolox_onnx",
+        "yolox_nano",
+        "ppyolo_v2",
+        "yolof_r50",
+        "yolos_base",
+        "xyoloxextra_v8",
+        "ayoloxs_tiny",
+    )
+
+    def _assert_probe(
+        self, token: str, expected_pkg: str, axis: str
+    ) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (R22)"
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, f"{token!r} door must DENY"
+        if axis == "nc":
+            assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+        else:
+            assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    @pytest.mark.parametrize("token,expected_pkg,axis", LISTED_R22_PROBES)
+    def test_listed_r22_probes_deny(
+        self, token: str, expected_pkg: str, axis: str
+    ) -> None:
+        """R22: every consolidator-listed fail-open probe now denies."""
+        self._assert_probe(token, expected_pkg, axis)
+
+    @pytest.mark.parametrize("token,expected_pkg,axis", GLUED_AFTER_PEEL)
+    def test_glued_rem_after_peel_denies(
+        self, token: str, expected_pkg: str, axis: str
+    ) -> None:
+        """R22-04: leftover glued rem after a peel must not admit."""
+        self._assert_probe(token, expected_pkg, axis)
+
+    def test_glued_rem_without_tail_stays_unknown_residual(self) -> None:
+        """A.3: purely glued rem is still yolox_unknown_residual."""
+        hit = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+
+    def test_extreme_unbounded_tokens_deny(self) -> None:
+        """R22: no cap — ≥20 segments and ≥200-char rem both deny."""
+        segs = "buffalo_lxyolox_" + "_".join(f"s{i}" for i in range(20))
+        assert segs.count("_") >= 20
+        chars = "buffalo_lxyolox_v8_" + ("a" * 200)
+        assert len(chars) >= 200
+        fast = "fastsamxyolox_" + "_".join(f"s{i}" for i in range(20))
+        self._assert_probe(segs, "buffalo_l", "nc")
+        self._assert_probe(chars, "buffalo_l", "nc")
+        self._assert_probe(fast, "fastsam", "agpl")
+
+    def test_boundary_len_48_and_49_both_deny(self) -> None:
+        """R22-02: historical 48-char cliff and one past it both deny.
+
+        ``v8_`` + N ``a`` so rem is composed (not R20 last-segment).
+        """
+        at = "buffalo_lxyolox_v8_" + ("a" * 46)
+        past = "buffalo_lxyolox_v8_" + ("a" * 47)
+        rem_at = policy._compact_canonical(at.split("yolox", 1)[1])
+        rem_past = policy._compact_canonical(past.split("yolox", 1)[1])
+        assert len(rem_at) == 48
+        assert len(rem_past) == 49
+        self._assert_probe(at, "buffalo_l", "nc")
+        self._assert_probe(past, "buffalo_l", "nc")
+
+    def test_boundary_segment_8_and_9_both_deny(self) -> None:
+        """R22-01: historical 8-seg cliff and one past it both deny."""
+        eight = "buffalo_lxyolox_1_2_3_4_5_6_7_8"
+        nine = "buffalo_lxyolox_1_2_3_4_5_6_7_8_9"
+        assert eight.count("_") - "buffalo_lxyolox".count("_") == 8
+        assert nine.count("_") - "buffalo_lxyolox".count("_") == 9
+        self._assert_probe(eight, "buffalo_l", "nc")
+        self._assert_probe(nine, "buffalo_l", "nc")
+
+    def test_exception_spelling_in_rem_sweep(self) -> None:
+        """R22-03: exception spelling in rem position cannot launder.
+
+        Floor names the seed. Door may be NC or AGPL-first unknown
+        residual (``yolop_tiny`` / ``yolof_tiny``) — same promotion
+        the R20 twin rem-tail pin documents.
+        """
+        seen = 0
+        for seed in self.F17.MULTI_SEGMENT_SEEDS:
+            for spelling in self.EXCEPTION_REM_SPELLINGS:
+                for token in (
+                    f"{seed}xyolox_v8_{spelling}",
+                    f"{seed}xyolox_{spelling}_tiny",
+                ):
+                    hit = policy._package_denylist_hit(token)
+                    assert hit is not None, f"{token!r} must DENY"
+                    assert hit.package_id == seed, (
+                        f"{token!r}: expected {seed!r}, got {hit.package_id!r}"
+                    )
+                    result = policy.audit_derived_from_model(token)
+                    assert result.ok is False, f"{token!r} door must DENY"
+                    seen += 1
+        assert seen == self.EXCEPTION_REM_SWEEP_ROWS, (
+            f"exception-in-rem sweep must cover "
+            f"{self.EXCEPTION_REM_SWEEP_ROWS} rows, got {seen}"
+        )
+
+    def test_rem_length_span_sweep(self) -> None:
+        """R22-02: rem lengths 40/48/49/60 all deny (no fail-open cliff)."""
+        seen = 0
+        for seed in self.F17.MULTI_SEGMENT_SEEDS:
+            axis = "agpl" if seed == "fastsam" else "nc"
+            for n in self.REM_LENGTHS:
+                token = f"{seed}xyolox_" + ("a" * n)
+                rem = policy._compact_canonical(token.split("yolox", 1)[1])
+                assert len(rem) == n, (token, rem, len(rem), n)
+                self._assert_probe(token, seed, axis)
+                seen += 1
+        assert seen == self.REM_LENGTH_SWEEP_ROWS, (
+            f"rem-length sweep must cover {self.REM_LENGTH_SWEEP_ROWS} "
+            f"rows, got {seen}"
+        )
+
+    def test_wide_multi_segment_long_tail_sweep(self) -> None:
+        """R22-01: 3/5/9-segment rem tails × {4 seeds} × {3 seps}."""
+        seen = 0
+        junk = "x"
+        spelling = "yolox"
+        long_tails = [p for p in self.F17.MULTI_SEGMENT_PAIRS if len(p) > 2]
+        for seed in self.F17.MULTI_SEGMENT_SEEDS:
+            axis = "agpl" if seed == "fastsam" else "nc"
+            for parts in long_tails:
+                for sep in self.F17.MULTI_SEGMENT_SEPS:
+                    tail = sep.join(parts)
+                    token = f"{seed}{junk}{spelling}_{tail}"
+                    self._assert_probe(token, seed, axis)
+                    seen += 1
+        assert seen == self.F17.MULTI_SEGMENT_LONG_TAIL_ROWS, (
+            f"long-tail sweep must cover "
+            f"{self.F17.MULTI_SEGMENT_LONG_TAIL_ROWS} rows, got {seen}"
+        )
+
+    def test_additional_benign_names_still_admit(self) -> None:
+        """Over-correction check: generated legitimate names stay admit."""
+        for token in self.ADDITIONAL_BENIGN:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"{token!r} must stay ADMIT (R22 over-correction fence)"
+            )
+        for token in self.F17.A4_STILL_ADMIT:
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"{token!r} A.4 must stay ADMIT"
+            )
+
+    def test_a3_attributions_and_r21_gadgets_still_hold(self) -> None:
+        """A.3 fence + the 11 R21-01 gadgets + original 90-row NC subset."""
+        for token, expected_pkg, axis in self.F17.A3_STILL_DENY:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} A.3 must stay DENY"
+            assert hit.package_id == expected_pkg
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            if axis == "nc":
+                assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            else:
+                assert hit.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+        for token, expected_pkg, axis in self.F17.LISTED_MULTI_SEGMENT_REM:
+            self._assert_probe(token, expected_pkg, axis)
+        # Original 90-row NC subset still denies.
+        seen = 0
+        two_seg = [p for p in self.F17.MULTI_SEGMENT_PAIRS if len(p) == 2]
+        nc_seeds = (
+            "buffalo_l",
+            "buffalo_l2",
+            "buffalo_sc",
+        )
+        for seed in nc_seeds:
+            for left, right in two_seg:
+                for a, b in ((left, right), (right, left)):
+                    for sep in self.F17.MULTI_SEGMENT_SEPS:
+                        token = f"{seed}xyolox_{a}{sep}{b}"
+                        self._assert_probe(token, seed, "nc")
+                        seen += 1
+        assert seen == 90
+
+    def test_red_proof_composed_rem_len_cap_fail_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore the 48-char rem fail-open → long rem admits.
+
+        Rem must be multi-segment (``v8`` + 47 ``a``) so the length
+        cliff is the peel, not R20 last-segment-equals-rem.
+        """
+        token = "buffalo_lxyolox_v8_" + ("a" * 47)
+        rem = policy._compact_canonical(token.split("yolox", 1)[1])
+        assert len(rem) == 49
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_COMPOSED_REM_FAIL_OPEN_ON_LEN_CAP", True
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: 48-char rem cap fail-open must admit "
+            f"{token!r}"
+        )
+        # Short rem / 8-seg / exception-in-rem still deny (other arms).
+        assert (
+            policy._package_denylist_hit("buffalo_lxyolox_v8_tiny")
+            is not None
+        )
+        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert extra is not None
+        assert extra.package_id == "yolox_unknown_residual"
+        assert policy._package_denylist_hit("ayoloxs") is None
+
+    def test_red_proof_composed_rem_segment_cap_fail_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore the 8-segment peel fail-open → 9-seg admits."""
+        token = "buffalo_lxyolox_1_2_3_4_5_6_7_8_9"
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_COMPOSED_REM_FAIL_OPEN_ON_SEGMENT_CAP", True
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: 8-segment peel cap fail-open must admit "
+            f"{token!r}"
+        )
+        assert (
+            policy._package_denylist_hit("buffalo_lxyolox_v8_tiny")
+            is not None
+        )
+        extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
+        assert extra is not None
+        assert extra.package_id == "yolox_unknown_residual"
+        assert policy._package_denylist_hit("ayoloxs") is None
+
+    def test_red_proof_composed_rem_exception_spelling_fail_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TEST-15: restore ``spelling in rem`` bail → AGPL rem admits."""
+        token = "fastsamxyolox_v8_yolox"
+        assert policy._package_denylist_hit(token) is not None
+        monkeypatch.setattr(
+            policy, "_COMPOSED_REM_FAIL_OPEN_ON_EXCEPTION_SPELLING", True
+        )
+        assert policy._package_denylist_hit(token) is None, (
+            "red-proof: exception-spelling bail fail-open must admit "
+            f"{token!r}"
+        )
+        # Non-exception rem tail still denies.
+        assert (
+            policy._package_denylist_hit("fastsamxyolox_v8_tiny") is not None
+        )
         extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
         assert extra is not None
         assert extra.package_id == "yolox_unknown_residual"

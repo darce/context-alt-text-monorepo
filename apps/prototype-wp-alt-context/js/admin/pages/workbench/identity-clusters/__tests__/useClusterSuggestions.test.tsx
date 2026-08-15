@@ -928,8 +928,6 @@ describe('useClusterSuggestions', () => {
 
       await waitFor(() => expect(result.current.atRestTruncated).toBe(true));
       expect(result.current.atRestTotal).toBe(80);
-      expect(result.current.atRestShown).toBe(50);
-      expect(result.current.atRestTotal).not.toBe(result.current.atRestShown);
 
       queryClient.clear();
     });
@@ -1091,11 +1089,10 @@ describe('useClusterSuggestions', () => {
       queryClient.clear();
     });
 
-    it('drops the editable cluster from atRestShown while preserving envelope total', async () => {
+    it('drops the editable cluster from the at-rest page while preserving envelope total', async () => {
       // Self-exclusion is locked twice: the at-rest select filter and
-      // buildNamingOptions({ excludeClusterId }). atRestShown is post-filter
-      // page length; atRestTotal is the envelope total. Together they pin the
-      // select lock independently of the builder.
+      // buildNamingOptions({ excludeClusterId }). atRestTotal is the envelope
+      // total and stays independent of the filtered page.
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
@@ -1123,8 +1120,7 @@ describe('useClusterSuggestions', () => {
         { wrapper },
       );
 
-      await waitFor(() => expect(result.current.atRestShown).toBe(atRestPage.length - 1));
-      expect(result.current.atRestTotal).toBe(12);
+      await waitFor(() => expect(result.current.atRestTotal).toBe(12));
 
       queryClient.clear();
     });

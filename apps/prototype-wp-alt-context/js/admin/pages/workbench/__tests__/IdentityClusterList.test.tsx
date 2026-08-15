@@ -47,7 +47,6 @@ const loaderResultFrom = (
     findClusterByLabel: partial.findClusterByLabel ?? defaultFindClusterByLabel,
     atRestTotal: partial.atRestTotal ?? 0,
     atRestTruncated: partial.atRestTruncated ?? false,
-    atRestShown: partial.atRestShown ?? 0,
     isAtRestMode: partial.isAtRestMode ?? true,
   };
 };

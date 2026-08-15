@@ -62,8 +62,6 @@ export interface ClusterSuggestionsLoaderResult {
   atRestTotal: number;
   /** Envelope truncated flag from the at-rest labelled-cluster page. */
   atRestTruncated: boolean;
-  /** Filtered at-rest page size after excluding the editable cluster. */
-  atRestShown: number;
   /** True while the debounced input is below the typed-search minimum. */
   isAtRestMode: boolean;
 }
@@ -228,7 +226,6 @@ export const useClusterSuggestionsLoader = ({
     findClusterByLabel,
     atRestTotal: atRestLabeledClusters?.total ?? 0,
     atRestTruncated: atRestLabeledClusters?.truncated ?? false,
-    atRestShown: atRestLabeledClusters?.clusters.length ?? 0,
     isAtRestMode,
   };
 };

@@ -79,11 +79,10 @@ describe('useClusterSuggestionsLoader', () => {
       { wrapper },
     );
 
-    await waitFor(() => expect(result.current.atRestShown).toBe(40));
+    await waitFor(() => expect(result.current.atRestTotal).toBe(40));
     expect(result.current.isAtRestMode).toBe(true);
     expect(result.current.namingOptions).toHaveLength(NAMING_OPTIONS_LIMIT);
     expect(result.current.namingOptions.length).not.toBe(40);
-    expect(result.current.atRestTotal).toBe(40);
 
     queryClient.clear();
   });

@@ -88,6 +88,13 @@ describe('DurableFaceThumb [TEST-15]', () => {
     expect(container.querySelector('.acx-durable-face-thumb--error')).toBeNull();
   });
 
+  it('hideMissingLabel adds modifier class and keeps the accessible name', () => {
+    const { container } = render(<DurableFaceThumb source={{}} hideMissingLabel />);
+
+    expect(screen.getByRole('img', { name: 'Representative image unavailable' })).toBeInTheDocument();
+    expect(container.querySelector('.acx-durable-face-thumb--hide-missing-label')).toBeInTheDocument();
+  });
+
   it('missing state accessible names differ when callers pass distinct alts', () => {
     const { rerender } = render(<DurableFaceThumb source={{}} alt="Detected face (first cluster)" />);
     expect(screen.getByRole('img', { name: 'Detected face (first cluster) — image unavailable' })).toBeInTheDocument();

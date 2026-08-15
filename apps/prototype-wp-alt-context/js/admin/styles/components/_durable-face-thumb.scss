@@ -41,4 +41,8 @@
     padding: var(--acx-space-2);
     text-align: center;
   }
+
+  &--hide-missing-label &__fallback-label {
+    display: none;
+  }
 }

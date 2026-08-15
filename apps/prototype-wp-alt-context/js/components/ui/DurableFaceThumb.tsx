@@ -29,6 +29,8 @@ export interface DurableFaceThumbProps {
   shape?: 'circle' | 'square';
   className?: string;
   loading?: 'lazy' | 'eager';
+  /** Hide the visible missing-label (keep aria-label). Opt in for chips too small for the copy. */
+  hideMissingLabel?: boolean;
 }
 
 export const DurableFaceThumb = ({
@@ -39,6 +41,7 @@ export const DurableFaceThumb = ({
   shape = 'circle',
   className = '',
   loading,
+  hideMissingLabel = false,
 }: DurableFaceThumbProps): React.JSX.Element => {
   const { display, onBlobLoad, onBlobError, onCropLoad, onCropError, onUncroppedLoad, onUncroppedError } =
     useDurableFaceThumb(source);
@@ -50,7 +53,10 @@ export const DurableFaceThumb = ({
   const errorClass = display.isLoudError ? `${baseClass}--error` : '';
   const callerUncropped =
     display.mode === FACE_THUMB_MODE.uncropped && className !== '' ? `${className}--uncropped` : '';
-  const classes = [baseClass, stateClass, errorClass, className, callerUncropped].filter(Boolean).join(' ');
+  const hideMissingClass = hideMissingLabel ? `${baseClass}--hide-missing-label` : '';
+  const classes = [baseClass, stateClass, errorClass, hideMissingClass, className, callerUncropped]
+    .filter(Boolean)
+    .join(' ');
 
   if (display.state === AVATAR_STATE.missing) {
     return (

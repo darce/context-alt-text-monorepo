@@ -14301,6 +14301,174 @@ class TestF20ComposedRemBoundsFailClosed:
         assert policy._package_denylist_hit("ayoloxs") is None
 
 
+# ---------------------------------------------------------------------------
+# FIR-7 Wave F21 — R23 legitimate-tag laundering
+# ---------------------------------------------------------------------------
+
+
+class TestF21LegitimateTagCannotLaunderCompactHead:
+    """R23-01: ``{compact_head}x{exception}_{legit_tag}`` must not admit.
+
+    R20's legitimate-residual skip meant a single-segment legit rem
+    never consulted the prefix owner, and the unpeeled-owner fallback
+    is gated on ``rem != last_uk``. That is a primitive over the whole
+    tag catalogue, not a one-token residual.
+    """
+
+    COMPACT_HEAD_SEEDS: ClassVar[tuple[str, ...]] = (
+        "fastsam",
+        "yolor",
+        "yolov3",
+        "yolov4",
+        "yolov5",
+        "yolov6",
+        "yolov7",
+        "yolov9",
+        "yolo11",
+        "yolo12",
+        "arcface",
+        "scrfd",
+        "retinaface",
+        "vec2face",
+        "antelopev2",
+    )
+    NC_SEEDS: ClassVar[frozenset[str]] = frozenset(
+        {"arcface", "scrfd", "retinaface", "vec2face", "antelopev2"}
+    )
+    # Finding-listed tags plus every yolox family/export tag. Class
+    # coverage, not a fitted probe list.
+    YOLOX_LEGIT_TAGS: ClassVar[tuple[str, ...]] = (
+        "tiny",
+        "s",
+        "m",
+        "l",
+        "x",
+        "nano",
+        "onnx",
+        "trt",
+        "int8",
+        "fp16",
+        "pt",
+        "engine",
+        "darknet",
+        "darknet53",
+        "coco",
+        "voc",
+        "8xb8",
+        "pth",
+        "bin",
+    )
+    SIBLING_SHAPES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("fastsamxyolos_tiny", "fastsam"),
+        ("fastsamxppyolo_s", "fastsam"),
+        ("fastsamxyolop_v2", "fastsam"),
+        ("fastsamxyolof_r50", "fastsam"),
+        ("arcfacexyolos_tiny", "arcface"),
+        ("scrfdxppyolo_s", "scrfd"),
+        ("yolorxyolop_v2", "yolor"),
+        ("yolov5xyolof_r50", "yolov5"),
+    )
+    CONTRAST_STILL_DENY: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("fastsamxyolox_tiny_onnx", "fastsam", "agpl"),
+        ("fastsamxyoloxs", "fastsam", "agpl"),
+        ("fastsamxyolox_v8", "fastsam", "agpl"),
+        ("buffalo_lxyolox_tiny", "buffalo_l", "nc"),
+        ("insightfacexyolox_tiny", "insightface", "nc"),
+    )
+    EXTENSION_TWINS: ClassVar[tuple[str, ...]] = (".onnx", ".pt")
+
+    @staticmethod
+    def _stem_matches(got: str, seed: str) -> bool:
+        if got == seed:
+            return True
+        return got.replace("_", "") == seed.replace("_", "")
+
+    def _assert_seed_deny(self, token: str, seed: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must DENY (R23-01)"
+        assert self._stem_matches(hit.package_id, seed), (
+            f"{token!r}: expected stem {seed!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, f"{token!r} door must DENY"
+        if seed in self.NC_SEEDS:
+            assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+                f"{token!r}: expected nc door, got {result.reason}"
+            )
+        else:
+            assert (
+                result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+            ), f"{token!r}: expected agpl door, got {result.reason}"
+
+    def test_listed_yolox_legit_tags_cannot_launder_compact_heads(self) -> None:
+        """Every listed tag × compact-head seed denies as the seed."""
+        seen = 0
+        for seed in self.COMPACT_HEAD_SEEDS:
+            for tag in self.YOLOX_LEGIT_TAGS:
+                self._assert_seed_deny(f"{seed}xyolox_{tag}", seed)
+                seen += 1
+        assert seen == len(self.COMPACT_HEAD_SEEDS) * len(self.YOLOX_LEGIT_TAGS)
+
+    def test_extension_twins_cannot_launder(self) -> None:
+        """``.onnx`` / ``.pt`` twins strip to the same deny."""
+        for seed in ("fastsam", "arcface", "yolov5", "scrfd"):
+            for tag in ("tiny", "s", "onnx", "pt"):
+                for ext in self.EXTENSION_TWINS:
+                    self._assert_seed_deny(f"{seed}xyolox_{tag}{ext}", seed)
+
+    def test_sibling_exception_families_cannot_launder(self) -> None:
+        for token, seed in self.SIBLING_SHAPES:
+            self._assert_seed_deny(token, seed)
+
+    def test_contrast_rows_still_deny(self) -> None:
+        for token, seed, axis in self.CONTRAST_STILL_DENY:
+            hit = policy._package_denylist_hit(token)
+            assert hit is not None, f"{token!r} contrast must stay DENY"
+            assert hit.package_id == seed
+            result = policy.audit_derived_from_model(token)
+            assert result.ok is False
+            if axis == "nc":
+                assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+            else:
+                assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+    def test_f13_exact_deny_prefix_stays_on_head_glue(self) -> None:
+        """``yolov8yolox_s`` stays yolov8 (F13 sole-path, not mid-prefix)."""
+        hit = policy._package_denylist_hit("yolov8yolox_s")
+        assert hit is not None and hit.package_id == "yolov8"
+        # Junk-prefix legit names stay admit.
+        for token in (
+            "ayoloxs",
+            "xyoloxs",
+            "ayolox_tiny",
+            "xyolox_tiny",
+            "yolox_tiny",
+            "yolox_s",
+            "yolos_tiny",
+            "ppyoloe_plus",
+            "megviiyolox",
+            "megvii_yolox",
+        ):
+            assert policy.audit_derived_from_model(token).ok is True, (
+                f"{token!r} must stay ADMIT (R23-01 over-correction)"
+            )
+
+    def test_catalogue_yolox_tags_on_fastsam_deny(self) -> None:
+        """Whole yolox separator inventory + shield tags, not a fitted list."""
+        tags = set(policy._EXCEPTION_FAMILY_SEPARATOR_TAGS["yolox"])
+        tags |= set(policy._NC_TRAILING_SHIELD_TAGS)
+        tags.discard("")
+        seen = 0
+        for tag in sorted(tags):
+            if not tag.isalnum() and tag not in {"8xb8", "8x8"}:
+                # fold may rewrite punctuation; skip exotic
+                if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789" for ch in tag):
+                    continue
+            self._assert_seed_deny(f"fastsamxyolox_{tag}", "fastsam")
+            seen += 1
+        assert seen >= 20, f"catalogue sweep too small: {seen}"
+
+
 class TestF17StackedExceptionStemAttribution:
     """R19-03: stacked exception rem must not steal a deny-stem prefix.
 

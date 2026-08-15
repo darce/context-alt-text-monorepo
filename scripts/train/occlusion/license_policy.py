@@ -5072,9 +5072,11 @@ def _compact_mid_exception_deny_adjacency(
                 # empty-rem owner so ``buffalo_lxyolox_v8`` names
                 # ``buffalo_l``. Compact tokens that only gained ``_``
                 # from the rem tail (``fastsamxyolox:v8``) use the
-                # prefix owner, but not when rem is a legitimate
-                # family/export tag — ``yolov8yolox_s`` stays on
-                # head-known-rem glue (F13 red-proof sole-path).
+                # prefix owner. A legitimate family/export rem no
+                # longer skips a deny-(c) prefix (R23-01
+                # ``fastsamxyolox_tiny``). Exact folded deny/NC
+                # prefixes (``yolov8yolox_s``) stay on F13
+                # head-known-rem glue.
                 peeled = None
                 if has_sep and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED:
                     if _mid_exception_rem_is_trailing_segment(token, rem):
@@ -5108,7 +5110,19 @@ def _compact_mid_exception_deny_adjacency(
                         owned = _underscore_preserving_glued_seed_owner(
                             peeled
                         )
-                    elif not _is_legitimate_residual_segment(rem, _seed_c):
+                    # R23-01: a single-segment legitimate family/export
+                    # tag used to skip the prefix owner
+                    # (``fastsamxyolox_tiny`` / ``fastsamxyolos_tiny``
+                    # admitted). Consult it whenever the prefix is not
+                    # an exact folded deny/NC identity — those stay on
+                    # F13 head-known-rem glue (``yolov8yolox_s``).
+                    if owned is None and (
+                        not _is_legitimate_residual_segment(rem, _seed_c)
+                        or (
+                            prefix
+                            and not _deny_has_folded_ab_claim(prefix)
+                        )
+                    ):
                         owned = _mid_exception_prefix_deny_owner(prefix)
                     if owned is not None:
                         return owned

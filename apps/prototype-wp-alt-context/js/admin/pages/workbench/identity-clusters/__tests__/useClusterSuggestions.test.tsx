@@ -1089,10 +1089,11 @@ describe('useClusterSuggestions', () => {
       queryClient.clear();
     });
 
-    it('drops the editable cluster from the at-rest page while preserving envelope total', async () => {
-      // Self-exclusion is locked twice: the at-rest select filter and
-      // buildNamingOptions({ excludeClusterId }). atRestTotal is the envelope
-      // total and stays independent of the filtered page.
+    it('does not offer the editable cluster among naming options while preserving envelope total', async () => {
+      // Exclusion is enforced at two layers (the at-rest select filter and
+      // buildNamingOptions({ excludeClusterId })). This test pins the combined
+      // user-visible result rather than either layer alone. atRestTotal is the
+      // envelope total and stays independent of the filtered page.
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
@@ -1121,6 +1122,7 @@ describe('useClusterSuggestions', () => {
       );
 
       await waitFor(() => expect(result.current.atRestTotal).toBe(12));
+      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
 
       queryClient.clear();
     });

@@ -20,6 +20,27 @@ const hookWithPaintLog = (paints: FaceThumbDisplay[]) => {
 };
 
 describe('useDurableFaceThumb [TEST-15] [REV1-05]', () => {
+  it('reads a stale-key status as loading so a swap cannot inherit fallbackCrop or real [REV2-01]', () => {
+    const paints: FaceThumbDisplay[] = [];
+    const { result, rerender } = renderHook(hookWithPaintLog(paints), {
+      initialProps: { thumbUrl: BLOB_A, attachmentUrl: ATTACH_A, bbox: BBOX },
+    });
+
+    act(() => {
+      result.current.onBlobError();
+    });
+    expect(result.current.display.state).toBe(AVATAR_STATE.fallbackCrop);
+
+    const beforeSwap = paints.length;
+    rerender({ thumbUrl: BLOB_B, attachmentUrl: ATTACH_B, bbox: BBOX });
+    const firstAfterSwap = paints[beforeSwap];
+
+    expect(firstAfterSwap?.state).toBe(AVATAR_STATE.loading);
+    expect(firstAfterSwap?.state).not.toBe(AVATAR_STATE.fallbackCrop);
+    expect(firstAfterSwap?.state).not.toBe(AVATAR_STATE.real);
+    expect(firstAfterSwap?.src).toBe(BLOB_B);
+  });
+
   it('resets a prior blob error during render so the new dedicated url is not skipped', () => {
     const paints: FaceThumbDisplay[] = [];
     const { result, rerender } = renderHook(hookWithPaintLog(paints), {

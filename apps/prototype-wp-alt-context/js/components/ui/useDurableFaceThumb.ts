@@ -19,6 +19,11 @@ export interface UseDurableFaceThumbResult {
   onUncroppedError: () => void;
 }
 
+interface KeyedLoadStatus {
+  key: string;
+  status: LoadStatus;
+}
+
 const normalizedBboxKey = (bbox: FaceThumbSource['bbox']): string => {
   if (
     bbox == null ||
@@ -41,115 +46,54 @@ const dedicatedKeyFor = (source: FaceThumbSource): string =>
 const uncroppedKeyFor = (source: FaceThumbSource): string =>
   `${source.attachmentUrl ?? ''}|${source.mediaUrl ?? ''}|${source.thumbUrl ?? ''}`;
 
-const resetIfKeyChanged = (
-  currentKey: string,
-  seenKey: string,
-  setSeenKey: (key: string) => void,
-  nextStatus: LoadStatus,
-  setStatus: (status: LoadStatus) => void,
-): LoadStatus => {
-  if (currentKey === seenKey) {
-    return nextStatus;
-  }
-  setSeenKey(currentKey);
-  setStatus(nextStatus);
-  return nextStatus;
-};
+const keyedLoadStatus = (key: string, status: LoadStatus): KeyedLoadStatus => ({ key, status });
+
+const statusForCurrentKey = (keyed: KeyedLoadStatus, currentKey: string): LoadStatus =>
+  keyed.key === currentKey ? keyed.status : LOAD_STATUS.loading;
 
 export const useDurableFaceThumb = (source: FaceThumbSource): UseDurableFaceThumbResult => {
   const dedicatedKey = dedicatedKeyFor(source);
   const cropKey = cropKeyFor(source);
   const uncroppedKey = uncroppedKeyFor(source);
 
-  const [blobStatus, setBlobStatus] = React.useState<LoadStatus>(
-    dedicatedKey ? LOAD_STATUS.loading : LOAD_STATUS.idle,
+  const [blobState, setBlobState] = React.useState<KeyedLoadStatus>(() =>
+    keyedLoadStatus(dedicatedKey, dedicatedKey ? LOAD_STATUS.loading : LOAD_STATUS.idle),
   );
-  const [cropStatus, setCropStatus] = React.useState<LoadStatus>(LOAD_STATUS.idle);
-  const [uncroppedStatus, setUncroppedStatus] = React.useState<LoadStatus>(LOAD_STATUS.idle);
-
-  const [seenDedicatedKey, setSeenDedicatedKey] = React.useState(dedicatedKey);
-  const [seenCropKey, setSeenCropKey] = React.useState(cropKey);
-  const [seenUncroppedKey, setSeenUncroppedKey] = React.useState(uncroppedKey);
-
-  const liveDedicatedKey = React.useRef(dedicatedKey);
-  const liveCropKey = React.useRef(cropKey);
-  const liveUncroppedKey = React.useRef(uncroppedKey);
-  liveDedicatedKey.current = dedicatedKey;
-  liveCropKey.current = cropKey;
-  liveUncroppedKey.current = uncroppedKey;
-
-  const nextBlobStatus = resetIfKeyChanged(
-    dedicatedKey,
-    seenDedicatedKey,
-    setSeenDedicatedKey,
-    dedicatedKey !== seenDedicatedKey
-      ? dedicatedKey
-        ? LOAD_STATUS.loading
-        : LOAD_STATUS.idle
-      : blobStatus,
-    setBlobStatus,
+  const [cropState, setCropState] = React.useState<KeyedLoadStatus>(() =>
+    keyedLoadStatus(cropKey, LOAD_STATUS.idle),
   );
-  const nextCropStatus = resetIfKeyChanged(
-    cropKey,
-    seenCropKey,
-    setSeenCropKey,
-    cropKey !== seenCropKey ? LOAD_STATUS.idle : cropStatus,
-    setCropStatus,
-  );
-  const nextUncroppedStatus = resetIfKeyChanged(
-    uncroppedKey,
-    seenUncroppedKey,
-    setSeenUncroppedKey,
-    uncroppedKey !== seenUncroppedKey ? LOAD_STATUS.idle : uncroppedStatus,
-    setUncroppedStatus,
+  const [uncroppedState, setUncroppedState] = React.useState<KeyedLoadStatus>(() =>
+    keyedLoadStatus(uncroppedKey, LOAD_STATUS.idle),
   );
 
   const onBlobLoad = React.useCallback(() => {
-    if (liveDedicatedKey.current !== dedicatedKey) {
-      return;
-    }
-    setBlobStatus(LOAD_STATUS.loaded);
+    setBlobState(keyedLoadStatus(dedicatedKey, LOAD_STATUS.loaded));
   }, [dedicatedKey]);
 
   const onBlobError = React.useCallback(() => {
-    if (liveDedicatedKey.current !== dedicatedKey) {
-      return;
-    }
-    setBlobStatus(LOAD_STATUS.error);
+    setBlobState(keyedLoadStatus(dedicatedKey, LOAD_STATUS.error));
   }, [dedicatedKey]);
 
   const onCropLoad = React.useCallback(() => {
-    if (liveCropKey.current !== cropKey) {
-      return;
-    }
-    setCropStatus(LOAD_STATUS.loaded);
+    setCropState(keyedLoadStatus(cropKey, LOAD_STATUS.loaded));
   }, [cropKey]);
 
   const onCropError = React.useCallback(() => {
-    if (liveCropKey.current !== cropKey) {
-      return;
-    }
-    setCropStatus(LOAD_STATUS.error);
+    setCropState(keyedLoadStatus(cropKey, LOAD_STATUS.error));
   }, [cropKey]);
 
   const onUncroppedLoad = React.useCallback(() => {
-    if (liveUncroppedKey.current !== uncroppedKey) {
-      return;
-    }
-    setUncroppedStatus(LOAD_STATUS.loaded);
+    setUncroppedState(keyedLoadStatus(uncroppedKey, LOAD_STATUS.loaded));
   }, [uncroppedKey]);
 
   const onUncroppedError = React.useCallback(() => {
-    if (liveUncroppedKey.current !== uncroppedKey) {
-      return;
-    }
-    setUncroppedStatus(LOAD_STATUS.error);
+    setUncroppedState(keyedLoadStatus(uncroppedKey, LOAD_STATUS.error));
   }, [uncroppedKey]);
 
   const display = resolveFaceThumbDisplay(source, {
-    blobStatus: nextBlobStatus,
-    cropStatus: nextCropStatus,
-    uncroppedStatus: nextUncroppedStatus,
+    blobStatus: statusForCurrentKey(blobState, dedicatedKey),
+    cropStatus: statusForCurrentKey(cropState, cropKey),
+    uncroppedStatus: statusForCurrentKey(uncroppedState, uncroppedKey),
   });
 
   return {

@@ -178,11 +178,11 @@ describe('WorkbenchFindingsPanel', () => {
     expect(previewImgs).toHaveLength(2);
     expect(previewImgs[0]).toHaveAttribute('src', 'http://example.test/face-1.jpg');
     expect(previewImgs[0]).toHaveAttribute('alt', 'Grace Hopper');
-    expect(previewImgs[0]).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(previewImgs[0]).toHaveClass('acx-avatar__image');
     expect(previewImgs[1]).toHaveAttribute('src', 'http://example.test/face-2.jpg');
     expect(previewImgs[1]).toHaveAttribute('alt', 'Reference image');
-    expect(previewImgs[1]).toHaveClass('acx-durable-face-thumb__uncropped');
-    expect(avatarSpy).not.toHaveBeenCalled();
+    expect(previewImgs[1]).toHaveClass('acx-avatar__image');
+    expect(avatarSpy).toHaveBeenCalled();
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
 
     const primary = screen.getByRole('button', { name: /Review next/ });
@@ -810,11 +810,18 @@ describe('WorkbenchFindingsPanel', () => {
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(faceThumbnailSpy).not.toHaveBeenCalled();
-    expect(avatarSpy).not.toHaveBeenCalled();
+    expect(avatarSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src: mediaUrl,
+        sizePx: FINDINGS_PREVIEW_SIZE_PX,
+        alt: 'Reference image',
+        className: 'acx-findings-panel__preview acx-findings-panel__preview--uncropped',
+      }),
+    );
     const image = screen.getByAltText('Reference image');
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('src', mediaUrl);
-    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(image).toHaveClass('acx-avatar__image');
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(container.querySelector('.acx-findings-panel__preview--uncropped')).toBeInTheDocument();
   });

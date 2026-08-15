@@ -40,7 +40,7 @@ class ClusterFacadeTest extends TestCase {
 
 		$members_repo->expects( $this->once() )
 			->method( 'list_for_cluster_uuids' )
-			->with( ['uuid-1'], 4 )
+			->with( ['uuid-1'], IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER )
 			->willReturn( $members );
 
 		$result = $facade->list_top_unlabeled( $tenant_id, $limit );

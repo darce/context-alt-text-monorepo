@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -176,6 +177,24 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     call = curation_calls[-1]
     assert call["source_cluster_id"] == source.id
     assert target.id in call["cluster_ids"]
+
+
+def test_merge_cluster_rejects_reserved_target_label(api_client, tenant_id, fake_cluster_service) -> None:
+    from recognition.domain.cluster import ReservedClusterLabelError
+    from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
+
+    register_exception_handlers(api_client.app)
+    target = seed_cluster(fake_cluster_service, tenant_id, label="target")
+    source = seed_cluster(fake_cluster_service, tenant_id, label="source")
+    fake_cluster_service.merge_cluster = AsyncMock(side_effect=ReservedClusterLabelError("cluster-forbidden"))
+
+    response = api_client.post(
+        f"/recognition/clusters/{source.id}/merge",
+        json={"tenant_id": tenant_id, "target_cluster_id": target.id, "target_label": "cluster-forbidden"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "ReservedClusterLabelError"
 
 
 def test_merge_cluster_same_target_does_not_queue_followup(

@@ -17,11 +17,23 @@ export interface ClusterLabelMatch {
   id: string;
   label: string;
   identityCount?: number;
+  /** Pending suggestion id — when set, merge/assign resolve the suggestion by id (BR-16). */
+  suggestionId?: string;
 }
 
 interface ClusterMatchMutations {
-  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
-  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  merge: (
+    targetClusterId: string,
+    targetLabel?: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
+  assignToCluster: (
+    identityId: string,
+    targetClusterId: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
 }
 
 interface UseClusterMatchActionOptions {
@@ -85,12 +97,17 @@ export const useClusterMatchAction = ({
       }
 
       if (editableClusterId) {
-        mutations.merge(match.id, match.label, abortController.signal);
+        mutations.merge(match.id, match.label, abortController.signal, match.suggestionId);
         return true;
       }
 
       for (const member of members) {
-        mutations.assignToCluster(member.identity_id, match.id, abortController.signal);
+        mutations.assignToCluster(
+          member.identity_id,
+          match.id,
+          abortController.signal,
+          match.suggestionId,
+        );
       }
       return true;
     },

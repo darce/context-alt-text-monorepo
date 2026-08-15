@@ -20,6 +20,7 @@ export const useSuggestionReviewData = () => {
     assignmentQuery,
     mergeQuery,
     nameQuery,
+    topUnlabeledQuery,
     assignmentSuggestions,
     assignmentDataSource,
     mergeSuggestions,
@@ -67,6 +68,8 @@ export const useSuggestionReviewData = () => {
   // COR-3 (rg-015): no authoritative backlog total exists; count loaded suggestions.
   const assignmentCount = assignmentSuggestions?.length ?? 0;
   const hasNoSuggestionData = !assignmentQuery.data && !mergeQuery.data;
+  // Global initial-failure / isError stay assignment+merge only: a top-unlabeled
+  // outage must not blank the rest of the queue (partial degrade — AGT-10).
   const hasInitialFailure =
     (assignmentQuery.failureCount > 0 || mergeQuery.failureCount > 0) && hasNoSuggestionData;
   const isLoading =
@@ -74,7 +77,14 @@ export const useSuggestionReviewData = () => {
     ((assignmentQuery.isLoading && !assignmentQuery.data) ||
       (mergeQuery.isLoading && !mergeQuery.data));
   const isError = assignmentQuery.isError && mergeQuery.isError && hasNoSuggestionData;
-  const failureCount = Math.max(assignmentQuery.failureCount, mergeQuery.failureCount);
+  // Separate flag so CLUSTER cards / unlabeled section can error+retry without
+  // folding into isError (which blanks every control via isErrorBranch).
+  const isTopUnlabeledError = topUnlabeledQuery.isError;
+  const failureCount = Math.max(
+    assignmentQuery.failureCount,
+    mergeQuery.failureCount,
+    topUnlabeledQuery.failureCount,
+  );
   const tenantId = getConfig().tenant_id;
 
   // BR-15: do NOT fold isHoldActive into a global pending flag — that disabled every
@@ -119,6 +129,7 @@ export const useSuggestionReviewData = () => {
     hasInitialFailure,
     isLoading,
     isError,
+    isTopUnlabeledError,
     failureCount,
     tenantId,
     isAnyMutationPending,
@@ -132,6 +143,7 @@ export const useSuggestionReviewData = () => {
     refetchAssignment: () => assignmentQuery.refetch(),
     refetchMerge: () => mergeQuery.refetch(),
     refetchName: () => nameQuery.refetch(),
+    refetchTopUnlabeled: () => topUnlabeledQuery.refetch(),
     invalidateSuggestionQueries,
     invalidateMediaIdentities,
     mutations,

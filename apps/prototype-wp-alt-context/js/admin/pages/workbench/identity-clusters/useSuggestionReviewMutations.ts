@@ -48,13 +48,21 @@ export type SuggestionCommitKind =
   | 'acceptName'
   | 'rejectName';
 
-export type CommitHoldPhase = 'idle' | 'holding' | 'committing' | 'failed';
+/** Canonical single-hold commit phases [sr-007]. */
+export const COMMIT_HOLD_PHASE = {
+  IDLE: 'idle',
+  HOLDING: 'holding',
+  COMMITTING: 'committing',
+  FAILED: 'failed',
+} as const;
+
+export type CommitHoldPhase = (typeof COMMIT_HOLD_PHASE)[keyof typeof COMMIT_HOLD_PHASE];
 
 export interface CommitHoldState {
   phase: CommitHoldPhase;
   kind: SuggestionCommitKind | null;
   suggestionId: string | null;
-  /** User-facing failure copy when phase === 'failed'. */
+  /** User-facing failure copy when phase === FAILED. */
   errorMessage: string | null;
 }
 
@@ -74,7 +82,15 @@ export interface ScheduleCommitResult {
  * Slice 3 person-commit — fires immediately after flushing any held accept/reject
  * (no undo window; deliberate multi-step Confirm). Single-in-flight via chainRef.
  */
-export type PersonCommitPhase = 'idle' | 'committing' | 'succeeded' | 'failed';
+/** Canonical person-commit phases [sr-007]. */
+export const PERSON_COMMIT_PHASE = {
+  IDLE: 'idle',
+  COMMITTING: 'committing',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
+} as const;
+
+export type PersonCommitPhase = (typeof PERSON_COMMIT_PHASE)[keyof typeof PERSON_COMMIT_PHASE];
 
 export interface PersonCommitState {
   phase: PersonCommitPhase;

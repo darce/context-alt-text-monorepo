@@ -53,8 +53,10 @@ import {
   type ReviewQueueItem,
 } from './reviewQueueDriver';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
 import {
+  BULK_COMMIT_PHASE,
   useBulkReviewCommit,
   type BulkCommitItem,
 } from './useBulkReviewCommit';
@@ -62,8 +64,11 @@ import { useMergeSurvivors } from './MergeSurvivorContext';
 import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
+  COMMIT_HOLD_PHASE,
   HOLD_COMMITTING_STATUS_COPY,
   HOLD_STATUS_COPY,
+  PERSON_COMMIT_PHASE,
+  type CommitHoldPhase,
   type PersonCommitRequest,
   type PersonCommitResult,
   type PersonCommitState,
@@ -81,6 +86,12 @@ import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
  * [COG-03] not a true drain when filters hide work; [A11Y-06] second channel.
  */
 const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
+
+/** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
+const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled clusters.';
+
+/** Empty-queue position copy when the projection outage makes the count unmeasurable. */
+const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -554,13 +565,27 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
       if (!currentKey && previousItemKeyRef.current !== null) {
         previousItemKeyRef.current = null;
-        // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-        setLiveMessage(
-          __(
-            filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
-            'alt-context',
-          ),
-        );
+        // UI-04: drain copy is for a successful empty only — projection failure
+        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+        // [rg-003] the outage must not silence the filtered-empty announcement:
+        // when filters hide real work, AT hears both the failure and the hint
+        // that an escape hatch exists, matching the visual (both are rendered).
+        if (data.isTopUnlabeledError) {
+          const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
+          setLiveMessage(
+            filteredEmptyWithWork
+              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+              : errorCopy,
+          );
+        } else {
+          // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
+          setLiveMessage(
+            __(
+              filteredEmptyWithWork ? REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE : REVIEW_QUEUE_DRAIN_MESSAGE,
+              'alt-context',
+            ),
+          );
+        }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => {
@@ -570,6 +595,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
     }, [
       currentKey,
+      data.isTopUnlabeledError,
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       focusPrimaryInCard,
@@ -619,7 +645,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Bulk active: flush/wait sequence first, then any single hold, then navigate.
         if (bulk.isBulkActive) {
           void bulk.awaitBulkIdleOrFlush().then(() => {
-            if (data.hold.phase === 'holding') {
+            if (data.hold.phase === COMMIT_HOLD_PHASE.HOLDING) {
               void data.flushHeld().then(afterSingleFlush);
               return;
             }
@@ -629,7 +655,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
 
         // Original single-hold fast path (BR-16) — sync check, no bulk await.
-        if (data.hold.phase !== 'holding') {
+        if (data.hold.phase !== COMMIT_HOLD_PHASE.HOLDING) {
           navigate();
           return;
         }
@@ -676,7 +702,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const personCommitSurfacedOnCard =
       data.personCommit.clusterId != null && data.personCommit.clusterId === currentClusterId;
     const showQueuePersonCommitFallback =
-      (data.personCommit.phase === 'failed' || data.personCommit.phase === 'succeeded') &&
+      (data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED || data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED) &&
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
@@ -760,7 +786,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const personCommitSucceededOnCurrentCard =
       currentItem !== null &&
       isPersonCommitPrimaryKind(currentItem.kind) &&
-      data.personCommit.phase === 'succeeded' &&
+      data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED &&
       (data.personCommit.clusterId === null ||
         data.personCommit.clusterId === currentClusterId);
 
@@ -844,7 +870,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           />
         ) : null}
         <header className="acx-review-queue__header">
-          <h3 className="acx-review-queue__title">{__('Review Suggestions', 'alt-context')}</h3>
+          <h3 id="acx-workbench-queue-heading" className="acx-review-queue__title">
+            {__('Review Suggestions', 'alt-context')}
+          </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
               {length}
@@ -904,7 +932,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <div className="acx-review-queue__nav">
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
-                ? __('0 of 0', 'alt-context')
+                ? data.isTopUnlabeledError
+                  ? // [A11Y] a bare em dash announces as punctuation and loses the
+                    // position entirely; state the unmeasurable count explicitly.
+                    __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
+                  : __('0 of 0', 'alt-context')
                 : sprintf(
                     /* translators: 1: current 1-based position, 2: total */
                     __('%1$d of %2$d', 'alt-context'),
@@ -1026,7 +1058,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         ) : null}
 
-        {bulk.bulk.phase === 'holding' || bulk.bulk.phase === 'committing' ? (
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING || bulk.bulk.phase === BULK_COMMIT_PHASE.COMMITTING ? (
           <div
             className="acx-review-queue__hold acx-review-queue__bulk-hold"
             role="status"
@@ -1043,7 +1075,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             onPointerLeave={() => bulk.setBulkHoldPaused(false)}
           >
             <span className="acx-review-queue__hold-message">{bulk.bulkHoldAnnounce}</span>
-            {bulk.bulk.phase === 'holding' ? (
+            {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING ? (
               <button
                 type="button"
                 className="button acx-review-queue__undo"
@@ -1055,7 +1087,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         ) : null}
 
-        {bulk.bulk.phase === 'partial_failed' && bulk.bulk.partialFailure ? (
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED && bulk.bulk.partialFailure ? (
           <div
             className="acx-review-queue__failure acx-review-queue__bulk-failure"
             role="alert"
@@ -1084,7 +1116,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           {liveMessage}
         </div>
 
-        {showQueuePersonCommitFallback && data.personCommit.phase === 'failed' ? (
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED ? (
           <div
             className="acx-review-queue__person-commit-fallback acx-person-commit__failure"
             role="alert"
@@ -1105,7 +1137,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             </button>
           </div>
         ) : null}
-        {showQueuePersonCommitFallback && data.personCommit.phase === 'succeeded' ? (
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED ? (
           <div
             className="acx-review-queue__person-commit-fallback acx-person-commit--success"
             role="status"
@@ -1140,40 +1172,90 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               onRetry={() => void data.refetchAssignment().then(() => data.refetchMerge())}
             />
           ) : length === 0 || !currentItem ? (
-            filteredEmptyWithWork ? (
-              // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
-              <div className="acx-review-queue__empty">
-                <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => {
-                    onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                    onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-                  }}
+            // [rg-003] the outage and the Clear-filters escape hatch coexist: a
+            // top-unlabeled 500 must never remove a primary control that reaches
+            // real pending work. Only the true-drain copy is suppressed by it.
+            <>
+              {data.isTopUnlabeledError ? (
+                // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  {__('Clear filters', 'alt-context')}
-                </button>
-              </div>
-            ) : (
-              <p className="acx-review-queue__empty">
-                {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-              </p>
-            )
+                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
+              {filteredEmptyWithWork ? (
+                // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
+                <div className="acx-review-queue__empty">
+                  <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
+                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                    }}
+                  >
+                    {__('Clear filters', 'alt-context')}
+                  </button>
+                </div>
+              ) : data.isTopUnlabeledError ? null : (
+                <p className="acx-review-queue__empty">
+                  {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                </p>
+              )}
+            </>
           ) : suppressRetiredHead ? (
             <p className="acx-review-queue__retired" data-testid="acx-review-queue-retired-head">
               {liveMessage ?? __('This review target is no longer available.', 'alt-context')}
             </p>
           ) : (
+            <>
+              {data.isTopUnlabeledError &&
+              !(
+                currentItem.kind === NEXT_ACTION_KIND.CLUSTER &&
+                !topClustersById.has(currentItem.clusterId)
+              ) ? (
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
+                >
+                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
             <CurrentCard
               item={currentItem}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
               accentPrimary={!bulkCommitOwnsAccent}
+              // BR-35: same 1-based numbers as the visible position span; omit when the
+              // REVIEW_QUEUE_POSITION_UNAVAILABLE outage path makes count unmeasurable
+              // (length===0 — CurrentCard is not mounted then, but keep the gate explicit).
+              queuePosition={length > 0 ? safeIndex + 1 : undefined}
+              queueTotal={length > 0 ? length : undefined}
               assignmentById={assignmentById}
               mergeById={mergeById}
               nameById={nameById}
               topClustersById={topClustersById}
+              isTopUnlabeledError={data.isTopUnlabeledError}
+              onRetryTopUnlabeled={() => void data.refetchTopUnlabeled()}
               isCardPending={(suggestionId, kinds) =>
                 // BR-47: selected cards cannot open a single hold (bulk exclusion).
                 data.isCardPending(suggestionId, kinds) ||
@@ -1228,6 +1310,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : undefined
               }
             />
+            </>
           )}
         </div>
 
@@ -1259,10 +1342,20 @@ interface CurrentCardProps {
    * exactly one element carries the accent per viewport.
    */
   accentPrimary: boolean;
+  /**
+   * BR-35: 1-based queue position from the same state as the visible
+   * `%1$d of %2$d` chrome. Omit (with `queueTotal`) when position is unavailable.
+   */
+  queuePosition?: number;
+  /** BR-35: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
   assignmentById: Map<string, ReviewSuggestion>;
   mergeById: Map<string, PendingMergeSuggestion>;
   nameById: Map<string, PendingNameSuggestion>;
   topClustersById: Map<string, TopUnlabeledCluster>;
+  /** Projection outage on top-unlabeled — distinct from retired-cluster empty. */
+  isTopUnlabeledError: boolean;
+  onRetryTopUnlabeled: () => void;
   isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
   /** BR-47: title/reason when Accept/Reject disabled due to selection or bulk. */
   cardActionsDisabledReason: string | null;
@@ -1338,14 +1431,14 @@ export const CommitHoldRegion = ({
   onPausedChange,
   retryPending = false,
 }: {
-  phase: 'holding' | 'committing' | 'failed';
+  phase: Exclude<CommitHoldPhase, typeof COMMIT_HOLD_PHASE.IDLE>;
   errorMessage: string | null;
   onUndo: () => void;
   onRetry: () => void;
   onPausedChange: (paused: boolean) => void;
   retryPending?: boolean;
 }): React.JSX.Element => {
-  if (phase === 'failed') {
+  if (phase === COMMIT_HOLD_PHASE.FAILED) {
     return (
       <div className="acx-review-queue__failure" role="alert">
         <p className="acx-review-queue__failure-message">
@@ -1364,7 +1457,7 @@ export const CommitHoldRegion = ({
   }
 
   const holdMessage =
-    phase === 'committing' ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
+    phase === COMMIT_HOLD_PHASE.COMMITTING ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
 
   return (
     <div
@@ -1382,7 +1475,7 @@ export const CommitHoldRegion = ({
       onPointerLeave={() => onPausedChange(false)}
     >
       <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
-      {phase === 'holding' ? (
+      {phase === COMMIT_HOLD_PHASE.HOLDING ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}
         </button>
@@ -1394,10 +1487,14 @@ export const CommitHoldRegion = ({
 const CurrentCard = ({
   item,
   accentPrimary,
+  queuePosition,
+  queueTotal,
   assignmentById,
   mergeById,
   nameById,
   topClustersById,
+  isTopUnlabeledError,
+  onRetryTopUnlabeled,
   isCardPending,
   cardActionsDisabledReason,
   hold,
@@ -1447,12 +1544,18 @@ const CurrentCard = ({
     if (!holdMatchesCard(hold, kinds, suggestionId)) {
       return null;
     }
-    if (hold.phase === 'idle') {
+    if (hold.phase === COMMIT_HOLD_PHASE.IDLE) {
       return null;
     }
     return (
       <CommitHoldRegion
-        phase={hold.phase === 'failed' ? 'failed' : hold.phase === 'committing' ? 'committing' : 'holding'}
+        phase={
+          hold.phase === COMMIT_HOLD_PHASE.FAILED
+            ? COMMIT_HOLD_PHASE.FAILED
+            : hold.phase === COMMIT_HOLD_PHASE.COMMITTING
+              ? COMMIT_HOLD_PHASE.COMMITTING
+              : COMMIT_HOLD_PHASE.HOLDING
+        }
         errorMessage={hold.errorMessage}
         onUndo={undoHold}
         onRetry={() => {
@@ -1482,7 +1585,7 @@ const CurrentCard = ({
     const phaseForCard =
       personCommit.clusterId === null || personCommit.clusterId === clusterId
         ? personCommit.phase
-        : 'idle';
+        : PERSON_COMMIT_PHASE.IDLE;
     const errorForCard =
       personCommit.clusterId === clusterId ? personCommit.errorMessage : null;
     const isPrimary = isPersonCommitPrimaryKind(kind);
@@ -1499,7 +1602,7 @@ const CurrentCard = ({
         // BR-25: disable on schedule (personCommitPending), not only phase==='committing'.
         // BR-48: disable while bulk hold/sequence is active (ordering via awaitBulk).
         disabled={
-          personCommit.phase === 'committing' || personCommitPending || isBulkActive
+          personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
         }
         suggestedCreateName={options?.suggestedCreateName}
         onCommit={(request) => {
@@ -1557,6 +1660,9 @@ const CurrentCard = ({
           <SuggestionCard
             suggestion={suggestion}
             accentPrimary={accentPrimary}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
               runScheduled(() => scheduleAccept(suggestion.suggestionId));
@@ -1598,6 +1704,9 @@ const CurrentCard = ({
           <MergeSuggestionCard
             suggestion={suggestion}
             accentPrimary={accentPrimary}
+            // BR-35: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
             onAccept={() => {
               runScheduled(() => scheduleAcceptMerge(suggestion.id));
             }}
@@ -1630,11 +1739,16 @@ const CurrentCard = ({
       const afterAccept = hold.kind === 'acceptName' || hold.kind === null;
       // BR-29 belt: disable accept/reject while person-commit succeeded for this cluster.
       const namePersonCommitDone =
-        personCommit.phase === 'succeeded' && personCommit.clusterId === item.clusterId;
+        personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
       return (
-        <div
+        <ReviewCardGroupShell
+          kind="name"
+          labelId={`acx-name-pos-${suggestion.id}`}
+          // BR-41: pass ordinal only when both are defined (position chrome available).
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
           className="acx-suggestion-card acx-name-suggestion-card"
           data-testid="acx-review-card"
           data-review-kind="name"
@@ -1687,24 +1801,47 @@ const CurrentCard = ({
             </button>
             {!afterAccept ? nameHold : null}
           </div>
-        </div>
+        </ReviewCardGroupShell>
       );
     }
     case NEXT_ACTION_KIND.CLUSTER: {
       const cluster = topClustersById.get(item.clusterId);
       if (!cluster) {
+        // RLSE-05: projection 500 must not read as "cluster retired".
+        if (isTopUnlabeledError) {
+          return (
+            <div
+              className="acx-review-queue__error"
+              role="alert"
+              data-testid="acx-review-queue-top-unlabeled-error"
+            >
+              <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+              <button type="button" className="button" onClick={onRetryTopUnlabeled}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
+          );
+        }
         return (
           <p className="acx-review-queue__empty">{__('This cluster is no longer available.', 'alt-context')}</p>
         );
       }
       return (
-        <div data-testid="acx-review-card" data-review-kind="cluster">
+        <>
           {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
-          <TopClusterCard cluster={cluster} onLabel={() => undefined} isReadOnly onReview={onReview} />
+          <TopClusterCard
+            cluster={cluster}
+            onLabel={() => undefined}
+            isReadOnly
+            onReview={onReview}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+          />
           {personCommitFor(item.clusterId, NEXT_ACTION_KIND.CLUSTER, {
             suggestedCreateName: cluster.suggested_label,
           })}
-        </div>
+        </>
       );
     }
     default:

@@ -2,11 +2,6 @@ import { ChangeEvent, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WORKBENCH_MEDIA_STATUSES, type WorkbenchMediaStatus } from '../api/workbenchMediaApi';
 import {
-  APP_LINK_PARAMS,
-  parseMediaExpanded,
-  serializeMediaExpanded,
-} from '../navigation/appLinks';
-import {
   parseQueueState,
   serializeQueueState,
   type WorkbenchQueueState,
@@ -46,8 +41,6 @@ export const useWorkbenchFilters = () => {
     ? perPageParsed
     : DEFAULT_MEDIA_PAGE_SIZE;
   const statusFilter = parseWorkbenchMediaStatus(searchParams.get('status'));
-  // E21-10: media-table expand state (`media=expanded`; absent = collapsed-per-heuristic).
-  const mediaExpanded = parseMediaExpanded(searchParams.get(APP_LINK_PARAMS.media));
 
   // E21-5: review-queue position/filter/band (rq=<kind>.<band>.<index>).
   const queueState = useMemo(() => parseQueueState(searchParams.get('rq')), [searchParams]);
@@ -151,29 +144,6 @@ export const useWorkbenchFilters = () => {
 
   const getQueueState = useCallback((): WorkbenchQueueState => queueState, [queueState]);
 
-  /**
-   * Write `media=expanded` (or omit for collapsed default). Always replace so
-   * expand toggles do not pollute back/forward (NAV-11 sibling convention).
-   */
-  const setMediaExpanded = useCallback(
-    (expanded: boolean) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          const serialized = serializeMediaExpanded(expanded);
-          if (serialized === null) {
-            next.delete(APP_LINK_PARAMS.media);
-          } else {
-            next.set(APP_LINK_PARAMS.media, serialized);
-          }
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
 
   return {
@@ -189,7 +159,5 @@ export const useWorkbenchFilters = () => {
     queueState,
     getQueueState,
     setQueueState,
-    mediaExpanded,
-    setMediaExpanded,
   } as const;
 };

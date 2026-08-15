@@ -9,6 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
+import { isHumanLabeledTarget } from './suggestionProjection';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
 
@@ -16,8 +17,18 @@ export type { ClusterLabelMatch };
 
 interface ClusterSaveMutations {
   isPending: boolean;
-  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
-  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  merge: (
+    targetClusterId: string,
+    targetLabel?: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
+  assignToCluster: (
+    identityId: string,
+    targetClusterId: string,
+    signal?: AbortSignal,
+    suggestionId?: string,
+  ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
   createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
 }
@@ -99,6 +110,13 @@ export const useClusterSaveAction = ({
         setError(__('Provide a label before saving.', 'alt-context'));
         return false;
       }
+      // BR-55: shared sink rejects reserved machine labels (defense-in-depth).
+      if (!isHumanLabeledTarget(trimmed)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
+        return false;
+      }
       if (editableClusterId) {
         mutations.rename(trimmed, abortController.signal);
         return true;
@@ -132,6 +150,14 @@ export const useClusterSaveAction = ({
       // Exact dirty check (B6): "bob"→"Bob" proceeds; "Bob"→"Bob" still no-ops.
       if (currentLabel === canonical) {
         cancelEditing();
+        return;
+      }
+
+      // BR-55: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
+      if (!isHumanLabeledTarget(canonical)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
         return;
       }
 
@@ -198,6 +224,14 @@ export const useClusterSaveAction = ({
       // Exact dirty check (B6): case-only rename ("bob"→"Bob") must mutate.
       if (currentLabel === trimmed) {
         cancelEditing();
+        return;
+      }
+
+      // BR-49: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
+      if (!isHumanLabeledTarget(trimmed)) {
+        setError(
+          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+        );
         return;
       }
 

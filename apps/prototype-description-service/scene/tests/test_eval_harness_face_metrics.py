@@ -7,6 +7,8 @@ TEST-15: each metric has a can-fail fixture proven to go red.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -77,7 +79,6 @@ def test_detection_spurious_faces_on_empty_image():
     items = [ImageDetection(image="glacier.jpg", pred_faces=2, labeled_faces=0)]
     result = detection_pr(items)
     assert result.precision == 0.0
-    assert result.recall is None
 
 
 # --- identification level (named assertions vs labeled identities) ---
@@ -1428,3 +1429,47 @@ def test_latency_summary_schema_and_throughput():
     assert nearest_rank_percentile([1.0, 2.0, 10.0], 0.50) == 2.0
     with pytest.raises(ValueError):
         nearest_rank_percentile([], 0.5)
+
+
+# --- FIR-8: optional last-field matched_faces + bounds table ---
+
+
+def test_matched_faces_is_optional_last_field():
+    fields = dataclasses.fields(ImageDetection)
+    assert fields[-1].name == "matched_faces"
+    assert fields[-1].default is None
+    # Positional 3-arg construction must keep working (field added last).
+    row = ImageDetection("a.jpg", 3, 2)
+    assert row.matched_faces is None
+
+
+@pytest.mark.parametrize(
+    ("matched", "expect_ok", "fp", "fn"),
+    [
+        (0, True, 3, 2),   # (i) accepted; neither FP nor FN negative
+        (2, True, 1, 0),   # (ii) upper bound matched == min(pred, labeled) — load-bearing for <= vs <
+        (3, False, None, None),  # (iii) exceeds labeled
+        (-1, False, None, None),  # (iv) below 0
+        (None, True, 1, 0),  # (v) omitted → count-only legacy
+    ],
+)
+def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
+    if matched is None:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
+    else:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
+    if not expect_ok:
+        with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
+            detection_pr([item])
+        return
+    result = detection_pr([item])
+    assert result.false_positives == fp
+    assert result.false_negatives == fn
+    assert result.false_positives >= 0
+    assert result.false_negatives >= 0
+    if matched is None:
+        # VLM6-S7-02: carried over from a duplicate definition of this test that
+        # main shadowed (defined twice, so only the second was ever collected).
+        # Scoped to the count-only path on purpose — with matched_faces supplied
+        # recall IS computable, so the shadowed copy's unqualified form was wrong.
+        assert result.recall is None

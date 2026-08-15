@@ -34,6 +34,20 @@ collects each published `head_sha`, and runs
 `git rev-parse --verify <sha>^{commit}` on each. Exit 0 if every stamp
 resolves; exit 1 if any SHA is missing. Wired into `make lint-scripts`.
 
+## regen_eval_report.py
+
+Offline republish of one eval report from a named run-record + named
+manifest, using the description-service venv and
+`scripts.eval_harness.cli score`. Does not edit the scorer.
+
+```bash
+python3 scripts/regen_eval_report.py \
+  --run-record docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
+  --manifest apps/prototype-description-service/scene/tests/seed/golden.json \
+  --out-json docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.json \
+  --out-md docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md
+```
+
 ## Test Placement Policy
 
 Root-level doc-lock tests stay in `scripts/` when they validate monorepo-wide

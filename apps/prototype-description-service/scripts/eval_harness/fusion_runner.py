@@ -697,6 +697,30 @@ def main(argv: list[str] | None = None) -> int:
     # fusion_runner.py → eval_harness → scripts → service → apps → monorepo root
     parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parents[4] / "docs" / "tasks" / "20.0"))
     parser.add_argument("--limit", type=int, default=None)
+    from .cli import (
+        ALLOW_REFUSED_ALL,
+        REFUSED_METRIC_EXIT_CODE,
+        RefusedMetric,
+        _parse_allow_refused_metric,
+        collect_refused_metrics,
+        consented_refused_metrics,
+    )
+
+    named = ", ".join(member.value for member in RefusedMetric)
+    parser.add_argument(
+        "--allow-refused",
+        action="append",
+        nargs="?",
+        const=ALLOW_REFUSED_ALL,
+        type=_parse_allow_refused_metric,
+        metavar="METRIC",
+        help=(
+            "exit 0 for the named refused metric. Repeatable. "
+            f"Bare --allow-refused is equivalent to naming every metric ({named}). "
+            "Default: refused metrics exit 3 — a missing score is not "
+            "clean evaluation evidence"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -711,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
     modes: list[Mode] = ["staged", "adhoc"] if args.mode == "both" else [args.mode]  # type: ignore[list-item]
     entries = manifest_entries_as_dicts(manifest)
 
+    exit_code = 0
     for mode in modes:
         record = run_fusion_eval(manifest, mode=mode, head_sha=head, limit=args.limit)
         mis = score_misattachments(record, manifest)
@@ -740,8 +765,23 @@ def main(argv: list[str] | None = None) -> int:
         (out_dir / f"{stem}-report.md").write_text(md_report)
         (out_dir / f"{stem}-misattachment.json").write_text(json.dumps(mis, indent=2, sort_keys=True) + "\n")
         print(f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} → {out_dir / stem}-report.md")
+        scored = json.loads(json_report)
+        blocked = {
+            name: invariant
+            for name, invariant in collect_refused_metrics(scored).items()
+            if name not in consented_refused_metrics(args.allow_refused)
+        }
+        if blocked:
+            print(
+                f"fusion {mode} gate failed: refused metric(s) ("
+                + ", ".join(f"{name}={invariant}" for name, invariant in blocked.items())
+                + "); pass --allow-refused=METRIC to accept a run with no score "
+                "for those metrics (bare --allow-refused names every metric)",
+                file=sys.stderr,
+            )
+            exit_code = REFUSED_METRIC_EXIT_CODE
 
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

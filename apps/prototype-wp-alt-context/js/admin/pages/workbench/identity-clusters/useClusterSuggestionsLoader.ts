@@ -58,6 +58,12 @@ export interface ClusterSuggestionsLoaderResult {
   rosterError: boolean;
   /** Find cluster ID by label (case-insensitive); remote search only; BR-17 gated */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
+  /** Envelope total from the at-rest labelled-cluster page (never derived from clusters.length). */
+  atRestTotal: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated: boolean;
+  /** Filtered at-rest page size after excluding the editable cluster. */
+  atRestShown: number;
 }
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -139,7 +145,11 @@ export const useClusterSuggestionsLoader = ({
         offset: 0,
         labeled_only: true,
       }),
-    select: (response) => response.clusters.filter((cluster) => cluster.id !== editableClusterId),
+    select: (response) => ({
+      clusters: response.clusters.filter((cluster) => cluster.id !== editableClusterId),
+      total: response.total,
+      truncated: response.truncated,
+    }),
     enabled: Boolean(enabled && debouncedValue.length < 2),
     staleTime: 30000,
   });
@@ -149,7 +159,8 @@ export const useClusterSuggestionsLoader = ({
   const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
     // A11Y-24: roster error/empty degrade to cluster-only options.
     const roster = rosterError ? [] : rosterEntries;
-    const labeledClusters = debouncedValue.length >= 2 ? (labelMatches ?? []) : (atRestLabeledClusters ?? []);
+    const labeledClusters =
+      debouncedValue.length >= 2 ? (labelMatches ?? []) : (atRestLabeledClusters?.clusters ?? []);
     // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
     const namedMatches = labeledClusters.filter(
       (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
@@ -211,5 +222,8 @@ export const useClusterSuggestionsLoader = ({
     isLoading: suggestionsLoading || labelMatchesLoading || atRestLabeledLoading || (enabled && rosterLoading),
     rosterError,
     findClusterByLabel,
+    atRestTotal: atRestLabeledClusters?.total ?? 0,
+    atRestTruncated: atRestLabeledClusters?.truncated ?? false,
+    atRestShown: atRestLabeledClusters?.clusters.length ?? 0,
   };
 };

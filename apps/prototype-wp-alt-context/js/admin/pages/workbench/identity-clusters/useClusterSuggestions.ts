@@ -31,6 +31,12 @@ interface UseClusterSuggestionsReturn {
   collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
   /** Find cluster ID by label (case-insensitive); cluster-source options only (PR-16) */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
+  /** Envelope total from the at-rest labelled-cluster page. */
+  atRestTotal: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated: boolean;
+  /** Filtered at-rest page size after excluding the editable cluster. */
+  atRestShown: number;
 }
 
 export const selectClusterSuggestions = ({
@@ -170,6 +176,9 @@ export const useClusterSuggestions = ({
     collisionsByLabel,
     isLoading,
     findClusterByLabel: findClusterByLabelRemote,
+    atRestTotal,
+    atRestTruncated,
+    atRestShown,
   } = useClusterSuggestionsLoader({
     identityId,
     enabled,
@@ -200,5 +209,8 @@ export const useClusterSuggestions = ({
     isLoading,
     collisionsByLabel,
     findClusterByLabel,
+    atRestTotal,
+    atRestTruncated,
+    atRestShown,
   };
 };

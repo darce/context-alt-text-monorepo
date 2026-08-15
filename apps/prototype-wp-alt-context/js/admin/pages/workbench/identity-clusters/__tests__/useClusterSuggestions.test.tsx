@@ -891,6 +891,35 @@ describe('useClusterSuggestions', () => {
       queryClient.clear();
     });
 
+    it('threads envelope total/truncated instead of deriving them from page length (REV1-01)', async () => {
+      const { wrapper, queryClient } = createWrapper();
+      mockEmptySuggestions();
+      const page = Array.from({ length: 50 }, (_, index) => ({
+        ...baseCluster,
+        id: `cluster-${index}`,
+        label: `Label ${index}`,
+        identity_count: 1,
+      }));
+      vi.mocked(recognitionApi.listRecognitionClusters).mockResolvedValue({
+        clusters: page,
+        limit: 50,
+        total: 80,
+        truncated: true,
+      });
+
+      const { result } = renderHook(
+        () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: '', debounceMs: 0 }),
+        { wrapper },
+      );
+
+      await waitFor(() => expect(result.current.atRestTruncated).toBe(true));
+      expect(result.current.atRestTotal).toBe(80);
+      expect(result.current.atRestShown).toBe(50);
+      expect(result.current.atRestTotal).not.toBe(result.current.atRestShown);
+
+      queryClient.clear();
+    });
+
     it('excludes editableClusterId from the at-rest labelled list', async () => {
       // Predicted first failure (pre-fix): neither at-rest row appears. After the
       // at-rest fetch, the editable cluster must stay out of the assign dropdown.

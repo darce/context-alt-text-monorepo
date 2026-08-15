@@ -70,7 +70,9 @@ export const DurableFaceThumb = ({
         data-avatar-state={AVATAR_STATE.error}
         role="img"
         aria-label={__('Image failed to load', 'alt-context')}
-      />
+      >
+        <span className={`${baseClass}__fallback-label`}>{__('Image failed to load', 'alt-context')}</span>
+      </span>
     );
   }
 

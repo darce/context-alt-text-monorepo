@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { MediaMeta } from '../../api/mediaApi';
 import { cropFaceFromImage } from '../../../components/ui/cropFaceFromImage';
+import { isDedicatedFaceThumbUrl } from '../../../components/ui/isDedicatedFaceThumbUrl';
 
 /**
  * Structural minimum IdentityThumbnail actually reads.
@@ -83,7 +84,8 @@ export const IdentityThumbnail = ({
   const hostRef = React.useRef<HTMLSpanElement | null>(null);
   const sourceUrl = mediaMeta?.url ?? identity.attachment_url ?? identity.media_url ?? null;
   const cropOwnerId = thumbnailCropOwnerId(identity);
-  const effectiveThumbUrl = thumbFailed ? null : (identity.thumb_url ?? null);
+  const dedicatedThumbUrl = isDedicatedFaceThumbUrl(identity.thumb_url) ? (identity.thumb_url ?? null) : null;
+  const effectiveThumbUrl = thumbFailed ? null : dedicatedThumbUrl;
 
   React.useEffect(() => {
     setThumbFailed(false);

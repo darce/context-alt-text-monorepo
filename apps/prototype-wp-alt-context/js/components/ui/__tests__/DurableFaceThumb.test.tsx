@@ -83,6 +83,10 @@ describe('DurableFaceThumb [TEST-15]', () => {
 
     expect(container.querySelector('.acx-durable-face-thumb--error')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Image failed to load' })).toBeInTheDocument();
+    expect(screen.getByText('Image failed to load')).toBeInTheDocument();
+    expect(container.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent(
+      'Image failed to load',
+    );
   });
 
   it('data-avatar-state distinguishes fallback-crop vs missing vs error', async () => {

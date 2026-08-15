@@ -953,6 +953,14 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"withheld {redaction['withheld_items']} of {redaction['total_items']} items "
             "(local-only / non-publishable)"
         )
+    estimand = scored.get("estimand")
+    if estimand:
+        lines.append(
+            f"- estimand: population=`{estimand.get('population')}` — "
+            f"annotation_mode and coverage resolved on `{estimand.get('resolved_on')}` "
+            f"({estimand.get('n_items')} items / {estimand.get('n_entries')} entries); "
+            "not the unfiltered corpus"
+        )
     if "seeded" in model.get("adapters", []):
         lines.append(
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
@@ -1131,25 +1139,16 @@ def build_reports(
     (via ``Provenance.is_publishable``) and stamps a top-level ``redaction`` block
     so withheld local-only items are never silent.
 
-    Identification computability is evaluated against the UNFILTERED entry set
-    (S2R4-02). Withholding an unboxed sibling must not turn an uncomputable
-    metric into a published P/R.
+    A filtered artifact is a different estimand (S2R5-03). Annotation mode,
+    box coverage, and identification computability are resolved on the same
+    population the numbers are computed from. PUBLIC declares that population
+    in ``estimand``; it does not silently reuse an unfiltered refusal or
+    silently drop the evidence that would have refused a metric.
     """
-    try:
-        require_boxed_identification_gt(
-            _identification_metric_entries(
-                _scored_identification_entries(run_record, manifest_entries)
-            )
-        )
-    except ManifestError as exc:
-        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
-            raise
-        unfiltered_id_invariant = exc.invariant
-    else:
-        unfiltered_id_invariant = None
     score_record = run_record
     score_entries = manifest_entries
     redaction: dict[str, Any] | None = None
+    estimand: dict[str, Any] | None = None
     if audience is Audience.PUBLIC:
         total_items = len(run_record["items"])
         score_record, score_entries, withheld = _filter_for_public_audience(run_record, manifest_entries)
@@ -1157,6 +1156,15 @@ def build_reports(
             "audience": Audience.PUBLIC.value,
             "withheld_items": withheld,
             "total_items": total_items,
+        }
+        estimand = {
+            "audience": Audience.PUBLIC.value,
+            "population": "publishable_items",
+            "n_items": len(score_record["items"]),
+            "n_entries": len(score_entries),
+            "withheld_items": withheld,
+            "total_items": total_items,
+            "resolved_on": "publishable_items",
         }
     scored = score_run_record(
         score_record,
@@ -1166,12 +1174,10 @@ def build_reports(
         manifest_roster=manifest_roster,
         annotation_mode=annotation_mode,
     )
-    if unfiltered_id_invariant is not None:
-        scored["faces"]["identification"] = _refused_identification_metric(
-            unfiltered_id_invariant
-        )
     if redaction is not None:
         scored["redaction"] = redaction
+    if estimand is not None:
+        scored["estimand"] = estimand
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
 
 

@@ -3862,9 +3862,10 @@ MUTATIONS: list[Mutation] = [
             "test_rem_length_span_sweep",
             "test_wide_multi_segment_long_tail_sweep",
             "test_a3_attributions_and_r21_gadgets_still_hold",
-            "test_red_proof_composed_rem_len_cap_fail_open",
-            "test_red_proof_composed_rem_segment_cap_fail_open",
-            "test_red_proof_composed_rem_exception_spelling_fail_open",
+            "test_padded_prefix_segment_8_denies_9_and_12_deny",
+            "test_padded_prefix_len_48_and_49_both_deny",
+            "test_padded_prefix_exception_spelling_in_rem_denies",
+            "test_padded_prefix_glued_leftover_after_peel_denies",
             # Wave F21 R23: prefix×rem matrix / legit-tag launder / NC-door.
             "test_r22_02_padded_prefix_past_16_with_long_rem_denies",
             "test_r22_02_prefix_by_rem_matrix_denies",
@@ -3979,6 +3980,10 @@ MUTATIONS: list[Mutation] = [
             # Wave F21 R23: door-reason pins (AUDIT-08). exception-in-rem
             # sweep now asserts licence class, so it joins M16.
             "test_exception_spelling_in_rem_sweep",
+            "test_padded_prefix_segment_8_denies_9_and_12_deny",
+            "test_padded_prefix_len_48_and_49_both_deny",
+            "test_padded_prefix_exception_spelling_in_rem_denies",
+            "test_padded_prefix_glued_leftover_after_peel_denies",
             "test_r22_02_padded_prefix_past_16_with_long_rem_denies",
             "test_r22_02_prefix_by_rem_matrix_denies",
             "test_listed_yolox_legit_tags_cannot_launder_compact_heads",
@@ -4171,9 +4176,7 @@ MUTATIONS: list[Mutation] = [
             # Wave F20 R22: red-proofs / A.3 pin also precondition on
             # classify-owned glued rem (buffalo_lxyoloxextra).
             "test_glued_rem_without_tail_stays_unknown_residual",
-            "test_red_proof_composed_rem_len_cap_fail_open",
-            "test_red_proof_composed_rem_segment_cap_fail_open",
-            "test_red_proof_composed_rem_exception_spelling_fail_open",
+            "test_padded_prefix_glued_leftover_after_peel_denies",
             # Wave F21 R23-03: unknown-residual-without-NC-seed pin.
             "test_unknown_residual_without_nc_seed_stays_agpl",
         ),
@@ -4310,9 +4313,7 @@ MUTATIONS: list[Mutation] = [
             # Wave F20 R22: red-proofs / A.3 pin also precondition on
             # classify-owned glued rem (buffalo_lxyoloxextra).
             "test_glued_rem_without_tail_stays_unknown_residual",
-            "test_red_proof_composed_rem_len_cap_fail_open",
-            "test_red_proof_composed_rem_segment_cap_fail_open",
-            "test_red_proof_composed_rem_exception_spelling_fail_open",
+            "test_padded_prefix_glued_leftover_after_peel_denies",
             # Wave F21 R23-03: unknown-residual-without-NC-seed pin.
             "test_unknown_residual_without_nc_seed_stays_agpl",
         ),

@@ -19,6 +19,7 @@ from scripts.eval_harness.report import (
     DETECTION_REFUSED_EXPLANATION,
     ReportError,
     _entries_as_dicts,
+    _mode_restrictiveness,
     _resolve_score_annotation_mode,
     _stamp_missing_annotation_mode,
     build_reports,
@@ -434,3 +435,10 @@ def test_resolver_omitted_explicit_uses_data_stamp() -> None:
         _resolve_score_annotation_mode(None, [{"annotation_mode": "exhaustive"}])
         is AnnotationMode.EXHAUSTIVE
     )
+
+
+def test_restrictiveness_unknown_mode_is_typed_refusal() -> None:
+    """S2R3-13: unknown mode is a named ManifestError, not a bare KeyError."""
+    with pytest.raises(ManifestError) as exc_info:
+        _mode_restrictiveness("not-a-mode")  # type: ignore[arg-type]
+    assert exc_info.value.invariant == "detection_unrecognised_annotation_mode"

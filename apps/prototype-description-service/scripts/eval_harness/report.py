@@ -89,6 +89,18 @@ _MODE_RESTRICTIVENESS = {
     AnnotationMode.ROSTER_ONLY: 1,
 }
 
+
+def _mode_restrictiveness(mode: AnnotationMode) -> int:
+    """Lattice rank for most-restrictive-wins. Unknown tokens refuse typed."""
+    rank = _MODE_RESTRICTIVENESS.get(mode)
+    if rank is None:
+        raise ManifestError(
+            f"unrecognised annotation_mode {mode!r}; "
+            f"expected one of {[member.value for member in AnnotationMode]}",
+            invariant="detection_unrecognised_annotation_mode",
+        )
+    return rank
+
 DETECTION_REFUSED_EXPLANATION = (
     "detection P/R is not computed unless annotation_mode is exhaustive"
 )
@@ -386,7 +398,7 @@ def _resolve_score_annotation_mode(
     data = next(iter(stamped))
     if explicit is None:
         return data
-    if _MODE_RESTRICTIVENESS[explicit] > _MODE_RESTRICTIVENESS[data]:
+    if _mode_restrictiveness(explicit) > _mode_restrictiveness(data):
         return explicit
     return data
 

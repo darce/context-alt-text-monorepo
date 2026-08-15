@@ -59,7 +59,7 @@ schema change cannot treat the pin as an accident.
 | `GoldenEntry` | **No field.** `extra="forbid"`. A JSON key `annotation_mode` on an entry fails validation. |
 | `cli._cmd_score` | Dumps typed entries and stamps the **parent** document mode onto every dict. Never reads a per-entry key from disk. |
 | `fusion_runner.manifest_entries_as_dicts` | Same: stamps `manifest.annotation_mode` onto every dumped entry. |
-| `report._entries_as_dicts` / `_stamp_missing_annotation_mode` | On a typed manifest, fills omitted stamps from the document mode. Never overwrites a real stamp. Blank/whitespace is not omitted (S2R3-02). |
+| `report._entries_as_dicts` / `_stamp_typed_document_mode` | Typed door: fills omitted stamps from the document mode; never overwrites a per-entry stamp. Raw-mapping door: does not fill; omission refuses (`detection_requires_annotation_mode`). Blank/whitespace is not omitted (S2R3-02). |
 | `report._resolve_score_annotation_mode` | The lattice. Reads `entry["annotation_mode"]` from raw mappings only. |
 | `score_run_record` / `score_face_run_record` | Consume the resolved mode. Roster-only / missing / mixed / empty → refuse (or raise on the face path). |
 | `test_per_entry_lattice_is_raw_mapping_only` | Pins `'annotation_mode' not in GoldenEntry.model_fields` and rejects a constructor kwarg. |
@@ -168,7 +168,7 @@ What would have to change:
    optional and that mixed files fail at load or at resolve, deliberately.
 3. Stop flatteners (`cli._cmd_score`, `manifest_entries_as_dicts`,
    `_entries_as_dicts`) from blindly stamping the parent over a real
-   per-entry value. Keep `_stamp_missing_annotation_mode` fill-only.
+   per-entry value. Keep `_stamp_typed_document_mode` fill-only.
 4. Decide load-time policy: refuse mixed files at `load_manifest`, or
    load them and let the resolver refuse at score. Prefer load-time —
    fail before GPU harvest.

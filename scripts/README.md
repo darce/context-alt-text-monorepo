@@ -19,6 +19,29 @@ The orchestration helpers in this repo now execute the installed `mcp-workbay-or
 package directly, including `python -m workbay_orchestrator_mcp.orchestration.lane_config`
 for lane/task manifest resolution.
 
+## eval-captions.sh
+
+Operator entry for the caption+face eval harness `run` subcommand.
+
+GNU Make converts every failed recipe to process exit 2, so
+`make eval-captions` cannot honour the scorer's 0/1/2/3 contract as
+*make's* status (`0→0`, `1/2/3/other→2`). This script is the command
+that can exit 3. Both entry points print `eval-captions: scorer_exit=<N>`
+and write that N to
+`apps/prototype-description-service/scripts/eval_harness/out/eval-captions.status`.
+
+```bash
+scripts/eval-captions.sh
+```
+
+`make eval-captions` calls the same script. Consent for a refused
+no-score report is only at the call site:
+
+```bash
+scripts/eval-captions.sh --allow-refused
+make eval-captions EVAL_ARGS='--allow-refused'
+```
+
 ## check_published_head_sha.py
 
 Every committed eval run-record and report under `docs/` and `benchmarks/`

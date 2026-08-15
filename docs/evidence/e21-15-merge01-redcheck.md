@@ -68,3 +68,27 @@
 - Verdict: FAILED
 - Failing assertion: `expect(crop).toEqual({ mediaUrl, bbox: BBOX });`
 - After restore: PASSED
+
+## REV1-13 mutation M1 — pending
+- Mutation applied: pending
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
+- Verdict: PENDING
+- Already covered by existing test: pending
+- Failing assertion: pending
+- After restore: pending
+
+## REV1-13 mutation M2 — pending
+- Mutation applied: pending
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
+- Verdict: PENDING
+- Already covered by existing test: pending
+- Failing assertion: pending
+- After restore: pending
+
+## REV1-13 mutation M3 — pending
+- Mutation applied: pending
+- Command: `cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/components/ui/__tests__/DurableFaceThumb.test.tsx`
+- Verdict: PENDING
+- Already covered by existing test: pending
+- Failing assertion: pending
+- After restore: pending

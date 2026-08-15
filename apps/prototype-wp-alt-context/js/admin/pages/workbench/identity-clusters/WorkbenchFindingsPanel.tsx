@@ -31,7 +31,6 @@ export const FINDINGS_PANEL_STATE = {
   ERROR: 'error',
   UNAVAILABLE: 'unavailable',
   DEGRADED: 'degraded',
-  REPAIR: 'repair',
   EMPTY: 'empty',
   DATA: 'data',
 } as const;
@@ -280,12 +279,10 @@ export const WorkbenchFindingsPanel = ({
   const primaryDisabled = isReadOnly || nextAction.kind === NEXT_ACTION_KIND.NONE;
 
   const panelState = isTopUnlabeledError ? FINDINGS_PANEL_STATE.DEGRADED : FINDINGS_PANEL_STATE.DATA;
-  // REV1-02: a mounted repair row is not an empty backlog (B.3).
-  const findingsState = !hasFindings
-    ? zeroEvidenceClusterCount > 0
-      ? FINDINGS_PANEL_STATE.REPAIR
-      : FINDINGS_PANEL_STATE.EMPTY
-    : panelState;
+  // REV2-10: REPAIR was dead — hasFindings uses the server-wide total, and any
+  // loaded zero-evidence cluster forces total >= 1. Repair copy still mounts
+  // from zeroEvidenceClusterCount on the reachable data/degraded stamps.
+  const findingsState = !hasFindings ? FINDINGS_PANEL_STATE.EMPTY : panelState;
 
   return (
     <div className="acx-findings-panel" data-findings-state={findingsState}>

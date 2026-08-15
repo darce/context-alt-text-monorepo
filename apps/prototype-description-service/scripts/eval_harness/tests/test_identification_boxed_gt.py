@@ -18,6 +18,7 @@ from scripts.eval_harness.face_metrics import (
 from scripts.eval_harness.manifest import AnnotationMode, ManifestError, load_manifest
 from scripts.eval_harness.report import (
     IDENTIFICATION_REFUSED_EXPLANATION,
+    Audience,
     build_reports,
     score_face_run_record,
     score_run_record,
@@ -328,3 +329,71 @@ def test_score_face_run_record_refuses_partially_boxed_group() -> None:
     coupling = scored["gate_proposal"]["identification_detection_coupling"]
     assert coupling.get("refused") is True
     assert coupling.get("identification_recall") is None
+
+
+def _audience_mixed_boxing() -> tuple[dict, list[dict]]:
+    """Public boxed sibling + private UNBOXED sibling (S2R4-02)."""
+    public = _boxed_alice()
+    public["path"] = "celebs01/alice.jpg"
+    public["provenance"] = {
+        "source": "celeb",
+        "license": "public_domain",
+        "publishable": True,
+    }
+    private = {
+        "path": "localwp/uploads/bob-birthday.jpg",
+        "media_id": 2,
+        "face_count": 1,
+        "present_identities": ["Bob Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+        "annotation_mode": "roster_only",
+        "provenance": {
+            "source": "localwp",
+            "license": "consented",
+            "publishable": False,
+        },
+    }
+    record = _record(["Alice Example"], path="celebs01/alice.jpg")
+    record["items"].append(
+        {
+            "media_id": 2,
+            "path": "localwp/uploads/bob-birthday.jpg",
+            "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+            "identities": [],
+            "face_count": 1,
+            "error": None,
+        }
+    )
+    return record, [public, private]
+
+
+def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
+    """S2R4-02: withholding unboxed GT must not mint a computable ID score.
+
+    LOCAL refuses. PUBLIC used to drop the private unboxed entry and publish
+    precision=1.0 recall=1.0. Refusal is evaluated on the unfiltered set.
+    """
+    record, entries = _audience_mixed_boxing()
+    local_json, _local_md = build_reports(record, entries, audience=Audience.LOCAL)
+    public_json, public_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    local_ident = json.loads(local_json)["faces"]["identification"]
+    public_doc = json.loads(public_json)
+    public_ident = public_doc["faces"]["identification"]
+    assert local_ident["refused"] is True
+    assert local_ident["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert public_ident["refused"] is True
+    assert public_ident["invariant"] == IDENTIFICATION_UNBOXED_INVARIANT
+    assert public_ident["precision"] is None
+    assert public_ident["recall"] is None
+    assert public_ident["precision"] != 1.0
+    assert public_ident["recall"] != 1.0
+    redaction = public_doc["redaction"]
+    assert redaction["audience"] == "public"
+    assert redaction["total_items"] == 2
+    assert redaction["withheld_items"] == 1
+    # A withheld-count is not the disclosure — identification itself is refused.
+    assert "REFUSED" in public_md
+    assert IDENTIFICATION_UNBOXED_INVARIANT in public_md

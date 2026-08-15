@@ -21,7 +21,6 @@ import jsonschema
 import pytest
 from sqlalchemy import Table, event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
@@ -43,21 +42,26 @@ def _schema() -> dict:
     return json.loads(SCHEMA_PATH.read_text())
 
 
-async def _sessionmaker():
-    # File-backed + StaticPool: the file keeps the schema when a cancelled
-    # aiosqlite query invalidates the connection (s1). StaticPool is one
-    # live checkout so the UDF and sequential sessions share a connection
-    # (GATEFLAKE-R1-03). It does NOT close the R1-01 lock window: cancel
-    # mid-write invalidates that connection, the dying aiosqlite worker
-    # still holds the file lock, and the replacement cannot persist
-    # FAILED (measured; busy_timeout self-deadlocks). See the timeout
-    # and cancel tests (REF-25).
+async def _sessionmaker(*, sleep_ms=None):
+    # File-backed SQLite, default AsyncAdaptedQueuePool. The file keeps
+    # the schema when a cancelled aiosqlite query invalidates a connection
+    # (s1). QueuePool gives real commit isolation: sessions do not share a
+    # sqlite3 connection, so a second session cannot dirty-read or roll
+    # back another session's uncommitted flush (GATEFLAKE-R2-01). sleep_ms
+    # is registered on every checkout via a connect listener (GATEFLAKE-R1-03).
     tmpdir = tempfile.TemporaryDirectory(prefix="acx-describe-async-")
     path = os.path.join(tmpdir.name, "test.db")
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{path}",
-        poolclass=StaticPool,
-    )
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+
+    def _sleep_ms(ms: object) -> int:
+        if sleep_ms is not None:
+            return sleep_ms(ms)
+        time.sleep(float(ms) / 1000.0)
+        return 1
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_sleep_ms(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function("sleep_ms", 1, _sleep_ms)
 
     def _cleanup(_eng: object = None) -> None:
         tmpdir.cleanup()
@@ -135,32 +139,28 @@ async def _count_cache_rows(sf, *, tenant_id: uuid.UUID) -> int:
 def test_sessionmaker_survives_cancelled_in_flight_query():
     """Discrimination guard [TEST-08][TEST-07][DBG-01]: cancel mid-query must not drop schema.
 
-    StaticPool + :memory: is one connection === the database. Cancelling an
-    in-flight aiosqlite await invalidates that connection, StaticPool closes
-    it, and the schema is gone. File-backed SQLite keeps the file. StaticPool
-    on that file URL is still one connection, so the UDF registered below is
-    the same checkout ``sf()`` uses (GATEFLAKE-R1-03). This test does not
-    depend on worker timing.
+    File-backed SQLite keeps the schema when a cancelled aiosqlite await
+    invalidates a connection. sleep_ms is installed on every pooled
+    connection by ``_sessionmaker``'s connect listener (GATEFLAKE-R1-03),
+    so this query does not depend on checking out the same connection
+    that registered the UDF. The TimeoutError below is a named guard if
+    that listener is ever dropped; with the listener in place it should
+    be unreachable.
     """
 
     async def body() -> None:
-        engine, sf = await _sessionmaker()
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def _sleep_and_signal(ms: object) -> int:
+            loop.call_soon_threadsafe(started.set)
+            time.sleep(float(ms) / 1000.0)
+            return 1
+
+        engine, sf = await _sessionmaker(sleep_ms=_sleep_and_signal)
         try:
             tenant = uuid.uuid4()
             run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
-
-            started = asyncio.Event()
-            loop = asyncio.get_running_loop()
-
-            def _sleep_and_signal(ms: object) -> int:
-                loop.call_soon_threadsafe(started.set)
-                time.sleep(float(ms) / 1000.0)
-                return 1
-
-            async with engine.connect() as conn:
-                adapt = conn.sync_connection.connection.dbapi_connection
-                aiosqlite_conn = adapt._connection
-                await aiosqlite_conn.create_function("sleep_ms", 1, _sleep_and_signal)
 
             async def _in_flight() -> None:
                 async with sf() as session:
@@ -328,14 +328,16 @@ def test_worker_timeout_marks_failed_exactly_once(monkeypatch: pytest.MonkeyPatc
             cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=2.0),
             gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never"),
             # FALLBACK (REF-25 / GATEFLAKE-R1-01): 0.05 fires inside
-            # phase-1 mark_item(RUNNING). The cancelled aiosqlite
-            # connection still holds the SQLite write lock; StaticPool
-            # replacement then fails _mark_terminal with database is
-            # locked (23/25 and 8/10 under 6 CPU burners; busy_timeout
-            # self-deadlocks because the holder is the dying checkout).
-            # 0.5 lets phase-1 commit before wait_for cancels, so
-            # cleanup is not fighting a live writer. Production is
-            # Postgres. Do not silently retune this.
+            # phase-1 mark_item(RUNNING). A cancelled aiosqlite
+            # connection can still hold the SQLite write lock; a
+            # replacement checkout then fails _mark_terminal with
+            # database is locked (measured under 6 CPU burners;
+            # busy_timeout self-deadlocks because the holder is the
+            # dying checkout). r2b timed phase-1 commit at min 0.027s
+            # / median 0.078s / max 0.096s (n=15 under 6 burners) —
+            # 0.404s margin to 0.5. 0.5 lets phase-1 commit before
+            # wait_for cancels. Production is Postgres. Do not
+            # silently retune this.
             job_timeout_seconds=0.5,
             audit_sink=None,
             metrics=None,
@@ -479,14 +481,21 @@ def test_worker_cancellation_marks_failed_then_re_raises():
                 metrics=None,
             )
         )
-        # FALLBACK (REF-25 / GATEFLAKE-R1-02): sleep(0.05) lands inside
-        # phase-1's RUNNING write under load. Same lock race as the
-        # timeout test — dying aiosqlite holds the file lock, cleanup
-        # cannot persist FAILED. Wait for the committed RUNNING row
-        # so cancel is after that write, not a magic longer sleep.
+        # Commit barrier (GATEFLAKE-R2-01): _sessionmaker is file-backed
+        # QueuePool, so this _load_item session is a different sqlite3
+        # connection and cannot dirty-read or roll back the worker's
+        # uncommitted flush. Seeing RUNNING means phase-1 committed.
+        # Cancel after that write, not mid-write (GATEFLAKE-R1-01 lock
+        # race). Measured hedge: poll may block or raise database is
+        # locked if the worker still holds the write lock.
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            started_item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+            try:
+                started_item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+            except Exception as exc:
+                if "database is locked" in str(exc).lower():
+                    print("GATEFLAKE-S3-LOCK during poll:", type(exc).__name__, exc)
+                raise
             if started_item is not None and started_item.status == DescribeItemStatus.RUNNING:
                 break
             await asyncio.sleep(0.01)

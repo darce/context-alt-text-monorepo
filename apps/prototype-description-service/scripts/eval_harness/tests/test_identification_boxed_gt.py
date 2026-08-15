@@ -418,10 +418,11 @@ def _audience_mixed_boxing() -> tuple[dict, list[dict]]:
 
 
 def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
-    """S2R4-02: withholding unboxed GT must not mint a computable ID score.
+    """S2R4-02 / S2R5-03: LOCAL refuses the unfiltered corpus.
 
-    LOCAL refuses. PUBLIC used to drop the private unboxed entry and publish
-    precision=1.0 recall=1.0. Refusal is evaluated on the unfiltered set.
+    PUBLIC is a different estimand. The publishable boxed sibling is scored
+    on that population, and the artifact declares it. S2R4-02's unfiltered
+    overlay used to over-refuse a metric the public subset supports honestly.
     """
     record, entries = _audience_mixed_boxing()
     local_json, _local_md = build_reports(record, entries, audience=Audience.LOCAL)
@@ -431,16 +432,78 @@ def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
     public_ident = public_doc["faces"]["identification"]
     assert local_ident["refused"] is True
     assert local_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
-    assert public_ident["refused"] is True
-    assert public_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
-    assert public_ident["precision"] is None
-    assert public_ident["recall"] is None
-    assert public_ident["precision"] != 1.0
-    assert public_ident["recall"] != 1.0
+    assert public_ident.get("refused") is not True
+    assert public_ident["precision"] == 1.0
+    assert public_ident["recall"] == 1.0
     redaction = public_doc["redaction"]
     assert redaction["audience"] == "public"
     assert redaction["total_items"] == 2
     assert redaction["withheld_items"] == 1
-    # A withheld-count is not the disclosure — identification itself is refused.
-    assert "REFUSED" in public_md
-    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS in public_md
+    estimand = public_doc["estimand"]
+    assert estimand["population"] == "publishable_items"
+    assert estimand["resolved_on"] == "publishable_items"
+    assert estimand["n_items"] == 1
+    assert estimand["n_entries"] == 1
+    assert estimand["withheld_items"] == 1
+    assert estimand["total_items"] == 2
+    assert "estimand" in public_md
+    assert "publishable_items" in public_md
+    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS not in public_md
+
+
+def test_public_detection_resolves_coverage_on_publishable_population() -> None:
+    """S2R5-03: private uncovered evidence must not silently change public detection.
+
+    LOCAL refuses uncovered face_count. PUBLIC scores the covered publishable
+    sibling and declares that the estimand is the publishable subset — the
+    opposite of resolving coverage on a different population than the check.
+    """
+    public = _boxed_alice()
+    public["path"] = "celebs01/alice.jpg"
+    public["annotation_mode"] = "exhaustive"
+    public["provenance"] = {
+        "source": "celeb",
+        "license": "public_domain",
+        "publishable": True,
+    }
+    private = {
+        "path": "localwp/uploads/group.jpg",
+        "media_id": 2,
+        "face_count": 2,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+        "annotation_mode": "exhaustive",
+        "provenance": {
+            "source": "localwp",
+            "license": "consented",
+            "publishable": False,
+        },
+    }
+    record = _record(["Alice Example"], path="celebs01/alice.jpg")
+    record["items"].append(
+        {
+            "media_id": 2,
+            "path": "localwp/uploads/group.jpg",
+            "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+            "identities": [],
+            "face_count": 0,
+            "error": None,
+        }
+    )
+    local_json, _local_md = build_reports(record, [public, private], audience=Audience.LOCAL)
+    public_json, public_md = build_reports(record, [public, private], audience=Audience.PUBLIC)
+    local_det = json.loads(local_json)["faces"]["detection"]
+    public_doc = json.loads(public_json)
+    public_det = public_doc["faces"]["detection"]
+    assert local_det["refused"] is True
+    assert local_det["invariant"] == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
+    assert public_det.get("refused") is not True
+    assert public_det["precision"] == 1.0
+    assert public_det["recall"] == 1.0
+    assert public_doc["estimand"]["population"] == "publishable_items"
+    assert public_doc["estimand"]["resolved_on"] == "publishable_items"
+    assert "estimand" in public_md
+    assert ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT not in public_md

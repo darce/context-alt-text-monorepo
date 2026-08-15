@@ -12,6 +12,8 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/eval_exit_contract.env"
 SERVICE="$ROOT/apps/prototype-description-service"
 OUT_DIR="$SERVICE/scripts/eval_harness/out"
 STATUS_FILE="$OUT_DIR/eval-captions.status"
@@ -30,7 +32,7 @@ set -e
 cat "$LOG_FILE"
 printf '%s\n' "$ec" > "$STATUS_FILE"
 printf 'eval-captions: scorer_exit=%s\n' "$ec"
-if [ "$ec" -eq 3 ]; then
+if [ "$ec" -eq "$EVAL_EXIT_REFUSED" ]; then
   python3 "$ROOT/scripts/eval_refusal_message.py" --log "$LOG_FILE" >&2
 fi
 exit "$ec"

@@ -31,11 +31,16 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# Score CLI contract (scripts.eval_harness.cli): reason comes from the code.
-CLI_EXIT_CLEAN = 0
-CLI_EXIT_PARTIAL = 1
-CLI_EXIT_USAGE = 2
-CLI_EXIT_REFUSED = 3
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from eval_exit_contract import (  # noqa: E402
+    EXIT_CLEAN as CLI_EXIT_CLEAN,
+    EXIT_PARTIAL as CLI_EXIT_PARTIAL,
+    EXIT_REFUSED as CLI_EXIT_REFUSED,
+    EXIT_USAGE as CLI_EXIT_USAGE,
+)
 
 
 @dataclass(frozen=True)

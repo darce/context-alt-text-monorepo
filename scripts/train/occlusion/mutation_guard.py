@@ -101,7 +101,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2411  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2412  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -1956,11 +1956,12 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_v8_yoloxs-fastsam-agpl]',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyolox_yolos_tiny-fastsam-agpl]',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_listed_r22_probes_deny[fastsamxyoloxextra_v8-fastsam-agpl]',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_padded_prefix_exception_spelling_in_rem_denies',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_padded_prefix_glued_leftover_after_peel_denies',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_padded_prefix_len_48_and_49_both_deny',
+    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_padded_prefix_segment_8_denies_9_and_12_deny',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_r22_02_padded_prefix_past_16_with_long_rem_denies',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_r22_02_prefix_by_rem_matrix_denies',
-    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_exception_spelling_fail_open',
-    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_len_cap_fail_open',
-    'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_red_proof_composed_rem_segment_cap_fail_open',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_rem_length_span_sweep',
     'test_license_policy.py::TestF20ComposedRemBoundsFailClosed::test_wide_multi_segment_long_tail_sweep',
     'test_license_policy.py::TestF21LegitimateTagCannotLaunderCompactHead::test_catalogue_yolox_tags_on_fastsam_deny',

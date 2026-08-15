@@ -122,10 +122,13 @@ describe('TopClusterCard', () => {
     expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
-  it('renders an avatar for a plain (non face-thumbs) thumb URL when no crop data is present', () => {
+  // E21-21: a plain thumb URL is a full scene, not a face chip. The durable
+  // chain renders it as the marked uncropped hop, never as a dedicated avatar.
+  // Mutation: treat any nonempty thumb_url as dedicated -> RED.
+  it('renders a plain (non face-thumbs) thumb URL through the uncropped hop', () => {
     const plainThumbUrl = 'https://example.test/wp-content/uploads/2026/01/rep-1-150x150.jpg';
 
-    render(
+    const { container } = render(
       <TopClusterCard
         cluster={buildCluster({
           representatives: [buildRepresentative({ thumb_url: plainThumbUrl })],
@@ -136,7 +139,12 @@ describe('TopClusterCard', () => {
 
     const image = screen.getByAltText(FACE_ALT);
     expect(image).toHaveAttribute('src', plainThumbUrl);
-    expect(image).toHaveClass('acx-avatar__image');
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(container.querySelector('.acx-top-cluster-card__thumb-image')).toHaveAttribute(
+      'data-avatar-state',
+      'uncropped',
+    );
+    expect(container.querySelector('.acx-avatar__image')).toBeNull();
     expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
   });
 
@@ -212,8 +220,8 @@ describe('TopClusterCard', () => {
     expect(smallCells).toHaveLength(2);
     smallCells.forEach((cell) => {
       expect(cell).toHaveStyle({ width: '39px', height: '39px' });
-      expect(cell).toHaveClass('acx-avatar--hide-missing-label');
-      expect(cell.querySelector('.acx-avatar__missing-label')).toHaveTextContent('No image');
+      expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
+      expect(cell.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent('No image');
     });
     unmount();
 
@@ -230,8 +238,10 @@ describe('TopClusterCard', () => {
 
     const largeCell = singleContainer.querySelector('.acx-top-cluster-card__thumb-image');
     expect(largeCell).toHaveStyle({ width: '80px', height: '80px' });
-    expect(largeCell).not.toHaveClass('acx-avatar--hide-missing-label');
-    expect(singleContainer.querySelector('.acx-avatar__missing-label')).toHaveTextContent('No image');
+    expect(largeCell).not.toHaveClass('acx-durable-face-thumb--hide-missing-label');
+    expect(singleContainer.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent(
+      'No image',
+    );
   });
 
   // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share
@@ -365,8 +375,12 @@ describe('TopClusterCard', () => {
     );
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    const missing = screen.getByRole('img', { name: MISSING_LABEL });
-    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    // E21-21: no crop, but media_url still serves the uncropped hop rather than
+    // dropping straight to missing. Mutation: accept a zero-extent bbox as
+    // croppable -> a .acx-face-thumbnail appears -> RED.
+    const cell = container.querySelector('.acx-top-cluster-card__thumb-image');
+    expect(cell).toHaveAttribute('data-avatar-state', 'uncropped');
+    expect(screen.getByAltText(FACE_ALT)).toHaveAttribute('src', MEDIA_URL);
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 

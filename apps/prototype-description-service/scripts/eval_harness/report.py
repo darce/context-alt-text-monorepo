@@ -39,6 +39,7 @@ from .face_assignment import (
 )
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
+    DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
     SAMPLING_FRAME_CLUSTERING,
     SAMPLING_FRAME_FACE_ID,
     SAMPLING_FRAME_UNKNOWN_REJECTION,
@@ -54,6 +55,7 @@ from .face_metrics import (
     face_unknown_rejection,
     identification_pr,
     require_boxed_identification_gt,
+    require_exhaustive_box_coverage,
 )
 from .manifest import (
     AnnotationMode,
@@ -689,8 +691,16 @@ def score_run_record(
         detection_invariant = exc.invariant
     else:
         if mode is AnnotationMode.EXHAUSTIVE:
-            det = detection_pr(detections, annotation_mode=mode)
-            detection_invariant = None
+            try:
+                require_exhaustive_box_coverage(manifest_entries)
+            except ManifestError as exc:
+                if exc.invariant != DETECTION_UNCOVERED_FACE_COUNT_INVARIANT:
+                    raise
+                det = None
+                detection_invariant = exc.invariant
+            else:
+                det = detection_pr(detections, annotation_mode=mode)
+                detection_invariant = None
         elif mode is AnnotationMode.ROSTER_ONLY:
             det = None
             detection_invariant = "detection_refuses_roster_only"
@@ -1704,6 +1714,7 @@ def score_face_run_record(
             "omission is not exhaustive",
             invariant="detection_requires_annotation_mode",
         )
+    require_exhaustive_box_coverage(entries)
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)

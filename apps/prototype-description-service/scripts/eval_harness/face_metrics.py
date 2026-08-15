@@ -39,6 +39,7 @@ from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
 # Identification GT requires a named face box per claimed identity. Unboxed
 # present_identities may load (roster_only) but cannot be scored as labels.
 IDENTIFICATION_UNBOXED_INVARIANT = "identification_refuses_unboxed_identity_claims"
+DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = "detection_refuses_uncovered_face_count"
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
@@ -201,6 +202,40 @@ def unboxed_identity_claims(entry: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(
         str(name) for name in (entry.get("present_identities") or []) if str(name) not in boxed
     )
+
+
+def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse exhaustive detection when boxes cannot witness ``face_count``.
+
+    An ``exhaustive`` stamp whose ``len(face_boxes) != face_count`` is not a
+    coverage witness. Load-time already checks this; the raw-mapping lattice
+    must not trust the stamp alone (S2R4-04).
+    """
+    holes: list[str] = []
+    first_index: int | None = None
+    first_path: str | None = None
+    for index, entry in enumerate(entries):
+        # Fusion flatten (S2R4-05) still omits the key. A missing key is not
+        # a false witness — only a present box list can contradict face_count.
+        if "face_boxes" not in entry:
+            continue
+        n_boxes = len(entry.get("face_boxes") or [])
+        face_count = int(entry.get("face_count") or 0)
+        if n_boxes == face_count:
+            continue
+        path = str(entry.get("path", f"entry[{index}]"))
+        if first_index is None:
+            first_index = index
+            first_path = path
+        holes.append(f"{path} len(face_boxes)={n_boxes} != face_count={face_count}")
+    if holes:
+        raise ManifestError(
+            "detection P/R cannot be computed from an exhaustive stamp whose "
+            "boxes do not cover face_count: " + "; ".join(holes),
+            invariant=DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            entry_index=first_index,
+            entry_path=first_path,
+        )
 
 
 def require_boxed_identification_gt(entries: Sequence[Mapping[str, Any]]) -> None:

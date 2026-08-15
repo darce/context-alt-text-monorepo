@@ -163,9 +163,8 @@ def test_exhaustive_fusion_flatten_detection_unchanged(tmp_path: Path) -> None:
 def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI score stamps entries and omits the kwarg (S2R2-10 omission branch).
 
-    Exit stays 0: caption/identification still scored; refusal is the correct
-    detection outcome for roster_only, not a failed run. The one-liner must
-    name the refusal so a stdout/CI check cannot treat it as a clean score.
+    S2R3-16: refused detection is exit 3 by default. A CI job that checks
+    only process status must not treat a missing detection score as clean.
     """
     import scripts.eval_harness.cli as cli_mod
 
@@ -173,7 +172,9 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     record_path = tmp_path / "run.json"
     record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert exc.value.code == 3
     report = json.loads(record_path.with_name("run-report.json").read_text(encoding="utf-8"))
     det = report["faces"]["detection"]
     assert det["refused"] is True
@@ -187,6 +188,45 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     assert "exhaustive" in det_section
     captured = capsys.readouterr()
     assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
+    assert "--allow-refused" in captured.err
+
+
+def test_cli_score_allow_refused_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """S2R3-16: --allow-refused is the explicit opt-in for a refused score."""
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path = _write_manifest(tmp_path, "roster_only")
+    record_path = tmp_path / "run.json"
+    record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(
+        [
+            "score",
+            "--manifest",
+            str(man_path),
+            "--run-record",
+            str(record_path),
+            "--allow-refused",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert "detection=REFUSED(detection_refuses_roster_only)" in captured.out
+    assert captured.err == ""
+
+
+def test_cli_score_help_documents_allow_refused_exit_contract(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import scripts.eval_harness.cli as cli_mod
+
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--allow-refused" in help_text
+    assert "exit 3" in help_text
 
 
 def _stamped(mode: str) -> list[dict]:

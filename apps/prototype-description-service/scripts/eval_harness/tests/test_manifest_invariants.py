@@ -334,7 +334,9 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert exc.value.code == 3
     assert hits == []
 
 

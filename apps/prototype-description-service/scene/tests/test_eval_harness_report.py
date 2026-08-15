@@ -207,6 +207,7 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "policy": {"recognition_enabled": True},
         }
     ]
+    entries[0]["annotation_mode"] = "exhaustive"
     scored = score_run_record(record, entries, annotation_mode="exhaustive")
     det = scored["faces"]["detection"]
     # 3 predicted vs 3 labeled -> no false positives from the 2 strangers
@@ -721,6 +722,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
         ],
     }
     manifest = {
+        "annotation_mode": "exhaustive",
         "roster": ["Alice Example"],
         "roster_cohorts": {"Alice Example": "cohort_a"},
         "entries": [
@@ -839,6 +841,7 @@ def test_zero_box_corpus_all_directional():
         ],
     }
     manifest = {
+        "annotation_mode": "exhaustive",
         "roster": [],
         "roster_cohorts": {},
         "entries": [
@@ -923,7 +926,12 @@ def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
         },
         "items": items,
     }
-    manifest = {"roster": ["Alice Q", "Bob Z"], "roster_cohorts": {}, "entries": entries}
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Q", "Bob Z"],
+        "roster_cohorts": {},
+        "entries": entries,
+    }
     return face_run, manifest, b2
 
 

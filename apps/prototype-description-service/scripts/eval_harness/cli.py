@@ -473,8 +473,9 @@ def _cmd_score(args: argparse.Namespace) -> None:
     record_path = Path(args.run_record)
     record = json.loads(record_path.read_text())
     manifest = load_manifest(args.manifest)
-    # Stamp annotation_mode onto every entry so a later caller that drops the
-    # kwarg still refuse-closes on roster_only (FIR-11-S2-01).
+    # Stamp annotation_mode onto every entry. The resolver reads the stamp
+    # (data wins); this function does not pass an explicit kwarg, so the
+    # stamp is the only score-time source (FIR-11-S2-01 / S2R2-10).
     entries = [
         {**e.model_dump(), "annotation_mode": manifest.annotation_mode}
         for e in manifest.entries
@@ -490,7 +491,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
         ignore_list=ignore_list,
         score_manifest_sha256=manifest_sha,
         manifest_roster=roster,
-        annotation_mode=manifest.annotation_mode,
     )
     if args.check_determinism:
         json_again, md_again = build_reports(
@@ -499,7 +499,6 @@ def _cmd_score(args: argparse.Namespace) -> None:
             ignore_list=ignore_list,
             score_manifest_sha256=manifest_sha,
             manifest_roster=roster,
-            annotation_mode=manifest.annotation_mode,
         )
         if json_doc != json_again or md_doc != md_again:
             sys.exit("determinism check FAILED: re-score produced different output")
@@ -514,13 +513,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
         ignore_list=ignore_list,
         score_manifest_sha256=manifest_sha,
         manifest_roster=roster,
-        annotation_mode=manifest.annotation_mode,
     )
     print(md_path)
+    det = scored["faces"]["detection"]
+    if det.get("refused"):
+        det_bit = f"detection=REFUSED({det.get('invariant')})"
+    else:
+        det_bit = (
+            f"detection_p={det.get('precision')} "
+            f"detection_r={det.get('recall')}"
+        )
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"insertion_rate={scored['caption']['insertion_rate']} "
-        f"wrong_names={len(scored['faces']['identification']['wrong_names'])}"
+        f"wrong_names={len(scored['faces']['identification']['wrong_names'])} "
+        f"{det_bit}"
     )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
@@ -927,7 +934,9 @@ def main(argv: list[str] | None = None) -> None:
         FaceRunRecordError,
         PerfLegError,
     ) as exc:
-        sys.exit(f"{type(exc).__name__}: {exc}")
+        invariant = getattr(exc, "invariant", None)
+        suffix = f" [{invariant}]" if invariant else ""
+        sys.exit(f"{type(exc).__name__}: {exc}{suffix}")
 
 
 if __name__ == "__main__":

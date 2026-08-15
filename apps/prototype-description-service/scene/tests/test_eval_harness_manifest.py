@@ -227,16 +227,16 @@ def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
         load_manifest(_write_manifest(tmp_path, data))
 
 
-def test_face_count_below_labeled_rejected(tmp_path):  # retired entry check re-expressed
-    """Original _face_count_covers_labeled scenario, re-expressed.
+def test_face_count_below_labeled_rejected(tmp_path):  # boxes_cover_face_count boxed form
+    """Boxed form: face_count=0 with one named box still fails coverage.
 
-    face_count=0 with one labeled identity. In v3 that identity has a named
-    box, so the manifest-level _boxes_cover_face_count fires: 1 box > 0
-    face_count (roster_only upper bound). Not silently dropped.
+    Distinct from present_identities_fit_face_count (unboxed identity claim).
     """
     data = _valid_manifest_dict()
     data["annotation_mode"] = "roster_only"
     data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = []
+    data["entries"][0]["must_right"] = []
     data["entries"][0]["face_boxes"] = [
         {
             "x": 0.5,
@@ -255,6 +255,63 @@ def test_face_count_below_labeled_rejected(tmp_path):  # retired entry check re-
     assert err.entry_index == 0
     assert err.entry_path == data["entries"][0]["path"]
     assert "scene-001.jpg" in str(err)
+
+
+def test_face_count_below_present_identities_rejected_unboxed(tmp_path):
+    """S2R2-05: face_count=0 + present identity + no boxes is rejected.
+
+    The retired _face_count_covers_labeled predicate. Identification must
+    not treat an unbacked identity claim as labeled ground truth.
+    """
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = ["Alice Example"]
+    data["entries"][0]["face_boxes"] = []
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "present_identities_fit_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_face_count_below_present_identities_rejected_exhaustive(tmp_path):
+    """S2R2-05: same unbacked claim is rejected under exhaustive."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = ["Alice Example"]
+    data["entries"][0]["face_boxes"] = []
+    data["entries"][1]["face_count"] = 0
+    data["entries"][1]["face_boxes"] = []
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "present_identities_fit_face_count"
+
+
+def test_face_count_one_two_identities_rejected(tmp_path):
+    """S2R2-05 near-miss: face_count=1, two identities, one box. 1 < 2."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["present_identities"] = ["Alice Example", "Bob Example"]
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(decision="named"),
+        }
+    ]
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "present_identities_fit_face_count"
+    assert exc_info.value.entry_index == 0
 
 
 def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
@@ -791,8 +848,9 @@ def test_seed_corpus_is_roster_only():
 def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypatch):
     """Behavioural: CLI score/score-face never call load_legacy_manifest.
 
-    A source-text grep would stay green on a rename or a moved call. The
-    sentinel is hit when the audit-arm loader is invoked directly.
+    A source-text grep would stay green on a rename or a moved call.
+    Audit-arm liveness is pinned by test_golden150_draft (legacy reader
+    loads the frozen v2 artifact), not by invoking the patched sentinel.
     """
     import scripts.eval_harness.cli as cli_mod
     import scripts.eval_harness.manifest as man_mod
@@ -807,7 +865,6 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     if hasattr(cli_mod, "load_legacy_manifest"):
         monkeypatch.setattr(cli_mod, "load_legacy_manifest", _sentinel)
 
-    img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
     data = _valid_manifest_dict()
     man_path = tmp_path / "golden.json"
     man_path.write_text(json.dumps(data))
@@ -864,32 +921,10 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
             }
         )
     )
-    # roster_only score-face raises; the point is it loaded via load_manifest.
-    with pytest.raises(SystemExit):
+    # roster_only score-face raises via the CLI wrapper; pin the invariant.
+    with pytest.raises(SystemExit, match="detection_refuses_roster_only") as exc_info:
         cli_mod.main(
             ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
         )
+    assert "score_face_run_record refuses roster_only" in str(exc_info.value)
     assert hits == []
-
-    v2 = {
-        "manifest_version": 2,
-        "roster": ["Alice Example"],
-        "entries": [
-            {
-                "path": "a.jpg",
-                "sha256": img_hash,
-                "media_id": 1,
-                "face_count": 0,
-                "present_identities": [],
-                "base_caption": "",
-                "must_right": [],
-                "easy_wrong": [],
-                "policy": {"recognition_enabled": True},
-            }
-        ],
-    }
-    v2_path = tmp_path / "legacy.json"
-    v2_path.write_text(json.dumps(v2))
-    with pytest.raises(RuntimeError, match="legacy-sentinel-hit"):
-        man_mod.load_legacy_manifest(str(v2_path))
-    assert hits, "audit-arm path must reach load_legacy_manifest"

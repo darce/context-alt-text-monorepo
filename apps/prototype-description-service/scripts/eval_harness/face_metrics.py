@@ -34,7 +34,7 @@ from typing import Any
 
 import numpy as np
 
-from .manifest import AnnotationMode, ManifestError
+from .manifest import AnnotationMode, ManifestError, parse_annotation_mode
 
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
@@ -157,12 +157,17 @@ def detection_pr(
 ) -> PrResult:
     """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN.
 
-    Raises ``ManifestError`` (invariant ``detection_refuses_roster_only``) against
-    a ``roster_only`` manifest rather than silently reporting inflated false
-    positives on unlabeled non-roster faces.
+    Refuses unless the resolved mode *is* ``AnnotationMode.EXHAUSTIVE``.
+    Omission, null, empty, unknown, and ``roster_only`` all raise
+    ``ManifestError`` with a named invariant — there is no permissive default.
     """
-    mode = annotation_mode.value if isinstance(annotation_mode, AnnotationMode) else annotation_mode
-    if mode == AnnotationMode.ROSTER_ONLY:
+    mode = parse_annotation_mode(annotation_mode)
+    if mode is None:
+        raise ManifestError(
+            "detection_pr requires annotation_mode; omission is not exhaustive",
+            invariant="detection_requires_annotation_mode",
+        )
+    if mode is not AnnotationMode.EXHAUSTIVE:
         raise ManifestError(
             "detection_pr refuses roster_only manifests; unlabeled non-roster "
             "faces would be scored as false positives",

@@ -26,86 +26,17 @@
       "tp": null
     },
     "identification": {
-      "excluded_images": [],
-      "ignored_wrong_names": [],
-      "macro_precision": 1.0,
-      "macro_recall": 1.0,
-      "per_identity": {
-        "Bea Burke": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Caitlin Weaver": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 14
-        },
-        "Cristina Quintana": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Daniel Arce": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Ellyn Heald": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Erika Hansen Miller": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Kirstie Mccarrel": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 5
-        },
-        "Liam Maloney": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 2
-        },
-        "Maria Correonero": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 7
-        },
-        "Ryann Wiseman": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 3
-        }
-      },
-      "precision": 1.0,
-      "recall": 1.0,
-      "true_rejections": 10,
-      "wrong_names": []
+      "excluded_images": null,
+      "ignored_wrong_names": null,
+      "invariant": "identification_refuses_unboxed_identity_claims",
+      "macro_precision": null,
+      "macro_recall": null,
+      "per_identity": {},
+      "precision": null,
+      "recall": null,
+      "refused": true,
+      "true_rejections": null,
+      "wrong_names": null
     }
   },
   "failures": [],

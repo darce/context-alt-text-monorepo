@@ -204,7 +204,7 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
     expected_sha = _manifest_sha(load_manifest(str(_MAN), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert len(manifest_sha) == 64
+    assert manifest_sha.startswith("4c674451")  # G-02 39-image freeze
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -668,6 +668,71 @@ def test_caption_anchor_corpus_includes_centre_x_tie_positional_trap() -> None:
     assert ties == 1
     committed = load_manifest(str(_MAN), skip_hash_verification=True)
     assert any(int(e.media_id) == _POS_TRAP_MEDIA_ID for e in committed.entries)
+
+
+def test_y_reversed_labeled_order_goes_red_on_extended_caption_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEST-15 / VLM6-R2-G-02 acceptance: the ordering rule must be freeze-visible.
+
+    Pre-extension the freeze had positional_images=0, so reversing the labeled
+    L→R key changed nothing the anchor could observe — HARM-06/07 could have
+    landed green against a y-blind rule. Media 40 ties centre x and separates y,
+    and its run-record prediction is the swapped sequence, so the correct rule
+    scores 0/2 with swap_images=1 while a y-reversed rule scores a perfect 2/2.
+
+    Scoped like the labeled_y_missing control above: live vs mutated scoring on
+    the committed man+run only, no comparison against the report digest.
+    """
+    from scripts.eval_harness import report as report_mod
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
+
+    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    record = json.loads(_RUN.read_text())
+    entries = [e.model_dump() for e in manifest.entries]
+    roster = sorted(set(manifest.roster))
+    sha = record["provenance"]["manifest_sha256"]
+
+    def _positional() -> dict:
+        faces = score_run_record(
+            record,
+            entries,
+            score_manifest_sha256=sha,
+            manifest_roster=roster,
+            rubric_gate="skip",
+        )["faces"]
+        assert int(faces["identity_ordering"]["positional_images"]) >= 1, (
+            "freeze corpus scores no positional image — media 40 missing or its "
+            "boxes no longer tie on centre x (mutation would be invisible)"
+        )
+        return faces["identification"]["positional"]
+
+    live = _positional()
+    assert int(live["compared_images"]) == 1
+    assert int(live["position_total"]) == 2
+    assert int(live["position_hits"]) == 0
+    assert int(live["swap_images"]) == 1
+
+    real_lo = labeled_order
+
+    def _y_reversed(face_boxes):  # type: ignore[no-untyped-def]
+        """Regression shape: y contributes nothing but sequence direction."""
+        result = real_lo(face_boxes)
+        return LabeledOrderResult(
+            names=list(reversed(result.names)) if result.names else result.names,
+            y_missing_count=result.y_missing_count,
+            order_degraded=result.order_degraded,
+        )
+
+    monkeypatch.setattr(report_mod, "labeled_order", _y_reversed)
+    blind = _positional()
+    assert int(blind["position_hits"]) != int(live["position_hits"]), (
+        f"y-reversed ordering still scores {live['position_hits']}/"
+        f"{live['position_total']} — the freeze cannot see ordering-rule "
+        "regressions (TEST-15 blindness not closed)"
+    )
+    assert int(blind["position_hits"]) == 2
+    assert int(blind["swap_images"]) == 0
 
 
 def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(

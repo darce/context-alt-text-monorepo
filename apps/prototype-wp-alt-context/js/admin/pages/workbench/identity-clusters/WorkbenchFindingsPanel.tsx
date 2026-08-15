@@ -246,17 +246,31 @@ export const WorkbenchFindingsPanel = ({
     }
   }, [onErrorBranch]);
 
+  const restoreRetryFocus = (): void => {
+    const reviewNext = reviewNextRef.current;
+    if (reviewNext && !reviewNext.disabled) {
+      reviewNext.focus({ preventScroll: true });
+      return;
+    }
+    headingRef.current?.focus({ preventScroll: true });
+  };
+
   // REV2-08: the control is labelled as reloading recognition findings, so it
   // must refetch every source that feeds them — name suggestions included.
-  const handleRetryFindings = (options?: { restoreFocus?: boolean }): void => {
+  const handleRetryFindings = (options?: {
+    restoreFocus?: boolean;
+    restoreFocusOnSuccess?: boolean;
+  }): void => {
     if (retrying) {
       return;
     }
     setRetrying(true);
     setRetryFailed(false);
-    // REV3-02: only the error-branch Retry should restore focus. Degraded-chip
-    // and assignment-outage Retry live in the data tree — arming here would
-    // jump focus minutes later on an unrelated hasFindings/isError change.
+    // REV3-02: only the error-branch Retry should restore focus via the
+    // deferred [hasFindings, isError] effect. Degraded-chip Retry must not
+    // arm it. Assignment-outage Retry also must not arm it (REV3-02) — a
+    // successful recovery unmounts the button, so REV4-03 restores focus
+    // immediately in the settled .then instead.
     if (options?.restoreFocus) {
       pendingRetryFocusRef.current = true;
     }
@@ -275,6 +289,10 @@ export const WorkbenchFindingsPanel = ({
         setRetryFailed(failed);
         if (failed) {
           pendingRetryFocusRef.current = false;
+          return;
+        }
+        if (options?.restoreFocusOnSuccess) {
+          restoreRetryFocus();
         }
       });
   };
@@ -501,7 +519,7 @@ export const WorkbenchFindingsPanel = ({
             <FindingsRetryButton
               describedBy="acx-findings-panel-assignment-outage"
               retrying={retrying}
-              onClick={() => handleRetryFindings()}
+              onClick={() => handleRetryFindings({ restoreFocusOnSuccess: true })}
               className="acx-button acx-button--secondary acx-button--small"
             />
           </div>

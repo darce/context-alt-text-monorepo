@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 import time
 import uuid
+import weakref
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import jsonschema
 import pytest
-from sqlalchemy import Table, select
+from sqlalchemy import Table, event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
@@ -40,7 +43,17 @@ def _schema() -> dict:
 
 
 async def _sessionmaker():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # File-backed: StaticPool :memory: is destroyed when a cancelled
+    # aiosqlite query invalidates the sole connection.
+    tmpdir = tempfile.TemporaryDirectory(prefix="acx-describe-async-")
+    path = os.path.join(tmpdir.name, "test.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+
+    def _cleanup(_eng: object = None) -> None:
+        tmpdir.cleanup()
+
+    event.listen(engine.sync_engine, "engine_disposed", _cleanup)
+    weakref.finalize(engine, _cleanup)
     async with engine.begin() as conn:
         await conn.run_sync(
             Base.metadata.create_all,
@@ -107,6 +120,53 @@ async def _count_cache_rows(sf, *, tenant_id: uuid.UUID) -> int:
     async with sf() as s:
         result = await s.execute(select(ImageDescription).where(ImageDescription.tenant_id == tenant_id))
         return len(list(result.scalars().all()))
+
+
+def test_sessionmaker_survives_cancelled_in_flight_query():
+    """Discrimination guard [TEST-08][TEST-07][DBG-01]: cancel mid-query must not drop schema.
+
+    StaticPool + :memory: is one connection === the database. Cancelling an
+    in-flight aiosqlite await invalidates that connection, StaticPool closes
+    it, and the schema is gone. File-backed SQLite keeps the file. This test
+    does not depend on worker timing.
+    """
+
+    async def body() -> None:
+        engine, sf = await _sessionmaker()
+        try:
+            tenant = uuid.uuid4()
+            run_id = await _create_run(sf, tenant_id=tenant, media_id=7, image_bytes=b"image")
+
+            started = asyncio.Event()
+            loop = asyncio.get_running_loop()
+
+            def _sleep_and_signal(ms: object) -> int:
+                loop.call_soon_threadsafe(started.set)
+                time.sleep(float(ms) / 1000.0)
+                return 1
+
+            async with engine.connect() as conn:
+                adapt = conn.sync_connection.connection.dbapi_connection
+                aiosqlite_conn = adapt._connection
+                await aiosqlite_conn.create_function("sleep_ms", 1, _sleep_and_signal)
+
+            async def _in_flight() -> None:
+                async with sf() as session:
+                    await session.execute(text("SELECT sleep_ms(800)"))
+
+            task = asyncio.create_task(_in_flight())
+            await asyncio.wait_for(started.wait(), timeout=3.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            item = await _load_item(sf, tenant_id=tenant, run_id=run_id)
+            assert item is not None
+            assert item.media_id == 7
+        finally:
+            await engine.dispose()
+
+    asyncio.run(body())
 
 
 def test_worker_module_importable():
@@ -248,13 +308,9 @@ def test_worker_timeout_marks_failed_exactly_once(monkeypatch: pytest.MonkeyPatc
             session_factory=sf,
             cpu_adapter=_Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="slow", delay_s=2.0),
             gpu_adapter=_Adapter(kind=DescriptionAdapterKind.GPU, caption="never"),
-            # Timeout must fire during the 2.0s CPU adapter sleep — after phase-1's
-            # DB writes commit — so cancellation lands at an await with no open
-            # session. Too small (0.05s) and a slow runner cancels mid-aiosqlite
-            # query, invalidating the StaticPool's single :memory: connection and
-            # destroying the schema ("no such table"). 0.5s clears phase-1 with
-            # margin (the degraded-projection test proves 0.3s is safe on CI).
-            job_timeout_seconds=0.5,
+            # File-backed fixture survives mid-query cancel, so the original
+            # tight timeout is safe again (d866e144's 0.5s dodge is no longer needed).
+            job_timeout_seconds=0.05,
             audit_sink=None,
             metrics=None,
         )

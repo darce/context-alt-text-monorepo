@@ -1170,6 +1170,49 @@ def synthetic_real_divergence(
     }
 
 
+def _refused_face_identification_block(invariant: str) -> dict[str, Any]:
+    """Identification slice that cannot be computed honestly (EVAL-03)."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "precision": None,
+        "recall": None,
+        "tp": None,
+        "fp": None,
+        "fn": None,
+        "n_named_probes": None,
+        "n_recall_eligible": None,
+        "wrong_names": None,
+        "detection_recall_coupling_flag": None,
+        "sampling_frame": None,
+        "precision_numerator": None,
+        "precision_denominator": None,
+        "recall_numerator": None,
+        "recall_denominator": None,
+        "missed_gt": None,
+        "unmatched_detections": None,
+        **_slice_status(meets_floor=False, reasons=[invariant]),
+    }
+
+
+def _refused_unknown_rejection_block(invariant: str) -> dict[str, Any]:
+    """Unknown-rejection must not credit probes dropped for lack of boxes."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "rate": None,
+        "correct_rejects": None,
+        "false_accepts": None,
+        "n": None,
+        "n_floor": UNKNOWN_REJECTION_N_FLOOR,
+        "error_target": UNKNOWN_REJECTION_ERROR_TARGET,
+        "sampling_frame": None,
+        "rate_numerator": None,
+        "rate_denominator": None,
+        **_slice_status(meets_floor=False, reasons=[invariant]),
+    }
+
+
 def _face_pr_dict(pr: Any) -> dict[str, Any]:
     # FIR5RR-12: FaceLevelIdPr is the only accepted shape — direct field access
     # (a getattr default here would silently fabricate audit fields on a
@@ -1659,75 +1702,97 @@ def score_face_run_record(
     assignment = score_face_assignment(scoreable, gt_by_media)
     detection = _detection_from_assignment(assignment)
 
-    # Full-corpus identification + unknown-rejection (includes private strangers).
-    id_pr = face_identification_pr(
-        assignment.decisions,
-        missed_gt=assignment.missed_gt,
-        unmatched_detections=assignment.false_detections,
-        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
-    )
-    unknown = face_unknown_rejection(assignment.decisions)
-
-    # Headline = celebs01 named probes only (provenance.source == CELEB).
-    # Coupling counts are headline-scoped (not full-corpus) so the honesty flag
-    # matches the published rate's sampling frame (FIR5V11-05 / REF-27).
-    celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
-    headline_decisions = [
-        d
-        for d in assignment.decisions
-        if d.media_id in celebs01_ids and d.true_name is not None
-    ]
-    headline_missed_gt, headline_unmatched, headline_assoc_notes = (
-        _association_counts_for_media(
-            assignment,
-            celebs01_ids,
-            gt_by_media=gt_by_media,
-            probe_media_ids={d.media_id for d in headline_decisions},
+    try:
+        require_boxed_identification_gt(
+            [entry_by_id[int(item["media_id"])] for item in scoreable]
         )
-    )
-    headline_id = face_identification_pr(
-        headline_decisions,
-        missed_gt=headline_missed_gt,
-        unmatched_detections=headline_unmatched,
-        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
-    )
+    except ManifestError as exc:
+        if exc.invariant != IDENTIFICATION_UNBOXED_INVARIANT:
+            raise
+        identification_invariant = exc.invariant
+    else:
+        identification_invariant = None
 
+    # Full-corpus identification + unknown-rejection (includes private strangers).
+    # Unboxed identity claims cannot be scored as named probes OR as stranger
+    # rejects — both would silently drop the claim from the ID denominator
+    # and recycle it as unknown-rejection credit (S2R4-01).
     # FIR5RR-07: mid-grid-unfitted τ can never back a gating number — every
     # τ-dependent slice is forced DIRECTIONAL with an explicit reason.
     tau_unfitted = assignment.tau_fit_status != "fitted"
     tau_unfitted_reason = f"tau_fit_status={assignment.tau_fit_status}"
 
-    headline_reasons: list[str] = []
-    if zero_box_corpus:
-        headline_reasons.append("zero_box_corpus")
-    elif headline_id.n_recall_eligible < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR:
-        headline_reasons.append(
-            f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"
+    celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
+    headline_assoc_notes: list[str] = []
+    if identification_invariant is None:
+        id_pr = face_identification_pr(
+            assignment.decisions,
+            missed_gt=assignment.missed_gt,
+            unmatched_detections=assignment.false_detections,
+            sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
         )
-    if tau_unfitted:
-        headline_reasons.append(tau_unfitted_reason)
-    headline_floor_met = (
-        not zero_box_corpus
-        and not tau_unfitted
-        and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
-    )
-    headline_status = _slice_status(
-        meets_floor=headline_floor_met,
-        reasons=headline_reasons,
-    )
+        unknown = face_unknown_rejection(assignment.decisions)
 
-    unknown_reasons: list[str] = []
-    if zero_box_corpus:
-        unknown_reasons.append("zero_box_corpus")
-    elif not unknown.meets_floor:
-        unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
-    if tau_unfitted:
-        unknown_reasons.append(tau_unfitted_reason)
-    unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
-    unknown_status = _slice_status(
-        meets_floor=unknown_floor_met,
-        reasons=unknown_reasons,
-    )
+        # Headline = celebs01 named probes only (provenance.source == CELEB).
+        # Coupling counts are headline-scoped (not full-corpus) so the honesty
+        # flag matches the published rate's sampling frame (FIR5V11-05 / REF-27).
+        headline_decisions = [
+            d
+            for d in assignment.decisions
+            if d.media_id in celebs01_ids and d.true_name is not None
+        ]
+        headline_missed_gt, headline_unmatched, headline_assoc_notes = (
+            _association_counts_for_media(
+                assignment,
+                celebs01_ids,
+                gt_by_media=gt_by_media,
+                probe_media_ids={d.media_id for d in headline_decisions},
+            )
+        )
+        headline_id = face_identification_pr(
+            headline_decisions,
+            missed_gt=headline_missed_gt,
+            unmatched_detections=headline_unmatched,
+            sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
+        )
+
+        headline_reasons: list[str] = []
+        if zero_box_corpus:
+            headline_reasons.append("zero_box_corpus")
+        elif headline_id.n_recall_eligible < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR:
+            headline_reasons.append(
+                f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"
+            )
+        if tau_unfitted:
+            headline_reasons.append(tau_unfitted_reason)
+        headline_floor_met = (
+            not zero_box_corpus
+            and not tau_unfitted
+            and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+        )
+        headline_status = _slice_status(
+            meets_floor=headline_floor_met,
+            reasons=headline_reasons,
+        )
+
+        unknown_reasons: list[str] = []
+        if zero_box_corpus:
+            unknown_reasons.append("zero_box_corpus")
+        elif not unknown.meets_floor:
+            unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
+        if tau_unfitted:
+            unknown_reasons.append(tau_unfitted_reason)
+        unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
+        unknown_status = _slice_status(
+            meets_floor=unknown_floor_met,
+            reasons=unknown_reasons,
+        )
+    else:
+        id_pr = None
+        unknown = None
+        headline_id = None
+        headline_status = None
+        unknown_status = None
 
     # Clustering on named matched faces only (strangers excluded).
     named_matched = [m for m in assignment.matched if m.true_name is not None]
@@ -1776,26 +1841,39 @@ def score_face_run_record(
             )
         )
 
-    # Demographic Fair-SA (always DIRECTIONAL — no floor).
-    single_subject = _build_single_subject_cohort_by_media(entries)
-    demo = demographic_rollup(
-        assignment.decisions,
-        roster_cohorts,
-        single_subject_cohort_by_media=single_subject,
-        # FIR5RR-05: per-cohort miss fields stay None (not attributed); the
-        # coupling flag is inherited from the full-corpus identification frame.
-        parent_detection_coupling=id_pr.detection_recall_coupling_flag,
-    )
-    demo_block = {
-        "section_header": demo.section_header,
-        "directional": True,
-        "directional_reasons": list(demo.directional_reasons),
-        "status": DIRECTIONAL_LABEL,
-        "label": DIRECTIONAL_LABEL,
-        "by_cohort": {
-            cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())
-        },
-    }
+    # Demographic Fair-SA (always DIRECTIONAL — no floor). Identification
+    # refusal also refuses the per-cohort ID rollup — it is the same estimand.
+    if identification_invariant is None:
+        single_subject = _build_single_subject_cohort_by_media(entries)
+        demo = demographic_rollup(
+            assignment.decisions,
+            roster_cohorts,
+            single_subject_cohort_by_media=single_subject,
+            # FIR5RR-05: per-cohort miss fields stay None (not attributed); the
+            # coupling flag is inherited from the full-corpus identification frame.
+            parent_detection_coupling=id_pr.detection_recall_coupling_flag,
+        )
+        demo_block = {
+            "section_header": demo.section_header,
+            "directional": True,
+            "directional_reasons": list(demo.directional_reasons),
+            "status": DIRECTIONAL_LABEL,
+            "label": DIRECTIONAL_LABEL,
+            "by_cohort": {
+                cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())
+            },
+        }
+    else:
+        demo_block = {
+            "refused": True,
+            "invariant": identification_invariant,
+            "section_header": "demographic Fair-SA (DIRECTIONAL)",
+            "directional": True,
+            "directional_reasons": [identification_invariant],
+            "status": DIRECTIONAL_LABEL,
+            "label": DIRECTIONAL_LABEL,
+            "by_cohort": {},
+        }
 
     # Occlusion slices (synthetic + real divergence).
     # FIR5RR-01 (CAL-07/EVAL-07): each twin is scored at its source identity's
@@ -1923,8 +2001,8 @@ def score_face_run_record(
         }
 
     # Floor-gated rollup of every gating slice.
-    slices: dict[str, Any] = {
-        "headline_identification": {
+    if identification_invariant is None:
+        headline_block = {
             **_face_pr_dict(headline_id),
             "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
             "floor_unit": "recall_eligible_celebs01",
@@ -1933,8 +2011,8 @@ def score_face_run_record(
             # disclosed here (their manifest named faces were counted as misses).
             "association_provenance_notes": list(headline_assoc_notes),
             **headline_status,
-        },
-        "unknown_rejection": {
+        }
+        unknown_block = {
             "rate": unknown.rate,
             "correct_rejects": unknown.correct_rejects,
             "false_accepts": unknown.false_accepts,
@@ -1945,14 +2023,55 @@ def score_face_run_record(
             "rate_numerator": unknown.rate_numerator,
             "rate_denominator": unknown.rate_denominator,
             **unknown_status,
-        },
+        }
+        full_id_block = _face_pr_dict(id_pr)
+        coupling_block = {
+            "identification_recall": headline_id.recall,
+            "detection_recall": detection["recall"],
+            "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
+            "missed_gt": headline_id.missed_gt,
+            "unmatched_detections": headline_id.unmatched_detections,
+            "sampling_frame": headline_id.sampling_frame,
+            "flag": (
+                "identification recall is computed only over faces this leg detected and "
+                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
+                "detected subset — report id-recall ALONGSIDE detection-recall"
+            ),
+        }
+    else:
+        headline_block = {
+            **_refused_face_identification_block(identification_invariant),
+            "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+            "floor_unit": "recall_eligible_celebs01",
+            "error_target": HEADLINE_ID_ERROR_TARGET,
+            "association_provenance_notes": list(headline_assoc_notes),
+        }
+        unknown_block = _refused_unknown_rejection_block(identification_invariant)
+        full_id_block = _refused_face_identification_block(identification_invariant)
+        coupling_block = {
+            "refused": True,
+            "invariant": identification_invariant,
+            "identification_recall": None,
+            "detection_recall": detection["recall"],
+            "detection_recall_coupling_flag": None,
+            "missed_gt": None,
+            "unmatched_detections": None,
+            "sampling_frame": None,
+            "flag": (
+                "identification recall is not computed from identity claims that "
+                "carry no per-face box lineage"
+            ),
+        }
+    slices: dict[str, Any] = {
+        "headline_identification": headline_block,
+        "unknown_rejection": unknown_block,
         "clustering": {
             **cluster_block,
             "sampling_frame": SAMPLING_FRAME_CLUSTERING,
         },
         "occlusion": occlusion_out,
         "demographic": demo_block,
-        "full_corpus_identification": _face_pr_dict(id_pr),
+        "full_corpus_identification": full_id_block,
     }
 
     # Gate-proposal: EXCLUDE every DIRECTIONAL slice (SC4). Never emit demoted verdict.
@@ -1983,19 +2102,7 @@ def score_face_run_record(
         "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
         "proposed_slices": proposed,
         "excluded_directional": sorted(excluded),
-        "identification_detection_coupling": {
-            "identification_recall": headline_id.recall,
-            "detection_recall": detection["recall"],
-            "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
-            "missed_gt": headline_id.missed_gt,
-            "unmatched_detections": headline_id.unmatched_detections,
-            "sampling_frame": headline_id.sampling_frame,
-            "flag": (
-                "identification recall is computed only over faces this leg detected and "
-                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
-                "detected subset — report id-recall ALONGSIDE detection-recall"
-            ),
-        },
+        "identification_detection_coupling": coupling_block,
         "p95_scan_latency": "FIR-6-owned; not measured here.",
         "scope_amendments_for_operator_ack": [
             "p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)",
@@ -2270,22 +2377,35 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         "",
     ]
     hl = slices.get("headline_identification") or {}
-    lines.append(
-        f"- **headline_identification**: status=`{hl.get('status', hl.get('label', '?'))}` "
-        f"directional={hl.get('directional')} "
-        f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
-        f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
-        f"n_recall_eligible={hl.get('n_recall_eligible')}/{hl.get('n_floor')} "
-        f"frame=`{hl.get('sampling_frame', '')}`"
-    )
+    if hl.get("refused"):
+        lines.append(
+            f"- **headline_identification**: REFUSED ({hl.get('invariant')}): "
+            f"{IDENTIFICATION_REFUSED_EXPLANATION}"
+        )
+    else:
+        lines.append(
+            f"- **headline_identification**: status=`{hl.get('status', hl.get('label', '?'))}` "
+            f"directional={hl.get('directional')} "
+            f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
+            f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
+            f"n_recall_eligible={hl.get('n_recall_eligible')}/{hl.get('n_floor')} "
+            f"frame=`{hl.get('sampling_frame', '')}`"
+        )
     unk = slices.get("unknown_rejection") or {}
-    lines.append(
-        f"- **unknown_rejection**: status=`{unk.get('status', unk.get('label', '?'))}` "
-        f"directional={unk.get('directional')} "
-        f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
-        f"n={unk.get('n')}/{unk.get('n_floor')} "
-        f"frame=`{unk.get('sampling_frame', '')}`"
-    )
+    if unk.get("refused"):
+        lines.append(
+            f"- **unknown_rejection**: REFUSED ({unk.get('invariant')}): "
+            "unknown-rejection is not scored from identity claims that carry "
+            "no per-face box lineage"
+        )
+    else:
+        lines.append(
+            f"- **unknown_rejection**: status=`{unk.get('status', unk.get('label', '?'))}` "
+            f"directional={unk.get('directional')} "
+            f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
+            f"n={unk.get('n')}/{unk.get('n_floor')} "
+            f"frame=`{unk.get('sampling_frame', '')}`"
+        )
     cl = slices.get("clustering") or {}
     lines.append(
         f"- **clustering**: status=`{cl.get('status', cl.get('label', '?'))}` "

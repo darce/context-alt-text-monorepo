@@ -7376,10 +7376,12 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
 
     cat = PolicyCategory.TOOLING
 
-    # Taint + clearance only — registration and licence deferred until after
-    # the package gate so denylisted_package is the authoritative reason when
-    # package + registration (or package + licence) both fire (BR-24 / GATE-22).
-    # BR-69: call each half explicitly; never a flag that drops an axis.
+    # Taint + clearance + floor step 4 (`_floor_package_identity_denylist`).
+    # GATE-22 is that floor step, not the door-local first-wins loop below:
+    # a denylisted token in any identity field (including `model_id`, which
+    # the door-local loop never sees) must report denylisted_package before
+    # registration or row SPDX. Inverting the door-local order leaves GATE-22
+    # green because step 4 already fired. BR-69: call each half explicitly.
     common = _floor_taint_and_clearance(row, category=cat)
     if common is not None:
         return common

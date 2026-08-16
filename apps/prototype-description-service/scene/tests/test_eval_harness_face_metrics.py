@@ -58,40 +58,6 @@ def test_detection_spurious_faces_on_empty_image():
     assert result.precision == 0.0
 
 
-def test_matched_faces_is_optional_last_field():
-    import dataclasses
-
-    fields = [f.name for f in dataclasses.fields(ImageDetection)]
-    assert fields[-1] == "matched_faces"
-    row = ImageDetection(image="a.jpg", pred_faces=3, labeled_faces=2)
-    assert row.matched_faces is None
-
-
-@pytest.mark.parametrize(
-    ("matched", "ok", "fp", "fn"),
-    [
-        (0, True, 3, 2),
-        (2, True, 1, 0),
-        (3, False, None, None),
-        (-1, False, None, None),
-        (None, True, 1, 0),
-    ],
-)
-def test_matched_faces_bounds_table(matched, ok, fp, fn):
-    if matched is None:
-        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
-    else:
-        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
-    if not ok:
-        with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
-            detection_pr([item])
-        return
-    result = detection_pr([item])
-    assert result.false_positives == fp
-    assert result.false_negatives == fn
-    assert result.recall is None
-
-
 def test_detection_pr_raises_against_roster_only():
     """Negative: detection scoring against a roster_only manifest raises."""
     items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=1)]
@@ -842,15 +808,20 @@ def test_matched_faces_is_optional_last_field():
     ],
 )
 def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
+    """FIR-8 matched_faces bounds, including count-only (matched=None).
+
+    Count-only uses exhaustive because the arithmetic is identity-agnostic
+    TP=min(pred, labeled). Omission is not exhaustive.
+    """
     if matched is None:
         item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
     else:
         item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
     if not expect_ok:
         with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
-            detection_pr([item])
+            detection_pr([item], annotation_mode=AnnotationMode.EXHAUSTIVE)
         return
-    result = detection_pr([item])
+    result = detection_pr([item], annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.false_positives == fp
     assert result.false_negatives == fn
     assert result.false_positives >= 0

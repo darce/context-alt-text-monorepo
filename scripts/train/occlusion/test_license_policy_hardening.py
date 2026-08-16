@@ -109,6 +109,22 @@ class TestGate15StrSubclassMethodLaundering:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
 
+    def test_audit_spdx_evil_lic_agpl_direct(self) -> None:
+        """FIR-7-PANEL-rv1-01: call audit_spdx directly, not via _license_values_of.
+
+        Binding ``spdx_id.strip()`` / ``.casefold()`` at audit_spdx:6445
+        must turn this pin red (forged MIT allowlist hit). Row-door pins
+        stay green because ``_license_values_of`` already unbound-strips.
+        """
+        result = policy.audit_spdx(EvilLic("AGPL-3.0"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_audit_spdx_evil_lic_research_direct(self) -> None:
+        result = policy.audit_spdx(EvilLic("research-only"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
+
     def test_forged_license_on_tooling_rejected(self) -> None:
         row = {
             "package": "umap-learn",
@@ -149,6 +165,25 @@ class TestGate15StrSubclassMethodLaundering:
         result = policy.audit_provenance_row(row)
         assert result.ok is False
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    def test_normalize_token_first_on_operator_owned_path(self) -> None:
+        """FIR-7-PANEL-rv1-02: first normalisation is ``_normalize_token``.
+
+        ``_is_operator_owned_source`` is the only production caller that
+        feeds a raw token to ``_normalize_token`` without a prior unbound
+        strip. Binding the helper to ``value.strip().lower()`` must treat
+        ``ToOp('ffhq')`` as ``self-generated`` and turn this pin red.
+        """
+        assert policy._is_operator_owned_source(ToOp("ffhq")) is False
+
+    def test_source_strip_helper_toop_ffhq(self) -> None:
+        """FIR-7-PANEL-rv1-03: pin the single unbound source-strip helper.
+
+        Binding this helper alone (``value.strip()``) must turn this pin
+        red. The floor, ``audit_source``, and the training-data door all
+        call it — a single-site bound-strip mutation is no longer silent.
+        """
+        assert policy._strip_source_token(ToOp("ffhq")) == "ffhq"
 
     def test_honest_subclass_still_evaluates_correctly(self) -> None:
         """Negative control: honest subclass (numpy.str_ shape) must PASS.
@@ -326,6 +361,33 @@ class TestGate22PackageDenylistOutranksRegistration:
         result = policy.audit_tooling_row(row)
         assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
+    def test_floor_step4_not_door_local_loop_is_gate22(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FIR-7-PANEL-rv1-04: GATE-22 is floor step 4, not the door-local loop.
+
+        ``model_id=ultralytics`` is invisible to the door-local first-wins
+        walk (``package`` / ``package_name`` / ``source``). Dropping
+        ``_floor_package_identity_denylist`` while leaving that loop
+        intact must PASS this row — the mutation the existing 3/3 pins
+        do not catch.
+        """
+        row = {
+            "package": "umap-learn",
+            "model_id": "ultralytics",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+        monkeypatch.setattr(
+            policy, "_floor_package_identity_denylist", lambda *_a, **_k: None
+        )
+        dropped = policy.audit_tooling_row(row)
+        assert dropped.ok is True, (
+            "red-proof: without floor step 4 the door-local loop misses "
+            f"model_id denylist: {dropped.reason} {dropped.detail}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # GATE-23 — synthetic-head exemption must re-check commercial_use every door
@@ -487,3 +549,103 @@ class TestRv14UnreadableNodeidBaseline:
         # No errno on UnicodeDecodeError, so the bracket segment must be absent.
         assert err.startswith(f"node-id baseline fixture unreadable: {fixture}: "), err
         assert "codec can't decode" in err, err
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-01 — separator-aligned mid-exception rem must fail closed
+# ---------------------------------------------------------------------------
+
+
+class TestRv301SepAlignedMidExceptionFailClosed:
+    """Junk prefix + exception stem + separator rem must not admit.
+
+    ``yolox_z`` already lands on ``yolox_unknown_residual``. Prefixed
+    twins (``xyolox_z`` / ``xyolox_extra`` / ``xyolox_s_free``) used to
+    hit the ``has_sep`` ``continue`` and fall out as None (permit).
+    """
+
+    DENY: tuple[str, ...] = (
+        "xyolox_z",
+        "xyolox_extra",
+        "xyolox_s_free",
+        "ayolox_z",
+        "myxyolox_z",
+    )
+
+    ADMIT: tuple[str, ...] = (
+        "xyolox_s",
+        "xyolox_tiny",
+        "xyoloxs",
+        "ayolox_tiny",
+        "xyolox_s_trt",
+    )
+
+    @pytest.mark.parametrize("token", DENY)
+    def test_prefixed_sep_unknown_rem_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (separator-aligned mid-exception unknown rem)"
+        )
+        assert hit.package_id == "yolox_unknown_residual", (
+            f"{token!r}: expected yolox_unknown_residual, got {hit.package_id!r}"
+        )
+
+    def test_offset0_yolox_z_still_unknown_residual(self) -> None:
+        hit = policy._package_denylist_hit("yolox_z")
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_prefixed_legit_sep_tag_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must stay ADMIT (legitimate separator rem)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-02 — Deci SuperGradients package identities seed the NC floor
+# ---------------------------------------------------------------------------
+
+
+class TestRv302SuperGradientsSeedsDeciNcFloor:
+    """Framework/package identities carrying Deci NC terms must not permit.
+
+    Only the model stem ``yolo_nas`` used to seed the Deci NC floor, so
+    ``super-gradients`` / ``super_gradients`` / ``deci-ai/super-gradients``
+    returned None and a permissive SPDX wrapper PASSed.
+    """
+
+    FRAMEWORK_IDS: tuple[str, ...] = (
+        "super-gradients",
+        "super_gradients",
+        "deci-ai/super-gradients",
+    )
+
+    @pytest.mark.parametrize("token", FRAMEWORK_IDS)
+    def test_framework_identity_is_nc_floor_hit(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit the Deci NC package floor"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {hit.reason}"
+        )
+        assert "super" in hit.package_id.replace("_", ""), (
+            f"{token!r}: expected super_gradients* package_id, got {hit.package_id!r}"
+        )
+
+    def test_provenance_row_fails_nc_model_derived(self) -> None:
+        # derived_from_model is structurally required on the training-data
+        # door; empty is the valid opt-out. Without the NC floor seed this
+        # row PASSes (Apache-2.0 launders Deci NC framework terms).
+        row = {
+            "package": "super-gradients",
+            "license": "Apache-2.0",
+            "source": "self-generated",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False, (
+            "super-gradients + Apache-2.0 must not PASS (transitive Deci NC)"
+        )
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"expected nc_model_derived, got {result.reason} ({result.detail})"
+        )

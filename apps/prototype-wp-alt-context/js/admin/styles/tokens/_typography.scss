@@ -12,6 +12,9 @@
    *   0.95 (lg), 1   -> --acx-text-base (lg re-values to 1.125rem ONLY at
    *                     audited heading call sites; see task plan S3)
    * Alias pins asserted in tokens/__tests__/design-tokens.test.ts. */
+  /* Micro geometry below the modular ladder (icon chevrons / section micro-headers). */
+  --acx-text-icon: 0.5rem; /* 8px */
+  --acx-text-micro: 0.5625rem; /* 9px */
   --acx-text-2xs: 0.702rem;
   --acx-text-xs: 0.79rem;
   --acx-text-sm: 0.889rem;

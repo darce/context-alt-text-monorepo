@@ -554,6 +554,37 @@ ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 - VM disk fills with build cache over time; run
   `ssh ubuntu@<vm> 'docker buildx prune -f'` periodically.
 
+#### acx_blobs ownership migration (non-root runtime)
+
+Stacks that created the `acx_blobs` named volume while the recognition image
+still ran as root keep that volume as `root:root` forever — Docker only
+propagates image-path ownership when it **initialises an empty new volume**,
+never on an existing one. After the image drops to `USER acx` (uid 10001),
+multipart uploads fail with `EACCES` under `/var/lib/acx-blobs`.
+
+`scripts/deploy/recognition-service.sh` runs an idempotent repair on every
+`do_restart` (deploy / promote path):
+
+```bash
+docker compose -f docker-compose.env.yml --profile repair run --rm fix-blob-ownership
+# prod compose file (manual / legacy stacks):
+docker compose -f docker-compose.prod.yml --profile repair run --rm fix-blob-ownership
+```
+
+The `fix-blob-ownership` service is root (`user: "0:0"`), mounts `acx_blobs`,
+and `chown -R acx:acx /var/lib/acx-blobs`. Safe to re-run. One-shot manual
+repair on an already-deployed env (no full redeploy):
+
+```bash
+ssh ubuntu@acx-backend.tail1a44b8.ts.net \
+  'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml --profile repair run --rm fix-blob-ownership'
+```
+
+Alternatively, destroy the volume only when data loss is acceptable
+(`docker volume rm <project>_acx_blobs`) so the next start re-initialises it
+from the image seed. Prefer the chown repair. The entrypoint fails closed if
+the blob root is unwritable and names this repair profile in the error.
+
 
 **Manual procedure** (the wrapper runs exactly this; documented for
 disaster-recovery scenarios where the script is unavailable):
@@ -776,8 +807,10 @@ focused on the destructive contract.
 
 - Registry: `iad.ocir.io`
 - Namespace: `idu2kqqe2jxy`
-- Repository: `acx-backend`
-- Image tags: `:latest` (prod), `:staging`, `:dev`
+- Repositories (distinct per image variant — not a tag on a shared repo):
+  - `acx-backend` — recognition / default `runtime` stage
+  - `acx-backend-vlm` — VLM / `runtime-vlm` stage (`ACX_BUILD_TARGET=runtime-vlm` in `scripts/deploy/recognition-service.sh`)
+- Image tags: `:latest` (prod), `:staging`, `:dev` (and SHA / rollback tags from the deploy script)
 - Auth: OCI auth token, username `idu2kqqe2jxy/<email>`
 
 ## GPU Burst Tier (detailed description)
@@ -789,6 +822,136 @@ is set. See **[GPU-BURST-PROVISIONING.md](GPU-BURST-PROVISIONING.md)** for the q
 procurement path, SSH/Tailscale admin-plane scope, provisioning sequence, and costs.
 If OCI denies the A10 quota, **[GPU-TIER-FALLBACK-PLAN.md](GPU-TIER-FALLBACK-PLAN.md)**
 covers the backend-agnostic fallbacks (self-host over Tailscale, serverless, hosted API).
+
+## VLM weight cache (runtime-vlm / Florence LOCAL_CPU)
+
+The `runtime-vlm` image is permanently offline for Hugging Face
+(`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` baked in). It cannot download
+Florence weights at boot. Operators seed a host path **outside** that image,
+write an integrity manifest, then mount the cache **read-only** at
+`/data/cache` (compose: `${ACX_MODELS_PATH}:/data/cache:ro` on api and worker).
+`trust_remote_code` still needs a writable module scratch path: compose mounts a
+private `tmpfs` at `HF_MODULES_CACHE` (`/var/cache/acx/hf_modules`, `noexec`,
+uid matching the image `acx` user) so weights stay `:ro` while import-time
+module writes do not hit the host bind.
+
+**Image variant is build-immutable.** Each runtime stage bakes
+`recognition` or `vlm` into `/app/.image-variant` (chmod 0444). The entrypoint
+and `/health`/`/version` read that artifact — not a free-form
+`ACX_IMAGE_VARIANT` env switch. A non-empty env claim that disagrees with the
+bake fails closed. Do not set `ACX_IMAGE_VARIANT` on a recognition container to
+"select" VLM behaviour; pull the `acx-backend-vlm` image instead.
+
+On the VLM image the shared entrypoint boot order is load-bearing:
+
+1. fail-closed bake / blob-root checks
+2. `alembic -c db/alembic.ini upgrade head`
+3. `python -m scripts.sync_identity_schema`
+4. `python -m scripts.verify_identity_schema`
+5. `python -m scripts.verify_vlm_cache` (VLM bake only)
+6. `exec uvicorn …`
+
+The VLM cache gate fails closed when the pinned snapshot does not match the
+integrity manifest exactly — including when an **extra unlisted file** appears
+or when trust_remote_code `modeling_*.py` / `processing_*.py` files are absent
+(model files are code; see SEC-13). If the active adapter is not LOCAL_CPU, the
+gate still verifies the default `florence_small` pin so an empty mount cannot
+boot green. Skipping is only for the recognition image (non-VLM bake) with a
+non-LOCAL_CPU profile.
+
+Identify which image is running (same commit SHA can be either variant). Port
+8000 is **not** published on the host for staging/dev (`expose` only); prod
+publishes it via `docker-compose.admin.yml` on `127.0.0.1:8000` only. Prefer
+`docker exec` against the running api container (works in every env):
+
+```bash
+# Replace <api-container> with the env's api container name/id.
+docker exec <api-container> wget -qO- http://127.0.0.1:8000/health \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print({k:d[k] for k in ("commit_sha","image_variant") if k in d})'
+# or: docker exec <api-container> wget -qO- http://127.0.0.1:8000/version
+# prod admin overlay only (127.0.0.1:8000 published):
+# curl -sS http://127.0.0.1:8000/health | jq '{commit_sha, image_variant}'
+```
+
+### 1. Seed the pinned snapshot (outside the offline image)
+
+From `apps/prototype-description-service`, with the `[vlm]` extra installed
+(network required once):
+
+```bash
+cd apps/prototype-description-service
+uv run --extra vlm python -m scripts.seed_vlm_cache \
+  --hf-home /data/cache/huggingface_cache \
+  --profile florence_small
+```
+
+This downloads the profile-pinned `model_id` at the pinned commit SHA (never a
+branch name), including `trust_remote_code` modeling `*.py` files and weight
+shards, then writes `acx-vlm-cache.manifest.json` inside the snapshot directory.
+
+### 2. Manifest is a trust-establishing act
+
+`--write-manifest` (also invoked by the seeder) **certifies whatever is on
+disk at that moment**. Run it only on a freshly downloaded, out-of-band-verified
+snapshot. **Never re-run it to silence a failing gate** — that would turn the
+gate into a no-op (sr-001 / RLSE-02).
+
+Standalone re-certify of an already-seeded tree (rare; prefer the seeder):
+
+```bash
+cd apps/prototype-description-service
+export ACX_DESCRIPTION_ADAPTER=florence_small
+export HF_HUB_CACHE=/data/cache/huggingface_cache
+uv run python -m scripts.verify_vlm_cache --write-manifest
+```
+
+### 3. Mount read-only at runtime and fail closed on boot
+
+Compose (and any ad-hoc run) must mount the pre-seeded cache at `/data/cache`
+**read-only** (least privilege; a writable shared volume is a code-execution
+vector under `trust_remote_code=True`). Reseeding is a one-shot RW job
+**outside** the serving unit — never remount the serving stack RW to refresh
+weights. Push/pull the VLM image under the `acx-backend-vlm` repository (not
+`:vlm` on `acx-backend`).
+
+**Do not** run the full image CMD without Postgres: the entrypoint's first
+real work is Alembic (step 2 above), so a bare `docker run … acx-backend-vlm`
+exits on a missing DSN and never reaches the VLM cache gate. To demonstrate
+the gate in isolation (no network, no DSN):
+
+```bash
+docker run --rm \
+  -e ACX_DESCRIPTION_ADAPTER=florence_small \
+  -e HF_HUB_CACHE=/data/cache/huggingface_cache \
+  -v /data/cache:/data/cache:ro \
+  --entrypoint python \
+  iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest \
+  -m scripts.verify_vlm_cache
+```
+
+Full-stack boot (migrations + gate + uvicorn) needs the env network and DSN:
+
+```bash
+docker run --rm \
+  --env-file /opt/acx-backend/<env>/.env \
+  --network acx-<env>-net \
+  -v ${ACX_MODELS_PATH}:/data/cache:ro \
+  iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm:latest
+```
+
+Exit 0 from the isolated gate only when every manifest entry verifies, the
+on-disk file set matches exactly, and remote-code `*.py` modules are present;
+any problem exits non-zero. On full-stack boot the same gate is step 5 — an
+earlier Alembic/schema failure is not a cache-gate failure.
+
+Manual check against a host cache (no container):
+
+```bash
+cd apps/prototype-description-service
+export ACX_DESCRIPTION_ADAPTER=florence_small
+export HF_HUB_CACHE=/data/cache/huggingface_cache
+uv run python -m scripts.verify_vlm_cache
+```
 
 ## Security Note
 

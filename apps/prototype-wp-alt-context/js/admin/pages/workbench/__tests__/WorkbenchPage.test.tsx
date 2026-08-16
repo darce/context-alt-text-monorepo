@@ -150,9 +150,13 @@ type ScanOutcome = 'success' | 'error';
 const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): WorkbenchFindingsViewModel => ({
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
+  zeroEvidenceClusterCount: 0,
+  topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
   isError: false,
+  isTopUnlabeledError: false,
+  isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
   queueSettled: true,
@@ -845,6 +849,16 @@ describe('WorkbenchPage', () => {
       const mediaRegions = container.querySelectorAll('.acx-media-selection');
       expect(mediaRegions).toHaveLength(1);
       expect(library).toContainElement(mediaRegions[0] as HTMLElement);
+    });
+
+    it('does not put aria-live on the control panel host [L2V-01]', () => {
+      setupScanMutation('success');
+      renderWorkbench();
+
+      const panelHost = document.querySelector('.acx-workbench__panel');
+      expect(panelHost).not.toBeNull();
+      // Nested narrow live regions may exist; the panel host itself must not re-announce.
+      expect(panelHost).not.toHaveAttribute('aria-live');
     });
 
     it('restores ?panes=library-collapsed independently of the ?panel= overlay [NAV-11]', () => {

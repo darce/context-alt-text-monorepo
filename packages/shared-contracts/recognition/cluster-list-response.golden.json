@@ -5,6 +5,7 @@
       "label": "Alice Example",
       "is_auto_label": false,
       "identity_count": 3,
+      "person_uuid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       "member_ids": ["identity-local-1", "identity-local-2", "identity-local-3"],
       "representative_identity": {
         "media_id": 11,
@@ -53,6 +54,7 @@
       "label": "Bob Example",
       "is_auto_label": false,
       "identity_count": 2,
+      "person_uuid": null,
       "member_ids": ["identity-local-4", "identity-local-5"],
       "representative_identity": {
         "media_id": 22,

@@ -20,6 +20,9 @@ import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox, type ComboboxOption } from '../../../../components/ui/combobox';
+import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
+import { unavailableImageName } from '../../../../components/ui/faceThumbDisplay';
+import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
   buildNamingOptions,
@@ -97,10 +100,6 @@ const withTimeout = async <T,>(
   }
 };
 
-const isDedicatedFaceThumbUrl = (thumbUrl: string | null | undefined): boolean => {
-  return typeof thumbUrl === 'string' && thumbUrl.includes('recognition/face-thumbs/');
-};
-
 const renderNamingOption = (option: ComboboxOption): React.ReactNode => {
   const source =
     option.source === 'person' || option.source === 'cluster'
@@ -167,12 +166,14 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const {
     members,
     isLoading,
+    isError,
     truncated,
     total,
     isFullyLoaded,
     isExpanding,
     expandError,
     showAll,
+    refetch,
   } = useShowAllClusterMembers(clusterId);
 
   // AT affordance: when expansion completes the show-all button unmounts, so
@@ -216,7 +217,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     () =>
       buildNamingOptions({
         rosterEntries: rosterError ? [] : persons,
-        labelMatches: labeledClusters,
+        // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+        labelMatches: labeledClusters.filter(
+          (cluster): cluster is typeof cluster & { label: string } =>
+            typeof cluster.label === 'string' && cluster.label.trim() !== '',
+        ),
         filter: labelInput,
         excludeClusterId: clusterId,
       }),
@@ -307,6 +312,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   /**
    * When the local collision set is empty/pending (limit 20, disabled <2 chars),
    * look up an exact remote labeled match so free-text create cannot silent-dupe (FIX-8).
+   * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
+   * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
    */
   const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
     try {
@@ -318,7 +325,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       const normalized = trimmed.toLowerCase();
       const match = results.clusters.find(
         (cluster) =>
-          cluster.id !== clusterId && cluster.label.toLowerCase() === normalized && isHumanLabeledTarget(cluster.label),
+          cluster.id !== clusterId &&
+          typeof cluster.label === 'string' &&
+          cluster.label.toLowerCase() === normalized,
       );
       if (!match?.id || !match.label) {
         return null;
@@ -346,6 +355,14 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       return;
     }
     setError(null);
+
+    // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
+    if (!isHumanLabeledTarget(trimmed)) {
+      setError(
+        __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
+      );
+      return;
+    }
 
     if (!allowRenameAnyway) {
       const localGuard = evaluateDuplicateGuard(trimmed);
@@ -428,6 +445,13 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const mergeTargetId = duplicateGuard?.mergeTarget ? unwrapClusterOptionId(duplicateGuard.mergeTarget.value) : null;
   const mergeTargetLabel = duplicateGuard?.mergeTarget?.label;
   const mergeTargetCount = duplicateGuard?.mergeTarget?.identityCount;
+  // BR-66 / BR-58: outcome-sample copy must match the merge button predicate — never advertise
+  // a merge that the machine-labeled-target guard suppresses.
+  const canOfferMerge =
+    Boolean(mergeTargetId) &&
+    typeof mergeTargetLabel === 'string' &&
+    mergeTargetLabel.length > 0 &&
+    isHumanLabeledTarget(mergeTargetLabel);
 
   if (lastMerge) {
     return (
@@ -473,6 +497,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     );
   }
 
+  const memberAlt = __('Face to label', 'alt-context');
+
   return (
     <div className="acx-cluster-labeling-panel">
       <div className="acx-cluster-labeling-panel__header">
@@ -486,22 +512,37 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         <div className="acx-cluster-labeling-panel__grid" ref={memberGridRef} tabIndex={-1}>
           {isLoading ? (
             <p>{__('Loading faces...', 'alt-context')}</p>
+          ) : isError ? (
+            <div className="acx-cluster-labeling-panel__error" role="alert" data-testid="acx-cluster-members-error">
+              <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+              <button type="button" className="button" onClick={() => refetch()}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
           ) : members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
                 {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
-                ) : member.media_url && member.bbox ? (
+                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
+                ) : member.media_url && isCroppableBbox(member.bbox) ? (
                   <FaceThumbnail
                     mediaUrl={member.media_url}
                     bbox={member.bbox}
                     size="lg"
-                    alt={__('Face to label', 'alt-context')}
+                    alt={memberAlt}
                   />
                 ) : member.thumb_url ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={__('Face to label', 'alt-context')} />
+                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
                 ) : (
-                  <div className="acx-face-thumbnail acx-face-thumbnail--placeholder" />
+                  <div
+                    className="acx-cluster-labeling-panel__face-unavailable"
+                    role="img"
+                    aria-label={unavailableImageName(memberAlt)}
+                  >
+                    <span className="acx-cluster-labeling-panel__face-unavailable-label">
+                      {__('No image', 'alt-context')}
+                    </span>
+                  </div>
                 )}
               </div>
             ))
@@ -587,7 +628,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                   duplicateGuard.label,
                 )}
               </p>
-              {mergeTargetId && mergeTargetLabel && (
+              {canOfferMerge ? (
                 <p className="acx-cluster-labeling-panel__outcome-sample">
                   {typeof mergeTargetCount === 'number'
                     ? sprintf(
@@ -602,9 +643,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                         mergeTargetLabel,
                       )}
                 </p>
-              )}
+              ) : null}
               <div className="acx-cluster-labeling-panel__suggestion-actions">
-                {mergeTargetId && mergeTargetLabel ? (
+                {canOfferMerge && mergeTargetId ? (
                   <button
                     type="button"
                     className="button button-primary"

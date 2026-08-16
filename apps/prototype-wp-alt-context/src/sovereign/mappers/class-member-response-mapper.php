@@ -66,15 +66,18 @@ class MemberResponseMapper {
 			&& ! $this->normalize_boolean_value( $member_row['is_user_confirmed'] ?? false )
 			&& $this->looks_like_system_defined_label( (string) $cluster_label );
 
+		$source = $this->resolve_face_source_fields( $member_row, $media_id, $member_row['bbox_json'] ?? null );
+
 		return array(
 			'identity_id' => $identity_id,
 			'media_id' => $media_id,
 			'similarity' => $this->normalize_similarity_value( $member_row ),
 			'confidence' => $this->normalize_confidence_value( $member_row ),
 			'clustering_pending' => false,
-			'bbox' => $this->extract_bbox_pixels( $member_row['bbox_json'] ?? null ),
-			'thumb_url'     => $this->resolve_thumb_url( $member_row, $media_id ),
-			'media_url'     => $this->resolve_media_url( $media_id ),
+			'bbox' => $source['bbox'],
+			'thumb_url'     => $source['thumb_url'],
+			'attachment_url' => $source['attachment_url'],
+			'media_url'     => $source['media_url'],
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
 			'cluster_label' => $cluster_label,
 			'is_auto_label' => $is_auto_label,

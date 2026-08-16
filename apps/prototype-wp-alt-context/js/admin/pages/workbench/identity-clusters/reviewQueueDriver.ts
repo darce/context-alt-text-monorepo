@@ -12,6 +12,30 @@ import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { SuggestionReviewItem } from './suggestionReviewItems';
 
+/** Cluster evidence gate (E21-18 S2 / sr-007). Zero-evidence rows never enter the queue. */
+export const CLUSTER_EVIDENCE = {
+  ZERO: 'zero',
+  PRESENT: 'present',
+} as const;
+
+export type ClusterEvidence = (typeof CLUSTER_EVIDENCE)[keyof typeof CLUSTER_EVIDENCE];
+
+type ClusterEvidenceInput = Pick<TopUnlabeledCluster, 'identity_count'> & {
+  representatives?: readonly unknown[] | null;
+};
+
+/**
+ * A cluster is zero-evidence iff identity_count === 0 OR representatives is empty/absent.
+ * Either alone already breaks the card: no meta count or no thumbs.
+ */
+export const isZeroEvidenceCluster = (cluster: ClusterEvidenceInput): boolean =>
+  cluster.identity_count === 0 ||
+  !Array.isArray(cluster.representatives) ||
+  cluster.representatives.length === 0;
+
+export const clusterEvidence = (cluster: ClusterEvidenceInput): ClusterEvidence =>
+  isZeroEvidenceCluster(cluster) ? CLUSTER_EVIDENCE.ZERO : CLUSTER_EVIDENCE.PRESENT;
+
 export const NEXT_ACTION_KIND = {
   ASSIGNMENT: 'assignment',
   MERGE: 'merge',
@@ -318,10 +342,12 @@ export const buildReviewQueue = (
     suggestionId: name.id,
     clusterId: name.cluster_id,
   }));
-  const clusters: ReviewQueueItem[] = sources.sortedClusters.map((cluster) => ({
-    kind: NEXT_ACTION_KIND.CLUSTER,
-    clusterId: cluster.id,
-  }));
+  const clusters: ReviewQueueItem[] = sources.sortedClusters
+    .filter((cluster) => clusterEvidence(cluster) === CLUSTER_EVIDENCE.PRESENT)
+    .map((cluster) => ({
+      kind: NEXT_ACTION_KIND.CLUSTER,
+      clusterId: cluster.id,
+    }));
 
   return filterReviewQueueComposite(
     [...assignments, ...merges, ...names, ...clusters],
@@ -404,3 +430,22 @@ export const nextQueueIndex = (index: number, length: number): number => {
   const clamped = clampQueueIndex(index, length);
   return Math.min(clamped + 1, length - 1);
 };
+
+/**
+ * BR-35/BR-40/BR-41: queue ordinal props are integers >= 1 only.
+ * Rejects 0, negative, NaN, Infinity, and floats so sprintf cannot coerce junk into accnames.
+ */
+export const isValidQueueOrdinal = (value: number | undefined): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1;
+
+/**
+ * E21-17-R1-TS41-1: pair-level gate — both singles valid and position <= total.
+ * Accname consumers must use this (not independent single checks) so "4 of 3" cannot render.
+ * Type predicate narrows `position`; pair it with `isValidQueueOrdinal(total)` at the call site
+ * so control-flow narrowing covers both sprintf args (same pattern as the old dual single-guards).
+ */
+export const isValidQueueOrdinalPair = (
+  position: number | undefined,
+  total: number | undefined,
+): position is number =>
+  isValidQueueOrdinal(position) && isValidQueueOrdinal(total) && position <= total;

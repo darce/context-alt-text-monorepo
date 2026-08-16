@@ -230,13 +230,25 @@ run)
     fi
     sha="$(git rev-parse HEAD)"
     echo "remote-gate: pushing ${sha} to ${REMOTE_HOST}:${REMOTE_DIR} (workdir ${WORKDIR})"
-    git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/heads/remote-gate"
+    # Transport ref lives OUTSIDE refs/heads/ on purpose. The gate publishes a
+    # SHA to a scratch mirror; the remote checks out ${sha} directly and never
+    # reads the ref by name, so nothing here is a branch. Under refs/heads/ the
+    # push-side branch-naming guard classified the DESTINATION name
+    # ("remote-gate") as the developer's branch and blocked every gate run on
+    # every branch, main included — because git reports local_ref as "HEAD" for
+    # a HEAD:refs/heads/<x> refspec and the guard falls back to the remote ref.
+    # Keeping the guard fully armed for real branch pushes is the point: the fix
+    # is to stop pretending the gate publishes a branch, not to override it.
+    git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/workbay/gate"
     "${SSH[@]}" "set -u
         cd \"\$HOME/${REMOTE_DIR}\" || exit 1
         [ -f \"${CLONE_SENTINEL}\" ] || { echo 'remote-gate: clone sentinel missing; refusing (re-run bootstrap)' >&2; exit 1; }
         exec 9>.gate.lock
         flock -n 9 || { echo 'remote-gate: gate busy (another run holds the clone lock)' >&2; exit 75; }
         git checkout -qf ${sha} || exit 1
+        # Retire the pre-refs/workbay transport branch once we are detached off
+        # it; left behind it pins old gate objects on a disk-tight VM. Idempotent.
+        git update-ref -d refs/heads/remote-gate 2>/dev/null || true
         git clean -fdq -e .venv -e ${CLONE_SENTINEL} -e .gate.lock || exit 1
         cd \"${WORKDIR}\" || exit 1
         if [ -f pyproject.toml ]; then

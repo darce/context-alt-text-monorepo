@@ -14,6 +14,8 @@ from db.models import (
     ClusterMergeSuggestion,
     IdentityCluster,
     IdentityClusteringJob,
+    IdentityClusterRepresentative,
+    IdentityMember,
     IdentitySuggestion,
     MediaIdentity,
     Tenant,
@@ -50,15 +52,22 @@ async def _create_cluster(
 
 
 async def _create_identity(
-    db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None
+    db_session: AsyncSession,
+    tenant: Tenant,
+    *,
+    identity_id: UUID | None = None,
+    media_id: int = 101,
+    media_url: str = "http://example.test/media-101.jpg",
+    bbox_x: int = 0,
+    bbox_y: int = 0,
 ) -> MediaIdentity:
     identity = MediaIdentity(
         id=identity_id or uuid4(),
         tenant_id=tenant.id,
-        media_id=101,
-        media_url="http://example.test/media-101.jpg",
-        bbox_x=0,
-        bbox_y=0,
+        media_id=media_id,
+        media_url=media_url,
+        bbox_x=bbox_x,
+        bbox_y=bbox_y,
         bbox_width=10,
         bbox_height=10,
         confidence=0.95,
@@ -112,6 +121,139 @@ async def test_list_name_suggestions_filters_expired_and_confidence(db_session: 
     assert [item.suggested_name for item in suggestions] == ["Avery Rhodes"]
     assert suggestions[0].source is SuggestedLabelSource.IDENTITY
     assert suggestions[0].source_job_id == str(job.id)
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_includes_eager_loaded_representatives(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    identity = await _create_identity(db_session, tenant)
+    db_session.add(
+        IdentityClusterRepresentative(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            identity_id=identity.id,
+            embedding=_unit_embedding(),
+            quality_score=0.94,
+            is_user_selected=True,
+        )
+    )
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="Avery Rhodes",
+            confidence_score=0.91,
+            source=SuggestedLabelSource.IDENTITY.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    assert len(suggestions[0].representatives) == 1
+    rep = suggestions[0].representatives[0]
+    assert rep.media_id == 101
+    assert rep.media_url == "http://example.test/media-101.jpg"
+    assert (rep.bbox_x, rep.bbox_y, rep.bbox_width, rep.bbox_height) == (0, 0, 10, 10)
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_without_representatives_returns_empty_list(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="No Reps",
+            confidence_score=0.88,
+            source=SuggestedLabelSource.ROSTER.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    assert suggestions[0].representatives == []
+
+
+@pytest.mark.asyncio
+async def test_list_name_suggestions_member_fallback_when_no_pinned_representative(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    # Two members: canonical order is similarity DESC, assigned_at ASC.
+    # Lower similarity is assigned earlier so a wrong ORDER BY would pick it.
+    low_sim = await _create_identity(
+        db_session,
+        tenant,
+        identity_id=uuid4(),
+        media_id=201,
+        media_url="http://example.test/media-201.jpg",
+        bbox_x=1,
+    )
+    high_sim = await _create_identity(
+        db_session,
+        tenant,
+        identity_id=uuid4(),
+        media_id=101,
+        media_url="http://example.test/media-101.jpg",
+        bbox_x=2,
+    )
+    earlier = datetime.now(tz=UTC) - timedelta(hours=2)
+    later = datetime.now(tz=UTC) - timedelta(hours=1)
+    db_session.add(
+        IdentityMember(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            identity_id=low_sim.id,
+            similarity=0.80,
+            assigned_at=earlier,
+        )
+    )
+    db_session.add(
+        IdentityMember(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            identity_id=high_sim.id,
+            similarity=0.97,
+            assigned_at=later,
+        )
+    )
+    db_session.add(
+        NameSuggestionModel(
+            tenant_id=tenant.id,
+            cluster_id=cluster.id,
+            suggested_name="Fallback Face",
+            confidence_score=0.9,
+            source=SuggestedLabelSource.IDENTITY.value,
+            expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+
+    assert len(suggestions) == 1
+    reps = suggestions[0].representatives
+    assert len(reps) >= 1
+    # MUT-H: first fallback member must be highest-similarity (similarity DESC, assigned_at ASC).
+    assert reps[0].identity_id == str(high_sim.id)
+    assert reps[0].media_id == 101
+    assert reps[0].media_url == "http://example.test/media-101.jpg"
+    assert (reps[0].bbox_x, reps[0].bbox_y, reps[0].bbox_width, reps[0].bbox_height) == (2, 0, 10, 10)
+    if len(reps) > 1:
+        assert reps[1].identity_id == str(low_sim.id)
 
 
 @pytest.mark.asyncio
@@ -258,6 +400,37 @@ async def test_accept_name_suggestion_raises_on_label_conflict(db_session: Async
 
     with pytest.raises(ValueError, match="label conflict"):
         await service.accept_name_suggestion(str(tenant.id), str(suggestion.id))
+
+
+@pytest.mark.asyncio
+async def test_accept_name_suggestion_rejects_reserved_label_without_write(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    """E21-17-R1-PY47-4: reserved suggested_name must raise and leave cluster untouched."""
+    from recognition.domain.cluster import ReservedClusterLabelError
+
+    cluster = await _create_cluster(db_session, tenant, label="Before", user_confirmed=False)
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="cluster-9",
+        confidence_score=0.88,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+
+    with pytest.raises(ReservedClusterLabelError):
+        await service.accept_name_suggestion(str(tenant.id), str(suggestion.id))
+
+    await db_session.refresh(cluster)
+    await db_session.refresh(suggestion)
+    assert cluster.label == "Before"
+    assert cluster.user_confirmed is False
+    assert suggestion.resolution == SuggestionStatus.PENDING.value
 
 
 @pytest.mark.asyncio
@@ -540,6 +713,34 @@ def test_assignment_repository_maps_machine_proposal_metadata() -> None:
     assert suggestion.confidence_score == pytest.approx(0.79)
     assert suggestion.expires_at == model.expires_at
     assert suggestion.source_job_id == str(source_job_id)
+
+
+def test_name_suggestion_representatives_default_empty() -> None:
+    """E21-17-R1-MUT-I/J: pin construction defaults instead of ripping call-site guards.
+
+    Call sites already pass representatives; the default_factory=[] contract is what
+    partial construction relies on — pin it rather than chase None-guards.
+    """
+    from recognition.domain.suggestion import NameSuggestion
+    from recognition.interface_adapters.http.schemas.responses import NameSuggestionResponse
+
+    domain = NameSuggestion(
+        id=str(uuid4()),
+        cluster_id=str(uuid4()),
+        suggested_name="Ada",
+        source=SuggestedLabelSource.IDENTITY,
+        status=SuggestionStatus.PENDING,
+    )
+    assert domain.representatives == []
+
+    response = NameSuggestionResponse(
+        id=str(uuid4()),
+        cluster_id=str(uuid4()),
+        suggested_name="Ada",
+        source="identity",
+        status="pending",
+    )
+    assert response.representatives == []
 
 
 def test_merge_repository_maps_machine_proposal_metadata() -> None:

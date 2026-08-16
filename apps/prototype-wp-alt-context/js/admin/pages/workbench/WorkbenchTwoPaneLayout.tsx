@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { __ } from '@wordpress/i18n';
 
@@ -120,6 +121,7 @@ interface PaneHostProps {
   title: string;
   zeroStateMessage: string;
   style?: CSSProperties;
+  hostRef?: RefObject<HTMLElement>;
 }
 
 const PaneHost = ({
@@ -130,12 +132,14 @@ const PaneHost = ({
   title,
   zeroStateMessage,
   style,
+  hostRef,
 }: PaneHostProps): JSX.Element => {
   const empty = isSlotEmpty(children);
   const dominant = kind === 'library';
 
   return (
     <section
+      ref={hostRef as RefObject<HTMLElement>}
       className={`acx-workbench__two-pane-${kind}`}
       data-testid={`workbench-two-pane-${kind}`}
       data-dominant={dominant ? 'true' : 'false'}
@@ -165,9 +169,17 @@ interface SplitterProps {
   panes: WorkbenchPanesState;
   onRatioChange: (next: number) => void;
   onPanesChange: (next: WorkbenchPanesState) => void;
+  splitterRef?: RefObject<HTMLDivElement>;
 }
 
-const TwoPaneSplitter = ({ stacked, ratio, panes, onRatioChange, onPanesChange }: SplitterProps): JSX.Element => {
+const TwoPaneSplitter = ({
+  stacked,
+  ratio,
+  panes,
+  onRatioChange,
+  onPanesChange,
+  splitterRef,
+}: SplitterProps): JSX.Element => {
   // Refs so pointer-move in the same event turn (jsdom fireEvent) sees drag start
   // without waiting for React state, and without getBoundingClientRect geometry.
   const draggingRef = useRef(false);
@@ -281,6 +293,7 @@ const TwoPaneSplitter = ({ stacked, ratio, panes, onRatioChange, onPanesChange }
 
   return (
     <div
+      ref={splitterRef}
       role="separator"
       tabIndex={0}
       className="acx-workbench__two-pane-splitter"
@@ -317,9 +330,26 @@ export const WorkbenchTwoPaneLayout = ({
   const [splitRatio, setSplitRatio] = useState(DEFAULT_SPLIT_RATIO);
   const controlTitleId = useId();
   const libraryTitleId = useId();
+  const controlHostRef = useRef<HTMLElement>(null);
+  const libraryHostRef = useRef<HTMLElement>(null);
+  const splitterRef = useRef<HTMLDivElement>(null);
 
   const controlCollapsed = panes === APP_LINK_VALUES.panesControlCollapsed;
   const libraryCollapsed = panes === APP_LINK_VALUES.panesLibraryCollapsed;
+
+  // L2V-02: if focus is inside a pane that just collapsed, move it to the splitter
+  // so keyboard users are not trapped on a hidden node.
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!(active instanceof Node)) {
+      return;
+    }
+    const trappedInControl = controlCollapsed && controlHostRef.current?.contains(active);
+    const trappedInLibrary = libraryCollapsed && libraryHostRef.current?.contains(active);
+    if ((trappedInControl || trappedInLibrary) && splitterRef.current) {
+      splitterRef.current.focus();
+    }
+  }, [controlCollapsed, libraryCollapsed]);
 
   const controlTitle = __('Control', 'alt-context');
   const libraryTitle = __('Library', 'alt-context');
@@ -358,6 +388,7 @@ export const WorkbenchTwoPaneLayout = ({
       title={controlTitle}
       zeroStateMessage={controlZero}
       style={controlStyle}
+      hostRef={controlHostRef}
     >
       {control}
     </PaneHost>
@@ -371,6 +402,7 @@ export const WorkbenchTwoPaneLayout = ({
       title={libraryTitle}
       zeroStateMessage={libraryZero}
       style={libraryStyle}
+      hostRef={libraryHostRef}
     >
       {library}
     </PaneHost>
@@ -383,6 +415,7 @@ export const WorkbenchTwoPaneLayout = ({
       panes={panes}
       onRatioChange={setSplitRatio}
       onPanesChange={onPanesChange}
+      splitterRef={splitterRef}
     />
   );
 

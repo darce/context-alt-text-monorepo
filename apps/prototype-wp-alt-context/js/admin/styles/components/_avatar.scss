@@ -44,4 +44,78 @@
     background-color: var(--acx-color-data-placeholder);
     border-radius: inherit;
   }
+
+  &__skeleton {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    background-color: var(--acx-gray-200);
+    background-image: linear-gradient(90deg, var(--acx-gray-200) 0%, var(--acx-gray-100) 50%, var(--acx-gray-200) 100%);
+    background-size: 200% 100%;
+    animation: acx-avatar-shimmer 1.2s ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+
+  &[data-avatar-state='data-missing'],
+  &[data-avatar-state='error'] {
+    flex-direction: column;
+    gap: var(--acx-space-2);
+    padding: var(--acx-space-4);
+    background-color: var(--acx-gray-200);
+    color: var(--acx-gray-600);
+    border-radius: var(--acx-radius-circle);
+    box-sizing: border-box;
+  }
+
+  &[data-avatar-state='error'] {
+    color: var(--acx-color-warning-border);
+    box-shadow: var(--acx-shadow-inset-danger);
+  }
+
+  &--square[data-avatar-state='data-missing'],
+  &--square[data-avatar-state='error'] {
+    border-radius: var(--acx-radius-md);
+  }
+
+  &__missing-label {
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-medium);
+    line-height: var(--acx-leading-tight);
+    text-align: center;
+    color: var(--acx-gray-600);
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+
+  // Consumers opt in via hideMissingLabel. Avatar already sets
+  // role="img" aria-label={missingLabel}, so hiding the visible label is safe.
+  &--hide-missing-label &__missing-label {
+    display: none;
+  }
+
+  &__error {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-2);
+  }
+
+  &__missing-icon,
+  &__broken-icon,
+  &__warning-icon {
+    flex-shrink: 0;
+  }
+}
+
+@keyframes acx-avatar-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }

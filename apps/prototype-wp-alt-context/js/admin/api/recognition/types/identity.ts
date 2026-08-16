@@ -24,6 +24,8 @@ export interface ClusterIdentity {
   clustering_pending?: boolean;
   bbox: BoundingBox | null;
   thumb_url?: string | null;
+  /** Durable WP attachment URL used to crop after scan-time blobs expire. */
+  attachment_url?: string | null;
   media_url?: string | null;
   cluster_id?: string | null;
   cluster_label?: string | null;
@@ -76,6 +78,8 @@ export interface DetectedIdentity {
   similarity: number | null;
   detected_at?: string;
   thumb_url?: string | null;
+  /** Durable WP attachment URL used to crop after scan-time blobs expire. */
+  attachment_url?: string | null;
   media_url?: string | null;
   debug_metrics?: DebugMetrics | null;
 }

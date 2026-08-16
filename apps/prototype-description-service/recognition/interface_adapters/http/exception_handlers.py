@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from db.session import get_pool_stats
+from recognition.domain.cluster import ReservedClusterLabelError
 from recognition.domain.repositories import ClusterNotFoundError
 from recognition.interface_adapters.http.middleware.correlation import (
     CORRELATION_ID_HEADER,
@@ -122,6 +123,19 @@ async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotF
     )
 
 
+async def reserved_cluster_label_exception_handler(request: Request, exc: ReservedClusterLabelError) -> JSONResponse:
+    """Translate reserved operator labels to HTTP 400."""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "error": "ReservedClusterLabelError",
+            "message": str(exc),
+            "path": str(request.url),
+            "correlation_id": _correlation_id_for(request),
+        },
+    )
+
+
 def _is_duplicate_cluster_label(exc: IntegrityError) -> bool:
     """Return True when IntegrityError is caused by duplicate (tenant_id, label)."""
     message = str(exc).lower()
@@ -155,6 +169,7 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach exception handlers to the FastAPI app."""
     app.add_exception_handler(ClusterNotFoundError, cluster_not_found_exception_handler)
+    app.add_exception_handler(ReservedClusterLabelError, reserved_cluster_label_exception_handler)
     app.add_exception_handler(RecognitionError, recognition_exception_handler)
     app.add_exception_handler(IntegrityError, integrity_exception_handler)
     app.add_exception_handler(PoolTimeoutError, pool_exhaustion_handler)

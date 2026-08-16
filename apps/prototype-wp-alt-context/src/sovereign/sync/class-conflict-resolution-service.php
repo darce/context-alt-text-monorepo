@@ -9,15 +9,21 @@ require_once __DIR__ . '/class-outbox-drain.php';
 require_once __DIR__ . '/class-curation-idempotency-key.php';
 require_once __DIR__ . '/interface-outbox-writer.php';
 require_once __DIR__ . '/class-outbox-writer.php';
+require_once __DIR__ . '/../class-projection-query-exception.php';
 require_once __DIR__ . '/../repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/interface-clusters-repository.php';
 require_once __DIR__ . '/../repositories/interface-identity-members-repository.php';
+require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
+use AltContext\Support\Telemetry;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function function_exists;
 use function get_current_user_id;
@@ -25,9 +31,12 @@ use function in_array;
 use function is_array;
 use function is_string;
 use function max;
+use function sprintf;
 use function trim;
 
 final class ConflictResolutionService {
+	use DetectsSystemDefinedLabels;
+
 	public const OUTBOX_OPERATION_CLUSTER_LABEL_UPDATED = 'cluster_label_updated';
 	public const OUTBOX_OPERATION_IDENTITY_REASSIGNED   = 'identity_reassigned';
 
@@ -67,7 +76,7 @@ final class ConflictResolutionService {
 	}
 
 	/**
-	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool, restore_report?:array{enqueued:int, skipped:int, skipped_keys:string[]}}
+	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'reserved_label'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool, restore_report?:array{enqueued:int, skipped:int, skipped_keys:string[]}}
 	 *         restore_report is present only for successful restore_local resolutions: entities whose
 	 *         local curated state no longer exists are skipped and counted, not fatal.
 	 */
@@ -133,14 +142,42 @@ final class ConflictResolutionService {
 		$metrics_refreshed = false;
 		$restore_report = null;
 
-		if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
-			if ( $has_outbox_conflict ) {
-				$operation = $this->outbox_drain->find_operation_by_id( (int) $conflict['outbox_id'], $tenant_id );
-				$operation_type = is_array( $operation ) ? (string) ( $operation['operation_type'] ?? '' ) : '';
-				if (
-					! in_array( $operation_type, self::ACCEPT_MACHINE_OUTBOX_OPERATIONS, true )
-					&& ! in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true )
-				) {
+		try {
+			if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
+				if ( $has_outbox_conflict ) {
+					$operation = $this->outbox_drain->find_operation_by_id( (int) $conflict['outbox_id'], $tenant_id );
+					$operation_type = is_array( $operation ) ? (string) ( $operation['operation_type'] ?? '' ) : '';
+					if (
+						! in_array( $operation_type, self::ACCEPT_MACHINE_OUTBOX_OPERATIONS, true )
+						&& ! in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true )
+					) {
+						$wpdb->query( 'ROLLBACK' );
+						return array(
+							'ok' => false,
+							'reason' => 'resolution_not_allowed',
+							'metrics_refreshed' => false,
+						);
+					}
+
+					if ( in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true ) ) {
+						$mutation_ok = $this->resolve_compound_outbox_acceptance( $operation_type, $operation, $conflict, $tenant_id );
+					} else {
+						$mutation_ok = $this->clear_curation_for_entity(
+							(string) ( $conflict['entity_type'] ?? '' ),
+							(string) ( $conflict['entity_key'] ?? '' ),
+							$tenant_id
+						) > 0;
+					}
+					if ( $mutation_ok ) {
+						$mutation_ok = $this->outbox_drain->discard_operation( (int) $conflict['outbox_id'], $tenant_id );
+						$metrics_refreshed = $mutation_ok;
+					}
+				} else {
+					$mutation_ok = $this->resolve_projection_acceptance( $conflict, $tenant_id );
+				}
+			} elseif ( 'merge' === $resolution ) {
+				$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
+				if ( '' === $normalized_merged_value ) {
 					$wpdb->query( 'ROLLBACK' );
 					return array(
 						'ok' => false,
@@ -149,84 +186,85 @@ final class ConflictResolutionService {
 					);
 				}
 
-				if ( in_array( $operation_type, self::ACCEPT_MACHINE_COMPOUND_OUTBOX_OPERATIONS, true ) ) {
-					$mutation_ok = $this->resolve_compound_outbox_acceptance( $operation_type, $operation, $conflict, $tenant_id );
-				} else {
-					$mutation_ok = $this->clear_curation_for_entity(
-						(string) ( $conflict['entity_type'] ?? '' ),
-						(string) ( $conflict['entity_key'] ?? '' ),
-						$tenant_id
-					) > 0;
+				if (
+					'person_name_conflict' === (string) ( $conflict['conflict_code'] ?? '' )
+					&& $this->is_reserved_label_shape( $normalized_merged_value )
+				) {
+					$wpdb->query( 'ROLLBACK' );
+					return array(
+						'ok' => false,
+						'reason' => 'reserved_label',
+						'metrics_refreshed' => false,
+					);
 				}
-				if ( $mutation_ok ) {
-					$mutation_ok = $this->outbox_drain->discard_operation( (int) $conflict['outbox_id'], $tenant_id );
+
+				$mutation_ok = $this->resolve_merge_acceptance( $conflict, $tenant_id, $normalized_merged_value );
+				$metrics_refreshed = $mutation_ok;
+				if ( $mutation_ok && $has_outbox_conflict ) {
+					$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
+						(int) $conflict['outbox_id'],
+						(int) ( $conflict['backend_version'] ?? 0 ),
+						$tenant_id,
+						$normalized_merged_value
+					);
 					$metrics_refreshed = $mutation_ok;
 				}
-			} else {
-				$mutation_ok = $this->resolve_projection_acceptance( $conflict, $tenant_id );
+			} elseif ( 'restore_local' === $resolution ) {
+				// Top-level branch by construction (PR2-01): resolve_projection_acceptance()
+				// only runs under accepted|accept_backend, so restore_local dispatches here,
+				// beside merge/accept_backend. Local curation is the good copy — synthesize
+				// re-push outbox ops instead of mutating local state.
+				$restore_report = $this->restore_local_roster_curation( $conflict, $tenant_id );
+				$mutation_ok = null !== $restore_report;
+				$metrics_refreshed = $mutation_ok && $restore_report['enqueued'] > 0;
+			} elseif ( $has_outbox_conflict ) {
+				$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
+					(int) $conflict['outbox_id'],
+					(int) ( $conflict['backend_version'] ?? 0 ),
+					$tenant_id
+				);
+				$metrics_refreshed = $mutation_ok;
 			}
-		} elseif ( 'merge' === $resolution ) {
-			$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
-			if ( '' === $normalized_merged_value ) {
+
+			if ( ! $mutation_ok ) {
 				$wpdb->query( 'ROLLBACK' );
 				return array(
 					'ok' => false,
-					'reason' => 'resolution_not_allowed',
+					'reason' => 'entity_mutation_failed',
 					'metrics_refreshed' => false,
 				);
 			}
 
-			$mutation_ok = $this->resolve_merge_acceptance( $conflict, $tenant_id, $normalized_merged_value );
-			$metrics_refreshed = $mutation_ok;
-			if ( $mutation_ok && $has_outbox_conflict ) {
-				$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
-					(int) $conflict['outbox_id'],
-					(int) ( $conflict['backend_version'] ?? 0 ),
-					$tenant_id,
-					$normalized_merged_value
+			if ( ! $this->conflict_repository->mark_resolved( $conflict_id, $resolution, $tenant_id ) ) {
+				$wpdb->query( 'ROLLBACK' );
+				return array(
+					'ok' => false,
+					'reason' => 'conflict_update_failed',
+					'metrics_refreshed' => false,
 				);
-				$metrics_refreshed = $mutation_ok;
 			}
-		} elseif ( 'restore_local' === $resolution ) {
-			// Top-level branch by construction (PR2-01): resolve_projection_acceptance()
-			// only runs under accepted|accept_backend, so restore_local dispatches here,
-			// beside merge/accept_backend. Local curation is the good copy — synthesize
-			// re-push outbox ops instead of mutating local state.
-			$restore_report = $this->restore_local_roster_curation( $conflict, $tenant_id );
-			$mutation_ok = null !== $restore_report;
-			$metrics_refreshed = $mutation_ok && $restore_report['enqueued'] > 0;
-		} elseif ( $has_outbox_conflict ) {
-			$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
-				(int) $conflict['outbox_id'],
-				(int) ( $conflict['backend_version'] ?? 0 ),
-				$tenant_id
-			);
-			$metrics_refreshed = $mutation_ok;
-		}
 
-		if ( ! $mutation_ok ) {
+			if ( false === $wpdb->query( 'COMMIT' ) ) {
+				$wpdb->query( 'ROLLBACK' );
+				return array(
+					'ok' => false,
+					'reason' => 'conflict_update_failed',
+					'metrics_refreshed' => false,
+				);
+			}
+		} catch ( ProjectionQueryException $exception ) {
+			// E21-14-BR-11: projection read failure mid-resolve must not fatal the request.
 			$wpdb->query( 'ROLLBACK' );
+			Telemetry::log_line(
+				sprintf(
+					'[acx] ConflictResolutionService projection failure on conflict %d: %s',
+					$conflict_id,
+					$exception->getMessage()
+				)
+			);
 			return array(
 				'ok' => false,
 				'reason' => 'entity_mutation_failed',
-				'metrics_refreshed' => false,
-			);
-		}
-
-		if ( ! $this->conflict_repository->mark_resolved( $conflict_id, $resolution, $tenant_id ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return array(
-				'ok' => false,
-				'reason' => 'conflict_update_failed',
-				'metrics_refreshed' => false,
-			);
-		}
-
-		if ( false === $wpdb->query( 'COMMIT' ) ) {
-			$wpdb->query( 'ROLLBACK' );
-			return array(
-				'ok' => false,
-				'reason' => 'conflict_update_failed',
 				'metrics_refreshed' => false,
 			);
 		}
@@ -597,6 +635,10 @@ final class ConflictResolutionService {
 	private function resolve_merge_acceptance( array $conflict, string $tenant_id, string $merged_value ): bool {
 		$conflict_code = (string) ( $conflict['conflict_code'] ?? '' );
 		if ( 'person_name_conflict' === $conflict_code ) {
+			if ( $this->is_reserved_label_shape( $merged_value ) ) {
+				return false;
+			}
+
 			return $this->clusters_repository->update_label( (string) ( $conflict['entity_key'] ?? '' ), $merged_value, true ) > 0;
 		}
 
@@ -625,7 +667,26 @@ final class ConflictResolutionService {
 			return false;
 		}
 
+		if ( $this->is_reserved_label_shape( $backend_value ) ) {
+			$this->log_reserved_label_write_skipped( $conflict, 'backend' );
+			return true;
+		}
+
 		return $this->clusters_repository->update_label( $entity_key, $backend_value, false ) > 0;
+	}
+
+	/**
+	 * @param array<string,mixed> $conflict
+	 */
+	private function log_reserved_label_write_skipped( array $conflict, string $source ): void {
+		Telemetry::log_line(
+			sprintf(
+				'acx conflict resolution skipped reserved label write: conflict_id=%d entity_key=%s source=%s',
+				(int) ( $conflict['id'] ?? 0 ),
+				(string) ( $conflict['entity_key'] ?? '' ),
+				$source
+			)
+		);
 	}
 
 	/**

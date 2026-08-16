@@ -5215,30 +5215,56 @@ def _compact_mid_exception_deny_adjacency(
                                 )
                             if owned is not None:
                                 return owned
-                    # FIR-7-PANEL-rv3-01: no-owner is not permit. A
-                    # separator-aligned rem after a mid-token exception
-                    # spelling must classify — legitimate tags admit
-                    # (``xyolox_s`` / ``xyolox_tiny``); unknown rem
-                    # fail-closes (``xyolox_z`` / ``xyolox_extra`` /
-                    # ``xyolox_s_free``). Never fall out as None.
-                    if _MID_EXCEPTION_UNKNOWN_REM_ENABLED:
-                        sep_rem = _token_tail_after_compact_len(
-                            token, idx + len(spelling)
+                    # FIR-7-PANEL-rv3-01: no-owner is not permit, but
+                    # only for *junk-prefix* + *unknown* rem, and only
+                    # when the peel-owner arms are live (their TEST-15
+                    # red-proofs must still admit when those flags drop).
+                    # Do not steal deny/NC prefix owners, defer/reconst
+                    # rem (suffix steal ``my_yoloxyolo`` → yolo), or a
+                    # trailing composed rem in the honest-yolo / shield
+                    # / family-tag inventories (R22 fence:
+                    # ``xyoloxs_v8`` / ``xyoloxextra_v8``).
+                    if (
+                        _MID_EXCEPTION_UNKNOWN_REM_ENABLED
+                        and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED
+                        and _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED
+                    ):
+                        prefix_owned = (
+                            _deny_has_folded_ab_claim(prefix)
+                            or _mid_exception_prefix_deny_owner(prefix)
+                            is not None
+                            or _underscore_preserving_glued_seed_owner(token)
+                            is not None
                         )
-                        classify_rem = sep_rem or rem
-                        outcome, entry = _classify_exception_residual(
-                            _seed_c,
-                            _seed_k,
-                            classify_rem,
-                            compact_glue=False,
-                        )
-                        if outcome != _RESIDUAL_LEGITIMATE:
-                            return (
-                                entry
-                                or _unknown_exception_residual_entry(
-                                    _seed_c, classify_rem
+                        if not prefix_owned:
+                            sep_rem = (
+                                _token_tail_after_compact_len(
+                                    token, idx + len(spelling)
+                                )
+                                or rem
+                            )
+                            last = sep_rem.rsplit("_", 1)[-1]
+                            peelable = last in _HONEST_YOLO_COMPACT_REMS or (
+                                _is_legitimate_residual_segment(
+                                    last, _seed_c
                                 )
                             )
+                            if not peelable:
+                                outcome, entry = (
+                                    _classify_exception_residual(
+                                        _seed_c,
+                                        _seed_k,
+                                        sep_rem,
+                                        compact_glue=False,
+                                    )
+                                )
+                                if outcome == _RESIDUAL_UNKNOWN:
+                                    return (
+                                        entry
+                                        or _unknown_exception_residual_entry(
+                                            _seed_c, sep_rem
+                                        )
+                                    )
                     start = idx + 1
                     continue
                 deny = _deny_folded_ab_hit(rem)

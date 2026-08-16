@@ -9,6 +9,11 @@
 # through the jump; the harness runs laptop-side from the altq-1 worktree so
 # run-records + reports land in-repo. Every launch pairs with a terminate.
 set -uo pipefail
+_CONTRACT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_exit_contract.env"
+# shellcheck disable=SC1090
+[ -f "$_CONTRACT" ] && . "$_CONTRACT"
+EVAL_EXIT_PARTIAL="${EVAL_EXIT_PARTIAL:-1}"
+EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 
 PRIV_IP="${1:-10.0.1.68}"
 export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$HOME/Development/eval-fixtures}"
@@ -54,7 +59,21 @@ modes_for() {  # macOS ships bash 3.2 — no associative arrays
 }
 
 echo "== 3/3 bench (~1h GPU budget; Ctrl-C safe — run-records are per-cell) =="
+# golden.json is roster_only. `cli score` therefore exits 3 (REFUSED) unless
+# the operator consents with --allow-refused. Do not add that flag here:
+# auto-consent would copy a no-score report as if it were a result.
 START=$(date +%s)
+worst_ec=0
+note_score_ec() {
+  local ec="$1"
+  if [ "$ec" -eq "$EVAL_EXIT_PARTIAL" ]; then
+    worst_ec="$EVAL_EXIT_PARTIAL"
+  elif [ "$ec" -eq "$EVAL_EXIT_REFUSED" ] && [ "$worst_ec" -ne "$EVAL_EXIT_PARTIAL" ]; then
+    worst_ec="$EVAL_EXIT_REFUSED"
+  elif [ "$ec" -ne 0 ] && [ "$worst_ec" -eq 0 ]; then
+    worst_ec="$ec"
+  fi
+}
 for entry in "${CONFIGS[@]}"; do
   name="${entry%%|*}"; flags="${entry#*|}"
   for mode in $(modes_for "$name"); do
@@ -67,11 +86,28 @@ for entry in "${CONFIGS[@]}"; do
            --out "$rr" >/dev/null 2>"$SVC/out/${tag}.err" ); then
       echo "ok -> scoring"
       ( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score \
-          --run-record "$rr" --manifest "$MANIFEST" >/dev/null 2>&1 )
+          --run-record "$rr" --manifest "$MANIFEST" )
+      score_ec=$?
       cp "$SVC/$rr" "$RESULTS/" 2>/dev/null
-      cp "$SVC/${rr%.json}"*report* "$RESULTS/" 2>/dev/null
+      if [ "$score_ec" -eq "$EVAL_EXIT_REFUSED" ]; then
+        echo "  REFUSED (exit 3) — not copying the report as a scored result."
+        _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
+        _report_json="$SVC/${rr%.json}-report.json"
+        if [ -f "$_refusal_helper" ]; then
+          python3 "$_refusal_helper" --report "$_report_json" --log-text "$(cat "$SVC/out/${tag}.err" 2>/dev/null)"
+        fi
+        mkdir -p "$RESULTS/refused"
+        cp "$SVC/${rr%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
+        note_score_ec 3
+      elif [ "$score_ec" -ne 0 ]; then
+        echo "  score FAILED (exit $score_ec) — partial/determinism/env; not copying reports"
+        note_score_ec "$score_ec"
+      else
+        cp "$SVC/${rr%.json}"*report* "$RESULTS/" 2>/dev/null
+      fi
     else
       echo "FAILED (out/${tag}.err) — continuing"
+      note_score_ec 1
     fi
   done
 done
@@ -80,3 +116,4 @@ echo
 echo "Done in $(( ($(date +%s)-START)/60 ))m. Results -> $RESULTS"
 echo "TEARDOWN (owed):"
 echo "  oci compute instance terminate --instance-id ocid1.instance.oc1.iad.anuwcljt2mcagaqcklr52rajo3egewj3bham5hctguewgi6u5ro5o7lenitq --force"
+exit "$worst_ec"

@@ -37,20 +37,41 @@
     animation: acx-face-thumbnail-pulse 1.5s ease-in-out infinite;
   }
 
-  // Error state - shows placeholder icon
+  // Error state — icon + text, never colour alone (sr-004)
   &--error {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    background-color: var(--acx-color-data-placeholder);
+    gap: var(--acx-space-2);
+    padding: var(--acx-space-4);
+    box-sizing: border-box;
+    background-color: var(--acx-gray-200);
+    color: var(--acx-color-warning-border);
+    box-shadow: var(--acx-shadow-inset-danger);
+  }
 
-    &::before {
-      content: '';
-      width: 40%;
-      height: 40%;
-      border-radius: var(--acx-radius-circle);
-      background-color: var(--acx-color-data-placeholder);
-    }
+  &__error {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-2);
+  }
+
+  &__error-label {
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-medium);
+    line-height: var(--acx-leading-tight);
+    text-align: center;
+    color: var(--acx-color-warning-border);
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+
+  &__warning-icon,
+  &__broken-icon {
+    flex-shrink: 0;
   }
 
   // Internal placeholder (shown while loading)

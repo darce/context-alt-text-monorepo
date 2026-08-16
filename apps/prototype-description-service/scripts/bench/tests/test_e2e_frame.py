@@ -5,12 +5,48 @@ from __future__ import annotations
 from scripts.bench.export_map import to_face_metric_inputs
 from scripts.bench.score_report import SAMPLING_FRAME_CROSSBENCH_NATIVE, SAMPLING_FRAME_E2E
 from scripts.eval_harness.face_metrics import detection_pr, identification_pr
-from scripts.eval_harness.manifest import EntryPolicy, FaceBox, GoldenEntry, GoldenManifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    EntryPolicy,
+    FaceBox,
+    GoldenEntry,
+    GoldenManifest,
+    LabelConfidence,
+    LabelDecision,
+    LabelLineage,
+    LabelSource,
+    SUPPORTED_MANIFEST_VERSION,
+)
+
+_BENCH_LINEAGE = LabelLineage(
+    labeler_id="bench-test",
+    batch_id="fir-11-bench-v3",
+    capture_session_id="bench-test-session",
+    pass_index=0,
+    labeled_at="2026-08-16T00:00:00Z",
+    tool_version="bench-test",
+    saw_machine_proposals=False,
+    label_source=LabelSource.GOLD_REFERENCE,
+    decision=LabelDecision.NAMED,
+    confidence=LabelConfidence.HIGH,
+)
+
+
+def _named_box(*, x: float, y: float, w: float, h: float, name: str, source: str = "iptc") -> FaceBox:
+    return FaceBox(x=x, y=y, w=w, h=h, name=name, source=source, lineage=_BENCH_LINEAGE)
+
+
+def _v3_manifest(*, roster: list[str], entries: list[GoldenEntry]) -> GoldenManifest:
+    return GoldenManifest(
+        manifest_version=SUPPORTED_MANIFEST_VERSION,
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+        roster=roster,
+        entries=entries,
+    )
 
 
 def _manifest() -> GoldenManifest:
-    return GoldenManifest(
-        manifest_version=2,
+    return _v3_manifest(
         roster=["Alice Q", "Bob Z"],
         entries=[
             GoldenEntry(
@@ -24,8 +60,8 @@ def _manifest() -> GoldenManifest:
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
                 face_boxes=[
-                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
-                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                    _named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
                 ],
             ),
             GoldenEntry(
@@ -38,7 +74,7 @@ def _manifest() -> GoldenManifest:
                 easy_wrong=[],
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
-                face_boxes=[FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+                face_boxes=[_named_box(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
             ),
         ],
     )
@@ -79,7 +115,7 @@ def test_partial_miss_e2e_vs_native() -> None:
     assert [(d.image, d.pred_faces, d.labeled_faces, d.matched_faces) for d in det_n] == [
         (d.image, d.pred_faces, d.labeled_faces, d.matched_faces) for d in det_e
     ]
-    det = detection_pr(det_e)
+    det = detection_pr(det_e, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert det.false_negatives >= 1
     e2e = identification_pr(id_e)
     native = identification_pr(id_n)
@@ -90,8 +126,7 @@ def test_partial_miss_e2e_vs_native() -> None:
 
 def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
     """Native ID recall is failable: a proposed box with no mapped name is an FN."""
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q"],
         entries=[
             GoldenEntry(
@@ -104,7 +139,7 @@ def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
                 easy_wrong=[],
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
-                face_boxes=[FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+                face_boxes=[_named_box(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
             )
         ],
     )
@@ -132,8 +167,7 @@ def test_native_recall_below_one_when_box_matched_but_unlabeled() -> None:
 
 def test_optimistic_native_maps_unlabeled_matched_cluster() -> None:
     """native×optimistic must use the optimistic mapper (FIR-8 R3-02)."""
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q"],
         entries=[
             GoldenEntry(
@@ -146,7 +180,7 @@ def test_optimistic_native_maps_unlabeled_matched_cluster() -> None:
                 easy_wrong=[],
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
-                face_boxes=[FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+                face_boxes=[_named_box(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")],
             )
         ],
     )
@@ -180,8 +214,7 @@ def test_optimistic_native_maps_unlabeled_matched_cluster() -> None:
 
 def _optimistic_labeled_and_unlabeled_fixture() -> tuple:
     """Unlabeled matched cluster + labeled row. bob_on_alice puts Bob on Alice's box."""
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q", "Bob Z"],
         entries=[
             GoldenEntry(
@@ -195,8 +228,8 @@ def _optimistic_labeled_and_unlabeled_fixture() -> tuple:
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
                 face_boxes=[
-                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
-                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                    _named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
                 ],
             )
         ],
@@ -251,8 +284,7 @@ def test_optimistic_native_does_not_override_labeled_row() -> None:
     """
     from scripts.bench.export_map import map_cluster_labels_optimistic
 
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q", "Bob Z"],
         entries=[
             GoldenEntry(
@@ -265,7 +297,7 @@ def test_optimistic_native_does_not_override_labeled_row() -> None:
                 easy_wrong=[],
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
-                face_boxes=[FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+                face_boxes=[_named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
             )
         ],
     )
@@ -307,8 +339,7 @@ def test_optimistic_two_preds_one_gt_single_claim() -> None:
     """Two unlabeled preds, one GT: Hungarian assigns one pred (FIR-8 R5-03)."""
     from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
 
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q"],
         entries=[
             GoldenEntry(
@@ -321,7 +352,7 @@ def test_optimistic_two_preds_one_gt_single_claim() -> None:
                 easy_wrong=[],
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
-                face_boxes=[FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
+                face_boxes=[_named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc")],
             )
         ],
     )
@@ -348,8 +379,7 @@ def test_optimistic_one_pred_two_gts_single_claim() -> None:
     """One unlabeled pred, two leftover GTs: fallback claims once (FIR-8 R5-03)."""
     from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
 
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q", "Bob Z"],
         entries=[
             GoldenEntry(
@@ -363,8 +393,8 @@ def test_optimistic_one_pred_two_gts_single_claim() -> None:
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
                 face_boxes=[
-                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
-                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                    _named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
                 ],
             )
         ],
@@ -388,8 +418,7 @@ def test_optimistic_e2e_dedupes_repeated_gt_name() -> None:
     """Two same-name GTs + two preds: e2e list is deduped (FIR-8 R5-03)."""
     from scripts.bench.export_map import _optimistic_names_by_pred_index, map_cluster_labels_optimistic
 
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q"],
         entries=[
             GoldenEntry(
@@ -403,8 +432,8 @@ def test_optimistic_e2e_dedupes_repeated_gt_name() -> None:
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
                 face_boxes=[
-                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
-                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.7, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
                 ],
             )
         ],
@@ -466,8 +495,8 @@ def test_zero_export_stays_in_both_detection_denominators() -> None:
     assert zero_e.pred_faces == 0
     assert zero_n.labeled_faces == 1
     assert zero_e.labeled_faces == 1
-    native = detection_pr(det_n)
-    e2e = detection_pr(det_e)
+    native = detection_pr(det_n, annotation_mode=AnnotationMode.EXHAUSTIVE)
+    e2e = detection_pr(det_e, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert native.false_negatives >= 1
     assert e2e.false_negatives >= 1
     _ = SAMPLING_FRAME_CROSSBENCH_NATIVE, SAMPLING_FRAME_E2E
@@ -475,8 +504,7 @@ def test_zero_export_stays_in_both_detection_denominators() -> None:
 
 def test_native_predictions_restricted_to_matched_faces() -> None:
     """Unmatched-face mapper names must not enter predicted_native."""
-    manifest = GoldenManifest(
-        manifest_version=2,
+    manifest = _v3_manifest(
         roster=["Alice Q", "Bob Z"],
         entries=[
             GoldenEntry(
@@ -490,8 +518,8 @@ def test_native_predictions_restricted_to_matched_faces() -> None:
                 policy=EntryPolicy(recognition_enabled=True),
                 base_caption="",
                 face_boxes=[
-                    FaceBox(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
-                    FaceBox(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
+                    _named_box(x=0.3, y=0.3, w=0.2, h=0.2, name="Alice Q", source="iptc"),
+                    _named_box(x=0.7, y=0.3, w=0.2, h=0.2, name="Bob Z", source="iptc"),
                 ],
             )
         ],

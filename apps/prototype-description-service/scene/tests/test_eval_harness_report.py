@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_metrics import named_box_name
+from scripts.eval_harness.manifest import ManifestError, ScoreInvariant
 from scripts.eval_harness.report import (
     CORPUS_TRAP_AFFECTS_DETECTION_FN,
     DIRECTIONAL_LABEL,
@@ -103,6 +104,33 @@ def _run_record() -> dict:
     }
 
 
+_TEST_LINEAGE = {
+    "labeler_id": "test-labeler",
+    "batch_id": "test-batch",
+    "capture_session_id": "test-session",
+    "pass_index": 0,
+    "labeled_at": "2026-08-14T00:00:00Z",
+    "tool_version": "test",
+    "saw_machine_proposals": False,
+    "label_source": "operator_blind",
+    "decision": "named",
+    "confidence": "high",
+    "arbitration_of": None,
+}
+
+
+def _named_box(name: str) -> dict:
+    return {
+        "x": 0.5,
+        "y": 0.4,
+        "w": 0.2,
+        "h": 0.3,
+        "name": name,
+        "source": "operator",
+        "lineage": _TEST_LINEAGE,
+    }
+
+
 def _manifest_entries() -> list[dict]:
     return [
         {
@@ -113,6 +141,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": ["Alice Example"],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Alice Example")],
         },
         {
             "path": "mock_images/bob-beach.jpg",
@@ -122,6 +151,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Bob Builder")],
         },
         {
             "path": "mock_images/glacier.jpg",
@@ -131,6 +161,7 @@ def _manifest_entries() -> list[dict]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [],
         },
     ]
 
@@ -312,9 +343,15 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [
+                _named_box("Ryann Wiseman"),
+                {**_named_box("Ryann Wiseman"), "x": 0.2, "name": None},
+                {**_named_box("Ryann Wiseman"), "x": 0.8, "name": None},
+            ],
         }
     ]
-    scored = score_run_record(record, entries)
+    entries[0]["annotation_mode"] = "exhaustive"
+    scored = score_run_record(record, entries, annotation_mode="exhaustive")
     det = scored["faces"]["detection"]
     # 3 predicted vs 3 labeled -> no false positives from the 2 strangers
     assert det["tp"] == 3 and det["fp"] == 0 and det["fn"] == 0
@@ -667,6 +704,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
             "must_right": [_PUBLIC_NAME],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box(_PUBLIC_NAME)],
             "provenance": {
                 "source": "celeb",
                 "license": "public_domain",
@@ -681,6 +719,7 @@ def _audience_fixtures() -> tuple[dict, list[dict]]:
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box(_LOCAL_NAME)],
             "provenance": {
                 "source": "localwp",
                 "license": "consented",
@@ -829,6 +868,120 @@ def test_public_reports_deterministic():
     assert a_md == b_md
 
 
+def _exhaustive_audience_fixtures() -> tuple[dict, list[dict]]:
+    """Public + private entries stamped exhaustive with matching boxes."""
+    record, entries = _audience_fixtures()
+    for entry in entries:
+        entry["annotation_mode"] = "exhaustive"
+    return record, entries
+
+
+def _assert_scored_detection(det: dict, *, tp: int) -> None:
+    assert det.get("refused") is not True
+    assert det["tp"] == tp
+    assert det["fp"] == 0
+    assert det["fn"] == 0
+    assert det["precision"] == 1.0
+    assert det["recall"] == 1.0
+
+
+def test_build_reports_scored_detection_local_and_public() -> None:
+    """S2R4-16: build_reports must render a computed detection block.
+
+    Arithmetic tests only call score_run_record. PUBLIC rendering of a
+    scored (not refused) detection block lives here.
+    """
+    record, entries = _exhaustive_audience_fixtures()
+    local_json, local_md = build_reports(record, entries, audience=Audience.LOCAL)
+    public_json, public_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    _assert_scored_detection(json.loads(local_json)["faces"]["detection"], tp=2)
+    _assert_scored_detection(json.loads(public_json)["faces"]["detection"], tp=1)
+    local_det = local_md.split("## Face detection")[1].split("## Face identification")[0]
+    public_det = public_md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "precision:" in local_det and "recall:" in local_det
+    assert "precision:" in public_det and "recall:" in public_det
+    assert "REFUSED" not in local_det
+    assert "REFUSED" not in public_det
+    assert "(tp=2" in local_det
+    assert "(tp=1" in public_det
+
+
+def test_build_reports_scored_detection_is_deterministic() -> None:
+    record, entries = _exhaustive_audience_fixtures()
+    a_json, a_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
+    assert a_json == b_json
+    assert a_md == b_md
+    _assert_scored_detection(json.loads(a_json)["faces"]["detection"], tp=1)
+
+
+def test_build_reports_scored_detection_public_redaction() -> None:
+    """PUBLIC redaction of a scored detection block withholds the private item."""
+    record, entries = _exhaustive_audience_fixtures()
+    json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
+    scored = json.loads(json_doc)
+    _assert_scored_detection(scored["faces"]["detection"], tp=1)
+    assert scored["redaction"] == {
+        "audience": "public",
+        "withheld_items": 1,
+        "total_items": 2,
+    }
+    assert _LOCAL_PATH not in json_doc
+    assert _LOCAL_NAME not in json_doc
+    assert _LOCAL_PATH not in md
+    assert _LOCAL_NAME not in md
+    assert _PUBLIC_NAME in json_doc
+
+
+def test_overshoot_markdown_names_fp() -> None:
+    """pred=3 labeled=1 must surface tp=1 fp=2 fn=0, not a refused block.
+
+    S2R6E-03 / S2R4-16: the existing scored-detection fixtures are balanced
+    at fp=0, fn=0, so a transposition is invisible there. This is the
+    scene-layer pin that can observe it.
+    """
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/alice.jpg",
+                "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                "identities": ["Alice Example"],
+                "face_count": 3,
+                "error": None,
+            }
+        ],
+    }
+    entry = {
+        "path": "mock_images/alice.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": ["Alice Example"],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [_named_box("Alice Example")],
+        "annotation_mode": "exhaustive",
+    }
+    json_doc, md = build_reports(record, [entry])
+    det = json.loads(json_doc)["faces"]["detection"]
+    assert det.get("refused") is not True
+    assert det["tp"] == 1
+    assert det["fp"] == 2
+    assert det["fn"] == 0
+    section = md.split("## Face detection")[1].split("## Face identification")[0]
+    assert "REFUSED" not in section
+    assert "- precision: 0.333 recall: 1.000 (tp=1 fp=2 fn=0)" in section
+
+
 # --- FIR-5 S5: face score path, floors, redaction, divergence, determinism ---
 
 
@@ -905,6 +1058,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
         ],
     }
     manifest = {
+        "annotation_mode": "exhaustive",
         "roster": ["Alice Example"],
         "roster_cohorts": {"Alice Example": "cohort_a"},
         "entries": [
@@ -917,6 +1071,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -929,6 +1084,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Alice Example")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 "demographic_cohort": "cohort_a",
             },
@@ -941,6 +1097,7 @@ def _face_fixture_corpus() -> tuple[dict, dict]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],  # stranger
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "localwp", "license": "consented", "publishable": False},
             },
         ],
@@ -1077,7 +1234,7 @@ def test_score_face_run_record_full_corpus_and_floor_gated_rollup():
     assert keys == sorted(keys)
 
 
-def test_zero_box_corpus_all_directional():
+def _zero_box_face_fixture(*, stamp: bool) -> tuple[dict, dict]:
     face_run = {
         "schema": "acx-eval/v1",
         "kind": DocKind.FACE_RUN_RECORD.value,
@@ -1093,22 +1250,45 @@ def test_zero_box_corpus_all_directional():
             }
         ],
     }
+    entry = {
+        "path": "x.jpg",
+        "media_id": 1,
+        "face_count": 0,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "face_boxes": [],
+    }
+    if stamp:
+        entry["annotation_mode"] = "exhaustive"
     manifest = {
+        "annotation_mode": "exhaustive",
         "roster": [],
         "roster_cohorts": {},
-        "entries": [
-            {
-                "path": "x.jpg",
-                "media_id": 1,
-                "face_count": 0,
-                "present_identities": [],
-                "must_right": [],
-                "easy_wrong": [],
-                "policy": {"recognition_enabled": True},
-                "face_boxes": [],
-            }
-        ],
+        "entries": [entry],
     }
+    return face_run, manifest
+
+
+def test_zero_box_corpus_all_directional():
+    """S2R3-02: parent exhaustive + unstamped 0-box entry must refuse.
+
+    A document-level mode is a caller assertion, not per-entry evidence.
+    The old expectation scored this fixture (fill minted exhaustive and
+    published directional zeros). The same unstamped entries through
+    score_run_record(..., annotation_mode='exhaustive') already refuse
+    with detection_requires_annotation_mode; the face path must match.
+    """
+    face_run, manifest = _zero_box_face_fixture(stamp=False)
+    with pytest.raises(ManifestError) as exc_info:
+        score_face_run_record(face_run, manifest)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
+
+def test_stamped_zero_box_corpus_all_directional():
+    """Zero-box directional still holds when the entry carries exhaustive."""
+    face_run, manifest = _zero_box_face_fixture(stamp=True)
     scored = score_face_run_record(face_run, manifest)
     assert scored["provenance"]["zero_box_corpus"] is True
     assert scored["slices"]["headline_identification"]["directional"] is True
@@ -1162,6 +1342,7 @@ def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, name)],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
             }
         )
@@ -1178,7 +1359,12 @@ def _two_identity_split_tau_fixture() -> tuple[dict, dict, list[float]]:
         },
         "items": items,
     }
-    manifest = {"roster": ["Alice Q", "Bob Z"], "roster_cohorts": {}, "entries": entries}
+    manifest = {
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Q", "Bob Z"],
+        "roster_cohorts": {},
+        "entries": entries,
+    }
     return face_run, manifest, b2
 
 
@@ -1262,6 +1448,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, None)],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1287,6 +1474,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1317,6 +1505,7 @@ def test_headline_association_counts_scoped_and_fail_closed():
                 _gt_box(0.25, 0.4, 0.3, 0.3, "Alice Example"),
                 _gt_box(0.7, 0.4, 0.3, 0.3, "Cara Example"),
             ],
+            "annotation_mode": "exhaustive",
             "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
         }
     )
@@ -1510,6 +1699,7 @@ def test_publishability_named_private_source_redacted():
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
                 "face_boxes": [_gt_box(0.4, 0.4, 0.4, 0.4, "Jane Roster")],
+                "annotation_mode": "exhaustive",
                 "provenance": {"source": "operator", "license": "consented", "publishable": False},
             }
         )

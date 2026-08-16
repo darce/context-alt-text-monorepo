@@ -123,6 +123,11 @@ class RecognitionTransportEgressGuardTest extends TestCase
         'dist',
         'build',
         '.git',
+        // Gitignored tool caches. PHPStan writes .php cache files that quote the
+        // banned names verbatim, so a developer who ran static analysis before
+        // the suite got a guard failure that no source change could clear.
+        '.phpstan-cache',
+        '.phpunit.cache',
     ];
 
     /**

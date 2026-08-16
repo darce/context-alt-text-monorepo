@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BoundingBox } from '../../../../api/recognition/types/identity';
+import type { DetectedIdentity } from '../../../../api/recognition';
 import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
+import { ClusterPreview } from '../ClusterPreview';
 import { TopClusterCard } from '../TopClusterCard';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -42,7 +44,8 @@ const FACE_THUMB_URL = 'https://example.test/wp-content/uploads/recognition/face
 const MEDIA_URL = 'https://example.test/wp-content/uploads/2026/01/group-photo.jpg';
 const BBOX: BoundingBox = { x: 12, y: 24, width: 80, height: 96 };
 
-const PLACEHOLDER_LABEL = 'Representative image unavailable';
+const MISSING_LABEL = 'Representative image unavailable';
+const MISSING_VISIBLE_LABEL = 'No image';
 const FACE_ALT = 'Face to label';
 
 const buildRepresentative = (
@@ -74,11 +77,28 @@ const buildCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabele
 });
 
 describe('TopClusterCard', () => {
-  it('renders an explicit unavailable-image fallback when the representative has no usable image data', () => {
-    render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
+  it('renders Avatar data-missing when the representative has no usable image data', () => {
+    const { container } = render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
 
-    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    const missing = screen.getByRole('img', { name: MISSING_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveAccessibleName(MISSING_LABEL);
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
+    expect(container.querySelector('.acx-top-cluster-card__thumb-image--unavailable')).toBeNull();
+  });
+
+  it('renders Avatar data-missing when the cluster has no representatives', () => {
+    const { container } = render(
+      <TopClusterCard
+        cluster={buildCluster({ representatives: [], suggested_label: null })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const missing = screen.getByRole('img', { name: MISSING_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveAccessibleName(MISSING_LABEL);
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
   // E21-14 regression: the reported symptom was avatars rendering as empty
@@ -98,14 +118,17 @@ describe('TopClusterCard', () => {
     expect(image).toHaveAttribute('src', FACE_THUMB_URL);
     expect(image).toHaveClass('acx-avatar__image');
     expect(container.querySelector('.acx-avatar')).toBeInTheDocument();
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
-    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
-  it('renders an avatar for a plain (non face-thumbs) thumb URL when no crop data is present', () => {
+  // E21-21: a plain thumb URL is a full scene, not a face chip. The durable
+  // chain renders it as the marked uncropped hop, never as a dedicated avatar.
+  // Mutation: treat any nonempty thumb_url as dedicated -> RED.
+  it('renders a plain (non face-thumbs) thumb URL through the uncropped hop', () => {
     const plainThumbUrl = 'https://example.test/wp-content/uploads/2026/01/rep-1-150x150.jpg';
 
-    render(
+    const { container } = render(
       <TopClusterCard
         cluster={buildCluster({
           representatives: [buildRepresentative({ thumb_url: plainThumbUrl })],
@@ -116,8 +139,13 @@ describe('TopClusterCard', () => {
 
     const image = screen.getByAltText(FACE_ALT);
     expect(image).toHaveAttribute('src', plainThumbUrl);
-    expect(image).toHaveClass('acx-avatar__image');
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
+    expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
+    expect(container.querySelector('.acx-top-cluster-card__thumb-image')).toHaveAttribute(
+      'data-avatar-state',
+      'uncropped',
+    );
+    expect(container.querySelector('.acx-avatar__image')).toBeNull();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
   });
 
   it('renders a cropped FaceThumbnail when the representative carries media_url + bbox', () => {
@@ -135,8 +163,8 @@ describe('TopClusterCard', () => {
     expect(image).toHaveAttribute('src', MEDIA_URL);
     expect(image.closest('.acx-face-thumbnail')).toBeInTheDocument();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
-    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
   // The reported DOM showed "5 faces in cluster" next to a placeholder thumb —
@@ -165,8 +193,89 @@ describe('TopClusterCard', () => {
     for (const face of renderedFaces) {
       expect(face).toHaveAttribute('src', expect.stringContaining('https://example.test/'));
     }
-    expect(screen.queryByLabelText(PLACEHOLDER_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: MISSING_LABEL })).not.toBeInTheDocument();
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
+  });
+
+  // E21-20-REV8-01 / TEST-15: two-or-more reps use cellSize 39 and must hide
+  // the visible missing label; the single-rep 80px path must keep it.
+  // Mutation: drop hideMissingLabel from the 39px Avatars -> RED.
+  it('hides the missing-state visible label at cellSize 39 and keeps it at cellSize 80', () => {
+    const twoMissingReps = [
+      buildRepresentative({ id: 'rep-1' }),
+      buildRepresentative({ id: 'rep-2' }),
+    ];
+    const { container, unmount } = render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: twoMissingReps.length,
+          representatives: twoMissingReps,
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const smallCells = container.querySelectorAll('.acx-top-cluster-card__thumb-image');
+    expect(smallCells).toHaveLength(2);
+    smallCells.forEach((cell) => {
+      expect(cell).toHaveStyle({ width: '39px', height: '39px' });
+      expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
+      expect(cell.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent('No image');
+    });
+    unmount();
+
+    const { container: singleContainer } = render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 1,
+          representatives: [buildRepresentative({ id: 'rep-1' })],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const largeCell = singleContainer.querySelector('.acx-top-cluster-card__thumb-image');
+    expect(largeCell).toHaveStyle({ width: '80px', height: '80px' });
+    expect(largeCell).not.toHaveClass('acx-durable-face-thumb--hide-missing-label');
+    expect(singleContainer.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent(
+      'No image',
+    );
+  });
+
+  // E21-20-REV1-06 / TEST-15: both missing-representative surfaces must share
+  // this accessible name via Avatar missingLabel. Pre-fix TopClusterCard used
+  // Avatar's 'No image' default and ClusterPreview used a custom span, so this
+  // goes red if either surface diverges.
+  it('shares missing-representative vocabulary with ClusterPreview', () => {
+    const { unmount } = render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} />);
+    const cardMissing = screen.getByRole('img', { name: MISSING_LABEL });
+    const cardName = cardMissing.getAttribute('aria-label');
+    expect(cardMissing).toHaveAttribute('data-avatar-state', 'data-missing');
+    unmount();
+
+    const previewRep: DetectedIdentity = {
+      identity_id: 'identity-1',
+      representative_id: 'rep-1',
+      media_id: 101,
+      cluster_id: 'cluster-1',
+      cluster_label: 'Known Person',
+      is_auto_label: false,
+      is_pinned: false,
+      bbox: { x: 10, y: 20, width: 30, height: 40 },
+      confidence: 0.98,
+      similarity: null,
+      thumb_url: 'https://example.test/thumb.jpg',
+      media_url: null,
+    };
+    render(<ClusterPreview representative={previewRep} memberCount={1} />);
+    const previewMissing = screen.getByRole('img', { name: MISSING_LABEL });
+    const previewName = previewMissing.getAttribute('aria-label');
+
+    expect(cardName).toBe(MISSING_LABEL);
+    expect(previewName).toBe(cardName);
+    expect(previewMissing).toHaveAttribute('data-avatar-state', 'data-missing');
   });
 
   // E21-16 W2: machine suggested_label must not open the Yes/No confirm path.
@@ -266,8 +375,13 @@ describe('TopClusterCard', () => {
     );
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    expect(screen.getByLabelText(PLACEHOLDER_LABEL)).toBeInTheDocument();
-    expect(screen.getByText('No image')).toBeInTheDocument();
+    // E21-21: no crop, but media_url still serves the uncropped hop rather than
+    // dropping straight to missing. Mutation: accept a zero-extent bbox as
+    // croppable -> a .acx-face-thumbnail appears -> RED.
+    const cell = container.querySelector('.acx-top-cluster-card__thumb-image');
+    expect(cell).toHaveAttribute('data-avatar-state', 'uncropped');
+    expect(screen.getByAltText(FACE_ALT)).toHaveAttribute('src', MEDIA_URL);
+    expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
   it('prompts Is this <label>? and confirms a human suggested_label', async () => {

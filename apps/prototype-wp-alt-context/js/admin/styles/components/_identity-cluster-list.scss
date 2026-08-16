@@ -39,11 +39,6 @@
     }
   }
 
-  &__thumb-fallback-label {
-    display: inline-block;
-    overflow-wrap: anywhere;
-  }
-
   &__count {
     margin-left: -10px;
     background-color: var(--acx-gray-100);
@@ -324,6 +319,12 @@
 
   &__match-score-band {
     white-space: nowrap;
+  }
+
+  &__at-rest-hint {
+    margin: var(--acx-space-4) 0 0;
+    font-size: var(--acx-text-2xs);
+    color: var(--acx-color-text-muted);
   }
 }
 

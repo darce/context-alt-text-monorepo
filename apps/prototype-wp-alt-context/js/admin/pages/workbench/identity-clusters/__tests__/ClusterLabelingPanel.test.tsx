@@ -425,7 +425,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(screen.getByText('No image')).toBeInTheDocument();
-    const unavailable = screen.getByRole('img', { name: 'Member image unavailable' });
+    const unavailable = screen.getByRole('img', { name: 'Face to label — image unavailable' });
     expect(unavailable).toBeInTheDocument();
     expect(unavailable).toHaveClass('acx-cluster-labeling-panel__face-unavailable');
   });

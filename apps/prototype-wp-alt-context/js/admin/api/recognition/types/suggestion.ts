@@ -29,10 +29,12 @@ export interface PendingSuggestion {
   cluster_identity_count?: number | null;
   identity_media_id?: number | null;
   identity_media_url?: string | null;
+  identity_attachment_url?: string | null;
   identity_thumb_url?: string | null;
   identity_bbox?: BoundingBox | null;
   representative_media_id?: number | null;
   representative_media_url?: string | null;
+  representative_attachment_url?: string | null;
   representative_thumb_url?: string | null;
   representative_bbox?: BoundingBox | null;
   suggested_label?: string | null;
@@ -104,10 +106,12 @@ export interface PendingMergeSuggestion {
   cluster_b_identity_count?: number | null;
   cluster_a_representative_media_id?: number | null;
   cluster_a_representative_media_url?: string | null;
+  cluster_a_representative_attachment_url?: string | null;
   cluster_a_representative_thumb_url?: string | null;
   cluster_a_representative_bbox?: BoundingBox | null;
   cluster_b_representative_media_id?: number | null;
   cluster_b_representative_media_url?: string | null;
+  cluster_b_representative_attachment_url?: string | null;
   cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
   /**

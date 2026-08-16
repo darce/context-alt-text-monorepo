@@ -119,9 +119,9 @@ Add a **new transport client** to the existing eval harness and inject it into t
 ## Verification Strategy
 
 - Deterministic tests (CPU, no network):
-  - `uv run pytest scene/tests/test_eval_harness_bakeoff.py` — `BakeoffClient.describe` shape, `context_pack` name-into-prompt rendering, prompt construction (greedy + `/no_think`), inert stub methods, and `report.build_reports` scoring a `fetch_run_record`-shaped record. (Per-item isolation + bounded-stall stay covered by the existing `cli.fetch_run_record` tests — not duplicated.)
-  - `uv run python -m scripts.eval_harness.cli score --run-record <captured>.json --manifest scene/tests/seed/bakeoff_golden.json --check-determinism` — re-score is bit-identical.
-  - `uv run python -c "from scripts.eval_harness.manifest import load_manifest; load_manifest('scene/tests/seed/bakeoff_golden.json')"` — manifest passes fail-fast validation.
+  - `.venv/bin/python -m pytest scene/tests/test_eval_harness_bakeoff.py` — `BakeoffClient.describe` shape, `context_pack` name-into-prompt rendering, prompt construction (greedy + `/no_think`), inert stub methods, and `report.build_reports` scoring a `fetch_run_record`-shaped record. (Per-item isolation + bounded-stall stay covered by the existing `cli.fetch_run_record` tests — not duplicated.)
+  - Copy a candidate record out of tree (`WORK=$(mktemp -d) && cp ../../docs/tasks/vlm/VLM-2B-bakeoff-Qwen3-VL-4B-Instruct-run-record.json "$WORK/run.json"`), then `.venv/bin/python -m scripts.eval_harness.cli score --run-record "$WORK/run.json" --manifest scene/tests/seed/bakeoff_golden.json --check-determinism` — re-score is bit-identical. **Expected exit 3**: `bakeoff_golden.json` is `roster_only` with unboxed identity claims, so detection and identification are REFUSED. Caption determinism is unaffected.
+  - `.venv/bin/python -c "from scripts.eval_harness.manifest import load_manifest; load_manifest('scene/tests/seed/bakeoff_golden.json')"` — manifest passes fail-fast validation.
 - Runtime-parity / environment checks (live A1, gated behind the VLM-2A live env-var pattern):
   - Serve each candidate on the A1; capture load time + per-image latency + peak RSS; confirm/deny the §13 1–3 min/img estimate; record the per-request timeout ceiling.
   - One live bake-off pass per candidate (concurrency 1, off-path) → run record → REPORT artifact.

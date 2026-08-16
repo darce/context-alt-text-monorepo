@@ -31,6 +31,12 @@ interface UseClusterSuggestionsReturn {
   collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
   /** Find cluster ID by label (case-insensitive); cluster-source options only (PR-16) */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
+  /** Envelope total from the at-rest labelled-cluster page. */
+  atRestTotal: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated: boolean;
+  /** True while the debounced input is below the typed-search minimum. */
+  isAtRestMode: boolean;
 }
 
 export const selectClusterSuggestions = ({
@@ -152,7 +158,7 @@ export const resolveClusterMatchFromOptions = (
  *
  * Fetches:
  * 1. Similarity-based suggestions for the identity
- * 2. Label-based search results for existing clusters (debounced)
+ * 2. At-rest labelled clusters (empty input) plus typed label search (2+ chars)
  * 3. Roster persons via the shared buildNamingOptions union
  *
  * Returns formatted ComboboxOptions grouped by "Suggested" and "All Labels".
@@ -170,6 +176,9 @@ export const useClusterSuggestions = ({
     collisionsByLabel,
     isLoading,
     findClusterByLabel: findClusterByLabelRemote,
+    atRestTotal,
+    atRestTruncated,
+    isAtRestMode,
   } = useClusterSuggestionsLoader({
     identityId,
     enabled,
@@ -200,5 +209,8 @@ export const useClusterSuggestions = ({
     isLoading,
     collisionsByLabel,
     findClusterByLabel,
+    atRestTotal,
+    atRestTruncated,
+    isAtRestMode,
   };
 };

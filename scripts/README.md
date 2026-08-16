@@ -19,6 +19,87 @@ The orchestration helpers in this repo now execute the installed `mcp-workbay-or
 package directly, including `python -m workbay_orchestrator_mcp.orchestration.lane_config`
 for lane/task manifest resolution.
 
+## eval-captions.sh
+
+Operator entry for the caption+face eval harness `run` subcommand.
+
+GNU Make converts every failed recipe to process exit 2, so
+`make eval-captions` cannot honour the scorer's 0/1/2/3 contract as
+*make's* status (`0→0`, `1/2/3/other→2`). This script is the command
+that can exit 3. Both entry points print `eval-captions: scorer_exit=<N>`
+and write that N to
+`apps/prototype-description-service/scripts/eval_harness/out/eval-captions.status`.
+
+```bash
+scripts/eval-captions.sh
+```
+
+On scorer exit 3 the wrapper prints each invariant the scorer produced
+(via `scripts/eval_refusal_message.py`) instead of one hardcoded cause.
+Several invariants share exit 3; the remedy is mapped to the name the
+scorer actually emitted.
+
+`make eval-captions` calls the same script. Consent for a refused
+no-score report is only at the call site:
+
+```bash
+scripts/eval-captions.sh --allow-refused
+make eval-captions EVAL_ARGS='--allow-refused'
+```
+
+## check_published_head_sha.py
+
+Every committed eval run-record and report under `docs/` and `benchmarks/`
+must stamp a commit that exists in this repository. Harvest/rebase
+rewrites have previously left orphan SHAs in published artifacts.
+
+```bash
+python3 scripts/check_published_head_sha.py
+```
+
+The script walks tracked `docs/**` and `benchmarks/**` JSON, Markdown,
+and HTML (`.html`/`.htm`) files. It harvests `head_sha`, `git_sha`, and
+selected `commit` forms. A present key is a stamp even when blank or
+non-string; non-conforming values are `UNREADABLE`, not absent.
+
+Exit 0 if every well-formed stamp resolves. Exit 1 if any stamp is
+`MISSING` or `UNREADABLE`, if no artifact files were scanned, or if the
+repository is a shallow clone (`cannot verify: shallow clone` — run
+`git fetch --unshallow`; unseen commits are not reported `MISSING`).
+Exit 2 if the git invocation itself fails. Wired into `make lint-scripts`.
+
+## regen_eval_report.py
+
+Offline republish of one eval report from a named run-record + named
+manifest, using the description-service venv and
+`scripts.eval_harness.cli score`. Does not edit the scorer.
+
+The default command **holds** both destinations against the shipped
+roster-only golden (scorer exit 3). That is the safe default: a refused
+report is not published without publisher-side consent. Measured:
+destinations are unchanged and the process exits 3.
+
+```bash
+python3 scripts/regen_eval_report.py \
+  --run-record docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
+  --manifest apps/prototype-description-service/scene/tests/seed/golden.json \
+  --out-json docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.json \
+  --out-md docs/tasks/vlm/VLM-2C-seeded-stub-score-20260707-report.md
+```
+
+To actually republish a refused report (still exits 3; still no face
+P/R numbers), add `--allow-refused`. Do not point this at tracked
+destinations unless you intend to replace them.
+
+```bash
+python3 scripts/regen_eval_report.py \
+  --run-record docs/tasks/vlm/VLM-2C-seeded-stub-run-record-20260707.json \
+  --manifest apps/prototype-description-service/scene/tests/seed/golden.json \
+  --out-json /path/to/dest-report.json \
+  --out-md /path/to/dest-report.md \
+  --allow-refused
+```
+
 ## Test Placement Policy
 
 Root-level doc-lock tests stay in `scripts/` when they validate monorepo-wide

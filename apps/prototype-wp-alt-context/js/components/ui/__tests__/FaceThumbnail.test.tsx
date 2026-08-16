@@ -183,6 +183,11 @@ describe('FaceThumbnail', () => {
       await waitFor(() => {
         const wrapper = container.firstChild as HTMLElement;
         expect(wrapper).toHaveClass('acx-face-thumbnail--error');
+        expect(wrapper.querySelector('.acx-face-thumbnail__warning-icon')).not.toBeNull();
+        expect(wrapper.querySelector('.acx-face-thumbnail__broken-icon')).not.toBeNull();
+        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent(
+          'Face image unavailable',
+        );
       });
     });
 

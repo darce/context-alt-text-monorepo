@@ -90,8 +90,18 @@ def generate_draft_manifest(fixtures_dir: str) -> tuple[dict, list[str]]:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": {
+                    "source": "fixture",
+                    "license": "fixture",
+                    "note": "vendored eval-corpus fixture",
+                },
             }
         )
 
-    draft = {"manifest_version": 2, "roster": roster, "entries": entries}
+    draft = {
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
+        "roster": roster,
+        "entries": entries,
+    }
     return draft, notes

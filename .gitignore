@@ -180,6 +180,9 @@ local/*-worktrees.txt
 !/benchmarks/plans/
 !/benchmarks/manifests/
 !/benchmarks/reports/
+# generated review-board HTML bundles are derived from the tracked json/md (regenerable, ~30 MB)
+/benchmarks/reports/*.html
+/benchmarks/reports/*_files/
 
 # Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
 # embed absolute local worktree paths, so machine-specific (never in repo)

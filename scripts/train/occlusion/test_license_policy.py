@@ -8474,9 +8474,10 @@ class TestB1001DerivedNcFloorSurface:
 
         FIR-7-B11-03 / A11-3: sweep the FULL generator input surface
         (``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ ``yolo_nas``
-        stem), both underscore and compact spellings — not just pinned
-        ids. A partial generator regression that drops only explicit-
-        variant keys must fail this sweep.
+        stem ∪ SuperGradients framework identity), both underscore and
+        compact spellings — not just pinned ids. A partial generator
+        regression that drops only explicit-variant keys must fail this
+        sweep.
         """
         excluded = (
             policy._NC_PACKAGE_FLOOR_EXCLUSIONS
@@ -8485,6 +8486,7 @@ class TestB1001DerivedNcFloorSurface:
         raw_ids: set[str] = set(policy._PINNED_NC_MODEL_IDS)
         raw_ids |= set(policy._NC_EXPLICIT_VARIANTS)
         raw_ids.add("yolo_nas")  # generator-only stem (A11-4)
+        raw_ids.add("super_gradients")  # Deci framework identity (rv3-02)
         seeds: list[str] = []
         for raw in sorted(raw_ids):
             if raw in excluded:

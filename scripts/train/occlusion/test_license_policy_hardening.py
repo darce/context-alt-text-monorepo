@@ -538,3 +538,52 @@ class TestRv301SepAlignedMidExceptionFailClosed:
         assert policy._package_denylist_hit(token) is None, (
             f"{token!r} must stay ADMIT (legitimate separator rem)"
         )
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-02 — Deci SuperGradients package identities seed the NC floor
+# ---------------------------------------------------------------------------
+
+
+class TestRv302SuperGradientsSeedsDeciNcFloor:
+    """Framework/package identities carrying Deci NC terms must not permit.
+
+    Only the model stem ``yolo_nas`` used to seed the Deci NC floor, so
+    ``super-gradients`` / ``super_gradients`` / ``deci-ai/super-gradients``
+    returned None and a permissive SPDX wrapper PASSed.
+    """
+
+    FRAMEWORK_IDS: tuple[str, ...] = (
+        "super-gradients",
+        "super_gradients",
+        "deci-ai/super-gradients",
+    )
+
+    @pytest.mark.parametrize("token", FRAMEWORK_IDS)
+    def test_framework_identity_is_nc_floor_hit(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit the Deci NC package floor"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {hit.reason}"
+        )
+        assert "super" in hit.package_id.replace("_", ""), (
+            f"{token!r}: expected super_gradients* package_id, got {hit.package_id!r}"
+        )
+
+    def test_provenance_row_fails_nc_model_derived(self) -> None:
+        # derived_from_model is structurally required on the training-data
+        # door; empty is the valid opt-out. Without the NC floor seed this
+        # row PASSes (Apache-2.0 launders Deci NC framework terms).
+        row = {
+            "package": "super-gradients",
+            "license": "Apache-2.0",
+            "source": "self-generated",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False, (
+            "super-gradients + Apache-2.0 must not PASS (transitive Deci NC)"
+        )
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"expected nc_model_derived, got {result.reason} ({result.detail})"
+        )

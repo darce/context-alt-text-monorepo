@@ -22,7 +22,7 @@
 
 ## FIR-7 branch scope vs. the hold
 
-The work on `feature/fir-7` right now — `scripts/train/occlusion/license_policy.py` + mutation guard + tests — is the **unconditional Slice 0a deliverable** (plan: "Slice 0a … lands `license_policy.py` constants + fixtures"). It is **not** gated by the 2c hold, which binds only Slice 0a's baseline freeze and sealed touches. The branch lands through the ordinary pre-merge gate (round-15 adversarial review pass, zero open findings, close-check) independently of CVUP-1 regeneration and FIR-11. Landing it advances Slice 0a as far as it can go before the hold releases.
+The work on `feature/fir-7` right now — `scripts/train/occlusion/license_policy.py` + mutation guard + tests — is the **license-policy portion** of Slice 0a (plan: "Slice 0a … lands `license_policy.py` constants + fixtures"). It is **not** gated by the 2c hold, which binds Slice 0a's baseline freeze and sealed touches. It is **not** the whole Slice 0a deliverable: the plan's other Slice 0a artifacts (frozen baseline, identity-split, gate spec) are absent from the tree. The branch lands through the ordinary pre-merge gate (round-15 adversarial review pass, zero open findings, close-check) independently of CVUP-1 regeneration and FIR-11. Landing it advances only the license-policy slice of 0a.
 
 ## Sibling tasks outside the critical path
 
@@ -36,7 +36,15 @@ The work on `feature/fir-7` right now — `scripts/train/occlusion/license_polic
 
 ## The three actions that move docs/tasks/fir/ forward this week
 
-1. **Land `feature/fir-7`** (round-15 pass → pre-merge gate → merge). Completes the unconditional Slice 0a deliverable.
+1. **Land `feature/fir-7`** (round-15 pass → pre-merge gate → merge). Ships the **license-policy** Slice 0a artifact only. The plan's Slice 0a list is four artifacts; `ls` on 2026-08-16 shows one present and three still open (the 2c hold still binds the freeze / sealed-touch pair):
+
+| Artifact | Present? | Path |
+|---|---|---|
+| Frozen OpenCV 5.x Golden-150 baseline (FIR7PLR-04) | no | `benchmarks/results/golden150-fir7-baseline-v7.0-cv5/` |
+| Train/eval identity-split manifest + content hash | no | `benchmarks/manifests/golden150-fir7-identity-split.json` |
+| Pre-registered gate spec (K=3, provisional δ, harm-direction) | no | `benchmarks/gates/fir-7-regate.json` |
+| `license_policy.py` constants + fixtures | yes | `scripts/train/occlusion/license_policy.py` (fixtures in `scripts/train/occlusion/test_license_policy.py`) |
+
 2. **Open the CVUP-1 regeneration follow-up task** and run the SFace baseline re-run + six-surface regeneration on the 5.x stack. This is the single cheapest unblock of the entire measurement surface (~1 eng-day, $0) and nobody owns it.
 3. **Drive FIR-11 Slices 0–2 to `main`** (35 findings open). Everything adjudication- and split-shaped queues behind it.
 

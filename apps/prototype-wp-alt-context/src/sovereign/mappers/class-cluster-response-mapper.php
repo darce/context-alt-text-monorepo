@@ -219,7 +219,6 @@ class ClusterResponseMapper {
 	private function map_representative_identity( array $cluster_row, array $member_rows ): array {
 		$representative      = $member_rows[0] ?? array();
 		$media_id            = absint( $representative['attachment_id'] ?? $representative['media_id'] ?? 0 );
-		$bbox                = $this->extract_bbox_pixels( $representative['bbox_json'] ?? null );
 		$representative_id   = trim( (string) ( $cluster_row['representative_id'] ?? '' ) );
 		$member_identity_id  = trim( (string) ( $representative['identity_uuid'] ?? '' ) );
 		$is_pinned           = $this->normalize_boolean_value( $representative['is_pinned'] ?? false );
@@ -232,9 +231,14 @@ class ClusterResponseMapper {
 			$is_pinned = $this->normalize_boolean_value( $cluster_row['is_pinned'] ?? false );
 		}
 
+		$source = $this->resolve_face_source_fields( $representative, $media_id, $representative['bbox_json'] ?? null );
+
 		return array(
 			'media_id' => $media_id > 0 ? $media_id : null,
-			'bbox' => $bbox,
+			'bbox' => $source['bbox'],
+			'thumb_url' => $source['thumb_url'],
+			'attachment_url' => $source['attachment_url'],
+			'media_url' => $source['media_url'],
 			'is_pinned' => $is_pinned,
 		);
 	}

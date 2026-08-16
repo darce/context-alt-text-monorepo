@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Tests\TestCase;
 
@@ -128,6 +129,40 @@ class FaceMediaSourceFallbackTest extends TestCase
         );
         $this->assertSame('http://example.test/uploads/original-768x512.jpg', $member['attachment_url']);
         $this->assertSame(['x' => 365, 'y' => 69, 'width' => 115, 'height' => 156], $member['bbox']);
+    }
+
+    /**
+     * E21-21-BR-01: the cluster representative took a different code path to
+     * its own sample identities and never reached the fallback, so a deleted
+     * original still 404'd on exactly the thumbnail the roster shows first.
+     */
+    public function testClusterRepresentativeDegradesLikeItsSampleIdentities(): void
+    {
+        $this->seedAttachment(originalOnDisk: false, sizeFilesOnDisk: ['medium_large']);
+
+        $representative = $this->mapClusterRepresentative();
+
+        $this->assertSame('http://example.test/uploads/original-768x512.jpg', $representative['media_url']);
+        $this->assertSame('http://example.test/uploads/original-768x512.jpg', $representative['attachment_url']);
+        $this->assertSame(['x' => 365, 'y' => 69, 'width' => 115, 'height' => 156], $representative['bbox']);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function mapClusterRepresentative(): array
+    {
+        $clusters = (new ClusterResponseMapper())->map_cluster_list(
+            [['cluster_uuid' => 'cluster-1', 'representative_id' => 'identity-6712']],
+            ['cluster-1' => [[
+                'identity_uuid' => 'identity-6712',
+                'attachment_id' => self::MEDIA_ID,
+                'similarity' => 0.9,
+                'bbox_json' => '{"pixels":{"x":380,"y":72,"width":120,"height":162}}',
+            ]]],
+        );
+
+        return $clusters[0]['representative_identity'];
     }
 
     /**

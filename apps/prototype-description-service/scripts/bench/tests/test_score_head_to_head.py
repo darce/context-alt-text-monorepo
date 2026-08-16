@@ -609,3 +609,28 @@ def test_roster_only_surfaces_detection_refusal_not_silent_skip(tmp_path: Path) 
     for cell in id_recall:
         assert cell.get("refused") is not True
         assert cell.get("true_positives") is not None
+
+
+def test_roster_only_accepted_set_has_empty_detection_scoring_set(tmp_path: Path) -> None:
+    """Document-level roster_only must empty detection_scoring_set.
+
+    TEST-15: entry-level is_detection_exhaustive (face_count == len(boxes))
+    would populate the set even though every detection cell is refused.
+    """
+    from scripts.bench.score_report import compute_accepted_set
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries, annotation_mode="roster_only")
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    score_head_to_head(run_dir)
+    accepted = compute_accepted_set(run_dir)
+    assert accepted.detection_scoring_set == []
+    assert accepted.detection_scoring_set_size == 0
+    frames = json.loads((run_dir / "score" / "frames.json").read_text())
+    assert frames["detection_scoring_set_size"] == 0
+    written = json.loads((run_dir / "score" / "accepted_set.json").read_text())
+    assert written["detection_scoring_set_size"] == 0

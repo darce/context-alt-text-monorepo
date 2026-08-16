@@ -450,6 +450,7 @@ test-scripts:
 		scripts/train/occlusion/test_license_policy.py \
 		scripts/train/occlusion/test_license_policy_hardening.py \
 		scripts/train/occlusion/test_equivalence_claims.py \
+		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh

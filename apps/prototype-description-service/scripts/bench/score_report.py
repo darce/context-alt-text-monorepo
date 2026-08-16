@@ -15,7 +15,14 @@ from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
 from scripts.bench.stack_pair import BenchError, StackPairConfig, load_stack_pair
 from scripts.eval_harness.face_metrics import detection_pr, identification_pr
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    GoldenEntry,
+    GoldenManifest,
+    ScoreInvariant,
+    SUPPORTED_MANIFEST_VERSION,
+    refusal_explanation,
+)
 
 LICENSE_BANNER = (
     "INTERNAL BENCH ONLY — insightface/buffalo_l outputs must never be user-facing "
@@ -610,6 +617,51 @@ def _pr_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def _subset_manifest(
+    manifest: GoldenManifest, entries: list[GoldenEntry]
+) -> GoldenManifest | None:
+    """Rebuild a v3 document over a scored subset. Mode is the parent's.
+
+    ADR-015: annotation_mode is document-level. A subset never widens
+    roster_only to exhaustive.
+    """
+    if not entries:
+        return None
+    return GoldenManifest(
+        manifest_version=SUPPORTED_MANIFEST_VERSION,
+        annotation_mode=manifest.annotation_mode,
+        roster=list(manifest.roster),
+        entries=entries,
+        roster_cohorts=dict(manifest.roster_cohorts),
+    )
+
+
+def _detection_score_mode(detection_manifest: GoldenManifest | None, parent: GoldenManifest) -> AnnotationMode:
+    """Mode of the document whose entries are detection-scored (ADR-015)."""
+    source = detection_manifest if detection_manifest is not None else parent
+    return source.annotation_mode
+
+
+def _detection_refusal_invariant(mode: AnnotationMode) -> ScoreInvariant:
+    if mode is AnnotationMode.ROSTER_ONLY:
+        return ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+    return ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
+
+def _refused_detection_payload(invariant: ScoreInvariant) -> dict[str, Any]:
+    return {
+        "refused": True,
+        "invariant": invariant.value,
+        "reason": refusal_explanation(invariant),
+        "value": None,
+        "precision": None,
+        "recall": None,
+        "true_positives": None,
+        "false_positives": None,
+        "false_negatives": None,
+    }
+
+
 def _detection_counts(item: Any) -> ImageCounts:
     if item.matched_faces is None:
         tp = min(item.pred_faces, item.labeled_faces)
@@ -735,24 +787,10 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             for mid, info in accepted.join_by_stack.get(stack_id, {}).items()
             if mid in set(accepted.manifest_media_ids)
         }
-        accepted_manifest = (
-            GoldenManifest(
-                manifest_version=2,
-                roster=list(manifest.roster),
-                entries=accepted_entries,
-            )
-            if accepted_entries
-            else None
-        )
-        detection_manifest = (
-            GoldenManifest(
-                manifest_version=2,
-                roster=list(manifest.roster),
-                entries=detection_entries,
-            )
-            if detection_entries
-            else None
-        )
+        accepted_manifest = _subset_manifest(manifest, accepted_entries)
+        detection_manifest = _subset_manifest(manifest, detection_entries)
+        detection_mode = _detection_score_mode(detection_manifest, manifest)
+        detection_refused = detection_mode is not AnnotationMode.EXHAUSTIVE
         export_payload = {
             "media_identities": export.media_identities,
             "clusters": export.clusters,
@@ -770,7 +808,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         frame=frame_key,  # type: ignore[arg-type]
                     )
                 det: list[Any] = []
-                if detection_manifest is not None:
+                if detection_manifest is not None and not detection_refused:
                     det, _ = to_face_metric_inputs(
                         export_payload,
                         detection_manifest,
@@ -778,13 +816,18 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         label_key,
                         frame=frame_key,  # type: ignore[arg-type]
                     )
-                det_matched = detection_pr(det)
-                det_count = detection_pr(
-                    [
-                        type(d)(image=d.image, pred_faces=d.pred_faces, labeled_faces=d.labeled_faces)
-                        for d in det
-                    ]
-                )
+                if detection_refused:
+                    det_matched = None
+                    det_count = None
+                else:
+                    det_matched = detection_pr(det, annotation_mode=detection_mode)
+                    det_count = detection_pr(
+                        [
+                            type(d)(image=d.image, pred_faces=d.pred_faces, labeled_faces=d.labeled_faces)
+                            for d in det
+                        ],
+                        annotation_mode=detection_mode,
+                    )
                 ident_pr = identification_pr(ident)
                 det_by_mid: dict[int, Any] = {}
                 for det_row in det:
@@ -811,6 +854,24 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     ("identification_precision", ident_pr, accepted_entries),
                 ):
                     cell = _cell_id(metric, frame_key, label_key)
+                    if metric.startswith("detection") and detection_refused:
+                        cells.append(
+                            {
+                                "cell": cell,
+                                "stack_id": stack_id,
+                                "frame": frame_name,
+                                "label_map": label_name,
+                                "metric": metric,
+                                "tier": CrossbenchTier.DIAGNOSTIC.value,
+                                **_refused_detection_payload(
+                                    _detection_refusal_invariant(detection_mode)
+                                ),
+                                "_frame_key": frame_key,
+                                "_label_key": label_key,
+                                "_refused": True,
+                            }
+                        )
+                        continue
                     if cell in counts_by:
                         series: list[ImageCounts] = []
                         for entry in population:
@@ -847,15 +908,28 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                             "_is_detection": metric.startswith("detection_"),
                         }
                     )
-                cells.append(
-                    {
-                        "cell": f"detection_count_only@{frame_name}/{label_name}",
-                        "stack_id": stack_id,
-                        "tier": CrossbenchTier.DIAGNOSTIC.value,
-                        "count_only": True,
-                        **_pr_payload(det_count),
-                    }
-                )
+                if detection_refused:
+                    cells.append(
+                        {
+                            "cell": f"detection_count_only@{frame_name}/{label_name}",
+                            "stack_id": stack_id,
+                            "tier": CrossbenchTier.DIAGNOSTIC.value,
+                            "count_only": True,
+                            **_refused_detection_payload(
+                                _detection_refusal_invariant(detection_mode)
+                            ),
+                        }
+                    )
+                else:
+                    cells.append(
+                        {
+                            "cell": f"detection_count_only@{frame_name}/{label_name}",
+                            "stack_id": stack_id,
+                            "tier": CrossbenchTier.DIAGNOSTIC.value,
+                            "count_only": True,
+                            **_pr_payload(det_count),
+                        }
+                    )
 
     intervals: dict[str, BootstrapInterval] = {}
     bootstrap_errors: dict[str, BenchError] = {}
@@ -897,7 +971,9 @@ def score_head_to_head(run_dir: Path | str) -> Path:
         holm = holm_bonferroni(padded, family_size=len(declared_secondaries))
 
     for cell in cells:
-        if cell.get("count_only"):
+        if cell.get("count_only") or cell.pop("_refused", False):
+            cell.pop("_frame_key", None)
+            cell.pop("_label_key", None)
             continue
         name = cell["cell"]
         interval = intervals.get(name)

@@ -348,6 +348,19 @@ Proof:
 
 - Frozen baseline path present with per-floor base/`n`/`n_eff`/`p_disc_prior`/provisional δ; identity-split manifest + hash committed; `fir-7-regate.json` committed with concrete provisional δ/K/α/harm-direction rules; `license_policy.py` constants + fixtures green (incl. cascade/A-B ingest + uncleared-occluder + NC-pattern).
 
+#### Mutation guard
+
+`make mutation-guard-license-policy` runs `python3 scripts/train/occlusion/mutation_guard.py --mutation all` against scratch copies of `license_policy.py` (the real tree is never written). It is **opt-in and remote-VM only** — not a prerequisite of `make test-scripts` or `make check-all`. Measured wall clock on a 4-core VM: ≈5 h for `--mutation all`; ≈12 min per single mutation.
+
+Makefile comment, EXIT=0 non-guarantees, quoted verbatim:
+
+> What it floors, precisely: the collected node-id set (may grow, must not
+> shrink), the existence of the pinned victim names, and that each required
+> mutant dies. What it does NOT floor: assertion strength inside a test body,
+> skip marks, or fixture-data diversity — a test whose body is replaced by
+> `pass` keeps its node id and still counts as executed. EXIT=0 means the suite
+> still has its shape and its pins, not that the suite was not gutted.
+
 ### Slice 0: Cheap-lever baseline, stage-separated (no training) — UNCONDITIONAL
 
 **Goal**: Exhaust non-training levers via a **train-split synthetic proxy sweep** (per-lever delta tables), commit **one** stacked config candidate for a **single sealed Golden-150 row**, and emit a pre-registered go/no-go `TRAINING_DECISION` artifact. Per-lever Golden-150 tables are **not** promised — only the stacked candidate is sealed.

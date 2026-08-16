@@ -282,4 +282,123 @@ class SyncStateRepositoryTest extends TestCase
 
         $this->assertSame('2026-03-07 04:00:00', $value);
     }
+
+    /**
+     * R23-BR-23 [TEST-15]: a durable last_sync_result write error (query === false)
+     * must throw naming the field — not silently leave the SPA on a green stale
+     * value. Distinct from the 0/no-op leg below.
+     *
+     * Uses expectException (not try/catch RuntimeException): PHPUnit's fail() is
+     * itself a RuntimeException subclass, so a try/catch pin would swallow the
+     * fail() and pass tautologically when the throw is removed.
+     */
+    public function testSetLastSyncResultThrowsOnWriteError(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = false;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Could not persist last_sync_result (write error).');
+        $this->repository->set_last_sync_result('tenant-sync', 'ok');
+    }
+
+    /**
+     * R23-BR-23 false-failure pin: identical re-apply of last_sync_result
+     * (query returns 0, not false) must still succeed. A check that treats
+     * 0 as failure would false-fail every no-op re-apply.
+     */
+    public function testSetLastSyncResultSucceedsOnNoOpZeroRowsAffected(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 0;
+
+        $this->repository->set_last_sync_result('tenant-sync', 'ok');
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("'ok'", $sql);
+        $this->assertStringContainsString('last_sync_result', $sql);
+    }
+
+    /**
+     * R23-BR-23: resync_required written by rekey must not be normalized to ok.
+     * A mutation that restores the old default-to-ok path reds this pin.
+     */
+    public function testGetLastSyncResultPreservesResyncRequired(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = 'resync_required';
+
+        $value = $this->repository->get_last_sync_result('tenant-sync');
+
+        $this->assertSame('resync_required', $value);
+    }
+
+    /**
+     * R23-BR-23: unknown non-empty status fails closed to failed (does not invent ok).
+     */
+    public function testGetLastSyncResultFailsClosedOnUnknownStatus(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = 'not-a-real-status';
+
+        $value = $this->repository->get_last_sync_result('tenant-sync');
+
+        $this->assertSame('failed', $value);
+    }
+
+    /**
+     * R23-BR-23 [TEST-15]: metrics update write error (false) throws and names
+     * the counter fields. Distinct from the 0/no-op leg.
+     * expectException — not try/catch RuntimeException (fail() is RuntimeException).
+     */
+    public function testRefreshCurationMetricsThrowsOnUpdateWriteError(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = [
+            'last_curation_acknowledged_at' => null,
+            'last_curation_conflict_at' => null,
+            'last_curation_failed_at' => null,
+        ];
+        $wpdb->defaultUpdateResult = false;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('update write error on pending_curation_operations');
+        $this->repository->refresh_curation_metrics('tenant-sync');
+    }
+
+    /**
+     * R23-BR-23 [TEST-15]: metrics update returning 0 (no-op / identical values)
+     * must still succeed. A mutation that treats 0 like false reds this pin
+     * without needing the false-leg pin above to fail first.
+     */
+    public function testRefreshCurationMetricsSucceedsOnUpdateZeroRowsAffected(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = [
+            'last_curation_acknowledged_at' => null,
+            'last_curation_conflict_at' => null,
+            'last_curation_failed_at' => null,
+        ];
+        $wpdb->defaultUpdateResult = 0;
+
+        $this->repository->refresh_curation_metrics('tenant-sync');
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('UPDATE wp_acx_sync_state SET pending_curation_operations', $sql);
+    }
+
+    /**
+     * R23-BR-23 [TEST-15]: metrics insert write error throws naming the fields.
+     * expectException — not try/catch RuntimeException (fail() is RuntimeException).
+     */
+    public function testRefreshCurationMetricsThrowsOnInsertWriteError(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = null;
+        $wpdb->defaultInsertResult = false;
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('insert write error on pending_curation_operations');
+        $this->repository->refresh_curation_metrics('tenant-sync');
+    }
 }

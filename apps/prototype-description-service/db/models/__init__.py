@@ -8,6 +8,13 @@ This package provides domain-specific model modules:
 - constraints: IdentitySuggestion, IdentityClusterBlock, IdentityConstraint models
 """
 
+from db.models.atlas import (
+    AtlasDispositionAction,
+    AtlasRunStatus,
+    IdentityAtlasPoint,
+    IdentityAtlasQueueDisposition,
+    IdentityAtlasRun,
+)
 from db.models.constraints import (
     ClusterMergeSuggestion,
     IdentityClusterBlock,
@@ -71,6 +78,12 @@ __all__ = [
     "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
+    # Atlas
+    "AtlasRunStatus",
+    "AtlasDispositionAction",
+    "IdentityAtlasRun",
+    "IdentityAtlasPoint",
+    "IdentityAtlasQueueDisposition",
     # Scene (image description)
     "ImageDescription",
     "DescribeRun",

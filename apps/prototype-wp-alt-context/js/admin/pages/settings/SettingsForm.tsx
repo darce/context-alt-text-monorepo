@@ -1,16 +1,66 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
-import { RecognitionSource, type SettingsResponse, type TestConnectionResponse } from '../../api/settingsApi';
 import {
+  RecognitionSource,
+  UrlRejectionReason,
+  type SettingsResponse,
+  type TestConnectionResponse,
+  type UrlRejectionReasonValue,
+} from '../../api/settingsApi';
+import {
+  deriveServiceUrlCardState,
   HEALTH_STATUS_ICONS,
   HEALTH_STATUS_LABELS,
+  ServiceUrlCardState,
   SOURCE_LABELS,
   TENANT_PAIRING_ICONS,
   TENANT_PAIRING_LABELS,
   TenantPairing,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
+
+const URL_REJECTION_REASON_LABELS: Record<UrlRejectionReasonValue, string> = {
+  [UrlRejectionReason.REJECTED_SCHEME]: __(
+    'scheme must be HTTPS (HTTP is allowed only for loopback development hosts)',
+    'alt-context',
+  ),
+  [UrlRejectionReason.NON_LOOPBACK_HTTP]: __(
+    'HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    'alt-context',
+  ),
+  [UrlRejectionReason.INVALID_URL]: __('the configured value is not a valid URL', 'alt-context'),
+};
+
+const urlRejectionStatusText = (data: SettingsResponse): string => {
+  const reason = data.url_rejection_reason;
+  const reasonLabel =
+    reason !== null
+      ? (URL_REJECTION_REASON_LABELS[reason] ?? reason)
+      : __('unknown reason', 'alt-context');
+  const sourceLabel =
+    data.url_rejection_source !== null
+      ? (SOURCE_LABELS[data.url_rejection_source] ?? data.url_rejection_source)
+      : __('unknown source', 'alt-context');
+  const rejectedValue = data.url_rejection_value ?? '';
+
+  if (rejectedValue !== '') {
+    return sprintf(
+      /* translators: %s placeholders: rejected URL, source label, rejection reason */
+      __('Rejected %s (%s): %s', 'alt-context'),
+      rejectedValue,
+      sourceLabel,
+      reasonLabel,
+    );
+  }
+
+  return sprintf(
+    /* translators: %s placeholders: source label, rejection reason */
+    __('Rejected (%s): %s', 'alt-context'),
+    sourceLabel,
+    reasonLabel,
+  );
+};
 
 interface SettingsFormProps {
   data: SettingsResponse;
@@ -49,12 +99,22 @@ export const SettingsForm = ({
   onTest,
   onFocusServiceUrl,
 }: SettingsFormProps): React.JSX.Element => {
-  const serviceConfigured = url.trim() !== '';
+  // R19-BR-04: one derived state drives empty CTA + source chip; do not re-check
+  // url emptiness (resolver blanks url on rejection for security).
+  const cardState = deriveServiceUrlCardState(data);
+  // R19-BR-05: test_connection probes effective_target_url, not the blanked url.
+  const hasProbeTarget = data.effective_target_url.trim() !== '';
   // RECOG-1: local survives only as a dev-only code hatch; when active the
   // effective target resolves to local. Surface it as a read-only diagnostic.
   const devHatchActive = data.recognition_source === RecognitionSource.LOCAL;
   const healthStatus = healthStatusForService(testResult);
   const pairingStatus = data.tenant_paired ? TenantPairing.PAIRED : TenantPairing.UNPAIRED;
+  // Rejected installs report url_source=default; surface the tier that held the
+  // rejected value so the chip does not claim "Not configured".
+  const urlSourceLabel =
+    cardState === ServiceUrlCardState.REJECTED && data.url_rejection_source !== null
+      ? (SOURCE_LABELS[data.url_rejection_source] ?? data.url_rejection_source)
+      : (SOURCE_LABELS[data.url_source] ?? data.url_source);
 
   return (
     <form onSubmit={onSave} className="acx-settings__form">
@@ -74,7 +134,7 @@ export const SettingsForm = ({
         </div>
 
         <div className="acx-target-card__body">
-          {!serviceConfigured ? (
+          {cardState === ServiceUrlCardState.UNCONFIGURED ? (
             <div className="acx-target-card__empty">
               <p>{__('No service URL configured yet. Enter the hosted recognition service URL to begin.', 'alt-context')}</p>
               <button
@@ -90,6 +150,21 @@ export const SettingsForm = ({
               </button>
             </div>
           ) : null}
+          {cardState === ServiceUrlCardState.REJECTED ? (
+            <div className="acx-target-card__empty" data-testid="acx-url-rejection-notice">
+              {/*
+                R16-BR-09: full rejection sentence lives only in the always-mounted
+                effective-target live region below (announced once). Card cue is a
+                short next-step prompt so sighted operators still know what to do.
+              */}
+              <p>
+                {__(
+                  'The configured service URL was rejected. Enter a valid HTTPS URL below to restore recognition routing.',
+                  'alt-context',
+                )}
+              </p>
+            </div>
+          ) : null}
           <label htmlFor="acx-settings-url">{__('Service API URL', 'alt-context')}</label>
           <input
             id="acx-settings-url"
@@ -100,8 +175,8 @@ export const SettingsForm = ({
             readOnly={urlReadOnly}
             placeholder="https://api.altcontext.com"
           />
-          <p className="description">
-            {SOURCE_LABELS[data.url_source] ?? data.url_source}
+          <p className="description" data-testid="acx-url-source">
+            {urlSourceLabel}
             {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
           </p>
           <label htmlFor="acx-settings-key">{__('API Key', 'alt-context')}</label>
@@ -125,7 +200,7 @@ export const SettingsForm = ({
             type="button"
             className="button button-secondary"
             onClick={onTest}
-            disabled={testPending || hasUnsavedRoutingChanges || !serviceConfigured}
+            disabled={testPending || hasUnsavedRoutingChanges || !hasProbeTarget}
           >
             {testPending ? __('Checking…', 'alt-context') : __('Check health', 'alt-context')}
           </button>
@@ -144,7 +219,23 @@ export const SettingsForm = ({
           ? __('Local development service (developer hatch)', 'alt-context')
           : __('Hosted recognition service', 'alt-context')}
         {': '}
-        <code>{data.effective_target_url || __('not configured', 'alt-context')}</code>
+        {hasProbeTarget ? (
+          <code>{data.effective_target_url}</code>
+        ) : data.url_rejection_reason === null ? (
+          <code>{__('not configured', 'alt-context')}</code>
+        ) : null}
+        {data.url_rejection_reason !== null ? (
+          <>
+            {hasProbeTarget ? ' — ' : null}
+            <span
+              className="acx-settings__url-rejection"
+              data-testid="acx-url-rejection"
+              style={{ color: 'var(--acx-color-danger)' }}
+            >
+              {urlRejectionStatusText(data)}
+            </span>
+          </>
+        ) : null}
       </p>
 
       {devHatchActive ? (

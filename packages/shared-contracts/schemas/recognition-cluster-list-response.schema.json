@@ -17,7 +17,8 @@
           "identity_count",
           "member_ids",
           "representative_identity",
-          "sample_identities"
+          "sample_identities",
+          "person_uuid"
         ],
         "properties": {
           "id": {
@@ -56,12 +57,25 @@
               "bbox": {
                 "type": "object",
                 "required": ["x", "y", "width", "height"],
+                "description": "Face rect in the pixel space of media_url, not of the original attachment: a deleted original degrades url and bbox together into the largest surviving sub-size.",
                 "properties": {
                   "x": { "type": "integer", "minimum": 0 },
                   "y": { "type": "integer", "minimum": 0 },
                   "width": { "type": "integer", "minimum": 0 },
                   "height": { "type": "integer", "minimum": 0 }
                 }
+              },
+              "thumb_url": {
+                "type": ["string", "null"],
+                "format": "uri"
+              },
+              "attachment_url": {
+                "type": ["string", "null"],
+                "format": "uri"
+              },
+              "media_url": {
+                "type": ["string", "null"],
+                "format": "uri"
               }
             }
           },
@@ -95,6 +109,7 @@
                 "bbox": {
                   "type": "object",
                   "required": ["x", "y", "width", "height"],
+                  "description": "Face rect in the pixel space of media_url, not of the original attachment: a deleted original degrades url and bbox together into the largest surviving sub-size.",
                   "properties": {
                     "x": { "type": "integer", "minimum": 0 },
                     "y": { "type": "integer", "minimum": 0 },
@@ -103,6 +118,10 @@
                   }
                 },
                 "thumb_url": {
+                  "type": ["string", "null"],
+                  "format": "uri"
+                },
+                "attachment_url": {
                   "type": ["string", "null"],
                   "format": "uri"
                 },
@@ -121,6 +140,10 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "person_uuid": {
+            "type": ["string", "null"],
+            "description": "Person UUID bound via wp_acx_clusters.person_id → persons.person_uuid. Null when the cluster is not assigned to a person."
           }
         }
       }

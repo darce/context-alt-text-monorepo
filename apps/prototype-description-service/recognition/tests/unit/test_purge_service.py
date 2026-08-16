@@ -10,12 +10,17 @@ from sqlalchemy import select, text
 
 from db.models import (
     AssignmentDecision,
+    AtlasDispositionAction,
+    AtlasRunStatus,
     AuditEvent,
     ClusterCentroid,
     ClusteringFeedback,
     ClusteringJobReport,
     ClusterMergeSuggestion,
     CurationReplayRecord,
+    IdentityAtlasPoint,
+    IdentityAtlasQueueDisposition,
+    IdentityAtlasRun,
     IdentityCluster,
     IdentityClusterBlock,
     IdentityClusteringJob,
@@ -31,7 +36,7 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
-from recognition.application.services.purge_service import TenantPurgeService
+from recognition.application.services.purge_service import PurgeRowScope, TenantPurgeService
 from recognition.domain.suggestion import SuggestedLabelSource
 
 
@@ -226,6 +231,180 @@ async def test_purge_service_disposed_scope_skips_name_suggestions_without_dispo
 
 
 @pytest.mark.asyncio
+async def test_purge_service_disposed_scope_with_nothing_disposed_deletes_nothing(db_session, tenant: Tenant) -> None:
+    """An empty disposed scope must delete zero rows, never the whole tenant.
+
+    Every dependency predicate resolves to an empty id list here. When the empty
+    case returned ``None`` that reached ``_list_batch_ids`` as "no extra WHERE",
+    so this purge wiped the tenant's live identities, clusters, members,
+    representatives, constraints, blocks, and suggestions.
+    """
+    identity_a = MediaIdentity(
+        tenant_id=tenant.id,
+        media_id=901,
+        media_url="http://example.test/live-a.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=10,
+        bbox_height=10,
+        confidence=0.95,
+        embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
+    )
+    identity_b = MediaIdentity(
+        tenant_id=tenant.id,
+        media_id=902,
+        media_url="http://example.test/live-b.jpg",
+        bbox_x=1,
+        bbox_y=1,
+        bbox_width=10,
+        bbox_height=10,
+        confidence=0.94,
+        embedding=_unit_embedding(),
+        embedding_model="buffalo_l@insightface",
+    )
+    cluster_a = IdentityCluster(tenant_id=tenant.id, label="Live A", identity_count=1)
+    cluster_b = IdentityCluster(tenant_id=tenant.id, label="Live B", identity_count=1)
+    db_session.add_all([identity_a, identity_b, cluster_a, cluster_b])
+    await db_session.flush()
+
+    member = IdentityMember(
+        tenant_id=tenant.id,
+        cluster_id=cluster_a.id,
+        identity_id=identity_a.id,
+        similarity=0.99,
+    )
+    representative = IdentityClusterRepresentative(
+        tenant_id=tenant.id,
+        cluster_id=cluster_a.id,
+        identity_id=identity_a.id,
+        embedding=_unit_embedding(),
+        quality_score=0.96,
+    )
+    constraint = IdentityConstraint(
+        tenant_id=tenant.id,
+        identity_a=min(identity_a.id, identity_b.id),
+        identity_b=max(identity_a.id, identity_b.id),
+        constraint_type="cannot_link",
+        source="test",
+    )
+    block = IdentityClusterBlock(
+        tenant_id=tenant.id,
+        identity_id=identity_a.id,
+        blocked_cluster_id=cluster_b.id,
+        reason="test",
+    )
+    identity_suggestion = IdentitySuggestion(
+        tenant_id=tenant.id,
+        identity_id=identity_b.id,
+        suggested_cluster_id=cluster_a.id,
+        representative_similarity=0.8,
+        avg_member_similarity=0.81,
+        confidence_score=0.82,
+    )
+    merge_suggestion = ClusterMergeSuggestion(
+        tenant_id=tenant.id,
+        cluster_a_id=min(cluster_a.id, cluster_b.id),
+        cluster_b_id=max(cluster_a.id, cluster_b.id),
+        similarity=0.7,
+    )
+    name_suggestion = NameSuggestion(
+        tenant_id=tenant.id,
+        cluster_id=cluster_a.id,
+        suggested_name="Live Cluster",
+        source=SuggestedLabelSource.IDENTITY.value,
+        confidence_score=0.83,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add_all(
+        [member, representative, constraint, block, identity_suggestion, merge_suggestion, name_suggestion]
+    )
+    await db_session.flush()
+
+    atlas_run = IdentityAtlasRun(
+        tenant_id=tenant.id,
+        embedding_model="buffalo_l@insightface",
+        status=AtlasRunStatus.COMPLETE.value,
+        params={"umap": {"n_neighbors": 15}, "score_recipe": "margin_v1"},
+        point_count=1,
+    )
+    db_session.add(atlas_run)
+    await db_session.flush()
+    atlas_point = IdentityAtlasPoint(
+        run_id=atlas_run.id,
+        tenant_id=tenant.id,
+        identity_id=identity_a.id,
+        media_id=identity_a.media_id,
+        cluster_id=None,
+        x=-0.5,
+        y=0.25,
+        queue_rank=0,
+        uncertainty={"margin": 0.12, "composite": 0.41},
+    )
+    db_session.add(atlas_point)
+    await db_session.flush()
+    atlas_disposition = IdentityAtlasQueueDisposition(
+        run_id=atlas_run.id,
+        point_id=atlas_point.id,
+        tenant_id=tenant.id,
+        action=AtlasDispositionAction.REVIEWED.value,
+        actor="admin:atlas-curator",
+    )
+    db_session.add(atlas_disposition)
+    await db_session.commit()
+
+    service = TenantPurgeService(db_session)
+
+    result = await service.purge_tenant_data(str(tenant.id), "api_key:test", scope="disposed")
+
+    deleted_counts = result["deleted_counts"]
+    assert all(count == 0 for count in deleted_counts.values()), deleted_counts
+
+    for row, model in (
+        (identity_a, MediaIdentity),
+        (identity_b, MediaIdentity),
+        (cluster_a, IdentityCluster),
+        (cluster_b, IdentityCluster),
+        (member, IdentityMember),
+        (representative, IdentityClusterRepresentative),
+        (constraint, IdentityConstraint),
+        (block, IdentityClusterBlock),
+        (identity_suggestion, IdentitySuggestion),
+        (merge_suggestion, ClusterMergeSuggestion),
+        (name_suggestion, NameSuggestion),
+        (atlas_run, IdentityAtlasRun),
+        (atlas_point, IdentityAtlasPoint),
+        (atlas_disposition, IdentityAtlasQueueDisposition),
+    ):
+        assert await db_session.get(model, row.id) is not None, f"{model.__name__} was purged out of scope"
+
+
+@pytest.mark.asyncio
+async def test_purge_service_rejects_non_sentinel_predicate(db_session, tenant: Tenant) -> None:
+    """A bare ``None`` predicate must fail loudly, not widen to a tenant-wide delete."""
+    service = TenantPurgeService(db_session)
+    primary_key = service._primary_key_column(MediaIdentity)
+
+    with pytest.raises(TypeError, match="PurgeRowScope member"):
+        await service._list_batch_ids(
+            MediaIdentity,
+            primary_key,
+            MediaIdentity.tenant_id == tenant.id,
+            None,
+        )
+
+    assert (
+        await service._list_batch_ids(
+            MediaIdentity,
+            primary_key,
+            MediaIdentity.tenant_id == tenant.id,
+            PurgeRowScope.NO_ROWS,
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
 async def test_purge_service_all_scope_deletes_all_machine_state(db_session, tenant: Tenant) -> None:
     identity = MediaIdentity(
         tenant_id=tenant.id,
@@ -393,7 +572,12 @@ async def test_purge_service_batches_large_table_deletes(
     original = service._list_batch_ids
     media_identity_batches: list[int] = []
 
-    async def instrumented_list_batch_ids(model, primary_key, tenant_predicate, extra_predicate=None) -> list[object]:
+    async def instrumented_list_batch_ids(
+        model,
+        primary_key,
+        tenant_predicate,
+        extra_predicate=PurgeRowScope.ALL_TENANT_ROWS,
+    ) -> list[object]:
         batch = await original(model, primary_key, tenant_predicate, extra_predicate)
         if model is MediaIdentity:
             media_identity_batches.append(len(batch))

@@ -54,7 +54,33 @@ def test_check_active_embedding_model_ok() -> None:
     result = check_active_embedding_model()
     assert result.name == "embedding_model"
     assert result.status is HealthStatus.OK
-    assert result.detail.startswith("active=")
+    assert result.detail.startswith("active_space=")
+
+
+def test_check_active_embedding_model_public_detail_hides_model_id() -> None:
+    """Unauthenticated /ready must not disclose the toolchain-bearing model_id.
+
+    CVUP1-GR-15: ``space_token`` folds the resolved OpenCV and onnxruntime
+    versions into ``model_id``, so echoing it on the public probe is version
+    disclosure. The coarse form must still discriminate — two different active
+    model_ids must not collapse to the same ``active_space``.
+    """
+    model_id = active_embedding_model_id()
+    public = check_active_embedding_model()
+    assert model_id not in public.detail
+
+    with patch(
+        "recognition.application.embedding.manifest.active_embedding_model_id",
+        return_value=model_id + "-other",
+    ):
+        other = check_active_embedding_model()
+    assert other.detail != public.detail
+
+
+def test_check_active_embedding_model_verbose_keeps_model_id() -> None:
+    verbose = check_active_embedding_model(verbose=True)
+    assert verbose.status is HealthStatus.OK
+    assert verbose.detail == f"active={active_embedding_model_id()}"
 
 
 def test_check_active_embedding_model_fail_closed() -> None:
@@ -140,13 +166,7 @@ def test_centroid_mv_sql_frames_by_embedding_model() -> None:
     """Migration MV definition must majority-frame by embedding_model (FIR23-01)."""
     from pathlib import Path
 
-    migration = (
-        Path(__file__).resolve().parents[3]
-        / "db"
-        / "migrations"
-        / "versions"
-        / "001_identity_schema.py"
-    )
+    migration = Path(__file__).resolve().parents[3] / "db" / "migrations" / "versions" / "001_identity_schema.py"
     text = migration.read_text(encoding="utf-8")
     assert "chosen_model" in text
     assert "embedding_model" in text
@@ -156,12 +176,7 @@ def test_centroid_mv_sql_frames_by_embedding_model() -> None:
 def test_sqlite_refresh_sql_frames_by_embedding_model() -> None:
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[2]
-        / "infrastructure"
-        / "repositories"
-        / "cluster_repository.py"
-    )
+    src = Path(__file__).resolve().parents[2] / "infrastructure" / "repositories" / "cluster_repository.py"
     text = src.read_text(encoding="utf-8")
     assert "chosen_model" in text
     assert "FIR23-01" in text
@@ -179,13 +194,7 @@ def test_label_inference_nn_filters_embedding_model() -> None:
 def test_orchestrator_fetch_filters_mixed_models() -> None:
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[2]
-        / "application"
-        / "orchestration"
-        / "clustering"
-        / "orchestrator.py"
-    )
+    src = Path(__file__).resolve().parents[2] / "application" / "orchestration" / "clustering" / "orchestrator.py"
     text = src.read_text(encoding="utf-8")
     assert "active_embedding_model_id" in text
     assert "FIR23-01" in text

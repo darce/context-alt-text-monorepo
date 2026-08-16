@@ -1,7 +1,9 @@
 """FIR-3 S3: ORT CPU adapters vs OpenCV reference parity + modelless decode tests.
 
-Gates (task plan / assignment):
-- embedding cosine(ORT, OpenCV) ≥ 0.999 on golden synthetic + aligner crops
+Gates (task plan / assignment, amended):
+- embedding cosine(ORT, OpenCV) ≥ 0.99999999 on golden synthetic + aligner crops
+  (S3 parity-budget amendment; supersedes the assigned 0.999 floor — see
+  docs/tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md and ``_COSINE_MIN``)
 - detector boxes IoU ≥ 0.99, landmark max-dist ≤ 2px, score delta ≤ 0.02
 - zero-norm raise, empty batch, same input gates as OpenCV path
 - modelless: pure decode/NMS unit-tested without ONNX
@@ -45,8 +47,16 @@ from recognition.tests.unit.face_pipeline_support import (
     three_face_canvas_640x480,
 )
 
-# Parity budgets from FIR-3 S3 assignment (do not loosen — sr-001).
-_COSINE_MIN = 0.999
+# Parity / golden budgets (CVUP1-LC-03; do not loosen without re-measure — sr-001).
+# Measurement 2026-07-29, OpenCV 5.0.0 / ORT 1.28.0 / numpy 2.5.1:
+#   ORT↔OpenCV cosine (synthetic + aligner crops): ≥ 0.999999999997 (1-cos ≤ 5e-12)
+#   ORT vs synthetic_112_embedding golden: ≥ 0.999999999997
+# Noise floor ≈ 0 for unit cosine. Floor 0.99999999 is 10× above a 1e-9 slack
+# band; prior decorative floors were 0.999 / 0.9999. This supersedes the FIR-3
+# S3 assigned budget (cosine ≥ 0.999) — see the S3 parity-budget amendment in
+# docs/tasks/fir/FIR-3-yunet-sface-adapters-task-plan.md for the evidence.
+_COSINE_MIN = 0.99999999
+_GOLDEN_COSINE_MIN = 0.99999999
 _IOU_MIN = 0.99
 _LANDMARK_MAX_DIST_PX = 2.0
 _SCORE_DELTA_MAX = 0.02
@@ -280,9 +290,11 @@ def test_embedding_parity_vs_golden_fixture(ort_sface_embedder) -> None:
     """ORT also matches committed golden embedding (cross-check)."""
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     expected = np.load(_FIXTURE_DIR / "synthetic_112_embedding.npy")
+    meta = load_json("embedding_meta.json")
+    cosine_min = float(meta.get("cosine_min", _GOLDEN_COSINE_MIN))
     emb = ort_sface_embedder.embed([crop]).vectors
     cos = cosine(emb[0], expected[0])
-    assert cos >= _COSINE_MIN, f"golden cosine={cos}"
+    assert cos >= cosine_min, f"golden cosine={cos} < {cosine_min}"
     print(f"PARITY_COSINE_golden={cos:.10f}")
 
 
@@ -303,7 +315,7 @@ def test_sface_preprocess_is_rgb_scale1(ort_sface_embedder, ocv_sface_embedder) 
     raw_ocv = np.asarray(ocv_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
     raw_ort = np.asarray(ort_sface_embedder._feature(crop), dtype=np.float32).reshape(-1)
     cos = cosine(raw_ocv, raw_ort)
-    assert cos >= 0.9999
+    assert cos >= _COSINE_MIN, f"raw feature cosine={cos} < {_COSINE_MIN}"
     print(f"PARITY_COSINE_raw_feature={cos:.10f}")
 
 
@@ -536,6 +548,24 @@ def test_aligner_crop_is_valid_ort_sface_input(ort_sface_embedder) -> None:
     emb = ort_sface_embedder.embed([crop]).vectors
     assert emb.shape == (1, SFACE_EMBEDDING_DIM)
     assert float(np.linalg.norm(emb[0])) == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.skipif(models_absent_allows_skip(), reason=MODELS_SKIP)
+def test_composed_aligner_embedder_ort_matches_golden(ort_sface_embedder) -> None:
+    """ORT path also hits the composed aligner→embedder golden (CVUP1-LC-03)."""
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+
+    img = np.load(_FIXTURE_DIR / "aligner_source_image.npy")
+    landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy")
+    expected = np.load(_FIXTURE_DIR / "aligner_composed_embedding.npy")
+    meta = load_json("aligner_composed_embedding_meta.json")
+    cosine_min = float(meta.get("cosine_min", _GOLDEN_COSINE_MIN))
+
+    crop = FivePointAligner().align(img, landmarks).crop
+    emb = ort_sface_embedder.embed([crop]).vectors
+    cos = cosine(emb[0], expected[0])
+    assert cos >= cosine_min, f"composed golden cosine={cos} < {cosine_min}"
+    print(f"PARITY_COSINE_composed_golden={cos:.10f}")
 
 
 def test_ort_adapters_import_purity_no_worker_http() -> None:

@@ -1,5 +1,5 @@
 [features]
-codex_hooks = true
+hooks = true
 
 [mcp_servers.workbay-handoff-mcp]
 type = "stdio"
@@ -13,8 +13,9 @@ args = ["-c", "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; 
 
 [mcp_servers.codebase-graph-mcp]
 type = "stdio"
-command = "python3"
-args = ["scripts/hooks/mcp_launch.py", "codebase-graph-mcp"]
+command = "sh"
+args = ["-c", "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"", "sh", "codebase-graph-mcp"]
+
 [marketplaces.workbay-marketplace]
 source_type = "local"
 source = "."

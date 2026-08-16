@@ -47,8 +47,19 @@ export const useCreatePerson = () => {
     },
     onSuccess: (createdEntry, _variables, context) => {
       queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) => {
+        const previous = (current ?? []).find((entry) => entry.id === context?.optimisticId);
         const withoutOptimistic = (current ?? []).filter((entry) => entry.id !== context?.optimisticId);
-        return [...withoutOptimistic, createdEntry];
+        // Merge server fields into the previous (optimistic) row rather than
+        // replacing: create_person returns a sparse acx_persons body with no
+        // queue_memberships / clusters / projection_status.
+        const merged: RosterEntry = {
+          ...previous,
+          ...createdEntry,
+          queue_memberships: previous?.queue_memberships ?? [],
+          clusters: previous?.clusters ?? [],
+          projection_status: previous?.projection_status ?? 'refreshing',
+        };
+        return [...withoutOptimistic, merged];
       });
     },
     onSettled: () => {
@@ -84,7 +95,21 @@ export const useUpdatePerson = () => {
     },
     onSuccess: (updatedEntry) => {
       queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) =>
-        (current ?? []).map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry)),
+        (current ?? []).map((entry) =>
+          entry.id === updatedEntry.id
+            ? {
+                // Merge server fields into the previous projected entry rather
+                // than replacing: update_person returns a raw acx_persons row
+                // with no queue_memberships, which would silently downgrade
+                // needs-review → named until invalidation settles.
+                ...entry,
+                ...updatedEntry,
+                queue_memberships: entry.queue_memberships ?? [],
+                clusters: entry.clusters ?? [],
+                projection_status: entry.projection_status,
+              }
+            : entry,
+        ),
       );
     },
     onSettled: () => {

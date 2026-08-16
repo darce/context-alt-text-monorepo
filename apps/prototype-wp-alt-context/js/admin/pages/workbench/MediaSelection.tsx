@@ -1,4 +1,4 @@
-import { ChangeEvent, useState } from 'react';
+import { ChangeEvent, useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
@@ -6,7 +6,6 @@ import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
-import { MediaSummaryBar } from './MediaSummaryBar';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -25,8 +24,6 @@ import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } f
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
-  collapsed?: boolean;
-  onExpand?: () => void;
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
    * card owns the single viewport accent primary, so both footer CTAs step down.
@@ -34,11 +31,7 @@ interface MediaSelectionProps {
   reviewActive?: boolean;
 }
 
-export const MediaSelection = ({
-  collapsed = false,
-  onExpand,
-  reviewActive = false,
-}: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -54,7 +47,7 @@ export const MediaSelection = ({
     setPerPage: onPerPageChange,
     setCurrentPage: onPageChange,
   } = filters;
-  const { mediaQuery, statusMessage } = mediaQueue;
+  const { mediaQuery, statusMessage, isStatusPending } = mediaQueue;
 
   const mediaData = mediaQuery.data;
   const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
@@ -104,10 +97,6 @@ export const MediaSelection = ({
   // accent primary across the footer, reconciled against the review card.
   const footerCta = selectMediaFooterCtaState({ reviewActive, describeRunning: isDescribeRunning });
 
-  if (collapsed) {
-    return <MediaSummaryBar onExpand={onExpand ?? (() => undefined)} />;
-  }
-
   return (
     <>
       <div className="acx-media-selection">
@@ -117,6 +106,7 @@ export const MediaSelection = ({
           statusFilter={statusFilter}
           onStatusFilterChange={onStatusFilterChange}
           statusMessage={statusMessage}
+          isStatusPending={isStatusPending}
           isError={isError}
           onRetry={onRetry}
         />
@@ -170,7 +160,7 @@ export const MediaSelection = ({
             runId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
-            errorMessage={bulkDescribe.submit.error?.message ?? bulkDescribe.cancel.error?.message ?? null}
+            errorMessage={bulkDescribe.errorMessage}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
@@ -236,9 +226,18 @@ interface MediaSelectionToolbarProps {
   statusFilter: WorkbenchMediaStatus;
   onStatusFilterChange: (status: WorkbenchMediaStatus) => void;
   statusMessage: string;
+  /**
+   * True while the queue is still fetching. Suppresses the transient status from
+   * the live region — gated on the context boolean, not display-copy equality
+   * [B-01][A11Y-08][sr-007].
+   */
+  isStatusPending: boolean;
   isError: boolean;
   onRetry?: () => void;
 }
+
+/** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
+const TOOLBAR_STATUS_ANNOUNCE_DEBOUNCE_MS = 1000;
 
 const MediaSelectionToolbar = ({
   searchQuery,
@@ -246,61 +245,99 @@ const MediaSelectionToolbar = ({
   statusFilter,
   onStatusFilterChange,
   statusMessage,
+  isStatusPending,
   isError,
   onRetry,
-}: MediaSelectionToolbarProps) => (
-  <div className="acx-media-selection__toolbar">
-    <label htmlFor="acx-media-search" className="acx-media-selection__search-label">
-      {__('Search media', 'alt-context')}
-    </label>
-    <input
-      id="acx-media-search"
-      className="acx-media-selection__search"
-      type="search"
-      placeholder={__('Filter by alt text or tag…', 'alt-context')}
-      value={searchQuery}
-      onChange={onSearchChange}
-    />
-    <div className="acx-media-selection__status-filter">
-      <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
-      <Select.Root value={statusFilter} onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}>
-        <Select.Trigger className="acx-media-selection__status-filter-trigger" aria-labelledby="acx-media-status-label">
-          <Select.Value />
-          <Select.Icon className="acx-media-selection__status-filter-icon">
-            <ChevronDown aria-hidden="true" size={16} />
-          </Select.Icon>
-        </Select.Trigger>
-        <Select.Portal>
-          <Select.Content className="acx-media-selection__status-filter-content" position="popper" sideOffset={6}>
-            <Select.Viewport className="acx-media-selection__status-filter-viewport">
-              <Select.Item value="all" className="acx-media-selection__status-filter-item">
-                <Select.ItemText>{__('All media', 'alt-context')}</Select.ItemText>
-                <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
-                  <Check aria-hidden="true" size={14} />
-                </Select.ItemIndicator>
-              </Select.Item>
-              <Select.Item value="missing" className="acx-media-selection__status-filter-item">
-                <Select.ItemText>{__('Missing alt text', 'alt-context')}</Select.ItemText>
-                <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
-                  <Check aria-hidden="true" size={14} />
-                </Select.ItemIndicator>
-              </Select.Item>
-            </Select.Viewport>
-          </Select.Content>
-        </Select.Portal>
-      </Select.Root>
-    </div>
+}: MediaSelectionToolbarProps) => {
+  // Settled candidate: exclude transient fetch-pending so fetch churn never
+  // enters the live region. Visual span still shows the full message [B-01 option b].
+  // Gate on isStatusPending (not translated display copy) [sr-007].
+  const settledCandidate = isStatusPending ? null : statusMessage;
 
-    <div className="acx-media-selection__toolbar-actions">
-      <span className="acx-media-selection__status">{statusMessage}</span>
-      {isError && onRetry && (
-        <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
-          {__('Retry', 'alt-context')}
-        </button>
-      )}
+  // Always-mounted live region: start empty so the region exists before text
+  // arrives (a status that mounts with content often is not announced).
+  const [announcedStatus, setAnnouncedStatus] = useState('');
+
+  useEffect(() => {
+    if (settledCandidate === null) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setAnnouncedStatus(settledCandidate);
+    }, TOOLBAR_STATUS_ANNOUNCE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [settledCandidate]);
+
+  return (
+    <div className="acx-media-selection__toolbar">
+      <label htmlFor="acx-media-search" className="acx-media-selection__search-label">
+        {__('Search media', 'alt-context')}
+      </label>
+      <input
+        id="acx-media-search"
+        className="acx-media-selection__search"
+        type="search"
+        placeholder={__('Filter by alt text or tag…', 'alt-context')}
+        value={searchQuery}
+        onChange={onSearchChange}
+      />
+      <div className="acx-media-selection__status-filter">
+        <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
+        <Select.Root value={statusFilter} onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}>
+          <Select.Trigger className="acx-media-selection__status-filter-trigger" aria-labelledby="acx-media-status-label">
+            <Select.Value />
+            <Select.Icon className="acx-media-selection__status-filter-icon">
+              <ChevronDown aria-hidden="true" size={16} />
+            </Select.Icon>
+          </Select.Trigger>
+          <Select.Portal>
+            <Select.Content className="acx-media-selection__status-filter-content" position="popper" sideOffset={6}>
+              <Select.Viewport className="acx-media-selection__status-filter-viewport">
+                <Select.Item value="all" className="acx-media-selection__status-filter-item">
+                  <Select.ItemText>{__('All media', 'alt-context')}</Select.ItemText>
+                  <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                    <Check aria-hidden="true" size={14} />
+                  </Select.ItemIndicator>
+                </Select.Item>
+                <Select.Item value="missing" className="acx-media-selection__status-filter-item">
+                  <Select.ItemText>{__('Missing alt text', 'alt-context')}</Select.ItemText>
+                  <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                    <Check aria-hidden="true" size={14} />
+                  </Select.ItemIndicator>
+                </Select.Item>
+              </Select.Viewport>
+            </Select.Content>
+          </Select.Portal>
+        </Select.Root>
+      </div>
+
+      <div className="acx-media-selection__toolbar-actions">
+        <span className="acx-media-selection__status">
+          {/* Visual status — full message including transient Updating… */}
+          <span aria-hidden="true">{statusMessage}</span>
+          {/*
+            Always-mounted polite region [B-01][A11Y-08]. Debounced settled text
+            only — never "Updating media queue…". Per-correction success strings
+            live on the row region, not here [B-02].
+          */}
+          <span
+            role="status"
+            aria-live="polite"
+            className="screen-reader-text"
+            data-testid="media-selection-toolbar-live-status"
+          >
+            {announcedStatus}
+          </span>
+        </span>
+        {isError && onRetry && (
+          <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
+            {__('Retry', 'alt-context')}
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 /** aria-describedby target for the §7 offline reason on the describe submit CTA. */
 const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
@@ -401,7 +438,12 @@ export const BulkDescribeCta = ({
         />
       </div>
       {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
-      {errorMessage ? <span className="acx-media-selection__bulk-describe-error">{errorMessage}</span> : null}
+      {errorMessage ? (
+        // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
+        <div className="acx-media-selection__bulk-describe-error" role="alert">
+          {errorMessage}
+        </div>
+      ) : null}
     </div>
   );
 };

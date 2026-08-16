@@ -8,6 +8,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { User, UserRound } from 'lucide-react';
 
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
+import { isHumanLabeledTarget } from '../../admin/pages/workbench/identity-clusters/suggestionProjection';
 import {
   isCompleteFiniteBbox,
   isUsableNaturalSize,
@@ -30,9 +31,15 @@ export interface FaceOverlayLayerProps {
   onHighlightChange?: (faceId: string | null) => void;
 }
 
-/** curated = label truthy ∧ not auto-label (AIPX-07 precision-first). */
+/**
+ * curated = human-shaped label ∧ not auto-label (AIPX-07 / E21-15-BR-27).
+ * Auto-shape `cluster-*` labels never become curated chips even when the
+ * backend omits/misflags `is_auto_label`.
+ */
 export function isCuratedFace(identity: FaceOverlayIdentity): boolean {
-  return Boolean(identity.cluster_label) && identity.is_auto_label === false;
+  return (
+    identity.is_auto_label === false && isHumanLabeledTarget(identity.cluster_label)
+  );
 }
 
 function compareBboxReadingOrder(a: FaceOverlayIdentity, b: FaceOverlayIdentity): number {

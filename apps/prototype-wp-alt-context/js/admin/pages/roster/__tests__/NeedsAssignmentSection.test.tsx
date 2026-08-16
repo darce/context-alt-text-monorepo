@@ -8,9 +8,12 @@ import { NeedsAssignmentSection } from '../NeedsAssignmentSection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
-    return format.replace(/%(s|d)/g, () => String(args[index++]));
+    return format
+      .replace(/%\d+\$[sd]/g, () => String(args[index++]))
+      .replace(/%[sd]/g, () => String(args[index++]));
   },
 }));
 
@@ -85,12 +88,13 @@ describe('NeedsAssignmentSection rail mount discrimination (E21-9 Slice 5b)', ()
     expect(screen.getByTestId('needs-assignment-count')).toHaveTextContent('2 unlabeled');
     expect(screen.getByTestId('needs-assignment-list').children).toHaveLength(2);
 
-    const merge = screen.getByRole('button', { name: /^Merge$/i });
+    const merge = screen.getByRole('button', { name: 'Merge 2 clusters' });
     expect(merge).toBeEnabled();
 
     await userEvent.click(merge);
-    // Confirm dialog appears for merge.
-    expect(await screen.findByRole('button', { name: /^Merge$/i })).toBeInTheDocument();
+    // Confirm dialog confirm label stays short "Merge" — exact match, distinct from bar.
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /^Merge$/ })).toBeInTheDocument();
   });
 
   it('renders disabled-with-reason bulk controls when only labeled clusters exist (zero unlabeled)', () => {
@@ -109,8 +113,8 @@ describe('NeedsAssignmentSection rail mount discrimination (E21-9 Slice 5b)', ()
     expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
     expect(screen.getByTestId('needs-assignment-zero')).toHaveTextContent(/No unlabeled clusters need assignment/i);
 
-    const merge = screen.getByRole('button', { name: /^Merge$/i });
-    const dismiss = screen.getByRole('button', { name: /^Dismiss$/i });
+    const merge = screen.getByRole('button', { name: 'Merge 0 clusters' });
+    const dismiss = screen.getByRole('button', { name: 'Dismiss 0 clusters' });
     expect(merge).toBeDisabled();
     expect(dismiss).toBeDisabled();
     expect(merge).toHaveAttribute('title', expect.stringMatching(/No unlabeled/i));
@@ -204,13 +208,13 @@ describe('NeedsAssignmentSection rail mount discrimination (E21-9 Slice 5b)', ()
     expect(screen.getByText('2 selected')).toBeInTheDocument();
     expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /^Merge$/i }));
-    // Confirm dialog describes rail-scoped count.
-    expect(await screen.findByText(/merge 2 clusters/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Merge 2 clusters' }));
+    // Confirm dialog describes rail-scoped count (bar also says "Merge 2 clusters" now).
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Are you sure you want to merge 2 clusters/i)).toBeInTheDocument();
 
-    // Confirm the merge — must pass only unlabeled ids.
-    const dialog = screen.getByRole('dialog');
-    await userEvent.click(within(dialog).getByRole('button', { name: /^Merge$/i }));
+    // Confirm the merge — dialog confirm label is bare "Merge" (exact; distinct from bar).
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Merge$/ }));
 
     expect(mutateAsync).toHaveBeenCalledTimes(1);
     const payload = mutateAsync.mock.calls[0][0] as { clusterIds: string[] };

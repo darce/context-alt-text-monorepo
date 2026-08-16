@@ -1,5 +1,9 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
+import {
+  normalizeTopUnlabeledRepresentative,
+  type TopUnlabeledRepresentativePayload,
+} from './normalizeTopUnlabeledRepresentative';
 import { parseDataSource, parseProjectionStatus } from './types/dataSource';
 import type {
   ClusterListResponse,
@@ -7,12 +11,7 @@ import type {
   ClusterSummary,
   TopUnlabeledCluster,
   TopUnlabeledClustersResponse,
-  TopUnlabeledRepresentative,
 } from './types';
-
-type TopUnlabeledRepresentativePayload = Omit<TopUnlabeledRepresentative, 'thumb_url'> & {
-  thumb_url?: string | null;
-};
 
 type TopUnlabeledClusterPayload = Omit<TopUnlabeledCluster, 'representatives'> & {
   representatives?: TopUnlabeledRepresentativePayload[] | null;
@@ -66,26 +65,6 @@ const requireClusterListBoolean = (value: unknown, fieldName: string): boolean =
   }
 
   return value;
-};
-
-const normalizeOptionalUrl = (value: unknown): string | null => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
-};
-
-const normalizeTopUnlabeledRepresentative = (
-  representative: TopUnlabeledRepresentativePayload,
-): TopUnlabeledRepresentative => {
-  const normalizedThumb = normalizeOptionalUrl(representative.thumb_url ?? null);
-  return {
-    ...representative,
-    thumb_url: normalizedThumb,
-    media_url: normalizeOptionalUrl(representative.media_url ?? null),
-    bbox: representative.bbox ?? null,
-  };
 };
 
 const normalizeTopUnlabeledCluster = (cluster: TopUnlabeledClusterPayload): TopUnlabeledCluster => ({

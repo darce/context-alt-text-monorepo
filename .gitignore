@@ -120,8 +120,9 @@ DASHBOARD.md
 # Legacy workstate overlay clone — still load-bearing via the scripts/hooks,
 # .github/hooks and Makefile.d symlinks until
 # `workbay-bootstrap install` repoints them to .workbay/remote. Physical removal
-# is deferred to that installer cutover; see
-# docs/workbay/upstream-requests/2026-06-28-refactoring-lens-and-overlay-mechanism/REQUEST.md.
+# is deferred to that installer cutover; see the upstream request
+# 2026-06-28-refactoring-lens-and-overlay-mechanism (now filed in
+# agentic-protocol-monorepo/docs/upstream-requests/).
 .workstate/
 /scripts/hooks
 # Local materialization: symlink into the gitignored /scripts/hooks overlay;

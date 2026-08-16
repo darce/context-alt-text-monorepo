@@ -39,7 +39,7 @@ trait NormalizesMemberRows {
 
 	/**
 	 * Normalize recognition assigned_at (ISO-8601 or MySQL datetime) to UTC MySQL form,
-	 * PRESERVING sub-second precision (rg-005 / DATA-09 ordering fidelity). Recognition
+	 * PRESERVING sub-second precision (rg-005 / DATA-15 ordering fidelity). Recognition
 	 * stores assigned_at as TIMESTAMP(tz) at microsecond resolution and exports it via
 	 * isoformat(); truncating to whole seconds would collapse members assigned within the
 	 * same second onto the random identity_uuid tie-break and flip PHP order vs recognition.

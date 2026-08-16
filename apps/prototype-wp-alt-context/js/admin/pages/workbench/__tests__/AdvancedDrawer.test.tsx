@@ -66,7 +66,7 @@ describe('AdvancedDrawer', () => {
     expect(screen.getByRole('region', { name: 'Advanced: jobs & recovery' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cluster the latest job results' })).toBeTruthy();
 
-    const details = container.querySelector('details.acx-workbench-help-card');
+    const details = container.querySelector<HTMLDetailsElement>('details.acx-workbench-help-card');
     expect(details).not.toBeNull();
     expect(details?.open).toBe(false);
     expect(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY)).toBeTruthy();
@@ -74,7 +74,7 @@ describe('AdvancedDrawer', () => {
 
   it('lets the operator expand the clustering disclosure on demand', async () => {
     const { container } = render(<AdvancedDrawer />);
-    const details = container.querySelector('details.acx-workbench-help-card');
+    const details = container.querySelector<HTMLDetailsElement>('details.acx-workbench-help-card');
 
     await userEvent.click(screen.getByText(CLUSTERING_DISCLOSURE_SUMMARY));
     expect(details?.open).toBe(true);

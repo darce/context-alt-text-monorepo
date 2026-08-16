@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -138,6 +139,19 @@ const selectionState = {
   count: 0,
 };
 
+const renderRosterPage = (route = '/'): ReturnType<typeof render> => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <QueryClientProvider client={queryClient}>
+        <RosterPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+};
+
 const expectListAndAddPerson = (): void => {
   expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
   // Tab panel + section both use the People label after UXP-4 slice 5.
@@ -182,11 +196,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
       createMockQuery({ data: [], isLoading: false, isError: false, refetch: vi.fn() }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderRosterPage('/');
 
     expectListAndAddPerson();
     const zeroState = screen.getByTestId('roster-zero-state');
@@ -197,7 +207,10 @@ describe('Roster zero-state reachability (rg-003)', () => {
     // rg-003: Needs-assignment rail stays reachable at zero state (disabled-with-reason).
     expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
     expect(screen.getByTestId('needs-assignment-zero')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Merge$/i })).toBeDisabled();
+    // The count belongs in the accessible name: at zero selection it is the only
+    // channel that states *why* the control is dimmed (title is not reliably
+    // announced), so rg-003's "disabled with reason" is carried by the label.
+    expect(screen.getByRole('button', { name: /^Merge 0 clusters$/i })).toBeDisabled();
   });
 
   it('pairs the active filter badge with an icon second channel', () => {
@@ -230,11 +243,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderRosterPage('/');
 
     expect(screen.getByRole('region', { name: /Person workspace: Alice/i })).toBeInTheDocument();
     expectListAndAddPerson();
@@ -257,11 +266,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/?tab=entries&personFilter=unassigned']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderRosterPage('/?tab=entries&personFilter=unassigned');
 
     expectListAndAddPerson();
     expect(screen.getByText('Bob')).toBeInTheDocument();
@@ -278,11 +283,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
+    renderRosterPage('/');
 
     expectListAndAddPerson();
     expect(screen.getByText(/Unable to load roster entries/i)).toBeInTheDocument();

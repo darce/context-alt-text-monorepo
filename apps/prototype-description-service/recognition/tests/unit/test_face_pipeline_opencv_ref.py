@@ -51,6 +51,18 @@ pytestmark_models = pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
 _ALIGN_CROP_MAX_ABS = 1.0
 _ALIGN_CROP_MAE = 0.05
 
+# Version-drift cosine floor for committed embedding goldens (CVUP1-LC-03).
+# Measurement 2026-07-29, OpenCV 5.0.0 / ORT 1.28.0 / numpy 2.5.1, N=50 runs on
+# the deterministic synthetic 112×112 crop (and composed aligner→embedder path):
+#   synthetic crop vs golden: bit-exact (vector maxabs=0; float64 cosine ≈ 1-1e-12)
+#   composed aligner→embedder: bit-exact (maxabs=0)
+# Noise floor = 0. Floor 0.99999999 is 10× above a 1e-9 slack band so same-host
+# regen noise cannot greenwash a real embedder shift (prior decorative floor was
+# 0.9999). Not the corpus OpenCV 4→5 upgrade self-similarity (min 0.999524 /
+# median 0.999933 over 83 faces — opencv-5-embedding-drift.md); that protocol
+# measures cross-version match-band drift, not golden noise floor.
+_GOLDEN_COSINE_MIN = 0.99999999
+
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -225,6 +237,7 @@ def test_embedding_golden_dim_norm_cosine() -> None:
     crop = np.load(_FIXTURE_DIR / "synthetic_112_crop.npy")
     expected = np.load(_FIXTURE_DIR / "synthetic_112_embedding.npy")
     meta = _load_json("embedding_meta.json")
+    cosine_min = float(meta.get("cosine_min", _GOLDEN_COSINE_MIN))
 
     batch = OpenCVSFaceEmbedder().embed([crop])
     emb = batch.vectors
@@ -233,8 +246,11 @@ def test_embedding_golden_dim_norm_cosine() -> None:
     norm = float(np.linalg.norm(emb[0]))
     assert norm == pytest.approx(1.0, abs=1e-6)
 
-    cosine = float(np.dot(emb[0], expected[0]))
-    assert cosine >= 0.9999
+    # L2 unit vectors: float64 re-norm cosine; floor from measured noise (CVUP1-LC-03).
+    a = np.asarray(emb[0], dtype=np.float64)
+    b = np.asarray(expected[0], dtype=np.float64)
+    cosine = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+    assert cosine >= cosine_min
 
 
 @pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
@@ -246,6 +262,34 @@ def test_embedding_determinism_two_runs() -> None:
     a = emb.embed([crop]).vectors
     b = emb.embed([crop]).vectors
     np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)
+def test_composed_aligner_embedder_matches_golden() -> None:
+    """Aligner→embedder composition guards warpAffine drift (CVUP1-LC-03).
+
+    synthetic_112_embedding feeds a pre-baked crop that never calls cv2.warpAffine.
+    This test is the missing arm: raw image + landmarks → FivePointAligner → SFace.
+    """
+    from recognition.infrastructure.face_pipeline.opencv_ref import OpenCVSFaceEmbedder
+
+    img = np.load(_FIXTURE_DIR / "aligner_source_image.npy")
+    landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy")
+    expected = np.load(_FIXTURE_DIR / "aligner_composed_embedding.npy")
+    meta = _load_json("aligner_composed_embedding_meta.json")
+    cosine_min = float(meta.get("cosine_min", _GOLDEN_COSINE_MIN))
+
+    crop = FivePointAligner().align(img, landmarks).crop
+    assert _sha256_bytes(crop.tobytes()) == meta["crop_sha256"]
+    emb = OpenCVSFaceEmbedder().embed([crop]).vectors
+    assert emb.shape == (1, SFACE_EMBEDDING_DIM)
+    assert emb.shape[1] == meta["embedding_dim"]
+    assert float(np.linalg.norm(emb[0])) == pytest.approx(1.0, abs=1e-6)
+
+    a = np.asarray(emb[0], dtype=np.float64)
+    b = np.asarray(expected[0], dtype=np.float64)
+    cosine = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+    assert cosine >= cosine_min, f"composed cosine={cosine} < {cosine_min}"
 
 
 @pytest.mark.skipif(not _MODELS_PRESENT, reason=_MODELS_SKIP)

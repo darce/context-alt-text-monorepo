@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 use function absint;
+use function array_merge;
 use function array_values;
 use function count;
+use function get_post;
 use function get_post_meta;
 use function get_posts;
 use function html_entity_decode;
 use function is_array;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function json_decode;
 use function json_encode;
 use function preg_match;
@@ -54,7 +57,10 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				// Meta is entity-encoded (sanitize_text_field); compare decoded.
+				$current_alt_text = trim(
+					html_entity_decode( (string) get_post_meta( $media_id, self::ALT_META, true ), ENT_QUOTES )
+				);
 				if ( '' === $current_alt_text ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
@@ -108,8 +114,10 @@ class DescriptionContentRefreshService {
 		$media_ids = $this->normalize_media_ids( $media_ids );
 		$posts     = $this->load_candidate_posts( $limit );
 
-		$changed = array();
-		$skipped = array();
+		$changed    = array();
+		$failed     = array();
+		$skipped    = array();
+		$candidates = 0;
 
 		foreach ( $posts as $post ) {
 			if ( ! is_object( $post ) || ! isset( $post->ID, $post->post_content ) ) {
@@ -118,6 +126,9 @@ class DescriptionContentRefreshService {
 
 			$content         = (string) $post->post_content;
 			$updated_content = $content;
+			// Accumulate intended per-media changes; promote to $changed only
+			// after wp_update_post is verified (BR-08).
+			$pending_changed = array();
 
 			foreach ( $media_ids as $media_id ) {
 				$matches = $this->find_image_tags_for_media( $updated_content, $media_id );
@@ -125,7 +136,10 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
-				$current_alt_text = trim( (string) get_post_meta( $media_id, self::ALT_META, true ) );
+				// Meta is entity-encoded (sanitize_text_field); compare and write decoded.
+				$current_alt_text = trim(
+					html_entity_decode( (string) get_post_meta( $media_id, self::ALT_META, true ), ENT_QUOTES )
+				);
 				if ( '' === $current_alt_text ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'missing_current_alt_text' );
 					continue;
@@ -147,15 +161,17 @@ class DescriptionContentRefreshService {
 					continue;
 				}
 
+				// $current_alt_text is decoded; esc_attr re-encodes for HTML alt,
+				// and replace_block_alt_attributes needs real characters for JSON.
 				$updated_tag = $this->replace_alt_text( $matches[0], $current_alt_text );
 				if ( $updated_tag === $matches[0] ) {
 					$skipped[] = $this->build_skip( $post, $media_id, 'replacement_failed' );
 					continue;
 				}
 
-				$updated_content = $this->replace_once( $updated_content, $matches[0], $updated_tag );
-				$updated_content = $this->replace_block_alt_attributes( $updated_content, $media_id, $current_alt_text );
-				$changed[]       = array(
+				$updated_content   = $this->replace_once( $updated_content, $matches[0], $updated_tag );
+				$updated_content   = $this->replace_block_alt_attributes( $updated_content, $media_id, $current_alt_text );
+				$pending_changed[] = array(
 					'post_id'           => absint( $post->ID ),
 					'post_type'         => isset( $post->post_type ) ? (string) $post->post_type : '',
 					'post_title'        => isset( $post->post_title ) ? (string) $post->post_title : '',
@@ -166,12 +182,45 @@ class DescriptionContentRefreshService {
 			}
 
 			if ( $updated_content !== $content ) {
-				wp_update_post(
+				// candidates = intended writes; changed = verified durable writes.
+				$candidates += count( $pending_changed );
+				$post_id     = absint( $post->ID );
+				$updated     = wp_update_post(
 					array(
-						'ID'           => absint( $post->ID ),
+						'ID'           => $post_id,
 						'post_content' => $updated_content,
-					)
+					),
+					true
 				);
+				if ( is_wp_error( $updated ) || 0 === $updated || false === $updated ) {
+					foreach ( $pending_changed as $entry ) {
+						$failed[] = array_merge(
+							$entry,
+							array( 'reason' => 'post_update_failed' )
+						);
+					}
+				} else {
+					// wp_update_post → wp_insert_post returns the post ID even when
+					// wp_insert_post_data / content_save_pre / kses altered the bytes.
+					// Read back durable storage per consumer accessor; verify each
+					// intended alt actually landed (R16-BR-13 / rg-015).
+					$stored_post    = get_post( $post_id );
+					$stored_content = ( is_object( $stored_post ) && isset( $stored_post->post_content ) )
+						? (string) $stored_post->post_content
+						: '';
+					foreach ( $pending_changed as $entry ) {
+						$media_id     = absint( $entry['media_id'] );
+						$intended_alt = (string) $entry['current_alt_text'];
+						if ( $this->stored_content_has_intended_alt( $stored_content, $media_id, $intended_alt ) ) {
+							$changed[] = $entry;
+						} else {
+							$failed[] = array_merge(
+								$entry,
+								array( 'reason' => 'post_content_not_persisted' )
+							);
+						}
+					}
+				}
 			}
 		}
 
@@ -180,11 +229,13 @@ class DescriptionContentRefreshService {
 				'dry_run'       => false,
 				'scanned_posts' => count( $posts ),
 				'media_ids'     => count( $media_ids ),
-				'candidates'    => count( $changed ),
+				'candidates'    => $candidates,
 				'changed'       => count( $changed ),
+				'failed'        => count( $failed ),
 				'skipped'       => count( $skipped ),
 			),
 			'changed' => $changed,
+			'failed'  => $failed,
 			'skipped' => $skipped,
 		);
 	}
@@ -279,6 +330,31 @@ class DescriptionContentRefreshService {
 		);
 
 		return is_string( $updated ) ? $updated : $content;
+	}
+
+	/**
+	 * Per-entry durability check: the intended alt for $media_id must be present
+	 * on a stored img tag after the write. Document-level !== would mis-report
+	 * when one of several replacements is filtered out.
+	 */
+	private function stored_content_has_intended_alt( string $stored_content, int $media_id, string $intended_alt ): bool {
+		if ( $media_id <= 0 || '' === $intended_alt ) {
+			return false;
+		}
+
+		$matches = $this->find_image_tags_for_media( $stored_content, $media_id );
+		if ( 0 === count( $matches ) ) {
+			return false;
+		}
+
+		foreach ( $matches as $tag ) {
+			$extracted = $this->extract_alt_text( $tag );
+			if ( null !== $extracted && $extracted === $intended_alt ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

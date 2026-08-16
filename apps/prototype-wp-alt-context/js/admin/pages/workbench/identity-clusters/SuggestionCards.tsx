@@ -4,6 +4,8 @@ import { __ } from '@wordpress/i18n';
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -36,6 +38,20 @@ interface SuggestionCardProps {
    * is present per rendered viewport.
    */
   accentPrimary?: boolean;
+  /**
+   * BR-41: 1-based queue position. When BOTH `queuePosition` and `queueTotal` are
+   * valid integers >= 1, ordinal text folds into the group accname.
+   */
+  queuePosition?: number;
+  /** BR-41: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
+}
+
+/** buildSuggestionReviewItems only emits human-labeled targets (truthy trimmed label). */
+function assertTruthyLabel(label: string | null | undefined): asserts label is string {
+  if (typeof label !== 'string' || label.trim().length === 0) {
+    throw new Error('SuggestionCard requires a truthy suggestion.label');
+  }
 }
 
 const FaceCropControl = ({
@@ -91,9 +107,12 @@ export const SuggestionCard = ({
   actionAccessory = null,
   actionAccessoryAfter = 'accept',
   accentPrimary = false,
+  queuePosition,
+  queueTotal,
 }: SuggestionCardProps): React.JSX.Element => {
-  // buildSuggestionReviewItems guarantees a human-labeled target with truthy label (UXP-3-BR-22).
-  const displayLabel = suggestion.label ?? '';
+  // BR-22: no empty-label / Unnamed / suggestedLabel-badge / !hasLabel branches — label is required.
+  assertTruthyLabel(suggestion.label);
+  const displayLabel = suggestion.label;
   const matchPercent = Math.round(suggestion.similarity * 100);
   const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
   const identityFace =
@@ -110,9 +129,14 @@ export const SuggestionCard = ({
   const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
+  const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
 
   return (
-    <div
+    <ReviewCardGroupShell
+      kind="assignment"
+      labelId={groupLabelId}
+      queuePosition={queuePosition}
+      queueTotal={queueTotal}
       className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}
       data-testid="acx-review-card"
       data-review-kind="assignment"
@@ -134,7 +158,11 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
           )}
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
@@ -144,18 +172,22 @@ export const SuggestionCard = ({
             <FaceCropControl
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}
-              alt={displayLabel || __('Cluster representative', 'alt-context')}
+              alt={displayLabel}
               onOpen={onOpenOriginal}
             />
           ) : representativeThumbUrl ? (
             <Avatar
               src={representativeThumbUrl}
               size="lg"
-              alt={__('Cluster representative', 'alt-context')}
+              alt={displayLabel}
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
           )}
           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
         </div>
@@ -215,6 +247,6 @@ export const SuggestionCard = ({
           </button>
         ) : null}
       </div>
-    </div>
+    </ReviewCardGroupShell>
   );
 };

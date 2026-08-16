@@ -3,7 +3,12 @@ import { act, render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
-import type { SettingsResponse, TestConnectionOutcomeValue, TestConnectionResponse } from '../../api/settingsApi';
+import {
+  UrlRejectionReason,
+  type SettingsResponse,
+  type TestConnectionOutcomeValue,
+  type TestConnectionResponse,
+} from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -72,6 +77,9 @@ vi.mock('@tanstack/react-query', async () => {
 const defaultSettings: SettingsResponse = {
   url: 'https://api.example.com',
   url_source: 'option',
+  url_rejection_reason: null,
+  url_rejection_source: null,
+  url_rejection_value: null,
   effective_target_url: 'https://api.example.com',
   effective_target_mode: 'service',
   recognition_source: 'service',
@@ -267,11 +275,111 @@ describe('SettingsPage', () => {
 
     expect(capturedSaveOptions?.onSuccess).toBeDefined();
     // onSuccess is async at runtime but typed void; wrap so we await the real work.
+    // R23-BR-14: pass an ok envelope so the success path runs (not partial/error).
     await act(async () => {
-      await Promise.resolve(capturedSaveOptions!.onSuccess!(undefined));
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({ saved: ['url'], result: 'ok' }),
+      );
     });
 
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
+  });
+
+  it('shows Settings saved only when result is ok (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({ saved: ['url', 'api_key'], result: 'ok' }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toBe('Settings saved.');
+    expect(banner.getAttribute('role')).toBe('status');
+  });
+
+  it('does not show Settings saved on partial storage failure (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({
+          saved: ['url'],
+          failed: ['api_key'],
+          result: 'partial',
+        }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toContain('Could not save settings.');
+    expect(banner.textContent).toContain('api_key');
+    expect(banner.getAttribute('role')).toBe('alert');
+    // Must not paint the success copy on a non-ok result.
+    expect(banner.textContent).not.toContain('Settings saved.');
+  });
+
+  it('does not show Settings saved on total storage failure (R23-BR-14)', async () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    await act(async () => {
+      await Promise.resolve(
+        capturedSaveOptions!.onSuccess!({
+          saved: [],
+          failed: ['url', 'api_key'],
+          result: 'error',
+        }),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    expect(banner.textContent).toContain('Could not save settings.');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).not.toContain('Settings saved.');
+  });
+
+  it('surfaces the server invalid_url message when save is rejected (BR-136)', () => {
+    // After the loopback-only HTTP rule, non-loopback http:// URLs return 400
+    // invalid_url with an actionable message — the operator must see that text,
+    // not a generic "Failed to save settings." ([RLSE-05]).
+    const loopbackRuleMessage =
+      'The recognition API URL must be HTTPS (HTTP is allowed only for loopback development hosts).';
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onError).toBeDefined();
+    act(() => {
+      capturedSaveOptions!.onError!(
+        new Error(
+          `Request to /acx/v1/settings failed (400): {"code":"invalid_url","message":"${loopbackRuleMessage}","data":{"status":400}}`,
+        ),
+      );
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    // BR-150: exact text — a regression that wraps the resolved message in raw
+    // transport text must go red. toHaveTextContent is a substring match.
+    expect(banner.textContent).toBe(loopbackRuleMessage);
+    expect(banner.getAttribute('role')).toBe('alert');
+  });
+
+  it('falls back to the generic save failure when the rejection is unstructured', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(capturedSaveOptions?.onError).toBeDefined();
+    act(() => {
+      capturedSaveOptions!.onError!(new Error('network down'));
+    });
+
+    const banner = screen.getByTestId('acx-settings-save-message');
+    // BR-150: exact text for the fallback path too.
+    expect(banner.textContent).toBe('Failed to save settings.');
+    expect(banner.getAttribute('role')).toBe('alert');
   });
 
   it('refetches sync health after a successful probe so the offline banner clears', () => {
@@ -353,6 +461,205 @@ describe('SettingsPage', () => {
     expect(urlInput).not.toHaveAttribute('readOnly');
     fireEvent.change(urlInput, { target: { value: 'https://api.altcontext.com' } });
     expect(urlInput).toHaveValue('https://api.altcontext.com');
+    // Genuinely unconfigured still says "not configured".
+    expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('not configured');
+  });
+
+  it('renders rejection reason instead of not configured when a URL was rejected (BR-138)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    const rejection = screen.getByTestId('acx-url-rejection');
+    expect(rejection).toHaveTextContent(
+      'Rejected http://10.0.0.5:8000 (Saved in database): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    );
+    expect(routing).not.toHaveTextContent('not configured');
+    // Status is text, not decoration alone (A11Y-21).
+    expect(routing).toHaveAttribute('role', 'status');
+  });
+
+  // R16-BR-09: rejection sentence must appear exactly once (live region only).
+  it('announces the rejection sentence exactly once in the accessibility tree (R16-BR-09)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const rejectionSentence =
+      'Rejected http://10.0.0.5:8000 (Saved in database): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)';
+    // Count matched nodes — getByText throws on multiples for the wrong reason and
+    // would pass for the wrong reason if the suite only asserted presence.
+    expect(screen.getAllByText(rejectionSentence)).toHaveLength(1);
+    // Card notice is a non-duplicating next-step cue, not a second copy of the sentence.
+    expect(screen.getByTestId('acx-url-rejection-notice')).toHaveTextContent(
+      'The configured service URL was rejected. Enter a valid HTTPS URL below to restore recognition routing.',
+    );
+    expect(screen.getByTestId('acx-url-rejection-notice')).not.toHaveTextContent(rejectionSentence);
+    // Colour+text status half still lives in the live-region span ([sr-004]).
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(rejectionSentence);
+  });
+
+  // A11Y-21: live region must stay mounted in CONFIGURED as well (rejected / hatch /
+  // unconfigured are already pinned above).
+  it('mounts the effective-target live region when configured (A11Y-21)', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    expect(routing).toHaveTextContent('https://api.example.com');
+    expect(screen.queryByTestId('acx-url-rejection')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('acx-url-rejection-notice')).not.toBeInTheDocument();
+  });
+
+  it('renders constant-tier rejection with exact source wording (BR-138)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'constant',
+          url_rejection_value: 'http://host.docker.internal:8000',
+          effective_target_url: '',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'Rejected http://host.docker.internal:8000 (Set via wp-config.php constant): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
+    );
+    expect(screen.getByTestId('acx-effective-routing')).not.toHaveTextContent('not configured');
+  });
+
+  // R19-BR-04 / R19-BR-05: rejected URL must not masquerade as "not configured".
+  it('hides the empty-state CTA and reports rejected tier when a URL was rejected (R19-BR-04)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No service URL configured yet/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent('http://10.0.0.5:8000');
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'HTTP is only allowed for loopback development hosts',
+    );
+    // Source chip reports the rejected tier, not "Not configured".
+    expect(screen.getByTestId('acx-url-source')).toHaveTextContent('Saved in database');
+    expect(screen.getByTestId('acx-url-source')).not.toHaveTextContent('Not configured');
+    // Live region always mounted (A11Y-21).
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    // Nothing to probe — Check health stays disabled.
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+  });
+
+  it('shows effective target and enables Check health when hatch + rejection coexist (R19-BR-05)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: UrlRejectionReason.NON_LOOPBACK_HTTP,
+          url_rejection_source: 'option',
+          url_rejection_value: 'http://10.0.0.5:8000',
+          effective_target_url: 'http://localhost:8000',
+          effective_target_mode: 'local',
+          recognition_source: 'local',
+          recognition_source_source: 'constant',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveTextContent('http://localhost:8000');
+    expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
+      'Rejected http://10.0.0.5:8000 (Saved in database)',
+    );
+    // Both present — rejection is additional info, not a replacement.
+    expect(routing.querySelector('code')).toHaveTextContent('http://localhost:8000');
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
+    // Live region always mounted (A11Y-21).
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('shows empty CTA and disables Check health when genuinely unconfigured (R19-BR-04 regression)', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: {
+          ...defaultSettings,
+          url: '',
+          url_source: 'default',
+          url_rejection_reason: null,
+          url_rejection_source: null,
+          url_rejection_value: null,
+          effective_target_url: '',
+          effective_target_mode: 'service',
+          recognition_source: 'service',
+        },
+      }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
+    expect(screen.getByText(/No service URL configured yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.queryByTestId('acx-url-rejection')).not.toBeInTheDocument();
+    // Live region always mounted even when target is empty (A11Y-21).
+    const routing = screen.getByTestId('acx-effective-routing');
+    expect(routing).toHaveAttribute('role', 'status');
+    expect(routing).toHaveAttribute('aria-live', 'polite');
+    expect(routing).toHaveTextContent('not configured');
   });
 
   it('disables Check health when routing edits are unsaved', () => {

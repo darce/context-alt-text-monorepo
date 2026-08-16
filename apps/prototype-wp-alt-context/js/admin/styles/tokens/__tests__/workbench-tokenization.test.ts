@@ -117,4 +117,18 @@ describe('components/*.scss no unguarded scale literals', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it('tokenizes durable/avatar error inset shadow and chip min sizes [REV1-18]', () => {
+    const durable = readFileSync(join(componentsDir, '_durable-face-thumb.scss'), 'utf8');
+    const avatar = readFileSync(join(componentsDir, '_avatar.scss'), 'utf8');
+
+    expect(durable).toContain('box-shadow: var(--acx-shadow-inset-danger)');
+    expect(avatar).toContain('box-shadow: var(--acx-shadow-inset-danger)');
+    expect(durable).toMatch(/min-width:\s*var\(--acx-thumb-size-sm\)/);
+    expect(durable).toMatch(/min-height:\s*var\(--acx-thumb-size-sm\)/);
+    expect(durable).not.toMatch(/min-width:\s*32px/);
+    expect(durable).not.toMatch(/min-height:\s*32px/);
+    expect(durable).not.toMatch(/box-shadow:\s*inset\s+0\s+0\s+0\s+1px/);
+    expect(avatar).not.toMatch(/box-shadow:\s*inset\s+0\s+0\s+0\s+1px/);
+  });
 });

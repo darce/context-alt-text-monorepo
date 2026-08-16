@@ -135,8 +135,19 @@ class DescriptionCandidateService {
 	 * Unified row builder used by BOTH the REST envelope path and the CLI status
 	 * path. Emits the UNION of the fields either consumer relies on. `reason` and
 	 * `candidate_reason` always hold the SAME classification value
-	 * (`missing_alt|has_alt_text|unsupported_mime|not_found`). When `$post` is not
-	 * supplied it is fetched via `get_post` (used by `get_status_for_media_ids`).
+	 * (`missing_alt|has_alt_text|unsupported_mime|not_found|decorative`). When
+	 * `$post` is not supplied it is fetched via `get_post` (used by
+	 * `get_status_for_media_ids`).
+	 *
+	 * Classification order is MECE and stale-marker-proof (WBUX-5-S2C3C-BR-01):
+	 *   1. ! is_object( $post )        → not_found
+	 *   2. unsupported mime            → unsupported_mime
+	 *   3. $has_alt                    → has_alt_text   (wins over leftover marker)
+	 *   4. acx_alt_decorative is set   → decorative
+	 *   5. otherwise                   → missing_alt
+	 * has_alt precedes the marker so a real description is never hidden behind
+	 * bookkeeping. Do not add a parallel top-level decorative boolean — reason
+	 * is the single source of truth.
 	 *
 	 * @return array<string,mixed>
 	 */
@@ -152,12 +163,21 @@ class DescriptionCandidateService {
 		$alt_text = is_string( $alt_raw ) ? $alt_raw : '';
 		$has_alt  = '' !== trim( $alt_text );
 
+		// Decorative marker: present when meta is the string '1'. Any other
+		// value (missing, '', '0') is treated as unset — the write path only
+		// plants '1' or deletes the key.
+		$decorative_raw = get_post_meta( $media_id, 'acx_alt_decorative', true );
+		$is_decorative  = is_string( $decorative_raw ) && '1' === $decorative_raw;
+
 		if ( ! is_object( $post ) ) {
 			$reason = 'not_found';
 		} elseif ( ! in_array( $mime, self::SUPPORTED_IMAGE_MIME_TYPES, true ) ) {
 			$reason = 'unsupported_mime';
 		} elseif ( $has_alt ) {
+			// Real alt wins over a leftover decorative marker (stale-marker-proof).
 			$reason = 'has_alt_text';
+		} elseif ( $is_decorative ) {
+			$reason = 'decorative';
 		} else {
 			$reason = 'missing_alt';
 		}

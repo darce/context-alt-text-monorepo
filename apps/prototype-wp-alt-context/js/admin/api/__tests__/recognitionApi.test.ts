@@ -643,16 +643,16 @@ describe('recognitionApi', () => {
           representatives: [
             {
               id: 'rep-1',
-              media_id: 101,
-              is_pinned: false,
+              media_id: '101',
+              is_user_selected: false,
               thumb_url: 'http://example.test/thumb-101.jpg',
               media_url: ' ',
               bbox: null,
             },
             {
               id: 'rep-2',
-              media_id: 202,
-              is_pinned: false,
+              media_id: '202',
+              is_user_selected: false,
               thumb_url: 'http://example.test/thumb-202.jpg',
               media_url: 'http://example.test/media-202.jpg',
               bbox: null,
@@ -688,6 +688,134 @@ describe('recognitionApi', () => {
     const url = new URL(endpoint);
     expect(url.searchParams.get('tenant_id')).toBe('tenant-1');
     expect(url.searchParams.get('limit')).toBe('3');
+  });
+
+  // E21-17-R4-PY-1 / R5-TS: wire is_user_selected → internal is_pinned; strip wire key.
+  it.each([
+    { label: 'true → is_pinned true', is_user_selected: true, expectedPinned: true },
+    { label: 'false → is_pinned false', is_user_selected: false, expectedPinned: false },
+    { label: 'absent → is_pinned false', is_user_selected: undefined, expectedPinned: false },
+  ])('maps wire is_user_selected ($label)', async ({ is_user_selected, expectedPinned }) => {
+    const representative: Record<string, unknown> = {
+      id: 'rep-1',
+      media_id: '7',
+      thumb_url: null,
+      media_url: null,
+      bbox: null,
+    };
+    if (is_user_selected !== undefined) {
+      representative.is_user_selected = is_user_selected;
+    }
+
+    fetchApiMock.mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-1',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 1,
+          user_confirmed: false,
+          representatives: [representative],
+        },
+      ],
+      limit: 1,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: 'local_projection',
+      projection_status: 'available',
+    });
+
+    const result = await fetchTopUnlabeledClusters('tenant-1', 1);
+    const normalized = result.clusters[0]?.representatives[0];
+
+    expect(normalized?.is_pinned).toBe(expectedPinned);
+    expect(normalized).not.toHaveProperty('is_user_selected');
+  });
+
+  // E21-17-R4-PY-2 / R5-TS / R6-TS-1: wire media_id digit string|null → number|null.
+  // Canonical wire is untrimmed /^\d+$/; whitespace-padded values reject to null.
+  it.each([
+    { label: '"7" → 7', wire: '7', expected: 7 },
+    { label: '"007" → 7', wire: '007', expected: 7 },
+    { label: '" 7 " → null', wire: ' 7 ', expected: null },
+    { label: '"7\\n" → null', wire: '7\n', expected: null },
+    { label: '" " → null', wire: ' ', expected: null },
+    { label: 'null stays null', wire: null, expected: null },
+  ])('normalizes wire media_id ($label)', async ({ wire, expected }) => {
+    fetchApiMock.mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-1',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 1,
+          user_confirmed: false,
+          representatives: [
+            {
+              id: 'rep-1',
+              media_id: wire,
+              is_user_selected: false,
+              thumb_url: null,
+              media_url: null,
+              bbox: null,
+            },
+          ],
+        },
+      ],
+      limit: 1,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: true,
+      data_source: 'local_projection',
+      projection_status: 'available',
+    });
+
+    const result = await fetchTopUnlabeledClusters('tenant-1', 1);
+    expect(result.clusters[0]?.representatives[0]?.media_id).toBe(expected);
+  });
+
+  // E21-17-R4-PY-1 / R5-TS: name-suggestion representatives cross the same wire boundary.
+  it('maps name-suggestion representative is_user_selected → is_pinned and media_id string', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-1',
+          suggested_name: 'Pat',
+          confidence_score: 0.9,
+          source: 'identity',
+          created_at: '2026-03-19T12:00:00Z',
+          expires_at: null,
+          representatives: [
+            {
+              id: 'rep-1',
+              media_id: '42',
+              is_user_selected: true,
+              thumb_url: null,
+              media_url: null,
+              bbox: null,
+            },
+          ],
+        },
+      ],
+      limit: 25,
+      offset: 0,
+      data_source: 'backend_proxy',
+    });
+
+    const result = await fetchPendingNameSuggestions(0, 25, 0);
+    const rep = result.suggestions[0]?.representatives?.[0];
+
+    expect(rep?.is_pinned).toBe(true);
+    expect(rep?.media_id).toBe(42);
+    expect(rep).not.toHaveProperty('is_user_selected');
   });
 
   it('fetches sync status with nonce', async () => {

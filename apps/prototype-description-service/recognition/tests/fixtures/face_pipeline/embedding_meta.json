@@ -1,13 +1,19 @@
 {
+  "cosine_min": 0.99999999,
   "crop_sha256": "fe200b72f9e75a9751f37f0fb7761867dd0365fa37b7b723b7fbfbb0a48903a8",
   "embedding_dim": 128,
   "embedding_shape": [
     1,
     128
   ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
   "kind": "embedding_golden",
   "l2_norm": 1.0,
   "model": "face_recognition_sface_2021dec.onnx",
   "model_sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+  "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
+  "opencv_version": "5.0.0",
+  "pre_norm_magnitude": 3.660250425338745,
   "seed": 20260716
 }

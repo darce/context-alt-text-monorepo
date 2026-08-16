@@ -132,7 +132,8 @@ class SyncHealthControllerTest extends TestCase
 
     public function testGetSyncHealthReportsOpenBreakerFromTransient(): void
     {
-        $baseUrl = 'http://recognition.test';
+        // BR-131: remote recognition URLs must be https.
+        $baseUrl = 'https://recognition.test';
         $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_url', $baseUrl);
         $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
@@ -148,7 +149,8 @@ class SyncHealthControllerTest extends TestCase
 
     public function testGetSyncHealthDoesNotMutateTransients(): void
     {
-        $baseUrl = 'http://recognition.test';
+        // BR-131: remote recognition URLs must be https.
+        $baseUrl = 'https://recognition.test';
         $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_url', $baseUrl);
         $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);

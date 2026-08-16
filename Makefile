@@ -187,7 +187,7 @@ help:
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
 	@echo "    Poll open worker-to-orchestrator handoff messages and the latest worker reports from root."
-	@echo "  make maint-start SLUG=<slug> OBJECTIVE=\"...\""
+	@echo "  make maint-start TASK=MAINT-<slug>-<YYYYMMDD> OBJECTIVE=\"...\""
 	@echo "    Register a MAINT-* task on main/master for permitted ad-hoc docs/config work."
 	@echo "  make review-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Backward-compatible alias for handoff-dispatch."
@@ -301,7 +301,8 @@ check-all:
 # Run the full monorepo check suite before merging a feature branch to main.
 # Pairs with the external handoff-close-check evidence gate, which validates
 # recorded test_result evidence but does NOT execute checks itself (see
-# docs/workbay/upstream-requests/2026-06-28-refactoring-lens-and-overlay-mechanism/REQUEST.md § E7). Run by habit before
+# agentic-protocol-monorepo/docs/upstream-requests/2026-06-28-refactoring-lens-and-overlay-mechanism/REQUEST.md § E7).
+# Run by habit before
 # the close-check so the working tree is actually verified, not trusted.
 pre-merge:
 	@$(MAKE) check-all
@@ -450,6 +451,7 @@ test-scripts:
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		scripts/test_remote_gate_guards.py \
+		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 
@@ -661,47 +663,15 @@ expire-demo:
 # ACE Observability
 # =============================================================================
 
-# Print a markdown metrics snapshot for the current task.
-# Usage: make ace-metrics TASK=<task-ref>
-ace-metrics:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
-		--task-ref "$(TASK)" \
-		--state-dir .task-state \
-		--logs-dir logs \
-		--output-format markdown
-
-# Print a JSON metrics snapshot (also appends to .task-state/metrics.jsonl).
-# Usage: make ace-metrics-json TASK=<task-ref>
-ace-metrics-json:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
-		--task-ref "$(TASK)" \
-		--state-dir .task-state \
-		--logs-dir logs \
-		--output-format json
-
-# Apply pending ACE counter updates from ace_reflect_log.jsonl to instruction files.
-# ACE is project-local (scripts/ace/), not part of any MCP package.
-# Usage: make ace-reflect
-ace-reflect:
-	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
-		--state-dir .task-state \
-		--instruction-files docs/workbay/instructions.md
-
-# Show pruning candidates across instruction files.
-# Usage: make ace-curation-report
-ace-curation-report:
-	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
-		--state-dir .task-state \
-		--instruction-files docs/workbay/instructions.md \
-		--curation-report-only
-
-# Print time-series sparklines from accumulated metrics history.
-# Usage: make ace-trends TASK=<task-ref>
-ace-trends:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.ace_metrics \
-		--task-ref "$(TASK)" \
-		--state-dir .task-state \
-		--sparklines
+# The ace-* recipes are owned by the canonical Makefile.d/ace.mk, which is
+# included below and overrides anything defined here. Repo-local copies used to
+# live at this spot; GNU make silently preferred the fragment and only said so
+# via `overriding commands` warnings. The consumer's job is to declare its
+# playbook surface — the canonical recipes require a non-empty value.
+# constitution.md, not instructions.md: the `helpful=/harmful=` counters ACE
+# reflects on live in the Short Rules / regression-guard tables there (the
+# CLAUDE.md and instructions.md copies are derived surfaces).
+WORKBAY_ACE_PLAYBOOK_FILES ?= docs/workbay/constitution.md
 
 # =============================================================================
 # Lane / worktree context discipline (E15-LANE-ORCH slice 2)
@@ -725,12 +695,9 @@ worktree-prune:
 maint-archive-stale:
 	@$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
 
-# Convenience wrapper that registers a MAINT-* task on the root main/master
-# worktree for permitted docs/config maintenance without creating a feature
-# branch or linked worktree.
-# Usage: make maint-start SLUG=<slug> OBJECTIVE="..."
-maint-start:
-	@./scripts/maint-start.sh "$(SLUG)" "$(OBJECTIVE)"
+# maint-start is owned by the canonical Makefile.d/lifecycle.mk, which overrides
+# this file and takes TASK=MAINT-<slug>-<YYYYMMDD>, not SLUG=. The repo-local
+# scripts/maint-start.sh wrapper was already unreachable through make.
 
 task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py

@@ -315,6 +315,33 @@ describe('SyncStatusIndicator', () => {
     );
   });
 
+  /**
+   * HARM-BR-04: resync escalation uses last_sync_result only — never a top-level
+   * failed string[] (that key is a settings-save graft and is not produced by sync).
+   */
+  it('renders re-sync required from last_sync_result even when sync_health is healthy', () => {
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 3,
+      last_synced_at: '2026-02-14 12:00:00',
+      sync_health: 'healthy',
+      last_sync_result: 'resync_required',
+    });
+
+    const { container } = render(<SyncStatusIndicator />);
+
+    expect(
+      screen.getByText('Local identity changed — a full re-sync is required before this view is current.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Re-sync required')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Local rows were re-keyed or marked for resync; run a full sync before trusting this view.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+    expect(container.querySelector('[data-sync-status="resync_required"]')).toBeTruthy();
+  });
+
   it('renders offline idle state when no transient sync operation is active', () => {
     mockReturn.data = buildSyncStatus({
       sync_health: 'offline',

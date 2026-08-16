@@ -55,6 +55,7 @@ export type {
   SyncHealth,
   SyncHealthResponse,
   SyncHealthWarning,
+  LastSyncResult,
   SyncStatusResponse,
   SyncTriggerResponse,
   RetentionMode,
@@ -86,7 +87,7 @@ export type {
 } from './types';
 
 export type { ConflictListParams, FailedOutboxListParams, OutboxListParams } from './conflictApi';
-export { DATA_SOURCE, PROJECTION_STATUS } from './types';
+export { DATA_SOURCE, PROJECTION_STATUS, LAST_SYNC_RESULT } from './types';
 
 // Scan operations
 export {

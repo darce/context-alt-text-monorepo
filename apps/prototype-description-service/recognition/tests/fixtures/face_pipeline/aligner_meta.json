@@ -3,12 +3,13 @@
     2,
     3
   ],
-  "crop_sha256": "c508c8f60d8a558180f8b2138531967b42ed877b622fa5e5d1d73cffffd06726",
+  "crop_sha256": "3e8e176dae0af88bd0660dff9d33687001a75e335a758fc312c1970074de4ec3",
   "crop_shape": [
     112,
     112,
     3
   ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
   "kind": "aligner_golden",
   "landmark_order": [
     "right_eye",
@@ -17,6 +18,9 @@
     "right_mouth_corner",
     "left_mouth_corner"
   ],
+  "numpy_version": "2.5.1",
+  "onnxruntime_version": "1.28.0",
+  "opencv_version": "5.0.0",
   "oracle": "cv2.FaceRecognizerSF.alignCrop",
   "oracle_model": "face_recognition_sface_2021dec.onnx",
   "output_size": 112,

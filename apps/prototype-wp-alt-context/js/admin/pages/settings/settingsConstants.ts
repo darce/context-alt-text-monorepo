@@ -8,6 +8,32 @@ export const SOURCE_LABELS: Record<string, string> = {
   derived: __('Derived from the API key', 'alt-context'),
 };
 
+/**
+ * R19-BR-04: single derived state for the service-URL card.
+ * Rejection blanks `url` for security, so emptiness alone is not "unconfigured".
+ */
+export const ServiceUrlCardState = {
+  CONFIGURED: 'configured',
+  REJECTED: 'rejected',
+  UNCONFIGURED: 'unconfigured',
+} as const;
+
+export type ServiceUrlCardStateValue =
+  (typeof ServiceUrlCardState)[keyof typeof ServiceUrlCardState];
+
+export const deriveServiceUrlCardState = (data: {
+  url: string;
+  url_rejection_reason: string | null;
+}): ServiceUrlCardStateValue => {
+  if (data.url_rejection_reason !== null) {
+    return ServiceUrlCardState.REJECTED;
+  }
+  if (data.url.trim() !== '') {
+    return ServiceUrlCardState.CONFIGURED;
+  }
+  return ServiceUrlCardState.UNCONFIGURED;
+};
+
 export const HealthStatus = {
   NOT_CHECKED: 'not_checked',
   REACHABLE: 'reachable',

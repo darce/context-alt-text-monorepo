@@ -55,6 +55,52 @@ if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = TestResizeObserver as typeof ResizeObserver;
 }
 
+/**
+ * Default IntersectionObserver for jsdom: auto-intersect on observe so existing
+ * IdentityThumbnail / ClusterDrawerPanel tests that expect canvas crop (or the
+ * post-intersect sourceUrl fallback) stay green without per-file stubs.
+ * Lazy-crop tests replace this with a controlled observer that does not fire.
+ */
+class TestIntersectionObserver implements IntersectionObserver {
+  readonly root: Element | Document | null = null;
+  readonly rootMargin: string = '0px';
+  readonly thresholds: ReadonlyArray<number> = [0];
+  private readonly callback: IntersectionObserverCallback;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+  }
+
+  observe(target: Element): void {
+    const entry = {
+      isIntersecting: true,
+      target,
+      intersectionRatio: 1,
+      time: 0,
+      boundingClientRect: target.getBoundingClientRect(),
+      intersectionRect: target.getBoundingClientRect(),
+      rootBounds: null,
+    } as IntersectionObserverEntry;
+    this.callback([entry], this);
+  }
+
+  unobserve(): void {
+    // no-op for test environment
+  }
+
+  disconnect(): void {
+    // no-op for test environment
+  }
+
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+}
+
+if (!globalThis.IntersectionObserver) {
+  globalThis.IntersectionObserver = TestIntersectionObserver as typeof IntersectionObserver;
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'scrollTo', { value: () => {}, writable: true });
 }

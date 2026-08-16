@@ -26,6 +26,8 @@ from recognition.application.orchestration.clustering.dependencies import (
     ClusteringRuntimeConfig,
 )
 from recognition.application.orchestration.clustering.discovery_pipeline import (
+    GalleryProvenanceStats,
+    GalleryProvenanceUnavailableError,
     evaluate_chunk_candidates,
     partition_unclustered,
     prepare_cluster_caches,
@@ -505,9 +507,21 @@ class IncrementalClusteringRunner:
         # Phase 3: prime cluster caches ONCE before the chunk loop instead of
         # re-loading the full cluster table on every chunk.  The caches are
         # updated incrementally after each batch of new clusters is persisted.
-        representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids = await prepare_cluster_caches(
-            self._assignment_writer, str(tenant_id)
-        )
+        # CVUP1-GR-21: thread the job session explicitly. AssignmentWriter._session
+        # is optional, so leaving provenance to the private-attribute fallback would
+        # make the fail-closed default silently empty the gallery cache.
+        (
+            representatives_by_cluster,
+            centroids_by_cluster,
+            labeled_cluster_ids,
+            gallery_stats,
+        ) = await prepare_cluster_caches(self._assignment_writer, str(tenant_id), session=self._session)
+        # R3-G2-1: surface fail-closed gallery exclusions on the job payload so
+        # operators see a wiped gallery without grepping logs. Subsequent chunk
+        # payload merges preserve this key via **(payload or {}).
+        self._record_gallery_provenance(clustering_job, gallery_stats)
+        # R3-03: an infrastructure-caused wipe must fail the job, not complete it.
+        self._abort_on_unprovenanced_gallery(job_label, gallery_stats)
 
         for chunk, processed_before in processor.iter_chunks():
             outcome = await self._process_single_chunk(
@@ -628,9 +642,7 @@ class IncrementalClusteringRunner:
         )
         if guard_rejected_ids:
             accepted_decisions = [
-                decision
-                for decision in accepted_decisions
-                if decision.candidate.identity.id not in guard_rejected_ids
+                decision for decision in accepted_decisions if decision.candidate.identity.id not in guard_rejected_ids
             ]
             accepted_ids -= guard_rejected_ids
             accept_count = len(accepted_ids)
@@ -817,6 +829,63 @@ class IncrementalClusteringRunner:
 
         return clusters_added, created_cluster_ids
 
+    @staticmethod
+    def _record_gallery_provenance(
+        clustering_job: IdentityClusteringJob,
+        gallery_stats: GalleryProvenanceStats,
+    ) -> None:
+        """Attach gallery provenance counters to the job payload (R3-G2-1).
+
+        Does not change job status — fail-closed exclusion is still correct;
+        this only makes the consequence operator-visible when every production
+        representative was dropped and discovery will open brand-new clusters.
+        """
+        clustering_job.payload = {
+            **(clustering_job.payload or {}),
+            "gallery_provenance": gallery_stats.to_payload(),
+        }
+        if gallery_stats.gallery_wiped or gallery_stats.representatives_excluded_unresolvable > 0:
+            logger.warning(
+                "[clustering] gallery_provenance job_id=%s active=%s provenance_loaded=%s "
+                "excluded_reps=%d excluded_clusters=%d excluded_centroids=%d gallery_wiped=%s",
+                clustering_job.id,
+                gallery_stats.active_embedding_model,
+                gallery_stats.provenance_loaded,
+                gallery_stats.representatives_excluded_unresolvable,
+                gallery_stats.clusters_excluded_unresolvable,
+                gallery_stats.centroids_excluded_untrusted,
+                gallery_stats.gallery_wiped,
+            )
+
+    @staticmethod
+    def _abort_on_unprovenanced_gallery(
+        job_label: str,
+        gallery_stats: GalleryProvenanceStats,
+    ) -> None:
+        """Fail the job when the gallery was wiped for an infrastructure reason (R3-03).
+
+        Recording the counters (R3-G2-1) makes the wipe visible, but a COMPLETED
+        job with an empty gallery still fragments the tenant: every probe misses
+        and opens a brand-new cluster. Raising rolls the run back and lets the
+        worker record FAILED with the reason, which an operator can retry once
+        provenance is restored.
+
+        A legitimate space migration — every representative resolved to a real
+        model that is not the active one — is explicitly *not* an abort; see
+        ``GalleryProvenanceStats.abort_reason``.
+        """
+        reason = gallery_stats.abort_reason()
+        if reason is None:
+            return
+        message = (
+            f"clustering aborted: gallery wiped by FIR23-01 provenance filter — {reason}; "
+            f"excluded_reps={gallery_stats.representatives_excluded_unresolvable} "
+            f"excluded_clusters={gallery_stats.clusters_excluded_unresolvable} "
+            f"excluded_centroids={gallery_stats.centroids_excluded_untrusted}"
+        )
+        logger.error("[clustering] job_id=%s %s", job_label, message)
+        raise GalleryProvenanceUnavailableError(message)
+
     async def _commit_chunk_progress(
         self,
         *,
@@ -897,6 +966,7 @@ class IncrementalClusteringRunner:
         clustering_job.progress = 1.0
         clustering_job.status = JobStatus.COMPLETED
         clustering_job.completed_at = datetime.now(tz=UTC)
+        # Preserve gallery_provenance (R3-G2-1) and chunk progress keys via merge.
         clustering_job.payload = {
             **(clustering_job.payload or {}),
             "clusters_created": clusters_created,

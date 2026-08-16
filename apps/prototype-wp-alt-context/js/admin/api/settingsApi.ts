@@ -1,9 +1,29 @@
 import { fetchRequiredApi } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
 
+/**
+ * BR-138: why a present service-URL value was discarded by is_valid_base_url.
+ * Mirrors RecognitionEndpointResolver::URL_REJECTION_* (sr-007).
+ */
+export const UrlRejectionReason = {
+  REJECTED_SCHEME: 'rejected_scheme',
+  NON_LOOPBACK_HTTP: 'non_loopback_http',
+  INVALID_URL: 'invalid_url',
+} as const;
+
+export type UrlRejectionReasonValue = (typeof UrlRejectionReason)[keyof typeof UrlRejectionReason];
+
+export type UrlRejectionSource = 'constant' | 'option' | 'filter';
+
 export interface SettingsResponse {
   url: string;
   url_source: 'constant' | 'option' | 'filter' | 'default';
+  // BR-138: present when a tier held a value that failed is_valid_base_url.
+  // Null when genuinely unconfigured or when a valid URL resolved.
+  // REST rename of service_url_rejection_* (same convention as url/url_source).
+  url_rejection_reason: UrlRejectionReasonValue | null;
+  url_rejection_source: UrlRejectionSource | null;
+  url_rejection_value: string | null;
   effective_target_url: string;
   effective_target_mode: 'service' | 'local';
   // RECOG-1: read-only dev-hatch diagnostics. The product no longer exposes a
@@ -70,9 +90,24 @@ export interface SaveSettingsPayload {
   };
 }
 
+/**
+ * Wire vocabulary for POST /settings `result` [sr-007].
+ * Mirrors SettingsController::SAVE_RESULT_* bit-for-bit.
+ */
+export const SettingsSaveResult = {
+  OK: 'ok',
+  PARTIAL: 'partial',
+  ERROR: 'error',
+} as const;
+
+export type SettingsSaveResultValue =
+  (typeof SettingsSaveResult)[keyof typeof SettingsSaveResult];
+
 export interface SaveSettingsResponse {
   saved: string[];
-  result: string;
+  result: SettingsSaveResultValue | string;
+  /** Present when result is partial/error — fields that did not persist. */
+  failed?: string[];
 }
 
 export const TestConnectionOutcome = {

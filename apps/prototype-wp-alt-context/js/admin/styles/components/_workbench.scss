@@ -68,6 +68,129 @@
     padding-left: var(--acx-space-24);
     color: var(--acx-color-text-muted);
   }
+
+  /* WBUX-5 two-pane shell host (presentational; do not reuse &__layout) */
+  &__two-pane {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--acx-pane-gap);
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+
+    &[data-layout='stacked'] {
+      flex-direction: column;
+    }
+
+    &[data-panes='control-collapsed'] .acx-workbench__two-pane-library,
+    &[data-panes='library-collapsed'] .acx-workbench__two-pane-control {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+  }
+
+  &__two-pane-control,
+  &__two-pane-library {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-12);
+    min-width: 0;
+    min-height: var(--acx-pane-min-height);
+    padding: var(--acx-space-16);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface-alt);
+    overflow: auto;
+  }
+
+  /* Control default share is smaller; library flex-grows as dominant [LAY-01].
+   * Runtime split ratio is applied via inline flexBasis from the host (not a token). */
+  &__two-pane-control {
+    flex: 0 1 auto;
+  }
+
+  &__two-pane-library {
+    flex: 1 1 auto;
+  }
+
+  &__two-pane-control[data-collapsed='true'],
+  &__two-pane-library[data-collapsed='true'] {
+    display: none;
+  }
+
+  &__two-pane-title {
+    margin: 0;
+    font-size: var(--acx-text-lg);
+    font-weight: var(--acx-font-weight-semibold);
+    line-height: var(--acx-leading-tight);
+    color: var(--acx-color-text);
+  }
+
+  &__two-pane-slot {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  &__two-pane-zero {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--acx-space-8);
+    flex: 1 1 auto;
+    padding: var(--acx-space-16);
+    border: 1px dashed var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-panel);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__two-pane-zero-message {
+    margin: 0;
+    font-size: var(--acx-text-md);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__two-pane-splitter {
+    flex: 0 0 var(--acx-splitter-width);
+    position: relative;
+    align-self: stretch;
+    min-width: var(--acx-splitter-hit);
+    min-height: var(--acx-splitter-hit);
+    margin-inline: calc((var(--acx-splitter-hit) - var(--acx-splitter-width)) / -2);
+    border: none;
+    border-radius: var(--acx-radius-sm);
+    background-color: var(--acx-color-border);
+    cursor: col-resize;
+    touch-action: none;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      min-width: var(--acx-splitter-hit);
+      min-height: var(--acx-splitter-hit);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: 2px;
+      background-color: var(--acx-color-accent);
+    }
+
+    &[data-mode='section-toggle'] {
+      flex: 0 0 var(--acx-splitter-hit);
+      width: 100%;
+      min-height: var(--acx-splitter-hit);
+      margin-inline: 0;
+      cursor: pointer;
+    }
+
+    &[data-dragging='true'] {
+      background-color: var(--acx-color-accent);
+    }
+  }
 }
 
 .acx-sync-status {
@@ -697,6 +820,62 @@ button.acx-accent-primary-action {
   }
 }
 
+/* E21-18 S1: compact active-job strip (progress + cancel) while a job runs */
+.acx-active-job-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-8);
+  margin: 0 0 var(--acx-space-12);
+  padding: var(--acx-space-8) var(--acx-space-12);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background-color: var(--acx-color-surface);
+}
+
+.acx-apply-panel--compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--acx-space-8) var(--acx-space-12);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+
+  .acx-apply-panel__status--compact {
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-text-secondary);
+  }
+
+  .acx-apply-panel__progress--compact {
+    flex: 1 1 8rem;
+    min-width: 6rem;
+    max-width: 12rem;
+    height: var(--acx-space-8);
+  }
+}
+
+/* E21-18 S1: demoted scan section at bottom of control pane */
+.acx-workbench-control-scan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-8);
+  margin-top: var(--acx-space-12);
+  padding-top: var(--acx-space-12);
+  border-top: 1px solid var(--acx-color-border);
+
+  &__title {
+    margin: 0;
+    font-size: var(--acx-text-base);
+    font-weight: var(--acx-font-weight-semibold);
+    line-height: var(--acx-leading-tight);
+    color: var(--acx-color-text);
+  }
+}
+
 .acx-job-timeline {
   list-style: none;
   padding: 0;
@@ -706,6 +885,23 @@ button.acx-accent-primary-action {
   gap: var(--acx-space-4);
   font-size: var(--acx-text-sm);
   color: var(--acx-color-text-secondary);
+
+  &--compact {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8) var(--acx-space-12);
+    margin: 0;
+    font-size: var(--acx-text-xs);
+
+    .acx-job-timeline__item {
+      gap: var(--acx-space-4);
+    }
+
+    .acx-job-timeline__label {
+      flex: 0 1 auto;
+    }
+  }
 
   &__item {
     display: flex;
@@ -1024,11 +1220,6 @@ button.acx-accent-primary-action {
     }
   }
 
-  &__thumb-fallback-label {
-    display: inline-block;
-    overflow-wrap: anywhere;
-  }
-
   &__content {
     flex: 1;
     min-width: 0;
@@ -1098,7 +1289,53 @@ button.acx-accent-primary-action {
   }
 
   &__status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-8);
     margin: 0;
+  }
+
+  &__status-icon {
+    flex: 0 0 auto;
+    color: var(--acx-color-warning-pill-text);
+  }
+
+  &__skeleton-row {
+    height: var(--acx-space-16);
+    margin: 0 auto var(--acx-space-8);
+    max-width: 16rem;
+    border-radius: var(--acx-radius-md);
+    background: linear-gradient(
+      90deg,
+      var(--acx-gray-100) 0%,
+      var(--acx-gray-50) 50%,
+      var(--acx-gray-100) 100%
+    );
+    background-size: 200% 100%;
+    animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
+  }
+
+  &__hint {
+    margin: var(--acx-space-8) 0 0;
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__degraded-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    color: var(--acx-color-warning-pill-text);
+  }
+
+  &__repair {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    margin: 0 0 var(--acx-space-12);
+    color: var(--acx-color-warning-pill-text);
   }
 
   &__title {
@@ -1131,8 +1368,36 @@ button.acx-accent-primary-action {
   &__previews {
     display: flex;
     flex-wrap: wrap;
+    // LAY-03: intra-strip gap < strip-to-neighbour (margin-bottom space-16).
+    gap: var(--acx-space-8);
+    margin-bottom: var(--acx-space-16);
+  }
+
+  &__preview {
+    // Box size is owned by FINDINGS_PREVIEW_SIZE_PX inline styles on Avatar / FaceThumbnail.
+    flex: 0 0 auto;
+  }
+
+  &__preview--uncropped {
+    // Distinguish uncropped / non-face fallbacks from real face crops (A11Y-02 companion).
+    outline: 1px dashed var(--acx-color-border);
+    outline-offset: calc(var(--acx-space-2) * -1);
+  }
+
+  &__preview--missing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     gap: var(--acx-space-4);
-    margin-bottom: var(--acx-space-12);
+    background-color: var(--acx-gray-100);
+    color: var(--acx-gray-500);
+    border-radius: var(--acx-radius-md);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__preview-missing-label {
+    color: var(--acx-gray-600);
   }
 
   &__empty {

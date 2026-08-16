@@ -72,12 +72,18 @@ interface ClusterEditFormProps {
    * When provided, person-row confirm uses this instead of onSave.
    */
   onPersonSelect?: (label: string) => void;
-  /** Called when a suggestion is confirmed */
-  onConfirmSuggestion?: (clusterId: string, label: string) => void;
+  /** Called when a suggestion is confirmed (optional suggestionId resolves the pending row by id) */
+  onConfirmSuggestion?: (clusterId: string, label: string, suggestionId?: string) => void;
   /** Called when cancel button is clicked */
   onCancel: () => void;
   /** Called when a suggested match is rejected */
   onRejectSuggestion?: (suggestionId: string) => void;
+  /** Envelope total from the at-rest labelled-cluster page. */
+  atRestTotal?: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated?: boolean;
+  /** True while the loader is still in at-rest (debounced) mode. */
+  isAtRestMode?: boolean;
 }
 
 /**
@@ -95,6 +101,9 @@ export const ClusterEditForm = ({
   onConfirmSuggestion,
   onCancel,
   onRejectSuggestion,
+  atRestTotal = 0,
+  atRestTruncated = false,
+  isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
   void isLoading;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +127,8 @@ export const ClusterEditForm = ({
   const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+  const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
+  const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
 
   // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
   // saveLabel carries "Saving…" / "Saved!" from the parent save-status pipeline.
@@ -155,7 +166,12 @@ export const ClusterEditForm = ({
       // Namespaced cluster: values only (no bare-id fallback — FIX-10).
       const clusterId = unwrapClusterOptionId(String(option.value));
       if (onConfirmSuggestion && clusterId) {
-        onConfirmSuggestion(clusterId, option.label);
+        // BR-16 / L1R-01: thread suggestion_id so confirm resolves the pending row by id.
+        const suggestionId =
+          typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
+            ? option.suggestion_id
+            : undefined;
+        onConfirmSuggestion(clusterId, option.label, suggestionId);
       } else {
         onSave(option.label);
       }
@@ -188,6 +204,9 @@ export const ClusterEditForm = ({
           placeholder={__('Enter a name…', 'alt-context')}
           disabled={isPending}
           aria-label={__('Cluster label', 'alt-context')}
+          aria-describedby={
+            [showAtRestTruncationHint ? atRestHintId : undefined].filter(Boolean).join(' ') || undefined
+          }
         />
 
         {displayedOptions.length > 0 && !isPending && (
@@ -259,6 +278,19 @@ export const ClusterEditForm = ({
               </div>
             ))}
           </div>
+        )}
+        {showAtRestTruncationHint && (
+          <p
+            id={atRestHintId}
+            className="acx-identity-cluster__at-rest-hint"
+          >
+            {sprintf(
+              /* translators: 1: number of labels currently shown, 2: total labelled clusters */
+              __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
+              displayedOptions.length,
+              atRestTotal,
+            )}
+          </p>
         )}
       </div>
 

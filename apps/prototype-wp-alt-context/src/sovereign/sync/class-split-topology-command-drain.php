@@ -10,6 +10,7 @@ require_once __DIR__ . '/../repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../class-projection-query-exception.php';
 require_once __DIR__ . '/../../support/class-telemetry.php';
 require_once __DIR__ . '/class-snapshot-client.php';
 require_once __DIR__ . '/class-snapshot-projector.php';
@@ -18,6 +19,7 @@ require_once __DIR__ . '/class-cross-plane-sequencer.php';
 require_once __DIR__ . '/interface-topology-command-repository.php';
 require_once __DIR__ . '/class-topology-command-repository.php';
 
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -197,12 +199,32 @@ class SplitTopologyCommandDrain {
 			return;
 		}
 
-		if ( 'applied' === $current_status ) {
-			$this->process_applied_split_command( $command_id, $command );
-			return;
-		}
+		try {
+			if ( 'applied' === $current_status ) {
+				$this->process_applied_split_command( $command_id, $command );
+				return;
+			}
 
-		$this->process_pending_split_command( $command_id, $command );
+			$this->process_pending_split_command( $command_id, $command );
+		} catch ( ProjectionQueryException $exception ) {
+			// rg-007 / E21-14-BR-11: one unit's projection failure must not strand the claim
+			// or halt the batch — mark this command failed and continue.
+			Telemetry::log_line(
+				sprintf(
+					'[acx] SplitTopologyCommandDrain projection failure on command %d: %s',
+					$command_id,
+					$exception->getMessage()
+				)
+			);
+			$this->repository->record_failure(
+				$command_id,
+				'failed',
+				'projection_query_failed',
+				$this->normalize_text( $exception->getMessage(), 'Projection query failed during topology drain.' ),
+				true,
+				null
+			);
+		}
 	}
 
 	/**

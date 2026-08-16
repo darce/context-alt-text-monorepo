@@ -183,6 +183,85 @@ async def test_get_top_unlabeled_includes_face_thumb_url_for_blob_backed_represe
 
 
 @pytest.mark.asyncio
+async def test_get_top_unlabeled_propagates_user_selected_representative_pin(
+    api_client: TestClient,
+    tenant_id: str,
+    fake_cluster_repository,
+) -> None:
+    """Shared builder must wire is_user_selected=true for pinned reps (E21-17-R1-PY11-2)."""
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_repository.seed(cluster_id, label=None, identity_count=3)
+    rep_id = str(uuid.uuid4())
+    fake_cluster_repository.clusters[cluster_id].representatives = [
+        ClusterRepresentative(
+            id=rep_id,
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=303,
+            media_url="http://example.test/media/303.jpg",
+            bbox_x=4,
+            bbox_y=5,
+            bbox_width=20,
+            bbox_height=25,
+            is_user_selected=True,
+        )
+    ]
+
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        params={"tenant_id": tenant_id, "limit": 1},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    rep = resp.json()[0]["representatives"][0]
+    assert rep["id"] == rep_id
+    assert rep["is_user_selected"] is True
+    assert "is_pinned" not in rep
+
+
+@pytest.mark.asyncio
+async def test_get_top_unlabeled_null_media_id_is_not_fabricated_to_zero(
+    api_client: TestClient,
+    tenant_id: str,
+    fake_cluster_repository,
+) -> None:
+    """Shared builder must not invent media_id=0 when domain media_id is None (E21-17-R1-PY11-1)."""
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_repository.seed(cluster_id, label=None, identity_count=2)
+    fake_cluster_repository.clusters[cluster_id].representatives = [
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id=str(uuid.uuid4()),
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            media_id=None,
+            media_url=None,
+            bbox_x=None,
+            bbox_y=None,
+            bbox_width=None,
+            bbox_height=None,
+            is_user_selected=False,
+        )
+    ]
+
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        params={"tenant_id": tenant_id, "limit": 1},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    rep = resp.json()[0]["representatives"][0]
+    assert rep["media_id"] is None
+    assert rep["media_id"] != 0
+    assert rep["media_id"] != "0"
+
+
+@pytest.mark.asyncio
 async def test_get_top_unlabeled_includes_suggested_label_fields(
     api_client: TestClient,
     tenant_id: str,

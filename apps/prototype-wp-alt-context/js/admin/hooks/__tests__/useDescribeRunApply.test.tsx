@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useDescribeRunApply } from '../useDescribeRunApply';
+import { describeRunItemsQueryKey, useDescribeRunApply } from '../useDescribeRunApply';
+import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunItemsResponse } from '../../api/describeApi';
+import { queryKeys } from '../../api/queryKeys';
 
 vi.mock('../../api/describeApi', () => ({
   fetchDescribeRunItems: vi.fn(),
@@ -25,11 +27,16 @@ const itemsResponse: DescribeRunItemsResponse = {
   ],
 };
 
-const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
-  const client = new QueryClient({
+const buildClient = (): QueryClient =>
+  new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+
+const createWrapper = (client: QueryClient) => {
+  const Wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return Wrapper;
 };
 
 describe('useDescribeRunApply', () => {
@@ -38,14 +45,16 @@ describe('useDescribeRunApply', () => {
   });
 
   it('does not fetch items when no run id is provided', () => {
-    renderHook(() => useDescribeRunApply(null), { wrapper });
+    renderHook(() => useDescribeRunApply(null), { wrapper: createWrapper(buildClient()) });
     expect(fetchItemsMock).not.toHaveBeenCalled();
   });
 
   it('fetches items for a run and buckets drafts by existing_alt and draft presence', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
 
-    const { result } = renderHook(() => useDescribeRunApply('run-abc'), { wrapper });
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(buildClient()),
+    });
 
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
     expect(fetchItemsMock).toHaveBeenCalledWith('run-abc');
@@ -60,9 +69,19 @@ describe('useDescribeRunApply', () => {
 
   it('applies drafts with the operator overwrite list and exposes the result', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
-    applyMock.mockResolvedValue({ run_id: 'run-abc', applied: [71, 70], skipped_existing: [], skipped_no_draft: [72], skipped_invalid: [], failed: [] });
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 70],
+      partial: [],
+      skipped_existing: [],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
 
-    const { result } = renderHook(() => useDescribeRunApply('run-abc'), { wrapper });
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(buildClient()),
+    });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
     result.current.apply.mutate([70]);
@@ -72,8 +91,76 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.applied).toEqual([71, 70]);
   });
 
+  it('invalidates run items and the missing-alt stats probe after a successful apply [BR-125]', async () => {
+    fetchItemsMock.mockResolvedValue(itemsResponse);
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71, 70],
+      partial: [],
+      skipped_existing: [],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [],
+    });
+
+    const client = buildClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(client),
+    });
+    await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
+
+    result.current.apply.mutate([70]);
+    await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: describeRunItemsQueryKey('run-abc') });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    // Not the total probe (media count unchanged) and not media.all (BR-77).
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsTotalQueryKey }),
+      ),
+    ).toBe(false);
+    expect(
+      invalidateSpy.mock.calls.some(
+        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.all }),
+      ),
+    ).toBe(false);
+  });
+
+  it('refreshes stats after a partial apply — some alts landed so counters are stale [BR-125]', async () => {
+    // HTTP success with mixed buckets: applied + failed. onSuccess still runs;
+    // some writes landed so dashboard coverage must ask the server again.
+    fetchItemsMock.mockResolvedValue(itemsResponse);
+    applyMock.mockResolvedValue({
+      run_id: 'run-abc',
+      applied: [71],
+      partial: [],
+      skipped_existing: [],
+      skipped_no_draft: [72],
+      skipped_invalid: [],
+      failed: [70],
+    });
+
+    const client = buildClient();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(client),
+    });
+    await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
+
+    result.current.apply.mutate([70]);
+    await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
+    expect(result.current.apply.data?.applied).toEqual([71]);
+    expect(result.current.apply.data?.failed).toEqual([70]);
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+  });
+
   it('is a no-op apply when no run id is set', async () => {
-    const { result } = renderHook(() => useDescribeRunApply(null), { wrapper });
+    const { result } = renderHook(() => useDescribeRunApply(null), {
+      wrapper: createWrapper(buildClient()),
+    });
 
     result.current.apply.mutate([]);
 

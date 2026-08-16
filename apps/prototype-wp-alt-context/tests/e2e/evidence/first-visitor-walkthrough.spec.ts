@@ -48,9 +48,8 @@ const MAX_SCAN_MEDIA = 5;
 const SCAN_POLL_MS = 5_000;
 const SCAN_TIMEOUT_MS = 240_000;
 const NAMING_SURFACE_TIMEOUT_MS = 120_000;
-// BR-04: a collapsed media queue must not burn the full scan-step budget — the
-// summary bar's "Show media table" affordance is detected first, so the checkbox
-// wait only needs to cover a rendered (expanded) table.
+// The media table always renders on load (E21-13), so the checkbox wait only
+// needs to cover the queue's first paint.
 const MEDIA_TABLE_WAIT_MS = 10_000;
 const SAVE_CLOSE_TIMEOUT_MS = 30_000;
 const QUEUE_NAV_MAX_STEPS = 40;
@@ -170,13 +169,6 @@ test('first-visitor walkthrough: scan → review → first named person, timed',
     await timer.step(
       'scan',
       async () => {
-        // When findings already exist, ScanTabContent collapses the media queue to
-        // the MediaSummaryBar — expand it instead of waiting on absent checkboxes.
-        const expandMediaTable = page.getByRole('button', { name: 'Show media table' });
-        if (await expandMediaTable.isVisible().catch(() => false)) {
-          await expandMediaTable.click();
-        }
-
         const mediaCheckboxes = page.getByRole('checkbox', { name: MEDIA_CHECKBOX_NAME });
         await mediaCheckboxes.first().waitFor({ state: 'visible', timeout: MEDIA_TABLE_WAIT_MS });
 

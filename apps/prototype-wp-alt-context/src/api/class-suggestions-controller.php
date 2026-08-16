@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 
 use stdClass;
@@ -236,20 +237,21 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		// BR-08: the offline path must carry data_source so the UI can tell
 		// "backend unreachable/erroring" from "genuinely no matches". matches is a
 		// list for a single identity, so its empty shape stays [].
+		// A refused 3xx is reachable-but-bad (ENDPOINT_ERROR), not UNAVAILABLE.
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'matches' => array(),
+					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
+				),
+				200
+			);
+		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'matches' => array(),
 					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
-			);
-		}
-		if ( $this->is_proxy_endpoint_error( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'matches' => array(),
-					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);
@@ -285,20 +287,21 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		// BR-08: keyed-by-id envelope — empty mapping serializes as {} not [] — and
 		// the offline path must carry data_source so the UI distinguishes
 		// unreachable/erroring from a genuine empty result.
+		// A refused 3xx is reachable-but-bad (ENDPOINT_ERROR), not UNAVAILABLE.
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'matches' => new stdClass(),
+					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
+				),
+				200
+			);
+		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'matches' => new stdClass(),
 					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
-			);
-		}
-		if ( $this->is_proxy_endpoint_error( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'matches' => new stdClass(),
-					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);
@@ -323,6 +326,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		);
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
+		}
+		if ( $this->is_proxy_redirect_refused( $response ) ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'], self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 		if ( is_wp_error( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
@@ -350,6 +356,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		);
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
+		}
+		if ( $this->is_proxy_redirect_refused( $response ) ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'], self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 		if ( is_wp_error( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
@@ -451,6 +460,12 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
+		// A refused 3xx is reachable-but-bad (ENDPOINT_ERROR), not UNAVAILABLE.
+		// Keep the pre-existing is_proxy_unavailable mapping for transport
+		// errors and 5xx (UNAVAILABLE) — only the 3xx case is reclassified.
+		if ( $this->is_proxy_redirect_refused( $response ) ) {
+			return $this->empty_pending_name_suggestions_response( (int) $query['limit'], (int) $query['offset'], self::DATA_SOURCE_ENDPOINT_ERROR );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_name_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
@@ -517,22 +532,23 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		// BR-08: carry data_source on the offline path so a no-op bulk-accept
 		// caused by an unreachable/erroring backend is distinguishable from a
 		// genuine "nothing to accept" result.
+		// A refused 3xx is reachable-but-bad (ENDPOINT_ERROR), not UNAVAILABLE.
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'accepted_count' => 0,
+					'skipped_count'  => 0,
+					'data_source'    => self::DATA_SOURCE_ENDPOINT_ERROR,
+				),
+				200
+			);
+		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'accepted_count' => 0,
 					'skipped_count'  => 0,
 					'data_source'    => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
-			);
-		}
-		if ( $this->is_proxy_endpoint_error( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'accepted_count' => 0,
-					'skipped_count'  => 0,
-					'data_source'    => self::DATA_SOURCE_ENDPOINT_ERROR,
 				),
 				200
 			);
@@ -554,13 +570,13 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		);
 	}
 
-	private function empty_pending_name_suggestions_response( int $limit, int $offset ): WP_REST_Response {
+	private function empty_pending_name_suggestions_response( int $limit, int $offset, string $data_source = self::DATA_SOURCE_UNAVAILABLE ): WP_REST_Response {
 		return new WP_REST_Response(
 			array(
 				'suggestions' => array(),
 				'limit'       => $limit,
 				'offset'      => $offset,
-				'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+				'data_source' => $data_source,
 			),
 			200
 		);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/interface-snapshot-projector.php';
 require_once __DIR__ . '/../repositories/class-member-conflict-recorder.php';
 
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
@@ -524,7 +525,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	 * @return array<string,mixed>
 	 */
 	private function hydrate_existing_member_snapshot_row( array $member ): array {
-		// rg-005 / DATA-09: pass assigned_at through delta re-merge so ORDER BY parity
+		// rg-005 / DATA-15: pass assigned_at through delta re-merge so ORDER BY parity
 		// with recognition (assigned_at ASC) is not lost when re-hydrating existing rows.
 		$assigned_at = trim( (string) ( $member['assigned_at'] ?? '' ) );
 		if ( '' === $assigned_at ) {

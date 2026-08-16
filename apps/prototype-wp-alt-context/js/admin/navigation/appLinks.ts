@@ -19,11 +19,12 @@ export const APP_LINK_PARAMS = {
   status: 'status',
   tab: 'tab',
   panel: 'panel',
+  /** WBUX-5 two-pane collapse/host state — independent of overlay `panel`. */
+  panes: 'panes',
   advanced: 'advanced',
   personFilter: 'personFilter',
   run: 'run',
   person: 'person',
-  media: 'media',
   /** E21-5-owned codec in workbenchQueueUrl.ts; name only re-exported here. */
   rq: 'rq',
   queue: 'queue',
@@ -40,12 +41,39 @@ export type AppLinkParam = (typeof APP_LINK_PARAMS)[keyof typeof APP_LINK_PARAMS
 /** Canonical wire values for params the contract serializes. */
 export const APP_LINK_VALUES = {
   advancedOpen: 'open',
-  mediaExpanded: 'expanded',
   personFilterUnassigned: 'unassigned',
+  /** WBUX-5 workbench two-pane collapse states (`?panes=`). Default `both` is omitted. */
+  panesBoth: 'both',
+  panesControlCollapsed: 'control-collapsed',
+  panesLibraryCollapsed: 'library-collapsed',
 } as const;
 
-export type MediaExpandValue = (typeof APP_LINK_VALUES)['mediaExpanded'];
 export type PersonFilterValue = (typeof APP_LINK_VALUES)['personFilterUnassigned'];
+
+/** Workbench two-pane collapse state carried by `?panes=` (absent ⇔ both). */
+export type PanesState =
+  | typeof APP_LINK_VALUES.panesBoth
+  | typeof APP_LINK_VALUES.panesControlCollapsed
+  | typeof APP_LINK_VALUES.panesLibraryCollapsed;
+
+const PANES_VALID: readonly PanesState[] = [
+  APP_LINK_VALUES.panesBoth,
+  APP_LINK_VALUES.panesControlCollapsed,
+  APP_LINK_VALUES.panesLibraryCollapsed,
+];
+
+/**
+ * Parse `panes` search param. Valid collapse states pass through; absent/other → `'both'`
+ * (default two-pane open; param omitted on clean URLs).
+ */
+export const parsePanes = (raw: string | null | undefined): PanesState =>
+  raw != null && (PANES_VALID as readonly string[]).includes(raw)
+    ? (raw as PanesState)
+    : APP_LINK_VALUES.panesBoth;
+
+/** Serialize panes state; `'both'` → null so callers omit the param (absent default). */
+export const serializePanes = (v: PanesState): string | null =>
+  v === APP_LINK_VALUES.panesBoth ? null : v;
 
 export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;
@@ -53,7 +81,8 @@ export interface ToWorkbenchOptions {
   /** When true or `'open'`, emits `advanced=open`. */
   advanced?: true | typeof APP_LINK_VALUES.advancedOpen;
   panel?: Exclude<WorkbenchOverlay, null>;
-  media?: MediaExpandValue;
+  /** Two-pane collapse; `'both'` (default) is omitted from the href. */
+  panes?: PanesState;
 }
 
 export interface ToRosterOptions {
@@ -80,21 +109,22 @@ export const toDashboard = (): string => href(ROUTE.dashboard);
 
 export const toWorkbench = (options: ToWorkbenchOptions = {}): string => {
   const params = new URLSearchParams();
-  // Stable emit order matches pre-contract overlays (tab → panel) then filters.
+  // Stable emit order matches pre-contract overlays (tab → panel → panes) then filters.
   if (options.tab !== undefined) {
     params.set(APP_LINK_PARAMS.tab, options.tab);
   }
   if (options.panel !== undefined) {
     params.set(APP_LINK_PARAMS.panel, options.panel);
   }
+  const panesWire = options.panes !== undefined ? serializePanes(options.panes) : null;
+  if (panesWire !== null) {
+    params.set(APP_LINK_PARAMS.panes, panesWire);
+  }
   if (options.advanced === true || options.advanced === APP_LINK_VALUES.advancedOpen) {
     params.set(APP_LINK_PARAMS.advanced, APP_LINK_VALUES.advancedOpen);
   }
   if (options.status !== undefined) {
     params.set(APP_LINK_PARAMS.status, options.status);
-  }
-  if (options.media !== undefined) {
-    params.set(APP_LINK_PARAMS.media, options.media);
   }
   return href(ROUTE.workbench, params);
 };
@@ -158,16 +188,3 @@ export const buildWorkbenchOverlayHref = (
 
 export const SCAN_CONFLICTS_HREF = buildWorkbenchOverlayHref('scan', 'conflicts');
 export const SCAN_DEAD_LETTER_HREF = buildWorkbenchOverlayHref('scan', 'dead-letter');
-
-// ── Codecs (malformed → default, never throw) ─────────────────────────────
-
-/**
- * Parse `media` search param. Only `expanded` is true; absent/other → false
- * (collapsed-per-heuristic default used by ScanTabContent today).
- */
-export const parseMediaExpanded = (raw: string | null | undefined): boolean =>
-  raw === APP_LINK_VALUES.mediaExpanded;
-
-/** Serialize expand state; false → null so callers omit the param (absent default). */
-export const serializeMediaExpanded = (expanded: boolean): string | null =>
-  expanded ? APP_LINK_VALUES.mediaExpanded : null;

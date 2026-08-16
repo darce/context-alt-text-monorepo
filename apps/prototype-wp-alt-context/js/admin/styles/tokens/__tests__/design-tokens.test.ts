@@ -17,6 +17,8 @@ const REQUIRED_RADIUS_TOKENS = [
 ] as const;
 
 const REQUIRED_TEXT_TOKENS = [
+  '--acx-text-icon',
+  '--acx-text-micro',
   '--acx-text-2xs',
   '--acx-text-xs',
   '--acx-text-sm',
@@ -42,7 +44,7 @@ const REQUIRED_COLOR_TOKENS = [
   '--acx-color-data-placeholder',
 ] as const;
 
-const REQUIRED_SHADOW_TOKENS = ['--acx-shadow-card'] as const;
+const REQUIRED_SHADOW_TOKENS = ['--acx-shadow-card', '--acx-shadow-inset-danger'] as const;
 
 // Strip SCSS line (//) and block comments before token regex parsing (S1-03).
 const stripScssComments = (contents: string): string =>
@@ -257,6 +259,8 @@ describe('E21-4 slice 1: token direction acceptance', () => {
     expect(map.get('--acx-shadow-card')).toBe('var(--acx-shadow-1)');
     expect(map.has('--acx-shadow-2')).toBe(true);
     expect(map.has('--acx-shadow-3')).toBe(true);
+    expect(map.get('--acx-shadow-inset-danger')).toBe('inset 0 0 0 1px var(--acx-color-danger)');
+    expect(map.get('--acx-thumb-size-sm')).toBe('var(--acx-space-32)');
     expect(resolveToken(map, '--acx-radius-xl')).toBe('0.75rem');
     expect(resolveToken(map, '--acx-color-success')).toBe('#047857');
     expect(resolveToken(map, '--acx-color-success-border')).toBe('#16a34a');

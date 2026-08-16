@@ -301,6 +301,15 @@ if (!class_exists('CaseInsensitiveDictionary')) {
 }
 
 if (!class_exists('WP_CLI')) {
+    /**
+     * Test double for WP-CLI output. Mirrors real channel routing from
+     * wp-cli/wp-cli php/class-wp-cli.php + Loggers\Regular (v2.11.0):
+     *   log / success → STDOUT
+     *   warning / error → STDERR
+     * Stream lines carry the same human prefixes real WP-CLI emits
+     * ("Success: ", "Warning: ", "Error: "). Level buckets in $messages
+     * stay unprefixed so existing suite accessors keep working.
+     */
     class WP_CLI
     {
         /** @var array<string,mixed> */
@@ -314,6 +323,20 @@ if (!class_exists('WP_CLI')) {
             'error' => [],
         ];
 
+        /**
+         * Wire-format lines written to STDOUT (log body; "Success: " + body).
+         *
+         * @var array<int,string>
+         */
+        public static $stdout = [];
+
+        /**
+         * Wire-format lines written to STDERR ("Warning: "/"Error: " + body).
+         *
+         * @var array<int,string>
+         */
+        public static $stderr = [];
+
         public static function add_command($name, $callable): void
         {
             self::$commands[$name] = $callable;
@@ -321,23 +344,31 @@ if (!class_exists('WP_CLI')) {
 
         public static function log($message): void
         {
-            self::$messages['log'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['log'][] = $msg;
+            self::$stdout[] = $msg;
         }
 
         public static function success($message): void
         {
-            self::$messages['success'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['success'][] = $msg;
+            self::$stdout[] = 'Success: ' . $msg;
         }
 
         public static function warning($message): void
         {
-            self::$messages['warning'][] = (string) $message;
+            $msg = (string) $message;
+            self::$messages['warning'][] = $msg;
+            self::$stderr[] = 'Warning: ' . $msg;
         }
 
         public static function error($message): void
         {
-            self::$messages['error'][] = (string) $message;
-            throw new RuntimeException((string) $message);
+            $msg = (string) $message;
+            self::$messages['error'][] = $msg;
+            self::$stderr[] = 'Error: ' . $msg;
+            throw new RuntimeException($msg);
         }
 
         public static function reset_cli_messages(): void
@@ -348,6 +379,24 @@ if (!class_exists('WP_CLI')) {
                 'warning' => [],
                 'error' => [],
             ];
+            self::$stdout = [];
+            self::$stderr = [];
+        }
+
+        /**
+         * Full STDOUT stream as real WP-CLI would emit it (newline-joined lines).
+         */
+        public static function get_stdout(): string
+        {
+            return implode("\n", self::$stdout);
+        }
+
+        /**
+         * Full STDERR stream as real WP-CLI would emit it (newline-joined lines).
+         */
+        public static function get_stderr(): string
+        {
+            return implode("\n", self::$stderr);
         }
     }
 }
@@ -554,7 +603,8 @@ if (!function_exists('esc_attr')) {
 if (!function_exists('esc_html')) {
     function esc_html($value)
     {
-        return (string) $value;
+        // Core uses _wp_specialchars; htmlspecialchars is the closest portable stand-in.
+        return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
     }
 }
 
@@ -727,12 +777,27 @@ if (!function_exists('wp_get_attachment_image_src')) {
 }
 
 if (!function_exists('wp_update_post')) {
+    /**
+     * @param array<string,mixed> $postarr
+     * @param bool                $wp_error
+     * @param bool                $fire_after_hooks
+     * @return int|WP_Error
+     */
     function wp_update_post($postarr, $wp_error = false, $fire_after_hooks = true)
     {
         $postId = isset($postarr['ID']) ? (int) $postarr['ID'] : 0;
         if ($postId <= 0) {
-            return 0;
+            return $wp_error ? new WP_Error('invalid_post', 'Invalid post ID.') : 0;
         }
+
+        // Opt-in test hook: simulate a failed post update WITHOUT persisting.
+        // Unset by default so every other test keeps the always-succeed behaviour.
+        if (!empty($GLOBALS['__ac_wp_update_post_fail'][$postId])) {
+            return $wp_error ? new WP_Error('db_update_error', 'Could not update post in the database.') : 0;
+        }
+
+        // Core wp_insert_post unslashes the postarr before writing row fields.
+        $postarr = wp_unslash($postarr);
 
         $GLOBALS['__ac_updated_posts'][] = $postarr;
         if (!isset($GLOBALS['__ac_posts'][$postId]) || !is_object($GLOBALS['__ac_posts'][$postId])) {
@@ -787,13 +852,122 @@ if (!function_exists('get_post_meta')) {
     }
 }
 
+if (!function_exists('has_filter')) {
+    /**
+     * Harness has_filter: true when any callback is registered on the hook.
+     * Models wp-includes/plugin.php has_filter() for the false-callback form
+     * used by sanitize_meta() subtype dispatch.
+     *
+     * @param string         $hookName
+     * @param callable|false $callback
+     * @return bool|int
+     */
+    function has_filter($hookName, $callback = false)
+    {
+        if (empty($GLOBALS['__ac_filters'][$hookName])) {
+            return false;
+        }
+
+        if (false === $callback) {
+            $priorities = array_keys($GLOBALS['__ac_filters'][$hookName]);
+
+            return empty($priorities) ? false : (int) min($priorities);
+        }
+
+        foreach ($GLOBALS['__ac_filters'][$hookName] as $priority => $callbacks) {
+            foreach ($callbacks as $data) {
+                if ($data['callback'] === $callback) {
+                    return (int) $priority;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('get_object_subtype')) {
+    /**
+     * Models wp-includes/meta.php get_object_subtype() for the post type.
+     * Attachment posts yield subtype "attachment", which update_metadata passes
+     * to sanitize_meta.
+     *
+     * @param string $objectType
+     * @param int    $objectId
+     */
+    function get_object_subtype($objectType, $objectId): string
+    {
+        $objectId      = (int) $objectId;
+        $objectSubtype = '';
+
+        if ('post' === $objectType) {
+            $postType = get_post_type($objectId);
+            if (!empty($postType)) {
+                $objectSubtype = (string) $postType;
+            }
+        }
+
+        return (string) apply_filters("get_object_subtype_{$objectType}", $objectSubtype, $objectId);
+    }
+}
+
+if (!function_exists('sanitize_meta')) {
+    /**
+     * Models wp-includes/meta.php sanitize_meta(): subtype-scoped filter first
+     * (sanitize_{type}_meta_{key}_for_{subtype}), then type-scoped
+     * sanitize_{type}_meta_{key}. Not a no-op and not an alias of the trait
+     * fallback — same dispatch order/args as core [R20-BR-12].
+     *
+     * @param string $metaKey
+     * @param mixed  $metaValue
+     * @param string $objectType
+     * @param string $objectSubtype
+     * @return mixed
+     */
+    function sanitize_meta($metaKey, $metaValue, $objectType, $objectSubtype = '')
+    {
+        if (!empty($objectSubtype) && has_filter("sanitize_{$objectType}_meta_{$metaKey}_for_{$objectSubtype}")) {
+            return apply_filters(
+                "sanitize_{$objectType}_meta_{$metaKey}_for_{$objectSubtype}",
+                $metaValue,
+                $metaKey,
+                $objectType,
+                $objectSubtype
+            );
+        }
+
+        return apply_filters(
+            "sanitize_{$objectType}_meta_{$metaKey}",
+            $metaValue,
+            $metaKey,
+            $objectType
+        );
+    }
+}
+
 if (!function_exists('update_post_meta')) {
+    /**
+     * Core-faithful update_post_meta for the harness (BR-17).
+     *
+     * Mirrors wp-includes/meta.php update_metadata():
+     * - unslashes the value before store / equality check
+     * - resolves object subtype via get_object_subtype()
+     * - runs sanitize_meta( $key, $value, 'post', $subtype )
+     * - returns false when the stored value is byte-identical (no-op)
+     * - returns false without persisting when the opt-in fail hook is set
+     *
+     * Same shape as update_option in this file: failure and no-op share false.
+     *
+     * @param int    $postId
+     * @param string $metaKey
+     * @param mixed  $metaValue
+     * @return bool
+     */
     function update_post_meta($postId, $metaKey, $metaValue)
     {
         // Opt-in test hook: simulate a failed (false) meta write WITHOUT
         // persisting, so the controller's `false === $alt_written` failure and
-        // no-op read-back branches are exercisable. Unset by default, so every
-        // other test keeps the always-true behaviour.
+        // no-op read-back branches are exercisable. Unset by default.
         if (isset($GLOBALS['__ac_update_post_meta_fail'][$postId][$metaKey])) {
             return false;
         }
@@ -806,6 +980,36 @@ if (!function_exists('update_post_meta')) {
             $GLOBALS['__ac_post_meta'][$postId] = [];
         }
 
+        // Core update_metadata (meta.php): unslash, then sanitize_meta with subtype.
+        $metaValue     = wp_unslash($metaValue);
+        $objectSubtype = get_object_subtype('post', (int) $postId);
+        $metaValue     = sanitize_meta($metaKey, $metaValue, 'post', $objectSubtype);
+
+        // Opt-in: write returns non-false but stores a different value (F-06).
+        // Exercises the post-write read-back when the write is "accepted" yet
+        // storage diverges. Takes precedence over the normal store path.
+        if (array_key_exists($postId, $GLOBALS['__ac_update_post_meta_mutate'] ?? [])
+            && array_key_exists($metaKey, $GLOBALS['__ac_update_post_meta_mutate'][$postId])
+        ) {
+            $GLOBALS['__ac_post_meta'][$postId][$metaKey] =
+                $GLOBALS['__ac_update_post_meta_mutate'][$postId][$metaKey];
+            return true;
+        }
+
+        // Core returns false when the value is unchanged (failure and no-op share
+        // the same return — production recovery branches must re-read).
+        if (array_key_exists($metaKey, $GLOBALS['__ac_post_meta'][$postId])) {
+            $old = $GLOBALS['__ac_post_meta'][$postId][$metaKey];
+            if ($old === $metaValue) {
+                return false;
+            }
+            // Mirror update_option: value-equal array/object shapes that are not
+            // the same zval still count as a no-op under maybe_serialize equality.
+            if (serialize($old) === serialize($metaValue)) {
+                return false;
+            }
+        }
+
         $GLOBALS['__ac_post_meta'][$postId][$metaKey] = $metaValue;
 
         return true;
@@ -815,6 +1019,12 @@ if (!function_exists('update_post_meta')) {
 if (!function_exists('delete_post_meta')) {
     function delete_post_meta($postId, $metaKey)
     {
+        // Opt-in test hook: simulate a failed delete WITHOUT removing the key,
+        // so decorative-clear read-back can return description_correction_partial.
+        if (isset($GLOBALS['__ac_delete_post_meta_fail'][$postId][$metaKey])) {
+            return false;
+        }
+
         if (isset($GLOBALS['__ac_post_meta'][$postId][$metaKey])) {
             unset($GLOBALS['__ac_post_meta'][$postId][$metaKey]);
         }
@@ -832,12 +1042,85 @@ if (!function_exists('sanitize_title')) {
     }
 }
 
-if (!function_exists('sanitize_text_field')) {
-    function sanitize_text_field($value)
+if (!function_exists('wp_pre_kses_less_than')) {
+    /**
+     * Mirrors WP core: convert bare `<` (no closing `>`) via esc_html before
+     * strip_tags so prose like `x <= y` is not truncated.
+     */
+    function wp_pre_kses_less_than($content)
     {
-        $value = (string) $value;
+        return preg_replace_callback(
+            '%<[^>]*?((?=<)|>|$)%',
+            'wp_pre_kses_less_than_callback',
+            (string) $content
+        );
+    }
+}
 
-        return trim(strip_tags($value));
+if (!function_exists('wp_pre_kses_less_than_callback')) {
+    function wp_pre_kses_less_than_callback($matches)
+    {
+        if (!str_contains($matches[0], '>')) {
+            return esc_html($matches[0]);
+        }
+
+        return $matches[0];
+    }
+}
+
+if (!function_exists('wp_strip_all_tags')) {
+    function wp_strip_all_tags($string, $remove_breaks = false)
+    {
+        $string = preg_replace('@<(script|style)[^>]*?>.*?</\\1>@si', '', (string) $string);
+        $string = strip_tags($string);
+        if ($remove_breaks) {
+            $string = preg_replace('/[\r\n\t ]+/', ' ', $string);
+        }
+
+        return trim($string);
+    }
+}
+
+if (!function_exists('_sanitize_text_fields')) {
+    /**
+     * Simplified core `_sanitize_text_fields`: pre_kses bare `<` → strip tags →
+     * optional whitespace collapse → trim. Weaker than core (no UTF-8 check,
+     * no percent-decode strip, no filters, no `<\\n` special-case).
+     *
+     * @param string|mixed $str
+     */
+    function _sanitize_text_fields($str, $keep_newlines = false)
+    {
+        if (is_object($str) || is_array($str)) {
+            return '';
+        }
+
+        $filtered = (string) $str;
+
+        if (str_contains($filtered, '<')) {
+            $filtered = wp_pre_kses_less_than($filtered);
+            $filtered = wp_strip_all_tags($filtered, false);
+        }
+
+        if (!$keep_newlines) {
+            $filtered = preg_replace('/[\r\n\t ]+/', ' ', $filtered);
+        }
+
+        return trim($filtered);
+    }
+}
+
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($str)
+    {
+        return _sanitize_text_fields($str, false);
+    }
+}
+
+if (!function_exists('sanitize_textarea_field')) {
+    function sanitize_textarea_field($str)
+    {
+        return _sanitize_text_fields($str, true);
     }
 }
 
@@ -850,13 +1133,32 @@ if (!function_exists('sanitize_key')) {
 }
 
 if (!function_exists('wp_unslash')) {
+    /**
+     * Core-faithful wp_unslash: stripslashes only string leaves (arrays/objects
+     * recurse; ints/bools/nulls pass through). Mirrors stripslashes_deep +
+     * stripslashes_from_strings_only so update_post_meta does not stringify
+     * non-string array meta values.
+     *
+     * @param mixed $value
+     * @return mixed
+     */
     function wp_unslash($value)
     {
         if (is_array($value)) {
             return array_map('wp_unslash', $value);
         }
 
-        return stripslashes((string) $value);
+        if (is_object($value)) {
+            // Core map_deep clones objects; for harness meta payloads we only
+            // ever receive arrays/scalars — leave objects untouched.
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        return stripslashes($value);
     }
 }
 
@@ -1293,8 +1595,59 @@ if (!function_exists('as_unschedule_all_actions')) {
 }
 
 if (!function_exists('update_option')) {
-    function update_option($key, $value)
+    /**
+     * Core-faithful update_option for the harness (BR-147).
+     *
+     * Returns false both on forced failure and when the stored value is
+     * identical to the incoming value (core's no-op short-circuit). Records
+     * the $autoload flag per option so tests can assert non-autoload writes.
+     *
+     * @param string               $key
+     * @param mixed                $value
+     * @param string|bool|null     $autoload
+     */
+    function update_option($key, $value, $autoload = null)
     {
+        if (!isset($GLOBALS['__ac_update_option_calls']) || !is_array($GLOBALS['__ac_update_option_calls'])) {
+            $GLOBALS['__ac_update_option_calls'] = [];
+        }
+        $GLOBALS['__ac_update_option_calls'][$key] = ($GLOBALS['__ac_update_option_calls'][$key] ?? 0) + 1;
+
+        // Core defaults autoload to true/'yes' for new options when null.
+        // On update with null, core leaves the existing autoload flag alone;
+        // record the effective intent so tests can assert non-autoload writes.
+        if (!isset($GLOBALS['__ac_option_autoload']) || !is_array($GLOBALS['__ac_option_autoload'])) {
+            $GLOBALS['__ac_option_autoload'] = [];
+        }
+        if (null === $autoload) {
+            if (!array_key_exists($key, $GLOBALS['__ac_options'] ?? [])) {
+                $GLOBALS['__ac_option_autoload'][$key] = true;
+            }
+        } else {
+            $GLOBALS['__ac_option_autoload'][$key] = $autoload;
+        }
+
+        if (!empty($GLOBALS['__ac_update_option_fail'][$key])) {
+            return false;
+        }
+
+        // Core returns false when the value is unchanged (failure and no-op share
+        // the same return — production recovery branches must re-read).
+        if (isset($GLOBALS['__ac_options']) && array_key_exists($key, $GLOBALS['__ac_options'])) {
+            $old = $GLOBALS['__ac_options'][$key];
+            if ($old === $value) {
+                return false;
+            }
+            // Mirror core's maybe_serialize equality for array/object shapes that
+            // are value-equal but not the same zval (e.g. re-built arrays).
+            if (serialize($old) === serialize($value)) {
+                return false;
+            }
+        }
+
+        if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {
+            $GLOBALS['__ac_options'] = [];
+        }
         $GLOBALS['__ac_options'][$key] = $value;
         return true;
     }
@@ -1516,117 +1869,135 @@ if (!function_exists('wp_json_encode')) {
 }
 
 
-if (!function_exists('wp_remote_post')) {
-    function wp_remote_post($url, $args = [])
+if (!function_exists('__ac_http_dispatch')) {
+    /**
+     * Shared test-harness HTTP dispatcher for wp_remote_* / wp_safe_remote_*.
+     *
+     * Mirrors WordPress redirect behaviour closely enough for BR-137 pins:
+     * when args['redirection'] > 0 (default 5, matching WP_Http), a 3xx response
+     * with a Location header issues another recorded call to that Location,
+     * reusing the same args (including credential headers). redirection => 0
+     * returns the 3xx as-is so production never-follow policy is discriminating.
+     *
+     * @param string               $url
+     * @param array<string,mixed>  $args
+     * @param string               $method
+     * @param bool                 $safe
+     * @return array<string,mixed>|\WP_Error
+     */
+    function __ac_http_dispatch($url, $args = [], $method = 'GET', $safe = false)
     {
         if (!isset($GLOBALS['__ac_http_calls'])) {
             $GLOBALS['__ac_http_calls'] = [];
         }
 
-        $GLOBALS['__ac_http_calls'][] = [
+        $call = [
             'url' => $url,
             'args' => $args,
-            'method' => 'POST',
+            'method' => $method,
             'body' => $args['body'] ?? '',
         ];
+        if ($safe) {
+            $call['safe'] = true;
+        }
+        $GLOBALS['__ac_http_calls'][] = $call;
 
         if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
+            $response = array_shift($GLOBALS['__ac_http_queue']);
+        } else {
+            $response = [
+                'response' => [
+                    'code' => 200,
+                    'message' => 'OK',
+                ],
+                'body' => '',
+            ];
         }
 
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        // WordPress default for redirection is 5 when the key is omitted.
+        $redirection = array_key_exists('redirection', $args) ? (int) $args['redirection'] : 5;
+        if ($redirection <= 0) {
+            return $response;
+        }
+
+        if ($response instanceof \WP_Error || !is_array($response)) {
+            return $response;
+        }
+
+        $code = (int) ($response['response']['code'] ?? 0);
+        if ($code < 300 || $code >= 400) {
+            return $response;
+        }
+
+        $headers = $response['headers'] ?? [];
+        if (!is_array($headers)) {
+            return $response;
+        }
+        $location = $headers['Location'] ?? $headers['location'] ?? null;
+        if (!is_string($location) || '' === $location) {
+            return $response;
+        }
+
+        $next_args = $args;
+        $next_args['redirection'] = $redirection - 1;
+
+        return __ac_http_dispatch($location, $next_args, $method, $safe);
+    }
+}
+
+if (!function_exists('wp_remote_post')) {
+    function wp_remote_post($url, $args = [])
+    {
+        return __ac_http_dispatch($url, $args, 'POST', false);
     }
 }
 
 if (!function_exists('wp_remote_get')) {
     function wp_remote_get($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
+        return __ac_http_dispatch($url, $args, 'GET', false);
+    }
+}
 
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => 'GET',
-            'body' => $args['body'] ?? '',
-        ];
+if (!function_exists('wp_safe_remote_get')) {
+    /**
+     * Test-harness stand-in for WP core wp_safe_remote_get. Records the call as
+     * safe, then reuses the same queue as wp_remote_get.
+     */
+    function wp_safe_remote_get($url, $args = [])
+    {
+        return __ac_http_dispatch($url, $args, 'GET', true);
+    }
+}
 
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
+if (!function_exists('wp_safe_remote_request')) {
+    /**
+     * Test-harness stand-in for WP core wp_safe_remote_request. Records the
+     * call as safe (distinguishable from wp_remote_request) and reuses the
+     * same queue. Also exposes args['redirection'] so BR-137 pins can assert
+     * credentialed calls refuse redirects.
+     */
+    function wp_safe_remote_request($url, $args = [])
+    {
+        $method = isset($args['method']) ? strtoupper((string) $args['method']) : 'GET';
 
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, $method, true);
     }
 }
 
 if (!function_exists('wp_remote_head')) {
     function wp_remote_head($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
-
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => 'HEAD',
-            'body' => '',
-        ];
-
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, 'HEAD', false);
     }
 }
 
 if (!function_exists('wp_remote_request')) {
     function wp_remote_request($url, $args = [])
     {
-        if (!isset($GLOBALS['__ac_http_calls'])) {
-            $GLOBALS['__ac_http_calls'] = [];
-        }
-
         $method = isset($args['method']) ? strtoupper((string) $args['method']) : 'GET';
 
-        $GLOBALS['__ac_http_calls'][] = [
-            'url' => $url,
-            'args' => $args,
-            'method' => $method,
-            'body' => $args['body'] ?? '',
-        ];
-
-        if (!empty($GLOBALS['__ac_http_queue'])) {
-            return array_shift($GLOBALS['__ac_http_queue']);
-        }
-
-        return [
-            'response' => [
-                'code' => 200,
-                'message' => 'OK',
-            ],
-            'body' => '',
-        ];
+        return __ac_http_dispatch($url, $args, $method, false);
     }
 }
 
@@ -1640,7 +2011,12 @@ if (!function_exists('wp_rand')) {
 if (!function_exists('current_time')) {
     function current_time($type, $gmt = 0)
     {
-        $timestamp = time();
+        // Opt-in freeze for payload-equality tests (BR-50): when set to an int
+        // unix timestamp, every current_time() call returns that moment instead
+        // of time(). Unset by default — same shape as __ac_update_post_meta_fail.
+        $timestamp = isset($GLOBALS['__ac_current_time']) && is_int($GLOBALS['__ac_current_time'])
+            ? $GLOBALS['__ac_current_time']
+            : time();
         $gmtOffset = (float) get_option('gmt_offset', 0);
         $offsetSeconds = (int) round($gmtOffset * 3600);
         $localizedTimestamp = $timestamp + $offsetSeconds;
@@ -1809,6 +2185,25 @@ if (!function_exists('wp_localize_script')) {
     }
 }
 
+if (!function_exists('wp_set_script_translations')) {
+    /**
+     * Stub for WordPress wp_set_script_translations().
+     *
+     * Records the call so tests can assert translations were wired to the
+     * expected handle/domain/path (see Admin::enqueue_entry).
+     *
+     * @param string      $handle Script handle the translations apply to.
+     * @param string      $domain Text domain. Default 'default'.
+     * @param string|null $path   Directory containing translation files.
+     */
+    function wp_set_script_translations($handle, $domain = 'default', $path = null): bool
+    {
+        $GLOBALS['__ac_script_translations'][$handle] = compact('domain', 'path');
+
+        return true;
+    }
+}
+
 if (!function_exists('wp_get_environment_type')) {
     function wp_get_environment_type(): string
     {
@@ -1845,6 +2240,21 @@ if (!isset($GLOBALS['wpdb'])) {
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
         public array $mockResults = [];
+        /**
+         * When true, get_results returns null (WordPress behaviour on MySQL failure).
+         * Pair with last_error to drive fail-loud repository guards.
+         */
+        public bool $get_results_returns_null = false;
+        /**
+         * When true, get_var returns null and leaves last_error for the caller.
+         */
+        public bool $get_var_returns_null = false;
+        /**
+         * When true, get_row returns null and leaves last_error for the caller.
+         */
+        public bool $get_row_returns_null = false;
+        /** MySQL error text mirrored from real $wpdb->last_error. */
+        public string $last_error = '';
         /** @var array<string,mixed>|null */
         public ?array $mockRow = null;
         /**
@@ -1869,6 +2279,15 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $updateResults = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
+        /** @var array<string,array<int,string>> */
+        public array $tableColumns = [];
+        /**
+         * Achieved index names per table (Key_name). Used by SHOW INDEX / DROP INDEX
+         * probes in lifecycle schema tests (LO-03).
+         *
+         * @var array<string,array<int,string>>
+         */
+        public array $tableIndexes = [];
         /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
         public $onGetVar = null;
 
@@ -1876,6 +2295,21 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $sql);
             $this->queries[] = $normalizedSql;
+
+            if (preg_match(
+                '/^ALTER\s+TABLE\s+`?([^\s`]+)`?\s+DROP\s+INDEX\s+`?([^\s`]+)`?/i',
+                $normalizedSql,
+                $dropMatches
+            )) {
+                $table = $dropMatches[1];
+                $index = $dropMatches[2];
+                if (isset($this->tableIndexes[$table]) && is_array($this->tableIndexes[$table])) {
+                    $this->tableIndexes[$table] = array_values(array_filter(
+                        $this->tableIndexes[$table],
+                        static fn(string $name): bool => $name !== $index
+                    ));
+                }
+            }
 
             $result = $this->defaultQueryResult;
             if (array_key_exists($normalizedSql, $this->queryResults)) {
@@ -1892,7 +2326,15 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $result;
             }
 
-            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT)\b/i', $normalizedSql) ? 1 : 0;
+            // Real mysqli returns int rows-affected for UPDATE. Coerce boolean-true
+            // default success to 0 so seed row-count checks match production.
+            // (INSERT left alone: 0 is falsy and would break truthy-success checks.)
+            if ($result === true && preg_match('/^UPDATE\b/i', $normalizedSql)) {
+                $this->rows_affected = 0;
+                return 0;
+            }
+
+            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT|ALTER)\b/i', $normalizedSql) ? 1 : 0;
             return $result;
         }
 
@@ -1962,7 +2404,46 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
 
-            $results = $this->mockResults;
+            if ($this->get_results_returns_null) {
+                return null;
+            }
+
+            if (preg_match('/^SHOW COLUMNS FROM\s+`?([^\s`]+)`?/i', $normalizedSql, $matches)) {
+                $tableName = $matches[1];
+                $showError = $GLOBALS['__ac_show_columns_error'] ?? null;
+                $showErrorTable = $GLOBALS['__ac_show_columns_error_table'] ?? null;
+                if (is_string($showError) && $showError !== ''
+                    && ($showErrorTable === null || $showErrorTable === $tableName)
+                ) {
+                    $this->last_error = $showError;
+                    return [];
+                }
+
+                $results = array_map(
+                    static fn(string $column): array => ['Field' => $column],
+                    $this->tableColumns[$tableName] ?? []
+                );
+            } elseif (preg_match(
+                '/^SHOW INDEX FROM\s+`?([^\s`]+)`?(?:\s+WHERE\s+Key_name\s*=\s*\'([^\']*)\')?/i',
+                $normalizedSql,
+                $indexMatches
+            )) {
+                // Test injection: null SHOW INDEX without poisoning SHOW COLUMNS
+                // (FIX-2 / LO-03 probe failure vs empty result set).
+                if (!empty($GLOBALS['__ac_show_index_returns_null'])) {
+                    return null;
+                }
+                $tableName = $indexMatches[1];
+                $keyName = $indexMatches[2] ?? null;
+                $results = [];
+                foreach ($this->tableIndexes[$tableName] ?? [] as $indexName) {
+                    if ($keyName === null || $keyName === $indexName) {
+                        $results[] = ['Key_name' => $indexName];
+                    }
+                }
+            } else {
+                $results = $this->mockResults;
+            }
             if ($results === []) {
                 $results = $this->resolveStoredSelectResults($normalizedSql);
             }
@@ -1981,6 +2462,10 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
+
+            if ($this->get_row_returns_null) {
+                return null;
+            }
 
             if ($this->mockRowSequence !== null) {
                 $row = array_key_exists($this->mockRowSequenceIndex, $this->mockRowSequence)
@@ -2019,6 +2504,10 @@ if (!isset($GLOBALS['wpdb'])) {
                 ($this->onGetVar)($normalizedSql);
             }
 
+            if ($this->get_var_returns_null) {
+                return null;
+            }
+
             if (array_key_exists($normalizedSql, $this->queryResults)) {
                 return $this->queryResults[$normalizedSql];
             }
@@ -2030,6 +2519,13 @@ if (!isset($GLOBALS['wpdb'])) {
                 if (is_string($firstKey) || is_int($firstKey)) {
                     return $firstRow[$firstKey];
                 }
+            }
+
+            // A total expression always yields a row on a successful query, so
+            // "no stored rows" must model 0 rather than the null this stub uses
+            // for a failed query (GD-03).
+            if ($this->mockVar === null && preg_match('/^SELECT\s+(EXISTS\s*\(|COUNT\s*\()/i', $normalizedSql) === 1) {
+                return 0;
             }
 
             return $this->mockVar;
@@ -2342,6 +2838,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queryResults = [];
             $this->defaultQueryResult = true;
             $this->mockResults = [];
+            $this->get_results_returns_null = false;
+            $this->get_var_returns_null = false;
+            $this->get_row_returns_null = false;
+            $this->last_error = '';
             $this->mockRow = null;
             $this->mockRowSequence = null;
             $this->mockRowSequenceIndex = 0;
@@ -2353,6 +2853,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
             $this->tableRows = [];
+            $this->tableColumns = [];
+            $this->tableIndexes = [];
             $this->onGetVar = null;
         }
     }
@@ -2363,6 +2865,10 @@ if (!isset($GLOBALS['wpdb'])) {
 if (!function_exists('dbDelta')) {
     /**
      * Record dbDelta invocations for lifecycle schema tests.
+     *
+     * Column extraction uses LifecycleManager::parse_create_table_column_names
+     * (SV-03 single grammar) so the stub cannot tautologically re-implement
+     * production's intended-column parse.
      *
      * @param string|array<int,string> $queries SQL string or list of SQL strings.
      * @return array<int,string>
@@ -2388,6 +2894,50 @@ if (!function_exists('dbDelta')) {
 
             $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
             $executed[] = $normalized;
+
+            if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb']) && property_exists($GLOBALS['wpdb'], 'tableColumns')) {
+                $tableName = null;
+                if (preg_match('/^CREATE TABLE\s+`?([^\s`(]+)`?/i', $normalized, $tableMatch)) {
+                    $tableName = $tableMatch[1];
+                }
+
+                $columns = null;
+                if (class_exists(\AltContext\Support\LifecycleManager::class)
+                    && method_exists(\AltContext\Support\LifecycleManager::class, 'parse_create_table_column_names')
+                ) {
+                    $columns = \AltContext\Support\LifecycleManager::parse_create_table_column_names($normalized);
+                }
+
+                if (is_array($columns) && $tableName !== null) {
+                    $skip = $GLOBALS['__ac_dbdelta_silent_skip_column'] ?? null;
+                    $skipTable = $GLOBALS['__ac_dbdelta_silent_skip_table'] ?? null;
+                    if (is_string($skip) && $skip !== '') {
+                        $columns = array_values(array_filter(
+                            $columns,
+                            static function (string $name) use ($skip, $skipTable, $tableName): bool {
+                                if ($name !== $skip) {
+                                    return true;
+                                }
+                                if ($skipTable === null || $skipTable === $tableName) {
+                                    return false;
+                                }
+                                return true;
+                            }
+                        ));
+                    }
+                    $GLOBALS['wpdb']->tableColumns[$tableName] = $columns;
+                }
+            }
+
+            // Test injection: simulate MySQL rejecting a statement (sets $wpdb->last_error).
+            // Match is a substring of the SQL (typically a table suffix like acx_identity_members).
+            $failOn = $GLOBALS['__ac_dbdelta_fail_on_match'] ?? null;
+            if (is_string($failOn) && $failOn !== '' && str_contains($normalized, $failOn)) {
+                $error = $GLOBALS['__ac_dbdelta_fail_error'] ?? "dbDelta simulated failure for {$failOn}";
+                if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb'])) {
+                    $GLOBALS['wpdb']->last_error = (string) $error;
+                }
+            }
         }
 
         return $executed;

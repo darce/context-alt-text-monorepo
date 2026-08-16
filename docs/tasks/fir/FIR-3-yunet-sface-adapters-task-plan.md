@@ -50,12 +50,32 @@ None at runtime (nothing wired). New package boundary: `face_pipeline` depends o
 | --- | --- | --- |
 | S1 Models + manifest | Fetch/pin YuNet 2026may + SFace 2021dec ONNX + license files; sha256 provenance manifest; loader verifies hash, fails closed | manifest test: tampered file → load refuses |
 | S2 OpenCV reference | `FaceDetectorYN`/`FaceRecognizerSF` wrappers per guide §6.4; golden fixtures (deterministic images incl. known landmark order + alignment outputs) | golden tests: landmark order, affine matrix, crop bytes, embedding norm==1, dim==128 |
-| S3 ORT adapters | ORT CPU detector post-processing (YuNet output decode + NMS) + embedder with identical preprocessing | parity tests vs S2 goldens (cosine ≥ 0.999 per embedding, boxes IoU ≥ 0.99); zero-norm raise test |
+| S3 ORT adapters | ORT CPU detector post-processing (YuNet output decode + NMS) + embedder with identical preprocessing | parity tests vs S2 goldens (cosine ≥ 0.999 per embedding — tightened, see [§ S3 parity-budget amendment](#s3-parity-budget-amendment-2026-07-29-cvup-1); boxes IoU ≥ 0.99); zero-norm raise test |
 | S4 OpenCV pin ADR | Build+parity spike on OpenCV 5 vs 4.12 pin; record ADR; land chosen pin | both parity suites green on chosen pin; ADR committed |
 
 ## Files and Surfaces to Change
 
 New `recognition/infrastructure/face_pipeline/` (detectors, embedder, aligner, manifest, models/README with licenses) · `pyproject.toml` (opencv pin per ADR; onnxruntime already present) · golden fixtures under `recognition/tests/fixtures/face_pipeline/` · tests `recognition/tests/unit/test_face_pipeline_*.py` · ADR via `manage_adr`/docs.
+
+### S3 parity-budget amendment (2026-07-29, CVUP-1)
+
+The S3 budget above (`cosine ≥ 0.999`) was assigned before the parity spread had
+been measured. It is superseded by `cosine ≥ 0.99999999` (`_COSINE_MIN` /
+`_GOLDEN_COSINE_MIN` in `test_face_pipeline_ort_parity.py`), a **tightening**
+under [sr-001], never a relaxation. Evidence:
+
+- Measured spread, OpenCV 5.0.0 / ORT 1.28.0 / numpy 2.5.1: ORT↔OpenCV cosine
+  ≥ 0.999999999997 on both the synthetic and aligner crops (1−cos ≤ 5e-12);
+  same figure against the `synthetic_112_embedding` golden.
+- Noise floor over 20 repeats: 1 distinct crop hash, composed-embedding max
+  absolute spread 0.0, minimum pairwise cosine 1.0000000000000002.
+- Holds cross-architecture: the same tightened assertions pass on the aarch64
+  remote gate, so this is not an x86-local budget.
+- 0.999 admitted a 1−cos slack band ~2e8× the measured
+  spread — a bound that wide cannot discriminate a real regression ([TEST-06]).
+  The new floor still sits ~10× above a 1e-9 slack band.
+
+Re-measure before touching it again; do not loosen to silence a failure.
 
 ## Verification Strategy
 
@@ -65,7 +85,7 @@ Golden tests are the heart of this task (guide checklist: landmark order, affine
 
 - [x] S1 models pinned (sha256 + license hashes + source URLs), loader fail-closed test
 - [x] S2 OpenCV reference + golden fixtures committed
-- [x] S3 ORT parity: embeddings cosine ≥ 0.999 vs reference, boxes IoU ≥ 0.99, zero-norm raises
+- [x] S3 ORT parity: embeddings cosine ≥ 0.99999999 vs reference (see [§ S3 parity-budget amendment](#s3-parity-budget-amendment-2026-07-29-cvup-1)), boxes IoU ≥ 0.99, zero-norm raises
 - [x] S4 OpenCV pin ADR recorded; chosen pin lands with both suites green
 - [x] Import-purity test: `face_pipeline` imports nothing from worker/HTTP layers
 - [x] Real-corpus smoke run + distribution eyeballed, result recorded

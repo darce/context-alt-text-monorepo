@@ -8,6 +8,7 @@
  */
 
 import * as React from 'react';
+import { AlertTriangle, ImageOff } from 'lucide-react';
 import { __ } from '@wordpress/i18n';
 
 import type { BoundingBox } from '../../admin/api/recognition/types/identity';
@@ -34,8 +35,12 @@ export interface FaceThumbnailProps {
   shape?: 'circle' | 'square';
   /** Accessible alt text */
   alt?: string;
+  /** Optional native img loading hint; omitted when unset */
+  loading?: 'lazy' | 'eager';
   /** Additional CSS class */
   className?: string;
+  onLoad?: () => void;
+  onError?: () => void;
 }
 
 type LoadingState = 'loading' | 'loaded' | 'error';
@@ -48,22 +53,36 @@ type LoadingState = 'loading' | 'loaded' | 'error';
  */
 export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps>(
   (
-    { mediaUrl, bbox, size = 'md', sizePx, shape = 'circle', alt = __('Detected face', 'alt-context'), className = '' },
+    {
+      mediaUrl,
+      bbox,
+      size = 'md',
+      sizePx,
+      shape = 'circle',
+      alt = __('Detected face', 'alt-context'),
+      loading,
+      className = '',
+      onLoad,
+      onError,
+    },
     ref,
   ) => {
     const [loadState, setLoadState] = React.useState<LoadingState>('loading');
     const imgRef = React.useRef<HTMLImageElement | null>(null);
     const displaySize = sizePx ?? sizeMap[size];
+    const iconSize = Math.max(12, Math.round(displaySize * 0.35));
     const borderRadius = shape === 'square' ? '0' : '50%';
     const { scale, offsetX, offsetY } = cropTransformFor(bbox, displaySize);
 
     const handleLoad = React.useCallback(() => {
       setLoadState('loaded');
-    }, []);
+      onLoad?.();
+    }, [onLoad]);
 
     const handleError = React.useCallback(() => {
       setLoadState('error');
-    }, []);
+      onError?.();
+    }, [onError]);
 
     React.useEffect(() => {
       setLoadState('loading');
@@ -89,14 +108,23 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
 
     // Show placeholder on error
     if (loadState === 'error') {
+      const errorLabel = __('Face image unavailable', 'alt-context');
       return (
         <div
           ref={ref}
           className={classes}
           role="img"
-          aria-label={__('Face image unavailable', 'alt-context')}
+          aria-label={errorLabel}
           style={{ width: displaySize, height: displaySize }}
-        />
+        >
+          <span className={`${baseClass}__error`}>
+            <AlertTriangle className={`${baseClass}__warning-icon`} size={iconSize} aria-hidden="true" />
+            <ImageOff className={`${baseClass}__broken-icon`} size={iconSize} aria-hidden="true" />
+            <span className={`${baseClass}__error-label`} aria-hidden="true">
+              {errorLabel}
+            </span>
+          </span>
+        </div>
       );
     }
 
@@ -128,6 +156,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           ref={imgRef}
           src={mediaUrl}
           alt={alt}
+          loading={loading}
           onLoad={handleLoad}
           onError={handleError}
           style={{

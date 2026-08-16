@@ -1,5 +1,19 @@
 export type SyncHealth = 'healthy' | 'queued' | 'stale' | 'conflicts' | 'failures' | 'offline';
 
+/**
+ * Wire vocabulary for last_sync_result [sr-007].
+ * Mirrored by PHP SyncStateRepository::SYNC_RESULT_* and
+ * TenantLocalRekeyService::RESYNC_REQUIRED_RESULT.
+ */
+export const LAST_SYNC_RESULT = {
+  OK: 'ok',
+  FAILED: 'failed',
+  UNREACHABLE: 'unreachable',
+  RESYNC_REQUIRED: 'resync_required',
+} as const;
+
+export type LastSyncResult = (typeof LAST_SYNC_RESULT)[keyof typeof LAST_SYNC_RESULT];
+
 export interface TopologyCommandStatus {
   pending: number;
   applied: number;
@@ -13,7 +27,7 @@ export interface SyncStatusResponse {
   last_synced_at: string | null;
   is_stale: boolean;
   sync_health: SyncHealth;
-  last_sync_result: 'ok' | 'failed' | 'unreachable';
+  last_sync_result: LastSyncResult;
   sync_mode?: 'delta' | 'full';
   pending_curation_operations?: number;
   failed_curation_operations?: number;

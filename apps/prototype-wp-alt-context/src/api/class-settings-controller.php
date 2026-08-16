@@ -10,9 +10,13 @@ require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-description-budget-service.php';
 require_once __DIR__ . '/services/class-tenant-local-rekey-service.php';
+require_once __DIR__ . '/../support/class-loopback-host.php';
+require_once __DIR__ . '/../support/class-recognition-transport.php';
 
 use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\Services\TenantLocalRekeyService;
+use AltContext\Support\LoopbackHost;
+use AltContext\Support\RecognitionTransport;
 
 use WP_Error;
 use WP_REST_Request;
@@ -21,6 +25,7 @@ use function apply_filters;
 use function current_user_can;
 use function defined;
 use function get_option;
+use function in_array;
 use function intval;
 use function is_array;
 use function is_int;
@@ -28,14 +33,15 @@ use function is_numeric;
 use function is_string;
 use function is_wp_error;
 use function json_decode;
+use function parse_url;
 use function register_rest_route;
 use function rtrim;
 use function stripos;
+use function strtolower;
 use function substr;
 use function trim;
 use function update_option;
 use function wp_is_uuid;
-use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
@@ -50,6 +56,15 @@ use function wp_remote_retrieve_response_code;
  *                                  of ten canonical {@see ProbeOutcome} codes
  */
 class SettingsController {
+	/**
+	 * Wire vocabulary for POST /settings `result` [sr-007].
+	 * Mirrored by TypeScript `SettingsSaveResult` in settingsApi.ts.
+	 * Happy-path stays `{ saved, result: 'ok' }` byte-compatible with existing clients.
+	 */
+	public const SAVE_RESULT_OK      = 'ok';
+	public const SAVE_RESULT_PARTIAL = 'partial';
+	public const SAVE_RESULT_ERROR   = 'error';
+
 	private RecognitionEndpointResolver $endpoint_resolver;
 
 	private DescriptionBudgetService $description_budget_service;
@@ -104,6 +119,10 @@ class SettingsController {
 			array(
 				'url'                       => $snapshot['service_url'],
 				'url_source'                => $snapshot['service_url_source'],
+				// BR-138: service_url_rejection_* → url_rejection_* (same rename as url/url_source).
+				'url_rejection_reason'      => $snapshot['service_url_rejection_reason'],
+				'url_rejection_source'      => $snapshot['service_url_rejection_source'],
+				'url_rejection_value'       => $snapshot['service_url_rejection_value'],
 				'effective_target_url'      => $snapshot['effective_target_url'],
 				'effective_target_mode'     => $snapshot['effective_target_mode'],
 				'recognition_source'        => $snapshot['recognition_source'],
@@ -122,20 +141,30 @@ class SettingsController {
 	}
 
 	public function save_settings( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$body = $request->get_json_params();
-		$saved = array();
+		$body   = $request->get_json_params();
+		$body   = is_array( $body ) ? $body : array();
+		$saved  = array();
+		$failed = array();
 
 		if ( isset( $body['url'] ) && is_string( $body['url'] ) ) {
 			$url = trim( $body['url'] );
 			if ( '' !== $url && ! $this->is_valid_url( $url ) ) {
 				return new WP_Error(
 					'invalid_url',
-					'The recognition API URL must be a valid HTTP or HTTPS URL.',
+					'The recognition API URL must be HTTPS (HTTP is allowed only for loopback development hosts).',
 					array( 'status' => 400 )
 				);
 			}
+			// R23-BR-14: do not trust update_option's return (false on no-op *and*
+			// failure). Read back and compare against the intended value; a no-op
+			// re-save still matches. option_matches_intended() verifies effect, not
+			// bytes in storage — see its docblock [R23-BR-35].
 			update_option( 'acx_recognition_url', $url );
-			$saved[] = 'url';
+			if ( $this->option_matches_intended( 'acx_recognition_url', $url ) ) {
+				$saved[] = 'url';
+			} else {
+				$failed[] = 'url';
+			}
 		}
 
 		// RECOG-1: the product no longer writes acx_recognition_source or
@@ -146,7 +175,11 @@ class SettingsController {
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
 			update_option( 'acx_recognition_api_key', $key );
-			$saved[] = 'api_key';
+			if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
+				$saved[] = 'api_key';
+			} else {
+				$failed[] = 'api_key';
+			}
 		}
 
 		if ( isset( $body['alt_style'] ) ) {
@@ -159,8 +192,13 @@ class SettingsController {
 					array( 'status' => 400 )
 				);
 			}
-			update_option( AltStyle::OPTION_NAME, $body['alt_style'] );
-			$saved[] = 'alt_style';
+			$alt_style = $body['alt_style'];
+			update_option( AltStyle::OPTION_NAME, $alt_style );
+			if ( $this->option_matches_intended( AltStyle::OPTION_NAME, $alt_style ) ) {
+				$saved[] = 'alt_style';
+			} else {
+				$failed[] = 'alt_style';
+			}
 		}
 
 		if ( isset( $body['description_budget'] ) && is_array( $body['description_budget'] ) ) {
@@ -183,16 +221,71 @@ class SettingsController {
 			}
 
 			update_option( 'acx_description_budget_max_attempts', $max_attempts );
-			$saved[] = 'description_budget';
+			// Int options may reappear as numeric strings after a cold options
+			// load from the DB; option_matches_intended models that coerce.
+			if ( $this->option_matches_intended( 'acx_description_budget_max_attempts', $max_attempts ) ) {
+				$saved[] = 'description_budget';
+			} else {
+				$failed[] = 'description_budget';
+			}
 		}
 
-		return new WP_REST_Response(
-			array(
-				'saved'  => $saved,
-				'result' => 'ok',
-			),
-			200
+		// Happy path stays { saved, result: 'ok' } — no extra keys [byte-compat].
+		// Non-ok names the fields that did not land so the operator can act.
+		$result = self::SAVE_RESULT_OK;
+		if ( array() !== $failed ) {
+			$result = array() === $saved
+				? self::SAVE_RESULT_ERROR
+				: self::SAVE_RESULT_PARTIAL;
+		}
+
+		$payload = array(
+			'saved'  => $saved,
+			'result' => $result,
 		);
+		if ( array() !== $failed ) {
+			$payload['failed'] = $failed;
+		}
+
+		return new WP_REST_Response( $payload, 200 );
+	}
+
+	/**
+	 * True when a read of the option now yields the intended value.
+	 *
+	 * update_option returns false for both storage failure and no-op (value
+	 * already equal), so its return cannot be trusted and a read-back is
+	 * required [R23-BR-14].
+	 *
+	 * What this verifies is effect, not bytes-in-storage [R23-BR-35]. get_option
+	 * applies pre_option_{$option} / option_{$option} / default_option_{$option},
+	 * so this compares the intended value against the *filtered* read — which is
+	 * deliberate: every consumer of these keys also reads through get_option
+	 * (see class-recognition-endpoint-resolver.php and
+	 * class-abstract-recognition-proxy-controller.php), so the filtered value is
+	 * what the site will actually use. A filter that diverges the read means the
+	 * operator's value is not in effect, and reporting it as saved would be the
+	 * false success R23-BR-14 removed. Verifying an unfiltered $wpdb read here
+	 * would reintroduce exactly that.
+	 *
+	 * Consequence to keep in mind: a false return does not distinguish "did not
+	 * persist" from "persisted but a filter overrides the read". Both are
+	 * correctly not-saved; neither is separately reported.
+	 *
+	 * Integer options are compared via numeric coerce so a DB-reloaded string
+	 * form does not false-fail a successful write.
+	 *
+	 * @param string $option   Option name.
+	 * @param mixed  $intended Value that should be in effect.
+	 */
+	private function option_matches_intended( string $option, $intended ): bool {
+		// null default: missing option is distinguishable from stored empty string.
+		$stored = get_option( $option, null );
+		if ( is_int( $intended ) ) {
+			return is_numeric( $stored ) && (int) $stored === $intended;
+		}
+
+		return $stored === $intended;
 	}
 
 	/**
@@ -234,7 +327,9 @@ class SettingsController {
 		}
 
 		$health_url = rtrim( $url, '/' ) . '/health/detailed';
-		$response   = wp_remote_get(
+		// BR-131/BR-137: RecognitionTransport chooses safe vs loopback transport
+		// and forces redirection => 0 so X-API-Key cannot walk on 3xx.
+		$response = RecognitionTransport::get(
 			$health_url,
 			array(
 				'headers' => $headers,
@@ -285,7 +380,7 @@ class SettingsController {
 		if ( $adopted && ProbeOutcome::TENANT_MISMATCH === $probe_outcome ) {
 			$reprobe_headers                = $headers;
 			$reprobe_headers['X-Tenant-ID'] = TenantIdentity::resolve()['value'];
-			$reprobe_response               = wp_remote_get(
+			$reprobe_response = RecognitionTransport::get(
 				$health_url,
 				array(
 					'headers' => $reprobe_headers,
@@ -308,7 +403,7 @@ class SettingsController {
 	 */
 	private function attempt_tenant_pairing( string $base_url, array $headers, bool $confirm_pairing ): array {
 		$whoami_url = rtrim( $base_url, '/' ) . '/recognition/tenant/whoami';
-		$response   = wp_remote_get(
+		$response   = RecognitionTransport::get(
 			$whoami_url,
 			array(
 				'headers' => $headers,
@@ -357,7 +452,17 @@ class SettingsController {
 		$current_tenant_id  = strtolower( $current_resolution['value'] );
 
 		if ( $current_tenant_id === $key_tenant_id ) {
-			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			// R23-BR-15: adopt throws RuntimeException on storage failure (distinct
+			// from InvalidArgumentException for a malformed UUID). Surface as a
+			// pairing error — do not claim tenant_paired when the option did not land.
+			try {
+				TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+			} catch ( \RuntimeException $e ) {
+				return array(
+					'outcome' => ProbeOutcome::SERVER_ERROR,
+					'detail'  => $e->getMessage(),
+				);
+			}
 			return array(
 				'tenant_paired'    => true,
 				'tenant_id'        => $key_tenant_id,
@@ -381,9 +486,43 @@ class SettingsController {
 			);
 		}
 
+		// R23-BR-28: adopt+verify the tenant-id option (and only then the paired
+		// flag, inside adopt_paired_tenant) BEFORE rekeying local rows / writing
+		// the resync_required marker. Prior order rekeyed first; if adopt then
+		// failed, durable rows already advertised the new tenant while pairing
+		// was incomplete. option_matches_intended() is option-scoped (save_settings
+		// path) and does not fit table-row rekey verification — adopt_paired_tenant
+		// already performs the option read-back; rekey verifies via row count
+		// read-back before its marker [sr-007].
+		//
+		// Call sites of adopt_paired_tenant (both in this method):
+		// 1. matching-tenant path above — try/catch RuntimeException → SERVER_ERROR
+		// 2. this rekey / auto-adopt path — same catch shape
+		// Call site of reconcile_identity_change: only here. Wrapped so a rekey
+		// throw after a successful adopt surfaces as SERVER_ERROR (not a 500),
+		// with tenant_paired already true so the operator sees identity landed
+		// and rekey needs retry (extra keys only on this non-success path).
+		try {
+			TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+		} catch ( \RuntimeException $e ) {
+			return array(
+				'outcome' => ProbeOutcome::SERVER_ERROR,
+				'detail'  => $e->getMessage(),
+			);
+		}
+
 		$rekey_service = new TenantLocalRekeyService();
-		$rekey_result  = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
-		TenantIdentity::adopt_paired_tenant( $key_tenant_id );
+		try {
+			$rekey_result = $rekey_service->reconcile_identity_change( $current_tenant_id, $key_tenant_id );
+		} catch ( \RuntimeException $e ) {
+			return array(
+				'outcome'        => ProbeOutcome::SERVER_ERROR,
+				'detail'         => $e->getMessage(),
+				'tenant_paired'  => true,
+				'tenant_id'      => $key_tenant_id,
+				'rekey_failed'   => true,
+			);
+		}
 
 		return array(
 			'tenant_paired'       => true,
@@ -582,11 +721,30 @@ class SettingsController {
 		return '****' . substr( $key, -4 );
 	}
 
+	/**
+	 * BR-131: require https for saved service URLs. Permit http only for
+	 * loopback hosts (LocalWP / local description-service hatch). Rejects
+	 * http://attacker.invalid while keeping http://localhost:8000.
+	 */
 	private function is_valid_url( string $url ): bool {
 		$parts = parse_url( $url );
 		if ( false === $parts || ! is_array( $parts ) ) {
 			return false;
 		}
-		return isset( $parts['scheme'], $parts['host'] ) && in_array( $parts['scheme'], array( 'http', 'https' ), true );
+		if ( ! isset( $parts['scheme'], $parts['host'] ) ) {
+			return false;
+		}
+
+		$scheme = strtolower( (string) $parts['scheme'] );
+		$host   = strtolower( (string) $parts['host'] );
+		if ( '' === $host ) {
+			return false;
+		}
+
+		if ( 'https' === $scheme ) {
+			return true;
+		}
+
+		return 'http' === $scheme && LoopbackHost::is_loopback( $host );
 	}
 }

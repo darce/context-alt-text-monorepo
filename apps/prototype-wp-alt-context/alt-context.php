@@ -154,6 +154,8 @@ if (defined('WP_CLI') && WP_CLI) {
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-usage-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-mirror-integrity-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-refresh-command.php';
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-xmp-backfill-command.php';
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-reset-projection-command.php';
 }
 
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);

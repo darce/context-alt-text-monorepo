@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
@@ -357,7 +358,23 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates from the cluster drawer into the selected person workspace', async () => {
+  it('navigates from the cluster drawer into the assigned person workspace', async () => {
+    const assignedCluster = makeCluster({ person_uuid: 'person-uuid-alex' });
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({ clusters: [assignedCluster] }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: assignedCluster,
+        isLoading: false,
+        isError: false,
+      }),
+    );
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -381,19 +398,100 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       }),
     );
 
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
     render(
-      <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
-        <RosterPage />
-      </MemoryRouter>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+          <RosterPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await userEvent.click(screen.getByRole('option', { name: 'Alex Carter' }));
-    await userEvent.click(screen.getByRole('button', { name: /Open person workspace/i }));
+    await userEvent.click(screen.getByRole('link', { name: /Open person review/i }));
 
     expect(screen.getByRole('region', { name: /Person workspace: Alex Carter/i })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
+  });
+
+  it('prefers cluster detail person_uuid over the list projection when they diverge', async () => {
+    const listCluster = makeCluster({ person_uuid: 'person-uuid-list', label: 'List Label' });
+    const detailCluster = makeCluster({ person_uuid: 'person-uuid-detail', label: 'Detail Label' });
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({ clusters: [listCluster] }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: detailCluster,
+        isLoading: false,
+        isError: false,
+      }),
+    );
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 7,
+            person_uuid: 'person-uuid-list',
+            name: 'List Person',
+            tags: [],
+            cluster_count: 1,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+          {
+            id: 8,
+            person_uuid: 'person-uuid-detail',
+            name: 'Detail Person',
+            tags: [],
+            cluster_count: 1,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/?tab=clusters&cluster=cluster-1']}>
+          <RosterPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Assigned cluster')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open person review/i })).toHaveAttribute(
+      'href',
+      '#/roster?person=person-uuid-detail',
+    );
+
+    await userEvent.click(screen.getByRole('link', { name: /Open person review/i }));
+
+    expect(screen.getByRole('region', { name: /Person workspace: Detail Person/i })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /Person workspace: List Person/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
 
@@ -450,8 +548,9 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await userEvent.click(screen.getAllByRole('button', { name: /^Merge$/i }).at(-1)!);
+    // Bar names count+object; dialog confirm stays exact "Merge" — no positional .at(-1) needed.
+    await userEvent.click(screen.getByRole('button', { name: 'Merge 3 clusters' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Merge$/ }));
     expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
       clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
     });
@@ -485,8 +584,9 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    await userEvent.click(screen.getAllByRole('button', { name: /^Dismiss$/i }).at(-1)!);
+    // Bar names count+object; dialog confirm stays exact "Dismiss" — no positional .at(-1) needed.
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss 3 clusters' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Dismiss$/ }));
 
     expect(clusterActionState.bulkDismissMutation.mutateAsync).toHaveBeenCalledWith({
       clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],

@@ -25,12 +25,16 @@ const loaderResultFrom = (
   },
 ): ClusterSuggestionsLoaderResult => {
   const labelMatches = partial.labelMatches ?? [];
+  // ClusterSummary.label is runtime-nullable (BR-46); ClusterNamingEntry.label stays string.
+  const namedMatches = labelMatches.filter(
+    (c): c is typeof c & { label: string } => typeof c.label === 'string' && c.label !== '',
+  );
   const built =
     partial.namingOptions !== undefined
       ? null
       : buildNamingOptions({
           rosterEntries: [],
-          labelMatches,
+          labelMatches: namedMatches,
           limit: null,
         });
   return {
@@ -41,6 +45,9 @@ const loaderResultFrom = (
     isLoading: partial.isLoading ?? false,
     rosterError: partial.rosterError ?? false,
     findClusterByLabel: partial.findClusterByLabel ?? defaultFindClusterByLabel,
+    atRestTotal: partial.atRestTotal ?? 0,
+    atRestTruncated: partial.atRestTruncated ?? false,
+    isAtRestMode: partial.isAtRestMode ?? true,
   };
 };
 
@@ -279,6 +286,48 @@ describe('IdentityClusterList', () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
     expect(MockEventSource.instances).toBe(0);
+  });
+
+  it('BR-46: list renders when labelMatches includes a null-label summary', async () => {
+    useClusterSuggestionsLoaderMock.mockReturnValue(
+      loaderResultFrom({
+        labelMatches: [
+          {
+            id: 'null-labeled',
+            label: null,
+            identity_count: 1,
+            member_ids: ['identity-x'],
+            representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+            sample_identities: [],
+          },
+          {
+            id: 'named',
+            label: 'Pat Rivera',
+            identity_count: 2,
+            member_ids: ['identity-y'],
+            representative_identity: { media_id: 2, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+            sample_identities: [],
+          },
+        ],
+        findClusterByLabel: defaultFindClusterByLabel,
+      }),
+    );
+
+    const { client } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, {
+        identities_by_media: {
+          '1': [baseIdentity],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Cluster 1')).toBeInTheDocument();
+    });
+    const result = useClusterSuggestionsLoaderMock.mock.results.at(-1)?.value as ClusterSuggestionsLoaderResult;
+    expect(result.namingOptions.some((option) => option.label === 'Pat Rivera')).toBe(true);
+    expect(result.namingOptions.every((option) => option.label !== '')).toBe(true);
   });
 
   it('renders an unavailable warning when identity data cannot be loaded', async () => {

@@ -187,7 +187,7 @@ Changes:
 
 Proof:
 
-- Vitest covers assigned, unresolved, singleton proposal, merged, and superseded cluster drawer states.
+- Vitest covers assigned, unresolved, and singleton proposal cluster drawer states. _Merged/superseded states deferred with the scope narrowing recorded in decision 4617._
 
 ## Consolidated Checklist
 
@@ -213,16 +213,16 @@ Proof:
 
 ### Checklist for Slice 3: Face Scrubber and Selection Controls
 
-- [ ] Scrubber supports pointer and keyboard navigation.
-- [ ] Face crop dimensions are stable and aspect-correct.
-- [ ] Selection actions map only to real API actions and are tested.
-- [ ] Metadata panel follows RSU-006 conservative labels until RCL-009 fields land and does not overclaim similarity semantics.
+- [x] Scrubber supports pointer and keyboard navigation. _Rail-scoped activedescendant listbox in `PersonFaceFilmstrip.tsx` (Arrow/Home/End, single tab stop) plus pointer selection; covered by `__tests__/PersonWorkspacePanel.scrubber.test.tsx` and `hooks/__tests__/useRosterFaceCursor.test.tsx`._
+- [x] Face crop dimensions are stable and aspect-correct. _`FaceThumbnail` reserves explicit 64px box across loading/loaded/error states; layout-shift assertions hardened per review Slice 3 findings._
+- [x] Selection actions map only to real API actions and are tested. _Representative pin maps to the existing pin API via `hooks/usePinRepresentative.ts` (pending guard, cache invalidation, error surface); no fabricated accept/reject/split controls shipped — those stay documented E15-13 dependencies._
+- [x] Metadata panel follows RSU-006 conservative labels until RCL-009 fields land and does not overclaim similarity semantics. _`similarityCopy.ts` renders banded labels ("strong/likely/possible/weak match") with current-cluster framing and no bare percentages; consumed by `PersonFaceMetadataPanel.tsx`._
 
 ### Checklist for Slice 4: Cluster Evidence Migration
 
-- [ ] Assigned cluster drawer links to person review by `person_uuid`.
-- [ ] Unresolved clusters stay in unresolved review mode.
-- [ ] Merged/superseded clusters explain topology state.
+- [x] Assigned cluster drawer links to person review by `person_uuid`. _`ClusterDrawerPanel.tsx` renders `Open person review` as a real `a[href]` to `#/roster?person=<uuid>` with modifier-aware SPA navigation; `person_uuid` flows from the `wp_acx_persons` LEFT JOIN in `class-clusters-read-repository.php` through `class-cluster-response-mapper.php`; covered by `ClusterDrawerPanel.personAware.test.tsx` and `RosterPage.container.test.tsx`._
+- [x] Unresolved clusters stay in unresolved review mode. _`clusterDrawerState.ts` classifies null/empty/whitespace `person_uuid` as unresolved (0-identity stale projections included) with no invented person link; boundary fixtures in `ClusterDrawerPanel.personAware.test.tsx` and the invention-vector guard in `RosterPage.test.tsx`._
+- [ ] Merged/superseded clusters explain topology state. _Deferred: `merge_cluster` deletes source rows (greenfield delete-over-flag), so merged/superseded topology cannot be rendered without fabricating contract metadata (rg-015); scope narrowed per handoff decision 4617 to a future persist-on-merge schema task._
 
 ## Review Readiness
 

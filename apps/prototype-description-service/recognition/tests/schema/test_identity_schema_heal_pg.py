@@ -296,3 +296,90 @@ def test_adopted_observability_tables_isolate_tenants(pg_empty_engine) -> None:
             ),
             {"id": str(uuid.uuid4()), "tenant": tenant_a},
         )
+
+
+# ---- FL30B-GATE-01: test-role privilege guard (decision logic) ----------
+#
+# Superusers / BYPASSRLS roles are exempt from RLS even under FORCE. The
+# harness must fail (not skip) when IDENTITY_PG_TEST_URL is privileged so a
+# remote gate cannot go green while isolation assertions are vacuous.
+# These tests exercise the pure decision helper without needing two real roles.
+
+
+def test_rls_privilege_guard_fires_for_superuser() -> None:
+    from recognition.tests.conftest import rls_unenforceable_role_message
+
+    msg = rls_unenforceable_role_message(role="daniel", rolsuper=True, rolbypassrls=False)
+    assert msg is not None
+    assert "unenforceable" in msg.lower()
+    assert "daniel" in msg
+    assert "IDENTITY_PG_TEST_URL" in msg
+    assert "BYPASSRLS" in msg or "bypassrls" in msg.lower()
+
+
+def test_rls_privilege_guard_fires_for_bypassrls() -> None:
+    from recognition.tests.conftest import rls_unenforceable_role_message
+
+    msg = rls_unenforceable_role_message(role="adminish", rolsuper=False, rolbypassrls=True)
+    assert msg is not None
+    assert "unenforceable" in msg.lower()
+    assert "adminish" in msg
+    assert "IDENTITY_PG_TEST_URL" in msg
+
+
+def test_rls_privilege_guard_silent_for_unprivileged() -> None:
+    from recognition.tests.conftest import rls_unenforceable_role_message
+
+    assert rls_unenforceable_role_message(role="context", rolsuper=False, rolbypassrls=False) is None
+
+
+def test_assert_engine_role_rls_enforceable_fails_on_privileged_row() -> None:
+    """Fixture-path helper must pytest.fail (not skip) when the role is privileged."""
+    from recognition.tests.conftest import assert_engine_role_rls_enforceable
+
+    class _Result:
+        def one(self):
+            return ("superuser_test", True, False)
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, stmt):  # noqa: ANN001
+            assert "rolsuper" in str(stmt) and "rolbypassrls" in str(stmt)
+            assert "current_user" in str(stmt)
+            return _Result()
+
+    class _Engine:
+        def connect(self):
+            return _Conn()
+
+    with pytest.raises(pytest.fail.Exception, match="unenforceable"):
+        assert_engine_role_rls_enforceable(_Engine())
+
+
+def test_assert_engine_role_rls_enforceable_passes_for_unprivileged_row() -> None:
+    from recognition.tests.conftest import assert_engine_role_rls_enforceable
+
+    class _Result:
+        def one(self):
+            return ("context", False, False)
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, stmt):  # noqa: ANN001
+            return _Result()
+
+    class _Engine:
+        def connect(self):
+            return _Conn()
+
+    assert_engine_role_rls_enforceable(_Engine())  # must not raise

@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/../sovereign/class-projection-query-exception.php';
 
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -90,15 +93,19 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'invalid_media_ids', 'Provide between 1 and 100 valid attachment IDs.', array( 'status' => 400 ) );
 		}
 
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$rows = $this->members_repository->list_for_media_ids( $tenant_id, $ids );
-			$payload = array(
-				'identities_by_media' => $this->as_identities_map( $this->member_mapper->map_media_identities( $rows ) ),
-				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
-			);
-			// Async heal only: the sovereign read must return immediately even offline.
-			$this->maybe_schedule_stale_projection_heal( $tenant_id );
-			return new WP_REST_Response( $payload, 200 );
+		try {
+			if ( $this->should_use_local_projection( $tenant_id ) ) {
+				$rows = $this->members_repository->list_for_media_ids( $tenant_id, $ids );
+				$payload = array(
+					'identities_by_media' => $this->as_identities_map( $this->member_mapper->map_media_identities( $rows ) ),
+					'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
+				);
+				// Async heal only: the sovereign read must return immediately even offline.
+				$this->maybe_schedule_stale_projection_heal( $tenant_id );
+				return new WP_REST_Response( $payload, 200 );
+			}
+		} catch ( ProjectionQueryException $exception ) {
+			return ProjectionQueryException::to_rest_error( 'get_media_identities' );
 		}
 
 		$query = array(
@@ -115,11 +122,12 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
+		// Refused 3xx: backend is reachable; report ENDPOINT_ERROR not UNAVAILABLE.
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
+		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
 			return $this->degraded_media_identities_response( self::DATA_SOURCE_UNAVAILABLE );
-		}
-		if ( $this->is_proxy_endpoint_error( $response ) ) {
-			return $this->degraded_media_identities_response( self::DATA_SOURCE_ENDPOINT_ERROR );
 		}
 
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {

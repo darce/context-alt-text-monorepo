@@ -97,6 +97,86 @@ describe('FaceOverlayLayer', () => {
       expect(screen.getByRole('button', { name: 'Unnamed face 1 of 1' })).toBeInTheDocument();
     });
 
+    it('does not announce cluster-7 as a curated person when is_auto_label is false [E21-15-BR-27]', () => {
+      // Backend looks_like_system_defined_label misses short forms, so is_auto_label stays false.
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-auto-shape',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'cluster-7',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: 'cluster-7' })).not.toBeInTheDocument();
+      expect(screen.queryByText('cluster-7')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Unnamed face 1 of 1' })).toBeInTheDocument();
+    });
+
+    it('does not announce cluster-7 when is_auto_label is omitted [E21-15-BR-27]', () => {
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-omitted-flag',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'cluster-7',
+              // is_auto_label omitted
+            },
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: 'cluster-7' })).not.toBeInTheDocument();
+      expect(screen.queryByText('cluster-7')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Unnamed face 1 of 1' })).toBeInTheDocument();
+    });
+
+    it("still announces genuinely human labels ('Jane Doe') on curated chips [E21-15-BR-27]", () => {
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-human',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'Jane Doe',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      const chip = screen.getByRole('button', { name: 'Jane Doe' });
+      expect(chip).toHaveTextContent('Jane Doe');
+    });
+
+    it('takes the curated path for CLUSTER_HQ when is_auto_label is false [E21-15-BR-34]', () => {
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'face-hq',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'CLUSTER_HQ',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={naturalSize}
+        />,
+      );
+
+      const chip = screen.getByRole('button', { name: 'CLUSTER_HQ' });
+      expect(chip).toHaveTextContent('CLUSTER_HQ');
+      expect(chip).toHaveClass('acx-face-overlay__chip--curated');
+    });
+
     it('names uncurated markers Unnamed face N of M', () => {
       render(
         <FaceOverlayLayer identities={outOfOrderFixture()} naturalSize={naturalSize} />,

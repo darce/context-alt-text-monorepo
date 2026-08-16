@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/../sovereign/sync/class-conflict-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-conflict-resolution-service.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
@@ -473,6 +474,10 @@ class ConflictController extends AbstractRecognitionProxyController {
 
 		if ( 'resolution_not_allowed' === $reason ) {
 			return new WP_Error( 'resolution_not_allowed', 'Resolution is not allowed for this conflict.', array( 'status' => 422 ) );
+		}
+
+		if ( 'reserved_label' === $reason ) {
+			return new WP_Error( 'reserved_label', 'Labels beginning with cluster- or cluster_ are reserved.', array( 'status' => 400 ) );
 		}
 
 		if ( 'not_found' === $reason ) {

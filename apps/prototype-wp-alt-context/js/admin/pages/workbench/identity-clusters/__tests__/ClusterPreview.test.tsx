@@ -28,12 +28,37 @@ const buildRepresentative = (overrides: Partial<DetectedIdentity> = {}): Detecte
   ...overrides,
 });
 
-describe('ClusterPreview', () => {
-  it('renders an explicit unavailable-image fallback when representative crop data is missing', () => {
-    render(<ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />);
+const MISSING_REPRESENTATIVE_LABEL = 'Representative image unavailable';
 
-    expect(screen.getByLabelText('Representative image unavailable')).toBeInTheDocument();
+describe('ClusterPreview', () => {
+  it('renders an explicit unavailable-image fallback when no usable image URL exists', () => {
+    render(
+      <ClusterPreview
+        representative={buildRepresentative({ media_url: null, thumb_url: null, bbox: undefined })}
+        memberCount={1}
+      />,
+    );
+
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAccessibleName(MISSING_REPRESENTATIVE_LABEL);
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
     expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByText(MISSING_REPRESENTATIVE_LABEL)).not.toBeInTheDocument();
+    expect(missing).toHaveClass('acx-avatar--hide-missing-label');
+    expect(screen.queryByRole('img', { name: 'No image' })).not.toBeInTheDocument();
+  });
+
+  it('renders Avatar data-missing when media_url is missing even if a plain thumb_url remains [REV1-02]', () => {
+    const { container } = render(
+      <ClusterPreview representative={buildRepresentative({ media_url: null })} memberCount={1} />,
+    );
+
+    const missing = screen.getByRole('img', { name: MISSING_REPRESENTATIVE_LABEL });
+    expect(missing).toHaveAttribute('data-avatar-state', 'data-missing');
+    expect(missing).toHaveClass('acx-avatar--hide-missing-label');
+    expect(screen.getByText('No image')).toBeInTheDocument();
+    expect(screen.queryByAltText('Detected identity thumbnail')).not.toBeInTheDocument();
+    expect(container.querySelector('.acx-durable-face-thumb__uncropped')).toBeNull();
   });
 
   it('does not render a pin control (UXA-07)', () => {

@@ -7,18 +7,18 @@ namespace AltContext\Tests\Unit;
 use AltContext\Tests\TestCase;
 
 /**
- * rg-005: columns the identity-members repository SQL references must exist in
- * the identity_members / clusters / persons DDL. Two complementary checks:
+ * Narrow hand-maintained allowlist for the identity-members repository layer
+ * only (not a general SQL↔DDL scanner — that is ProjectionQueryColumnParityTest).
  *
- *  - Live parity: the DDL column sets are parsed live from
- *    class-life-cycle-manager.php and the identity_members write columns are
- *    parsed live from the repository-layer INSERT/upsert statements, so a
- *    fabricated or renamed *write* column is caught directly from the SQL
- *    (testSqlWriteColumnsExistInMembersDdl).
- *  - Allowlist: the MEMBERS_COLUMNS / CLUSTERS_COLUMNS / PERSONS_COLUMNS lists
- *    are hand-maintained secondary checks covering the read/join/where columns
- *    the SQL parser does not extract. They do not, on their own, prove the SQL
- *    matches the DDL.
+ * Asserts:
+ *  - MEMBERS_COLUMNS / CLUSTERS_COLUMNS / PERSONS_COLUMNS are subsets of the
+ *    matching CREATE TABLE blocks in class-life-cycle-manager.php
+ *  - each allowlisted name still appears somewhere in the identity-members
+ *    repository-layer sources
+ *  - identity_members INSERT/upsert write columns scraped from that layer
+ *    exist in the members DDL (live write-path check)
+ *
+ * Does not scan other repositories, derived tables, or $wpdb->insert maps.
  *
  * @coversNothing
  */
@@ -57,6 +57,16 @@ class IdentityMembersSchemaParityTest extends TestCase
         'id',
         'name',
     ];
+
+    /**
+     * Concrete floors for the live SQL↔DDL parity walk (not merely > 0).
+     * Tied to the identity_members INSERT column list and CREATE TABLE as of
+     * 2026-07-30: twelve write columns, twelve DDL columns. A scrape that only
+     * finds one of twelve still fails the floor [rg-005].
+     */
+    private const SQL_WRITE_COLUMN_FLOOR = 12;
+
+    private const MEMBERS_DDL_COLUMN_FLOOR = 12;
 
     public function testMembersColumnsExistInIdentityMembersDdl(): void
     {
@@ -151,15 +161,32 @@ class IdentityMembersSchemaParityTest extends TestCase
     public function testSqlWriteColumnsExistInMembersDdl(): void
     {
         $referenced = $this->parseSqlWriteColumns($this->repositoryLayerSource());
+        $ddlColumns = $this->parseDdlColumns('members_table');
 
-        $this->assertNotEmpty(
-            $referenced,
-            'parser found no INSERT/upsert write columns in the identity-members repository SQL — parser or corpus is broken'
+        // Concrete floors on both sides before comparing — empty-vs-empty (or
+        // 1-of-N scrape drift) must not pass as clean parity [rg-005].
+        $this->assertGreaterThanOrEqual(
+            self::SQL_WRITE_COLUMN_FLOOR,
+            count($referenced),
+            sprintf(
+                'identity-members SQL write-column scrape resolved %d column(s); expected at least %d — parser or corpus is broken',
+                count($referenced),
+                self::SQL_WRITE_COLUMN_FLOOR
+            )
+        );
+        $this->assertGreaterThanOrEqual(
+            self::MEMBERS_DDL_COLUMN_FLOOR,
+            count($ddlColumns),
+            sprintf(
+                'identity_members DDL parse resolved %d column(s); expected at least %d — DDL parser or life-cycle source is broken',
+                count($ddlColumns),
+                self::MEMBERS_DDL_COLUMN_FLOOR
+            )
         );
 
         $this->assertSame(
             [],
-            $this->columnsMissingFrom($referenced, $this->parseDdlColumns('members_table')),
+            $this->columnsMissingFrom($referenced, $ddlColumns),
             'identity-members repository SQL writes columns absent from the identity_members DDL'
         );
     }
@@ -267,6 +294,9 @@ class IdentityMembersSchemaParityTest extends TestCase
             }
         }
 
+        // Floor is enforced by callers that need a concrete count (members live
+        // parity). Keep a non-empty guard here so empty DDL never silently
+        // compares equal to an empty candidate list.
         $this->assertNotEmpty($columns, "parsed {$tableVar} DDL yielded no columns");
 
         return $columns;

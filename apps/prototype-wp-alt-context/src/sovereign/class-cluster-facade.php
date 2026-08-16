@@ -51,7 +51,16 @@ class ClusterFacade {
 
 		$members_by_cluster = array();
 		if ( ! empty( $cluster_uuids ) ) {
-			$members_by_cluster = $this->members_repo->list_for_cluster_uuids( $cluster_uuids, 4 );
+			// Repository returns a sparse map (no key when a cluster has zero
+			// rows). Densify so callers can treat [] as "none" and absence as
+			// "not fetched" (UI-01 / LO-01).
+			$members_by_cluster = self::densify_members_by_cluster(
+				$cluster_uuids,
+				$this->members_repo->list_for_cluster_uuids(
+					$cluster_uuids,
+					IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+				)
+			);
 		}
 
 		return array(
@@ -59,5 +68,29 @@ class ClusterFacade {
 			'members'  => $members_by_cluster,
 			'singleton_count' => $singleton_count,
 		);
+	}
+
+	/**
+	 * Expand a sparse members-by-cluster map to one key per requested uuid.
+	 *
+	 * @param array<int,string> $cluster_uuids
+	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
+	 * @return array<string,array<int,array<string,mixed>>>
+	 */
+	public static function densify_members_by_cluster( array $cluster_uuids, array $members_by_cluster ): array {
+		$dense = array();
+		foreach ( $cluster_uuids as $uuid ) {
+			$uuid = trim( (string) $uuid );
+			if ( '' === $uuid ) {
+				continue;
+			}
+			if ( isset( $members_by_cluster[ $uuid ] ) && is_array( $members_by_cluster[ $uuid ] ) ) {
+				$dense[ $uuid ] = $members_by_cluster[ $uuid ];
+			} else {
+				$dense[ $uuid ] = array();
+			}
+		}
+
+		return $dense;
 	}
 }

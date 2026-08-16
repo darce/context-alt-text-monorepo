@@ -39,11 +39,6 @@
     }
   }
 
-  &__thumb-fallback-label {
-    display: inline-block;
-    overflow-wrap: anywhere;
-  }
-
   &__count {
     margin-left: -10px;
     background-color: var(--acx-gray-100);
@@ -325,6 +320,12 @@
   &__match-score-band {
     white-space: nowrap;
   }
+
+  &__at-rest-hint {
+    margin: var(--acx-space-4) 0 0;
+    font-size: var(--acx-text-2xs);
+    color: var(--acx-color-text-muted);
+  }
 }
 
 .acx-anchor-modal {
@@ -438,7 +439,7 @@
   }
 
   &__chevron {
-    font-size: 8px; // E21-4 disposition: icon/micro geometry, below type ladder
+    font-size: var(--acx-text-icon);
     color: var(--acx-gray-400);
   }
 
@@ -458,7 +459,7 @@
     font-weight: var(--acx-font-weight-semibold);
     color: var(--acx-color-text-muted);
     text-transform: uppercase;
-    font-size: 9px; // E21-4 disposition: icon/micro geometry, below type ladder
+    font-size: var(--acx-text-micro);
     letter-spacing: 0.05em;
     margin-top: 8px;
     padding-bottom: 4px;

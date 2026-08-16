@@ -1,7 +1,23 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
+import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { formatTimestamp } from '../../utils/formatTimestamp';
+import { FaceLightbox } from '../../../components/ui/FaceLightbox';
+import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
+import { isCroppableBbox } from '../../../components/ui/faceGeometry';
+import type { BoundingBox } from '../../api/recognition/types/identity';
+import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
+import { useAriaAnnounce } from './hooks/useAriaAnnounce';
+import { PIN_REPRESENTATIVE_ERROR_COPY, usePinRepresentative } from './hooks/usePinRepresentative';
+import { useRosterFaceCursor } from './hooks/useRosterFaceCursor';
+import { useRosterFaceRoute } from './hooks/useRosterFaceRoute';
+import { rosterFaceDomId } from './faceDomId';
+import { PersonFaceFilmstrip } from './PersonFaceFilmstrip';
+import { PersonFaceMetadataPanel } from './PersonFaceMetadataPanel';
+import { PersonFacePreview } from './PersonFacePreview';
+import { collectPersonFaces } from './personFaces';
+import { getSelectedFaceMetadataLines } from './similarityCopy';
 
 const QUEUE_SECTIONS = [
   {
@@ -26,38 +42,59 @@ const QUEUE_SECTIONS = [
 
 const EVIDENCE_IMAGE_SIZE = 96;
 
-interface EvidenceMetadata {
-  similarity: number | null;
-  similarity_threshold?: number | null;
+interface LightboxSelection {
+  mediaUrl: string;
+  bbox: BoundingBox;
+  label: string;
 }
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
-
-const formatEvidencePercent = (value: number, fractionDigits = 0): string =>
-  `${(value * 100).toFixed(fractionDigits)}%`;
-
-const getEvidenceMetadataLines = (evidence: EvidenceMetadata | null | undefined): string[] => {
-  if (!evidence) {
-    return [];
+const renderEvidenceMedia = ({
+  mediaUrl,
+  bbox,
+  alt,
+  onOpenLightbox,
+}: {
+  mediaUrl: string | null | undefined;
+  bbox: RosterEntryInstance['bbox'];
+  alt: string;
+  onOpenLightbox: (selection: LightboxSelection) => void;
+}): React.JSX.Element => {
+  if (typeof mediaUrl === 'string' && mediaUrl.length > 0 && isCroppableBbox(bbox)) {
+    return (
+      <button
+        type="button"
+        aria-label={alt}
+        onClick={() => onOpenLightbox({ mediaUrl, bbox, label: alt })}
+      >
+        <FaceThumbnail
+          mediaUrl={mediaUrl}
+          bbox={bbox}
+          sizePx={EVIDENCE_IMAGE_SIZE}
+          shape="square"
+          alt={alt}
+          loading="lazy"
+        />
+      </button>
+    );
   }
 
-  const lines: string[] = [];
-
-  if (isFiniteNumber(evidence.similarity)) {
-    lines.push(`${formatEvidencePercent(evidence.similarity)} ${__('similarity', 'alt-context')}`);
-  } else {
-    lines.push(__('Similarity pending next projection refresh.', 'alt-context'));
+  if (typeof mediaUrl === 'string' && mediaUrl.length > 0) {
+    return (
+      <img
+        src={mediaUrl}
+        alt={alt}
+        width={EVIDENCE_IMAGE_SIZE}
+        height={EVIDENCE_IMAGE_SIZE}
+        loading="lazy"
+      />
+    );
   }
 
-  const thresholdParts: string[] = [];
-  if (isFiniteNumber(evidence.similarity_threshold)) {
-    thresholdParts.push(`${__('Threshold', 'alt-context')} ${formatEvidencePercent(evidence.similarity_threshold, 1)}`);
-  }
-  if (thresholdParts.length > 0) {
-    lines.push(thresholdParts.join(' · '));
-  }
-
-  return lines;
+  return (
+    <div role="img" aria-label={alt}>
+      {__('No image', 'alt-context')}
+    </div>
+  );
 };
 
 interface PersonWorkspacePanelProps {
@@ -68,6 +105,108 @@ interface PersonWorkspacePanelProps {
 export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
   const queueMemberships = new Set(entry.queue_memberships);
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
+  const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
+  const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
+  const faces = React.useMemo(() => collectPersonFaces(entry), [entry]);
+  const visibleIds = React.useMemo(() => faces.map((face) => face.faceId), [faces]);
+  const { requestedFaceId, writeFace } = useRosterFaceRoute();
+  const { selectedId, select } = useRosterFaceCursor(visibleIds, requestedFaceId);
+  const selectedFace = faces.find((face) => face.faceId === selectedId) ?? null;
+  const { pin, isPinning, pinError } = usePinRepresentative();
+  const { message, seq, announce } = useAriaAnnounce();
+  const railRefs = React.useRef(new Map<string, HTMLDivElement>());
+  const railCallbackRefs = React.useRef(new Map<string, (node: HTMLDivElement | null) => void>());
+  const scrollLeftByRailRef = React.useRef(new Map<string, number>());
+  const previousSelectedIdRef = React.useRef<string | null>(selectedId);
+
+  const bindRailRef = React.useCallback((clusterId: string) => {
+    const existing = railCallbackRefs.current.get(clusterId);
+    if (existing) {
+      return existing;
+    }
+    const callback = (node: HTMLDivElement | null): void => {
+      if (node) {
+        railRefs.current.set(clusterId, node);
+        node.scrollLeft = scrollLeftByRailRef.current.get(clusterId) ?? 0;
+        return;
+      }
+      const current = railRefs.current.get(clusterId);
+      if (current) {
+        scrollLeftByRailRef.current.set(clusterId, current.scrollLeft);
+      }
+      railRefs.current.delete(clusterId);
+    };
+    railCallbackRefs.current.set(clusterId, callback);
+    return callback;
+  }, []);
+
+  React.useEffect(() => {
+    setLightbox(null);
+  }, [entryIdentity]);
+
+  React.useEffect(() => {
+    if (requestedFaceId === selectedId) {
+      return;
+    }
+    writeFace(selectedId, personUuid);
+  }, [personUuid, requestedFaceId, selectedId, writeFace]);
+
+  React.useEffect(() => {
+    if (!pinError) {
+      return;
+    }
+    announce(PIN_REPRESENTATIVE_ERROR_COPY);
+  }, [announce, pinError]);
+
+  React.useLayoutEffect(() => {
+    const rails = railRefs.current;
+    const saved = scrollLeftByRailRef.current;
+    rails.forEach((rail, clusterId) => {
+      rail.scrollLeft = saved.get(clusterId) ?? 0;
+    });
+    return () => {
+      rails.forEach((rail, clusterId) => {
+        saved.set(clusterId, rail.scrollLeft);
+      });
+    };
+  });
+
+  React.useEffect(() => {
+    const previousId = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = selectedId;
+    if (!previousId || previousId === selectedId || visibleIds.includes(previousId)) {
+      return;
+    }
+
+    const active = document.activeElement;
+    const focusLostToBody = active === document.body || active === document.documentElement || active === null;
+    const activeInRemovedOption = Boolean(
+      active instanceof HTMLElement && active.id === rosterFaceDomId(previousId),
+    );
+    if (!focusLostToBody && !activeInRemovedOption) {
+      return;
+    }
+
+    const survivingOption = selectedId ? document.getElementById(rosterFaceDomId(selectedId)) : null;
+    const survivingRail = survivingOption?.closest<HTMLElement>('[role="listbox"]');
+    survivingRail?.focus();
+  }, [selectedId, visibleIds]);
+
+  const selectFace = React.useCallback(
+    (faceId: string, railFaceIds: readonly string[]) => {
+      select(faceId);
+      writeFace(faceId, personUuid);
+      const nextIndex = railFaceIds.indexOf(faceId);
+      if (nextIndex >= 0) {
+        announce(
+          sprintf(__('Selected face %d of %d', 'alt-context'), nextIndex + 1, railFaceIds.length),
+        );
+      }
+    },
+    [announce, personUuid, select, writeFace],
+  );
+
+  const canPin = Boolean(selectedFace && !selectedFace.isRepresentative && selectedFace.clusterId);
 
   return (
     <section
@@ -125,67 +264,85 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
 
       <section aria-label={__('Assigned cluster evidence', 'alt-context')} role="region">
         <h4>{__('Assigned cluster evidence', 'alt-context')}</h4>
+        <div className="acx-roster__person-workspace-scrubber">
+          <PersonFacePreview face={selectedFace} onOpenLightbox={setLightbox} />
+          <PersonFaceMetadataPanel face={selectedFace} />
+          <div className="acx-roster__person-workspace-actions">
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              disabled={!canPin || isPinning}
+              onClick={() => {
+                if (!selectedFace) {
+                  return;
+                }
+                pin(selectedFace.clusterId, selectedFace.identityId, true);
+              }}
+            >
+              {__('Set as representative', 'alt-context')}
+            </button>
+            {pinError ? (
+              <UserFacingErrorNotice error={pinError} fallback={PIN_REPRESENTATIVE_ERROR_COPY} />
+            ) : null}
+          </div>
+          <div
+            className="acx-roster__person-workspace-live"
+            role="status"
+            aria-live="polite"
+            aria-label={__('Face selection announcements', 'alt-context')}
+          >
+            {message ? `${message}${seq % 2 === 1 ? '\u200b' : ''}` : null}
+          </div>
+        </div>
         {entry.clusters.length > 0 ? (
           <div>
-            {entry.clusters.map((cluster) => (
-              <section
-                key={cluster.cluster_id}
-                role="region"
-                aria-label={sprintf(__('Cluster %s', 'alt-context'), cluster.cluster_id)}
-              >
-                <h5>{cluster.cluster_id}</h5>
-                <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
-                {cluster.representative_identity?.media_url ? (
-                  <img
-                    src={cluster.representative_identity.media_url}
-                    alt={sprintf(__('Representative face for cluster %s', 'alt-context'), cluster.cluster_id)}
-                    width={EVIDENCE_IMAGE_SIZE}
-                    height={EVIDENCE_IMAGE_SIZE}
-                    loading="lazy"
-                  />
-                ) : (
-                  <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
-                )}
-                {getEvidenceMetadataLines(cluster.representative_identity).map((line) => (
-                  <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
-                ))}
-                <div>
-                  {cluster.instances.map((instance) => (
-                    <figure key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
-                      {instance.media_url ? (
-                        <img
-                          src={instance.media_url}
-                          alt={sprintf(
-                            __('Instance %d for cluster %s', 'alt-context'),
-                            instance.media_id,
-                            cluster.cluster_id,
-                          )}
-                          width={EVIDENCE_IMAGE_SIZE}
-                          height={EVIDENCE_IMAGE_SIZE}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div
-                          aria-label={sprintf(
-                            __('Instance %d for cluster %s', 'alt-context'),
-                            instance.media_id,
-                            cluster.cluster_id,
-                          )}
-                        />
-                      )}
-                      <figcaption>
-                        {sprintf(__('Identity %s · media %d', 'alt-context'), instance.identity_id, instance.media_id)}
-                      </figcaption>
-                      {getEvidenceMetadataLines(instance).map((line) => (
-                        <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
-                          {line}
-                        </div>
-                      ))}
-                    </figure>
+            {entry.clusters.map((cluster, index) => {
+              const clusterLabel = sprintf(__('Cluster %d', 'alt-context'), index + 1);
+              const representativeAlt = sprintf(
+                __('Representative face for Cluster %d', 'alt-context'),
+                index + 1,
+              );
+              const clusterFaces = faces.filter((face) => face.clusterIndex === index);
+              return (
+                <section key={cluster.cluster_id} role="region" aria-label={clusterLabel}>
+                  <h5>{clusterLabel}</h5>
+                  <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
+                  {cluster.representative_identity?.media_url ? (
+                    renderEvidenceMedia({
+                      mediaUrl: cluster.representative_identity.media_url,
+                      bbox: cluster.representative_identity.bbox,
+                      alt: representativeAlt,
+                      onOpenLightbox: setLightbox,
+                    })
+                  ) : (
+                    <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
+                  )}
+                  {getSelectedFaceMetadataLines(cluster.representative_identity).map((line) => (
+                    <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
                   ))}
-                </div>
-              </section>
-            ))}
+                  {clusterFaces.length > 0 ? (
+                    <PersonFaceFilmstrip
+                      faces={clusterFaces}
+                      selectedId={selectedId}
+                      onSelect={selectFace}
+                      railRef={bindRailRef(cluster.cluster_id)}
+                      clusterOrdinal={index + 1}
+                    />
+                  ) : null}
+                  <div>
+                    {cluster.instances.map((instance) => (
+                      <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}`}>
+                        {getSelectedFaceMetadataLines(instance).map((line) => (
+                          <div key={`${cluster.cluster_id}-${instance.identity_id}-${instance.media_id}-${line}`}>
+                            {line}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         ) : (
           <p>{__('Assigned cluster evidence will appear after the next projection refresh.', 'alt-context')}</p>
@@ -232,6 +389,20 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           })}
         </div>
       </section>
+
+      {lightbox ? (
+        <FaceLightbox
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setLightbox(null);
+            }
+          }}
+          mediaUrl={lightbox.mediaUrl}
+          bbox={lightbox.bbox}
+          label={lightbox.label}
+        />
+      ) : null}
     </section>
   );
 };

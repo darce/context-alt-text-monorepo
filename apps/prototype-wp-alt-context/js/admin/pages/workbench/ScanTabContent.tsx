@@ -16,13 +16,12 @@ import {
   WorkbenchFindingsPanel,
   type ReviewQueueHandle,
 } from './identity-clusters';
-import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
-import { MediaSelection } from './MediaSelection';
 import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
+import { useReviewSurface } from './ReviewSurfaceContext';
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -45,7 +44,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
-  const { queueState, setQueueState, mediaExpanded, setMediaExpanded } = useWorkbenchFilters();
+  const { queueState, setQueueState } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
@@ -57,7 +56,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     seq: reviewLifecycleSeq,
     announce: announceReviewLifecycle,
   } = useAriaAnnounce();
-  const findings = useWorkbenchFindings();
 
   const focusQueueRoot = React.useCallback((): void => {
     findingsDetailRef.current?.focus({ preventScroll: true });
@@ -77,12 +75,11 @@ export const ScanTabContent = (): React.JSX.Element => {
     // panel reducer and the mounted review target agree.
     onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
   });
-  const previousHasFindings = React.useRef(findings.hasFindings);
-  // §7 / BR-75/BR-82: the queue reports whether IT owns the viewport's single accent
-  // primary (its card marker or bulk-commit marker). This — not findings totals —
-  // drives footer demotion, so the signal that places the queue's accent marker is the
-  // same one that steps the footer CTAs down (BR-83: this is the ONLY footer input).
-  const [cardPrimaryPresent, setCardPrimaryPresent] = React.useState(false);
+  // §7 / BR-75/BR-82/BR-83: the queue reports whether IT owns the viewport's single accent
+  // primary (its card marker or bulk-commit marker) via the shared ReviewSurfaceContext. The
+  // READER — the media footer's CTA demotion — lives in the sibling library host
+  // (WorkbenchPageContent); ScanTabContent is the SETTER side only (WBUX-5 S1c-2).
+  const { setCardPrimaryPresent } = useReviewSurface();
 
   // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
   const [queueIndex, setQueueIndex] = React.useState(queueState.index);
@@ -99,26 +96,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     setQueueKind(queueState.kind);
     setQueueBand(queueState.band);
   }, [queueState.index, queueState.kind, queueState.band]);
-
-  // Findings-arrival auto-collapse: clear media=expanded so the URL stays honest (NAV-11).
-  React.useEffect(() => {
-    if (findings.hasFindings && !previousHasFindings.current) {
-      setMediaExpanded(false);
-    }
-    previousHasFindings.current = findings.hasFindings;
-  }, [findings.hasFindings, setMediaExpanded]);
-
-  const isMediaCollapsed =
-    findings.hasFindings && !mediaExpanded && !findings.isLoading && !findings.isError && !findings.isUnavailable;
-
-  // §7 media-footer CTA hierarchy (BR-83): the footer steps its CTAs down to secondary
-  // exactly when the QUEUE owns the viewport's single accent primary (`cardPrimaryPresent`
-  // — the queue's card marker or its bulk-commit marker). A label/review panel carries NO
-  // accent marker and unmounts the queue, so on panel-open `cardPrimaryPresent` is false
-  // and the footer keeps its state-selected primary (§7 "no card ⇒ footer owns"). Adding
-  // label-mode / reviewClusterId terms here would demote the footer with nothing left to
-  // own the accent → zero primaries on panel-open, so they are deliberately excluded.
-  const reviewSurfaceActive = cardPrimaryPresent;
 
   const handleIndexChange = React.useCallback(
     (nextIndex: number): void => {
@@ -168,72 +145,123 @@ export const ScanTabContent = (): React.JSX.Element => {
     cancelScan(targets);
   };
 
+  // E21-18 S1 / L3R-03: strip while scanning OR projecting (projection can outlive isScanning).
+  const isJobActive = Boolean(scanRun.isScanning) || status.currentPhase === 'projecting';
+
   return (
     <>
-      <ScanActionPanel scanRun={scanRun} onCancelScan={handleCancelScan} onRetryStream={retryScanStream} />
-      <JobTimeline
-        scanProgress={status.scanProgress}
-        clusterProgress={status.clusterProgress}
-        phase={status.currentPhase}
-        projectionSyncState={status.projectionSyncState}
-      />
-      <ErrorBoundary>
-        <WorkbenchFindingsPanel
-          onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-          onTargetFindings={handleTargetFindings}
-        />
-      </ErrorBoundary>
-      <ScanScrollRestoration />
-      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
-      <ErrorBoundary>
-        <p
-          key={reviewLifecycleSeq}
-          className="acx-review-lifecycle-announce"
-          role="status"
-          aria-live="polite"
-        >
-          {reviewLifecycleMessage}
-        </p>
-        <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
-          {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
-            <ClusterLabelingPanel
-              key={clusterPanel.clusterId}
-              clusterId={clusterPanel.clusterId}
-              onClose={() => dispatchClusterPanel({ type: 'close' })}
-              onLabel={() => {
-                dispatchClusterPanel({ type: 'close' });
-              }}
-            />
-          ) : reviewClusterId !== null ? (
-            <ClusterReviewPanel
-              key={reviewClusterId}
-              clusterId={reviewClusterId}
-              onClose={() => dispatchClusterPanel({ type: 'close' })}
-            />
-          ) : (
-            <ReviewQueue
-              ref={reviewQueueRef}
-              index={queueIndex}
-              onIndexChange={handleIndexChange}
-              kind={queueKind}
-              onKindChange={handleKindChange}
-              band={queueBand}
-              onBandChange={handleBandChange}
-              selectedIds={selectedSuggestionIds}
-              onSelectedIdsChange={setSelectedSuggestionIds}
-              emptyStateAnchorRef={findingsDetailRef}
-              onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-              onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
-              onCardPrimaryPresenceChange={setCardPrimaryPresent}
-            />
-          )}
+      {isJobActive ? (
+        // L3R-01: strip is visual-only — no role="status". Job announcements live on the
+        // demoted panel's phase-stable live region (buildCoarseJobAnnouncement), not statusText ticks.
+        <div className="acx-active-job-strip" data-testid="active-job-strip">
+          <ScanActionPanel
+            variant="compact"
+            scanRun={scanRun}
+            currentPhase={status.currentPhase}
+            onCancelScan={handleCancelScan}
+            onRetryStream={retryScanStream}
+          />
+          <JobTimeline
+            compact
+            scanProgress={status.scanProgress}
+            clusterProgress={status.clusterProgress}
+            phase={status.currentPhase}
+            projectionSyncState={status.projectionSyncState}
+          />
         </div>
-      </ErrorBoundary>
-      <MediaSelection
-        collapsed={isMediaCollapsed}
-        onExpand={() => setMediaExpanded(true)}
-        reviewActive={reviewSurfaceActive}
-      />
+      ) : null}
+
+      <ScanScrollRestoration />
+
+      {/* (b) Review queue promoted to top — named region (L3R-04 / design B.1) */}
+      <section className="acx-workbench-control-queue" aria-labelledby="acx-workbench-queue-heading">
+        <ErrorBoundary>
+          <p
+            key={reviewLifecycleSeq}
+            className="acx-review-lifecycle-announce"
+            role="status"
+            aria-live="polite"
+          >
+            {reviewLifecycleMessage}
+          </p>
+          {/* L3R-08: ReviewQueue owns #acx-workbench-queue-heading; label/review panels do not —
+              supply a stable region heading so aria-labelledby never dangles. */}
+          {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
+              {__('Name this person', 'alt-context')}
+            </h3>
+          ) : reviewClusterId !== null ? (
+            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
+              {__('Review Cluster', 'alt-context')}
+            </h3>
+          ) : null}
+          <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+              <ClusterLabelingPanel
+                key={clusterPanel.clusterId}
+                clusterId={clusterPanel.clusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
+                onLabel={() => {
+                  dispatchClusterPanel({ type: 'close' });
+                }}
+              />
+            ) : reviewClusterId !== null ? (
+              <ClusterReviewPanel
+                key={reviewClusterId}
+                clusterId={reviewClusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
+              />
+            ) : (
+              <ReviewQueue
+                ref={reviewQueueRef}
+                index={queueIndex}
+                onIndexChange={handleIndexChange}
+                kind={queueKind}
+                onKindChange={handleKindChange}
+                band={queueBand}
+                onBandChange={handleBandChange}
+                selectedIds={selectedSuggestionIds}
+                onSelectedIdsChange={setSelectedSuggestionIds}
+                emptyStateAnchorRef={findingsDetailRef}
+                onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+                onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+                onCardPrimaryPresenceChange={setCardPrimaryPresent}
+              />
+            )}
+          </div>
+        </ErrorBoundary>
+      </section>
+
+      {/* (c) Findings demoted below the queue — named region (L3R-04 / design B.1) */}
+      <section className="acx-workbench-control-findings" aria-labelledby="acx-workbench-findings-heading">
+        <ErrorBoundary>
+          <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
+        </ErrorBoundary>
+      </section>
+
+      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
+
+      {/* (d) Scan CTA + full timeline demoted to bottom; reachable from zero state (rg-003) */}
+      <section className="acx-workbench-control-scan" aria-labelledby="acx-workbench-scan-heading">
+        <h3 id="acx-workbench-scan-heading" className="acx-workbench-control-scan__title">
+          {__('Scan', 'alt-context')}
+        </h3>
+        {/* L3R-02: while strip owns progress/cancel/timeline, demoted panel keeps unique detail only. */}
+        <ScanActionPanel
+          scanRun={scanRun}
+          onCancelScan={handleCancelScan}
+          onRetryStream={retryScanStream}
+          suppressPrimaryChrome={isJobActive}
+        />
+        {!isJobActive ? (
+          <JobTimeline
+            scanProgress={status.scanProgress}
+            clusterProgress={status.clusterProgress}
+            phase={status.currentPhase}
+            projectionSyncState={status.projectionSyncState}
+          />
+        ) : null}
+      </section>
     </>
   );
 };

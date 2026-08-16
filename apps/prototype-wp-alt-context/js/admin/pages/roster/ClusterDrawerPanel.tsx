@@ -5,10 +5,22 @@ import type { ClusterIdentity, ClusterSummary } from '../../api/recognition';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { MediaMap } from './hooks/useClusterMediaMap';
 import { mediaEditUrl } from '../../utils/adminUrls';
+import { toRosterPerson } from '../../navigation/appLinks';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import {
+  CLUSTER_DRAWER_STATES,
+  getClusterDrawerState,
+  getClusterPersonUuid,
+} from './clusterDrawerState';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 export interface ClusterReassignTarget {
   id: string;
@@ -52,10 +64,11 @@ const EMPTY_TARGETS: ClusterReassignTarget[] = [];
 const NO_TARGETS_REASON = __('No other clusters available to move this identity into.', 'alt-context');
 const NO_TARGETS_REASON_ID = 'acx-cluster-drawer-no-move-targets-reason';
 
-const clusterTargetLabel = (target: ClusterReassignTarget): string =>
+/** Unlabeled targets: list index (type has no face count). */
+const clusterTargetLabel = (target: ClusterReassignTarget, index: number): string =>
   target.label.trim().length > 0
     ? target.label
-    : sprintf(__('Cluster %s', 'alt-context'), target.id.slice(0, 8));
+    : sprintf(__('Unnamed cluster %d', 'alt-context'), index + 1);
 
 export const ClusterDrawerPanel = ({
   cluster,
@@ -90,6 +103,8 @@ export const ClusterDrawerPanel = ({
   const [newEntryName, setNewEntryName] = React.useState('');
   const [pickerFaceId, setPickerFaceId] = React.useState<string | null>(null);
   const [statusMessage, setStatusMessage] = React.useState('');
+  /** BR-65: bump on every reserved reject so identical copy remounts the live region. */
+  const [statusAnnounceSeq, setStatusAnnounceSeq] = React.useState(0);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const drawerRef = React.useRef<HTMLElement>(null);
   const pickerFirstOptionRef = React.useRef<HTMLButtonElement>(null);
@@ -180,17 +195,24 @@ export const ClusterDrawerPanel = ({
     pendingReassignRef.current = null;
   }, [isReassigning, reassignErrorMessage]);
 
+  /** BR-64: drop only the reserved-reject copy; leave reassign announcements intact. */
+  const clearReservedStatus = React.useCallback(() => {
+    setStatusMessage((current) => (current === RESERVED_LABEL_MESSAGE ? '' : current));
+  }, []);
+
   const handleCreate = (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) {
       return;
     }
 
+    clearReservedStatus();
     setSelectedEntryId('create');
     setNewEntryName(trimmed);
   };
 
   const handleSelectEntry = (nextValue: string) => {
+    clearReservedStatus();
     setSelectedEntryId(nextValue);
     if (nextValue !== 'create') {
       setNewEntryName('');
@@ -233,11 +255,11 @@ export const ClusterDrawerPanel = ({
   );
 
   const handleSelectTarget = React.useCallback(
-    (faceId: string, target: ClusterReassignTarget) => {
+    (faceId: string, target: ClusterReassignTarget, index: number) => {
       if (!onReassignFace) {
         return;
       }
-      const targetLabel = clusterTargetLabel(target);
+      const targetLabel = clusterTargetLabel(target, index);
       pendingReassignRef.current = { faceId, targetLabel };
       setStatusMessage(sprintf(__('Moving identity to %s…', 'alt-context'), targetLabel));
       closePicker(true);
@@ -246,18 +268,14 @@ export const ClusterDrawerPanel = ({
     [closePicker, onReassignFace],
   );
 
-  const selectedEntry = React.useMemo(
-    () => rosterEntries.find((entry) => entry.id.toString() === selectedEntryId) ?? null,
-    [rosterEntries, selectedEntryId],
-  );
-
   if (!cluster) {
     return null;
   }
 
   const isCreatingEntry = selectedEntryId === 'create';
   const canCommit = (isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== '');
-  const selectedPersonUuid = selectedEntry?.person_uuid ?? null;
+  const assignedPersonUuid = getClusterPersonUuid(cluster);
+  const drawerState = getClusterDrawerState(cluster);
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
   const hasReassignTargets = reassignTargets.length > 0;
@@ -270,11 +288,23 @@ export const ClusterDrawerPanel = ({
       return;
     }
 
-    const assignment = isCreatingEntry
-      ? { newEntryName: newEntryName.trim() }
-      : { rosterEntryId: Number.parseInt(selectedEntryId, 10) };
+    if (isCreatingEntry) {
+      const trimmedName = newEntryName.trim();
+      // BR-59: reject reserved machine-shaped create names before commit.
+      if (!isHumanLabeledTarget(trimmedName)) {
+        setStatusMessage(RESERVED_LABEL_MESSAGE);
+        setStatusAnnounceSeq((seq) => seq + 1);
+        return;
+      }
+      // BR-64: clear stale reserved failure once the create path proceeds past the gate.
+      clearReservedStatus();
+      onCommitCluster(cluster, { newEntryName: trimmedName });
+      return;
+    }
 
-    onCommitCluster(cluster, assignment);
+    // BR-64: clear stale reserved failure on select-existing commit past the gate.
+    clearReservedStatus();
+    onCommitCluster(cluster, { rosterEntryId: Number.parseInt(selectedEntryId, 10) });
   };
 
   return (
@@ -283,9 +313,15 @@ export const ClusterDrawerPanel = ({
       <aside className="acx-cluster-drawer" aria-live="polite" ref={drawerRef} onKeyDown={handleDrawerKeyDown}>
         <header className="acx-cluster-drawer__header">
           <div className="acx-cluster-drawer__title-group">
-            <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
+            <span className="acx-cluster-drawer__eyebrow">
+              {drawerState === CLUSTER_DRAWER_STATES.ASSIGNED
+                ? __('Assigned cluster', 'alt-context')
+                : drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL
+                  ? __('Singleton proposal', 'alt-context')
+                  : __('Unresolved cluster', 'alt-context')}
+            </span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label || sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
+              {cluster.label?.trim() ? cluster.label : __('Unnamed cluster', 'alt-context')}
             </h3>
             <ul className="acx-cluster-drawer__meta">
               <li>
@@ -384,7 +420,7 @@ export const ClusterDrawerPanel = ({
                           onKeyDown={handlePickerKeyDown}
                         >
                           {reassignTargets.map((target, index) => {
-                            const label = clusterTargetLabel(target);
+                            const label = clusterTargetLabel(target, index);
                             return (
                               <button
                                 key={target.id}
@@ -392,7 +428,7 @@ export const ClusterDrawerPanel = ({
                                 role="menuitem"
                                 className="acx-cluster-drawer__move-option"
                                 ref={index === 0 ? pickerFirstOptionRef : undefined}
-                                onClick={() => handleSelectTarget(identity.identity_id, target)}
+                                onClick={() => handleSelectTarget(identity.identity_id, target, index)}
                               >
                                 {label}
                               </button>
@@ -417,10 +453,12 @@ export const ClusterDrawerPanel = ({
         </div>
 
         <p
+          key={statusAnnounceSeq}
           className="acx-cluster-drawer__reassign-status"
           role="status"
           aria-live="polite"
           data-testid="cluster-drawer-reassign-status"
+          data-announce-seq={statusAnnounceSeq}
         >
           {statusMessage}
         </p>
@@ -454,6 +492,12 @@ export const ClusterDrawerPanel = ({
             {isRescanning ? __('Rescanning…', 'alt-context') : __('Rescan with sensitive settings', 'alt-context')}
           </button>
         </div>
+
+        {drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL ? (
+          <p className="acx-cluster-drawer__state">
+            {__('This face group is a proposal, not a curated person. Review it before assigning.', 'alt-context')}
+          </p>
+        ) : null}
 
         <div className="acx-cluster-drawer__assignment">
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
@@ -495,18 +539,27 @@ export const ClusterDrawerPanel = ({
                 </>
               )}
             </button>
-            <button
-              type="button"
-              className="acx-button acx-cluster-drawer__workspace-btn"
-              onClick={() => {
-                if (selectedPersonUuid) {
-                  onOpenPersonWorkspace(selectedPersonUuid);
-                }
-              }}
-              disabled={!selectedPersonUuid}
-            >
-              {__('Open person workspace', 'alt-context')}
-            </button>
+            {assignedPersonUuid ? (
+              <a
+                className="acx-button acx-cluster-drawer__workspace-btn"
+                href={toRosterPerson(assignedPersonUuid)}
+                onClick={(event) => {
+                  if (
+                    event.button === 0 &&
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    !event.altKey
+                  ) {
+                    event.preventDefault();
+                    onOpenPersonWorkspace(assignedPersonUuid);
+                    return;
+                  }
+                }}
+              >
+                {__('Open person review', 'alt-context')}
+              </a>
+            ) : null}
           </div>
         </div>
       </aside>

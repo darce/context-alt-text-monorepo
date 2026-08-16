@@ -291,12 +291,12 @@ describe('ClusterDrawerPanel', () => {
     expect(closeButton).toHaveFocus();
   });
 
-  it('opens the selected person workspace when the roster entry has a person_uuid', async () => {
+  it('opens person review from the cluster person_uuid without inventing a picker link', async () => {
     const onOpenPersonWorkspace = vi.fn();
 
     render(
       <ClusterDrawerPanel
-        cluster={makeCluster()}
+        cluster={makeCluster({ person_uuid: 'person-uuid-alex' })}
         identities={[]}
         mediaMap={{}}
         onClose={vi.fn()}
@@ -305,6 +305,35 @@ describe('ClusterDrawerPanel', () => {
         onCommitCluster={vi.fn()}
         onOpenPersonWorkspace={onOpenPersonWorkspace}
         isCommitting={false}
+        rosterEntries={[]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    const reviewLink = screen.getByRole('link', { name: /Open person review/i });
+    await userEvent.click(reviewLink);
+
+    expect(onOpenPersonWorkspace).toHaveBeenCalledWith('person-uuid-alex');
+  });
+
+  it('unresolved cluster with a selected roster entry does not invent a person review link', async () => {
+    render(
+      <ClusterDrawerPanel
+        cluster={makeCluster({ person_uuid: null, identity_count: 3, label: null })}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={vi.fn()}
+        isCommitting={false}
         rosterEntries={[
           {
             id: 42,
@@ -312,12 +341,12 @@ describe('ClusterDrawerPanel', () => {
             name: 'Alex Carter',
             tags: ['event'],
             cluster_count: 3,
+            clusters: [],
+            queue_memberships: [],
             updated_at: '2026-01-01T00:00:00Z',
             source_version: 1,
             projection_status: 'current',
             projection_refreshed_at: '2026-01-01T00:00:00Z',
-            queue_memberships: [],
-            clusters: [],
           },
         ]}
         isDetailLoading={false}
@@ -331,12 +360,9 @@ describe('ClusterDrawerPanel', () => {
     );
 
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
-    const openWorkspaceButton = screen.getByRole('button', { name: /Open person workspace/i });
 
-    expect(openWorkspaceButton).toBeEnabled();
-
-    await userEvent.click(openWorkspaceButton);
-
-    expect(onOpenPersonWorkspace).toHaveBeenCalledWith('person-uuid-alex');
+    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open person review/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
   });
 });

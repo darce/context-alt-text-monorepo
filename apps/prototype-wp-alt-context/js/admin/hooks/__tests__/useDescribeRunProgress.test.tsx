@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useDescribeRunProgress } from '../useDescribeRunProgress';
+import {
+  DESCRIBE_RUN_POLL_INTERVAL_MS,
+  FROZEN_POLL_ESCALATION_THRESHOLD,
+  getDescribeRunRefetchInterval,
+  useDescribeRunProgress,
+} from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
 
@@ -33,6 +38,70 @@ const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
+
+describe('getDescribeRunRefetchInterval (UXP-2-BR-07 pure policy)', () => {
+  const running = runResponse({ status: 'running', completed: 1, total: 4 });
+  const completed = runResponse({ status: 'completed', completed: 4, total: 4 });
+  const timeoutError = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+  const abortError = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+  const hardError = new Error('network down');
+
+  // TEST-15: each branch fails if the corresponding condition is inverted.
+  it('keeps polling through abort-like (timeout) transient errors', () => {
+    expect(
+      getDescribeRunRefetchInterval({
+        status: 'error',
+        error: timeoutError,
+        data: running,
+        frozenPollStreak: 0,
+      }),
+    ).toBe(DESCRIBE_RUN_POLL_INTERVAL_MS);
+  });
+
+  it('keeps polling through abort-like (AbortError) transient errors', () => {
+    expect(
+      getDescribeRunRefetchInterval({
+        status: 'error',
+        error: abortError,
+        data: running,
+        frozenPollStreak: 1,
+      }),
+    ).toBe(DESCRIBE_RUN_POLL_INTERVAL_MS);
+  });
+
+  it('stops polling on terminal completion', () => {
+    expect(
+      getDescribeRunRefetchInterval({
+        status: 'success',
+        error: null,
+        data: completed,
+        frozenPollStreak: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('stops polling on hard (non-abort) errors', () => {
+    expect(
+      getDescribeRunRefetchInterval({
+        status: 'error',
+        error: hardError,
+        data: running,
+        frozenPollStreak: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('stops polling once the frozen-streak bound is reached', () => {
+    expect(
+      getDescribeRunRefetchInterval({
+        status: 'error',
+        error: timeoutError,
+        data: running,
+        frozenPollStreak: FROZEN_POLL_ESCALATION_THRESHOLD,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('useDescribeRunProgress', () => {
   beforeEach(() => {

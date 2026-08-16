@@ -7,6 +7,8 @@ TEST-15: each metric has a can-fail fixture proven to go red.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -54,6 +56,39 @@ def test_detection_spurious_faces_on_empty_image():
     items = [ImageDetection(image="glacier.jpg", pred_faces=2, labeled_faces=0)]
     result = detection_pr(items, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.precision == 0.0
+
+
+def test_matched_faces_is_optional_last_field():
+    import dataclasses
+
+    fields = [f.name for f in dataclasses.fields(ImageDetection)]
+    assert fields[-1] == "matched_faces"
+    row = ImageDetection(image="a.jpg", pred_faces=3, labeled_faces=2)
+    assert row.matched_faces is None
+
+
+@pytest.mark.parametrize(
+    ("matched", "ok", "fp", "fn"),
+    [
+        (0, True, 3, 2),
+        (2, True, 1, 0),
+        (3, False, None, None),
+        (-1, False, None, None),
+        (None, True, 1, 0),
+    ],
+)
+def test_matched_faces_bounds_table(matched, ok, fp, fn):
+    if matched is None:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
+    else:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
+    if not ok:
+        with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
+            detection_pr([item])
+        return
+    result = detection_pr([item])
+    assert result.false_positives == fp
+    assert result.false_negatives == fn
     assert result.recall is None
 
 
@@ -782,3 +817,41 @@ def test_demographic_rollup_strangers_excluded_and_unlabeled_legible():
     # Stranger not counted anywhere.
     total_n = sum(pr.n_named_probes for pr in rollup.by_cohort.values())
     assert total_n == 2
+
+
+# --- FIR-8: optional last-field matched_faces + bounds table ---
+
+
+def test_matched_faces_is_optional_last_field():
+    fields = dataclasses.fields(ImageDetection)
+    assert fields[-1].name == "matched_faces"
+    assert fields[-1].default is None
+    # Positional 3-arg construction must keep working (field added last).
+    row = ImageDetection("a.jpg", 3, 2)
+    assert row.matched_faces is None
+
+
+@pytest.mark.parametrize(
+    ("matched", "expect_ok", "fp", "fn"),
+    [
+        (0, True, 3, 2),   # (i) accepted; neither FP nor FN negative
+        (2, True, 1, 0),   # (ii) upper bound matched == min(pred, labeled) — load-bearing for <= vs <
+        (3, False, None, None),  # (iii) exceeds labeled
+        (-1, False, None, None),  # (iv) below 0
+        (None, True, 1, 0),  # (v) omitted → count-only legacy
+    ],
+)
+def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
+    if matched is None:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
+    else:
+        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
+    if not expect_ok:
+        with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
+            detection_pr([item])
+        return
+    result = detection_pr([item])
+    assert result.false_positives == fp
+    assert result.false_negatives == fn
+    assert result.false_positives >= 0
+    assert result.false_negatives >= 0

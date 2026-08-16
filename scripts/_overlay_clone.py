@@ -14,8 +14,8 @@ Claude/Codex/Cursor/Grok).
 
 `workbay` should own this resolution (expose the overlay home from the install ledger /
 package) so consumers need neither this shim nor hoisted copies of the overlay tooling —
-tracked as a request in docs/workbay/upstream-requests/2026-06-28-…/. This module is the
-thin interim seam until then.
+tracked as a request in agentic-protocol-monorepo/docs/upstream-requests/2026-06-28-…/.
+This module is the thin interim seam until then.
 """
 
 from __future__ import annotations

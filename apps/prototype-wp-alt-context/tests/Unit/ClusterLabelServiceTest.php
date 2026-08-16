@@ -276,6 +276,23 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertSame('missing_label', $response->get_error_code());
     }
 
+    public function testUpdateClusterLabelRejectsReservedLabel(): void
+    {
+        global $wpdb;
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'CLUSTER-9');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('reserved_label', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status']);
+        $this->assertSame('', $this->repository->updatedLabelClusterId);
+        $this->assertNotContains('START TRANSACTION', $wpdb->queries);
+    }
+
     /**
      * BR-11: identical-label resubmit with no person binding still write-throughs.
      * update_label returns 0 (no row change) but resolver/bind must still run.

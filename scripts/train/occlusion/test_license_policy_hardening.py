@@ -487,3 +487,54 @@ class TestRv14UnreadableNodeidBaseline:
         # No errno on UnicodeDecodeError, so the bracket segment must be absent.
         assert err.startswith(f"node-id baseline fixture unreadable: {fixture}: "), err
         assert "codec can't decode" in err, err
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-01 — separator-aligned mid-exception rem must fail closed
+# ---------------------------------------------------------------------------
+
+
+class TestRv301SepAlignedMidExceptionFailClosed:
+    """Junk prefix + exception stem + separator rem must not admit.
+
+    ``yolox_z`` already lands on ``yolox_unknown_residual``. Prefixed
+    twins (``xyolox_z`` / ``xyolox_extra`` / ``xyolox_s_free``) used to
+    hit the ``has_sep`` ``continue`` and fall out as None (permit).
+    """
+
+    DENY: tuple[str, ...] = (
+        "xyolox_z",
+        "xyolox_extra",
+        "xyolox_s_free",
+        "ayolox_z",
+        "myxyolox_z",
+    )
+
+    ADMIT: tuple[str, ...] = (
+        "xyolox_s",
+        "xyolox_tiny",
+        "xyoloxs",
+        "ayolox_tiny",
+        "xyolox_s_trt",
+    )
+
+    @pytest.mark.parametrize("token", DENY)
+    def test_prefixed_sep_unknown_rem_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (separator-aligned mid-exception unknown rem)"
+        )
+        assert hit.package_id == "yolox_unknown_residual", (
+            f"{token!r}: expected yolox_unknown_residual, got {hit.package_id!r}"
+        )
+
+    def test_offset0_yolox_z_still_unknown_residual(self) -> None:
+        hit = policy._package_denylist_hit("yolox_z")
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_prefixed_legit_sep_tag_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must stay ADMIT (legitimate separator rem)"
+        )

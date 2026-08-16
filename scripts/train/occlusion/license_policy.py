@@ -144,8 +144,11 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
              artifact rem (``yolox_z`` / ``yolos_ti``), and junk-prefix
              mid-token exception + unknown rem (F15-5:
              ``xyoloxsextra`` / ``myyoloxsextra`` →
-             ``yolox_unknown_residual``; ``ayoloxs`` / ``xyoloxs``
-             stay admit). R18-01: a deny/NC *stem* glued through
+             ``yolox_unknown_residual``; separator-aligned twins
+             ``xyolox_z`` / ``xyolox_extra`` / ``xyolox_s_free``
+             fail-close the same way — never None; ``ayoloxs`` /
+             ``xyoloxs`` / ``xyolox_s`` / ``xyolox_tiny`` stay admit).
+             R18-01: a deny/NC *stem* glued through
              1–3 junk + exception spelling (``fastsamxyoloxextra`` /
              ``arcfacexyoloxextra``) is owned by that stem — the
              skip is only for an exact folded deny/NC prefix so
@@ -4995,6 +4998,25 @@ def _peel_composed_trailing_rem_segments(
     return None
 
 
+def _token_tail_after_compact_len(token: str, compact_len: int) -> str:
+    """Suffix of ``token`` after the first ``compact_len`` non-``_`` chars.
+
+    Maps a compact-form offset back onto the underscore-preserving token
+    so separator rem (``s_free`` / ``s_trt``) is classified with
+    separator semantics, not the compact-joined remainder.
+    """
+    if compact_len <= 0:
+        return token.lstrip("_")
+    seen = 0
+    for i, ch in enumerate(token):
+        if ch == "_":
+            continue
+        seen += 1
+        if seen == compact_len:
+            return token[i + 1 :].lstrip("_")
+    return ""
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -5169,6 +5191,30 @@ def _compact_mid_exception_deny_adjacency(
                                 )
                             if owned is not None:
                                 return owned
+                    # FIR-7-PANEL-rv3-01: no-owner is not permit. A
+                    # separator-aligned rem after a mid-token exception
+                    # spelling must classify — legitimate tags admit
+                    # (``xyolox_s`` / ``xyolox_tiny``); unknown rem
+                    # fail-closes (``xyolox_z`` / ``xyolox_extra`` /
+                    # ``xyolox_s_free``). Never fall out as None.
+                    if _MID_EXCEPTION_UNKNOWN_REM_ENABLED:
+                        sep_rem = _token_tail_after_compact_len(
+                            token, idx + len(spelling)
+                        )
+                        classify_rem = sep_rem or rem
+                        outcome, entry = _classify_exception_residual(
+                            _seed_c,
+                            _seed_k,
+                            classify_rem,
+                            compact_glue=False,
+                        )
+                        if outcome != _RESIDUAL_LEGITIMATE:
+                            return (
+                                entry
+                                or _unknown_exception_residual_entry(
+                                    _seed_c, classify_rem
+                                )
+                            )
                     start = idx + 1
                     continue
                 deny = _deny_folded_ab_hit(rem)

@@ -449,6 +449,7 @@ test-scripts:
 		scripts/test_remote_gate_guards.py \
 		scripts/train/occlusion/test_license_policy.py \
 		scripts/train/occlusion/test_license_policy_hardening.py \
+		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh

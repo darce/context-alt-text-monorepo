@@ -1,6 +1,18 @@
-# Tech Debt: OPS-1 `acx-backend` host retention hygiene (deferred)
+# Tech Debt: OPS-1 `acx-backend` host retention hygiene (TRIGGERED — no longer deferred)
 
-**Status:** deferred · **Owner:** operator (root timer) + backend (retention policy) · **Origin:** host disk audit, 2026-08-04 — [`docs/operations/acx-backend-host-disk-audit-2026-08-04.md`](../operations/acx-backend-host-disk-audit-2026-08-04.md) findings F3, F4, F5, F7
+**Status:** triggered 2026-08-12 · **Owner:** operator (root timer) + backend (retention policy) · **Origin:** host disk audit, 2026-08-04 — [`docs/operations/acx-backend-host-disk-audit-2026-08-04.md`](../operations/acx-backend-host-disk-audit-2026-08-04.md) findings F3, F4, F5, F7
+
+> **2026-08-12 — the trigger below fired.** Free space hit **31 GB** (threshold: ~40 GB),
+> 63 GB consumed in eight days. A hand reclaim recovered 20 GB; see
+> [`acx-backend-host-disk-audit-2026-08-12.md`](../operations/acx-backend-host-disk-audit-2026-08-12.md)
+> (task `MAINT-oci-disk-hygiene-20260812`).
+>
+> **The trap documented below was tripped during that reclaim.** An age-based
+> `docker image prune -a --filter until=504h` was run despite this item warning against
+> exactly that, collapsing rollback tag history from 23+ tags to 2 and transiently
+> untagging `:latest` / `:dev`. Tags were restored from local image IDs; whether OCIR
+> still holds the deleted `rollback-*` tags is **unverified**. Acceptance criteria 1 and 2
+> are now overdue rather than deferred.
 
 ## What was deferred
 

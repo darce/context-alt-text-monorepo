@@ -361,6 +361,33 @@ class TestGate22PackageDenylistOutranksRegistration:
         result = policy.audit_tooling_row(row)
         assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
 
+    def test_floor_step4_not_door_local_loop_is_gate22(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FIR-7-PANEL-rv1-04: GATE-22 is floor step 4, not the door-local loop.
+
+        ``model_id=ultralytics`` is invisible to the door-local first-wins
+        walk (``package`` / ``package_name`` / ``source``). Dropping
+        ``_floor_package_identity_denylist`` while leaving that loop
+        intact must PASS this row — the mutation the existing 3/3 pins
+        do not catch.
+        """
+        row = {
+            "package": "umap-learn",
+            "model_id": "ultralytics",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+        monkeypatch.setattr(
+            policy, "_floor_package_identity_denylist", lambda *_a, **_k: None
+        )
+        dropped = policy.audit_tooling_row(row)
+        assert dropped.ok is True, (
+            "red-proof: without floor step 4 the door-local loop misses "
+            f"model_id denylist: {dropped.reason} {dropped.detail}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # GATE-23 — synthetic-head exemption must re-check commercial_use every door

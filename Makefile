@@ -138,6 +138,7 @@ help:
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all        - Run all checks (lint + types + tests)"
+	@echo "  make mutation-guard-license-policy - Opt-in remote-VM licence-policy mutation guard (~5h --mutation all)"
 	@echo "  make format-all       - Fix lint + format across all apps and packages (run before check-all)"
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all         - Run linters for all apps and packages"
@@ -453,6 +454,20 @@ test-scripts:
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 
 # Permanent [TEST-15] discrimination guard for the licence/provenance gate.
+# OPT-IN / REMOTE-VM ONLY. Not a prerequisite of test-scripts or check-all:
+# laptop `make test-scripts` / `make check-all` must stay a fast self-checking
+# suite (TEST-01). Standing rule: mutation testing is remote-VM only
+# (CARD-09 / feedback-bounded-waiting). Measured wall clock on a 4-core VM:
+#   ≈5 h  for  --mutation all
+#   ≈12 min per single mutation
+# The default remote-gate workdir is apps/prototype-description-service, so
+# this root target never runs there. Invoke from the monorepo root on the
+# remote VM (do not attach to REMOTE_GATE_TARGETS while workdir is the
+# description service):
+#   make mutation-guard-license-policy
+# or override workdir to the repo root for that run only:
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="mutation-guard-license-policy"
+#
 # test-scripts above proves test_license_policy.py is green; this proves that
 # green can go red. Its victim suite is test_license_policy.py only —
 # test_license_policy_hardening.py is gated by test-scripts but kills no
@@ -472,8 +487,6 @@ test-scripts:
 # still has its shape and its pins, not that the suite was not gutted.
 mutation-guard-license-policy:
 	@python3 scripts/train/occlusion/mutation_guard.py --mutation all
-
-test-scripts: mutation-guard-license-policy
 
 # Unit tests backing check-overrides-digest (incl. the committed-lock
 # consistency regression guard). Also collected by test-scripts in check-all;

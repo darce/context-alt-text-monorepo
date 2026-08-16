@@ -83,7 +83,13 @@ export const IdentityThumbnail = ({
   const [thumbFailed, setThumbFailed] = React.useState(false);
   const [fallbackFailed, setFallbackFailed] = React.useState(false);
   const hostRef = React.useRef<HTMLSpanElement | null>(null);
-  const sourceUrl = mediaMeta?.url ?? identity.attachment_url ?? identity.media_url ?? null;
+  // The sovereign mapper emits bbox in the pixel space of the URL it ships with:
+  // a deleted original degrades both to a surviving sub-size together. Splitting
+  // that pair — mapper bbox against a WP-core media URL, scaled by the original's
+  // dimensions — misplaces the crop, so the mapper URL wins and its bbox is read
+  // in the loaded image's own space [E21-21-BR-01] [rg-015].
+  const mapperUrl = identity.attachment_url ?? identity.media_url ?? null;
+  const sourceUrl = mapperUrl ?? mediaMeta?.url ?? null;
   const cropOwnerId = thumbnailCropOwnerId(identity);
   const dedicatedThumbUrl = isDedicatedFaceThumbUrl(identity.thumb_url) ? (identity.thumb_url ?? null) : null;
   const effectiveThumbUrl = thumbFailed ? null : dedicatedThumbUrl;
@@ -167,8 +173,8 @@ export const IdentityThumbnail = ({
         image: img,
         bbox,
         size,
-        originalWidth: mediaMeta?.width,
-        originalHeight: mediaMeta?.height,
+        originalWidth: mapperUrl ? undefined : mediaMeta?.width,
+        originalHeight: mapperUrl ? undefined : mediaMeta?.height,
         paddingRatio: PADDING_RATIO,
       });
       if (!dataUrl) {
@@ -196,6 +202,7 @@ export const IdentityThumbnail = ({
     identity.bbox,
     identity.media_url,
     isIntersecting,
+    mapperUrl,
     mediaMeta?.height,
     mediaMeta?.url,
     mediaMeta?.width,

@@ -5041,6 +5041,39 @@ def _token_tail_after_compact_len(token: str, compact_len: int) -> str:
     return ""
 
 
+def _mid_exception_r22_sep_rem_fence(
+    token: str, compact_end: int, spelling: str, sep_rem: str
+) -> bool:
+    """True when the R22 fence must skip junk-prefix unknown-rem fail-closed.
+
+    ``xyoloxs_v8`` / ``xyoloxextra_v8`` either glue the first rem char
+    onto the seed or are a single honest-yolo rem after a compact-tag
+    spelling (``yoloxs`` + ``v8``). Separator-aligned multi-segment rem
+    (``xyolox_z_v8``) is never fenced — last-segment honesty is not a
+    skip (FIR-7-PANEL7D-rv3-01 / SECD-05 / CARD-26).
+    """
+    if not token or compact_end <= 0:
+        return False
+    seen = 0
+    for i, ch in enumerate(token):
+        if ch == "_":
+            continue
+        seen += 1
+        if seen == compact_end:
+            nxt = token[i + 1 : i + 2]
+            if nxt and nxt.isalnum():
+                return True
+            break
+    if (
+        sep_rem
+        and "_" not in sep_rem
+        and sep_rem in _HONEST_YOLO_COMPACT_REMS
+        and _is_legitimate_exception_compact_spelling(spelling)
+    ):
+        return True
+    return False
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -5215,20 +5248,19 @@ def _compact_mid_exception_deny_adjacency(
                                 )
                             if owned is not None:
                                 return owned
-                    # FIR-7-PANEL-rv3-01: no-owner is not permit, but
-                    # only for *junk-prefix* + *unknown* rem, and only
-                    # when the peel-owner arms are live (their TEST-15
-                    # red-proofs must still admit when those flags drop).
-                    # Do not steal deny/NC prefix owners, defer/reconst
-                    # rem (suffix steal ``my_yoloxyolo`` → yolo), or a
-                    # trailing composed rem in the honest-yolo / shield
-                    # / family-tag inventories (R22 fence:
-                    # ``xyoloxs_v8`` / ``xyoloxextra_v8``).
-                    if (
-                        _MID_EXCEPTION_UNKNOWN_REM_ENABLED
-                        and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED
-                        and _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED
-                    ):
+                    # FIR-7-PANEL7D-rv3-01 / rv3-02: no-owner is not
+                    # permit for junk-prefix + unknown rem. Fail-closed
+                    # depends only on ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED``
+                    # — peel-owner TEST-15 flags must not re-open
+                    # ``xyolox_z``. Classify the FULL separator rem
+                    # (never last-segment peelable: ``xyolox_z_v8``).
+                    # Skip fail-closed only on legitimate / defer
+                    # outcomes, a whole-rem legitimate residual, or
+                    # the R22 compact-glue / compact-tag-tail fence
+                    # (``xyoloxs_v8`` / ``xyoloxextra_v8``). Reconst
+                    # returns the named deny. Prefix owners are not
+                    # stolen (buffalo / fastsam red-proofs).
+                    if _MID_EXCEPTION_UNKNOWN_REM_ENABLED:  # FIR-7-PANEL7D-rv3-02 sole flag
                         prefix_owned = (
                             _deny_has_folded_ab_claim(prefix)
                             or _mid_exception_prefix_deny_owner(prefix)
@@ -5243,13 +5275,16 @@ def _compact_mid_exception_deny_adjacency(
                                 )
                                 or rem
                             )
-                            last = sep_rem.rsplit("_", 1)[-1]
-                            peelable = last in _HONEST_YOLO_COMPACT_REMS or (
-                                _is_legitimate_residual_segment(
-                                    last, _seed_c
-                                )
-                            )
-                            if not peelable:
+                            # FIR-7-PANEL7D-rv3-01: classify FULL sep_rem
+                            # (not last-segment peelable).
+                            if not _mid_exception_r22_sep_rem_fence(
+                                token,
+                                idx + len(spelling),
+                                spelling,
+                                sep_rem,
+                            ) and not _is_legitimate_residual_segment(
+                                sep_rem, _seed_c
+                            ):
                                 outcome, entry = (
                                     _classify_exception_residual(
                                         _seed_c,
@@ -5265,6 +5300,11 @@ def _compact_mid_exception_deny_adjacency(
                                             _seed_c, sep_rem
                                         )
                                     )
+                                if (
+                                    outcome == _RESIDUAL_DENY_RECONST
+                                    and entry is not None
+                                ):
+                                    return entry
                     start = idx + 1
                     continue
                 deny = _deny_folded_ab_hit(rem)

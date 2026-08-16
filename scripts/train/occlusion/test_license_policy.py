@@ -13732,11 +13732,14 @@ class TestF17UnderscoreNcSeedGluedException:
         Empty-rem R19-01 gadgets and A.3 glued rem stay on their own
         arms.
         """
+        # FIR-7-PANEL7D-rv3-02: peel-owner red-proofs stay on owner-prefix
+        # gadgets whose rem is NOT unknown (``buffalo_lxyolox_v8``).
+        # ``buffalo_lxyolox_extra`` is xyolox_z-shaped unknown rem — the
+        # decoupled fail-closed still DENY when this flag drops.
         gadgets = [
             "buffalo_lxyolox_v8",
             "buffalo_lxyolox:v8",
             "buffalo_lxyolox_tiny",
-            "buffalo_lxyolox_extra",
             "buffalo_lxyolox_onnx",
             "buffalo_lx_yolox_tiny",
             "fastsamxyolox:v8",
@@ -13745,6 +13748,8 @@ class TestF17UnderscoreNcSeedGluedException:
             assert policy._package_denylist_hit(token) is not None, (
                 f"precondition: {token!r} must deny"
             )
+        extra_prod = policy._package_denylist_hit("buffalo_lxyolox_extra")
+        assert extra_prod is not None
         monkeypatch.setattr(
             policy, "_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED", False
         )
@@ -13752,6 +13757,11 @@ class TestF17UnderscoreNcSeedGluedException:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: without separate-rem owner, {token!r} must admit"
             )
+        extra_off = policy._package_denylist_hit("buffalo_lxyolox_extra")
+        assert extra_off is not None, (
+            "unknown rem must stay DENY when peel-owner is off (rv3-02)"
+        )
+        assert extra_off.package_id == "yolox_unknown_residual"
         assert policy._package_denylist_hit("buffalo_lxyolox") is not None
         extra = policy._package_denylist_hit("buffalo_lxyoloxextra")
         assert extra is not None
@@ -13808,11 +13818,20 @@ class TestF17UnderscoreNcSeedGluedException:
         Single-segment R20-01 tails, empty-rem R19-01 gadgets, and A.3
         glued rem stay on their own arms.
         """
-        gadgets = [token for token, _pkg, _axis in self.LISTED_MULTI_SEGMENT_REM]
+        # FIR-7-PANEL7D-rv3-02: only owner-prefix gadgets whose rem is
+        # not unknown stay on this arm. ``extra_v8`` / ``v8_tiny`` are
+        # xyolox_z-shaped and keep fail-closed when this flag drops.
+        gadgets = [
+            "buffalo_lxyolox_onnx_tiny",
+            "buffalo_l2xyolox_onnx_tiny",
+            "fastsamxyolox_v8-3",
+        ]
         for token in gadgets:
             assert policy._package_denylist_hit(token) is not None, (
                 f"precondition: {token!r} must deny"
             )
+        unknown_style = "buffalo_lxyolox_extra_v8"
+        assert policy._package_denylist_hit(unknown_style) is not None
         monkeypatch.setattr(
             policy, "_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED", False
         )
@@ -13820,6 +13839,11 @@ class TestF17UnderscoreNcSeedGluedException:
             assert policy._package_denylist_hit(token) is None, (
                 f"red-proof: without multi-seg rem owner, {token!r} must admit"
             )
+        extra_off = policy._package_denylist_hit(unknown_style)
+        assert extra_off is not None, (
+            "unknown rem must stay DENY when multi-seg peel is off (rv3-02)"
+        )
+        assert extra_off.package_id == "yolox_unknown_residual"
         # R20-01 single-segment rem still denies.
         assert policy._package_denylist_hit("buffalo_lxyolox_v8") is not None
         assert policy._package_denylist_hit("fastsamxyolox:v8") is not None

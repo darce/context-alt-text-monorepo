@@ -51,7 +51,7 @@ uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harnes
 | **2** | argparse |
 | **3** | Detection and/or identification **REFUSED** and no `--allow-refused` |
 
-Partial is checked before refusal, so partial+refused exits **1**. `score-face` has no `--allow-refused` and never exits 3.
+Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.
 
 ### What REFUSED means
 
@@ -71,13 +71,16 @@ The shipped default manifest (`scene/tests/seed/golden.json`) is `roster_only` w
 
 `--allow-refused` does not invent numbers. It only changes the process exit from 3 to 0.
 
-`--allow-refused` help text (from `score --help`):
+`--allow-refused` help text (from `score-face --help`; same flag on `score --help`):
 
 ```
---allow-refused       exit 0 when detection or identification is REFUSED
-                      (roster_only / unboxed identity claims). Default:
-                      refused metrics exit 3 — a missing score is not
-                      clean evaluation evidence
+  --allow-refused [METRIC]
+                        exit 0 for the named refused metric. Repeatable
+                        (--allow-refused=detection --allow-
+                        refused=identification). Bare --allow-refused is
+                        equivalent to naming every metric (detection,
+                        identification). Default: refused metrics exit 3 — a
+                        missing score is not clean evaluation evidence
 ```
 
 ### Worked offline example (no live tenant)

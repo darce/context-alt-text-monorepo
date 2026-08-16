@@ -86,9 +86,9 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # identical); run/report/md moved. Digests from sha256sum of generator output.
 _FROZEN_DIGESTS = {
     _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
-    _RUN.name: "f0e8298a96df12c6ea114c05a65158abe2bba24b6362407594a9d71354e384db",
-    _REPORT_JSON.name: "b6d6b88534a6616546eaaebda4120c2196d5d1e7abd9ddf454ee92cfd2bf4524",
-    _REPORT_MD.name: "b739f5ea10fb661f4667d283b28c93ab261e4466c1c40e1f7c5b112ea4852b26",
+    _RUN.name: "99c108a74064df76bca7101bb066b9a1a36ea50c7c85d99fddf4f86d24fbd202",
+    _REPORT_JSON.name: "9755611fdf8002e11c0e642775919a75257ea8bdf57c8e70ab29f135afca9016",
+    _REPORT_MD.name: "851039608dccb4c18302c89b0b4284decd2464ae2a6e26e10aea3af0f4d9489e",
 }
 
 
@@ -433,7 +433,7 @@ def test_fixture_local_detection_caveat_present_and_disappears_without_affects()
     assert "fn=5 includes misses from 2 deliberate trap media" in md
     # Defect pin: N is trap MEDIA. "{n} of fn=" reads as an FN share (rg-015).
     assert "2 of fn=" not in md
-    assert "the attributable FN share is not derivable from this table" in md
+    assert "the FN share attributable to them is not derivable from this table" in md
     assert "synthetic determinism anchor (11 images)" in md
 
     record = json.loads(_RUN.read_text())
@@ -454,7 +454,7 @@ def test_fixture_local_detection_caveat_present_and_disappears_without_affects()
     )
     assert "fn=5 includes misses from 2 deliberate trap media" in live_md
     assert "2 of fn=" not in live_md
-    assert "the attributable FN share is not derivable from this table" in live_md
+    assert "the FN share attributable to them is not derivable from this table" in live_md
 
     for trap in traps:
         trap.pop("affects", None)

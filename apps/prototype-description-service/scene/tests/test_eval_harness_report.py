@@ -4487,7 +4487,7 @@ def test_fixture_local_detection_caveat_filters_on_affects_only():  # VLM6-R2-C-
     assert "fn=5 includes misses from 1 deliberate trap media" in line
     # Defect pin: N is trap MEDIA. "{n} of fn=" reads as an FN share (rg-015).
     assert "1 of fn=" not in line
-    assert "the attributable FN share is not derivable from this table" in line
+    assert "the FN share attributable to them is not derivable from this table" in line
     assert "99 `fixture/trap-a.jpg`" in line
     assert "y-missing-mixed-order.jpg" not in line
     assert "synthetic determinism anchor (11 images)" in line

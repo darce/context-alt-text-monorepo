@@ -35,6 +35,21 @@ from typing import Any
 
 import numpy as np
 
+from .manifest import AnnotationMode, ManifestError, ScoreInvariant, parse_annotation_mode
+
+# Re-exports of the canonical ScoreInvariant members. New call sites should
+# import ScoreInvariant directly.
+IDENTIFICATION_UNBOXED_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+)
+DETECTION_UNCOVERED_FACE_COUNT_INVARIANT = (
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
+)
+DETECTION_EMPTY_OBSERVATIONS_INVARIANT = ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS
+IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT = (
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS
+)
+
 # Clustering pair floors + degenerate guard (§F).
 CLUSTER_PAIR_FLOOR = 20
 # Unknown-rejection n floor: Wilson 95% half-width ≤ ~15% at p̂=0.5
@@ -550,11 +565,30 @@ class PrResult:
         return sum(values) / len(values) if values else None
 
 
-def detection_pr(items: Sequence[ImageDetection]) -> PrResult:
+def detection_pr(
+    items: Sequence[ImageDetection],
+    *,
+    annotation_mode: AnnotationMode | str | None = None,
+) -> PrResult:
     """Count-based detection P/R: per image TP=min(pred,labeled), overshoot=FP, undershoot=FN.
 
     When ``matched_faces`` is set, TP is the IoU-matched count (FIR-8 localization pin).
+    Refuses unless the resolved mode *is* ``AnnotationMode.EXHAUSTIVE``.
+    Omission, null, empty, unknown, and ``roster_only`` all raise
+    ``ManifestError`` with a named invariant — there is no permissive default.
     """
+    mode = parse_annotation_mode(annotation_mode)
+    if mode is None:
+        raise ManifestError(
+            "detection_pr requires annotation_mode; omission is not exhaustive",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
+        )
+    if mode is not AnnotationMode.EXHAUSTIVE:
+        raise ManifestError(
+            "detection_pr refuses roster_only manifests; unlabeled non-roster "
+            "faces would be scored as false positives",
+            invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
+        )
     tp = fp = fn = 0
     for item in items:
         if item.matched_faces is None:
@@ -570,6 +604,97 @@ def detection_pr(items: Sequence[ImageDetection]) -> PrResult:
         fp += max(item.pred_faces - matched, 0)
         fn += max(item.labeled_faces - matched, 0)
     return PrResult(true_positives=tp, false_positives=fp, false_negatives=fn)
+
+
+def boxed_identity_names(entry: Mapping[str, Any]) -> frozenset[str]:
+    """Names that have a per-face box. Unnamed boxes are detection-only."""
+    names: set[str] = set()
+    for box in entry.get("face_boxes") or []:
+        name = box.get("name") if isinstance(box, Mapping) else getattr(box, "name", None)
+        if name:
+            names.add(str(name))
+    return frozenset(names)
+
+
+def unboxed_identity_claims(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Identity claims in ``present_identities`` with no matching named box."""
+    boxed = boxed_identity_names(entry)
+    return tuple(
+        str(name) for name in (entry.get("present_identities") or []) if str(name) not in boxed
+    )
+
+
+def require_exhaustive_box_coverage(entries: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse exhaustive detection when boxes cannot witness ``face_count``.
+
+    An ``exhaustive`` stamp whose ``len(face_boxes) != face_count`` is not a
+    coverage witness. Load-time already checks this; the raw-mapping lattice
+    must not trust the stamp alone (S2R4-04).
+    """
+    holes: list[str] = []
+    first_index: int | None = None
+    first_path: str | None = None
+    for index, entry in enumerate(entries):
+        # Absent key ≡ empty list. Fusion flatten and GoldenEntry.model_dump
+        # both emit face_boxes; a raw mapping that omits it cannot witness
+        # face_count (S2R5-07). 0 boxes vs face_count=0 is covered, not a hole.
+        n_boxes = len(entry.get("face_boxes") or [])
+        face_count = int(entry.get("face_count") or 0)
+        if n_boxes == face_count:
+            continue
+        path = str(entry.get("path", f"entry[{index}]"))
+        if first_index is None:
+            first_index = index
+            first_path = path
+        holes.append(f"{path} len(face_boxes)={n_boxes} != face_count={face_count}")
+    if holes:
+        raise ManifestError(
+            "detection P/R cannot be computed from an exhaustive stamp whose "
+            "boxes do not cover face_count: " + "; ".join(holes),
+            invariant=DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            entry_index=first_index,
+            entry_path=first_path,
+        )
+
+
+def _recognition_enabled(entry: Mapping[str, Any]) -> bool:
+    """Match identification_pr: policy-disabled rows are not live claims."""
+    policy = entry.get("policy") or {}
+    if isinstance(policy, Mapping):
+        return bool(policy.get("recognition_enabled", True))
+    return bool(getattr(policy, "recognition_enabled", True))
+
+
+def require_boxed_identification_gt(entries: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse identification scoring when any claim lacks per-face box lineage.
+
+    Does not drop the unboxed entries from the denominator and does not
+    substitute 0.0 — the metric is not computable honestly (EVAL-03).
+    Policy-disabled rows are not live claims (same population as
+    identification_pr) and must not refuse an otherwise boxed score (S2R4-06).
+    """
+    holes: list[str] = []
+    first_index: int | None = None
+    first_path: str | None = None
+    for index, entry in enumerate(entries):
+        if not _recognition_enabled(entry):
+            continue
+        unboxed = unboxed_identity_claims(entry)
+        if not unboxed:
+            continue
+        path = str(entry.get("path", f"entry[{index}]"))
+        if first_index is None:
+            first_index = index
+            first_path = path
+        holes.append(f"{path} unboxed={list(unboxed)}")
+    if holes:
+        raise ManifestError(
+            "identification P/R cannot be computed from identity claims that "
+            "carry no per-face box lineage: " + "; ".join(holes),
+            invariant=IDENTIFICATION_UNBOXED_INVARIANT,
+            entry_index=first_index,
+            entry_path=first_path,
+        )
 
 
 def identification_pr(items: Sequence[ImageIdentities]) -> PrResult:

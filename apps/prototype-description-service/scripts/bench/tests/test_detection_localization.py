@@ -5,9 +5,39 @@ from __future__ import annotations
 from scripts.bench.export_map import match_detection_boxes
 from scripts.eval_harness.face_assignment import IOU_MATCH_THRESHOLD
 from scripts.eval_harness.face_metrics import ImageDetection, detection_pr
-from scripts.eval_harness.manifest import FaceBox
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    FaceBox,
+    LabelConfidence,
+    LabelDecision,
+    LabelLineage,
+    LabelSource,
+    SUPPORTED_MANIFEST_VERSION,
+)
 
-GT = [FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")]
+_BENCH_LINEAGE = LabelLineage(
+    labeler_id="bench-test",
+    batch_id="fir-11-bench-v3",
+    capture_session_id="bench-test-session",
+    pass_index=0,
+    labeled_at="2026-08-16T00:00:00Z",
+    tool_version="bench-test",
+    saw_machine_proposals=False,
+    label_source=LabelSource.GOLD_REFERENCE,
+    decision=LabelDecision.NAMED,
+    confidence=LabelConfidence.HIGH,
+)
+GT = [
+    FaceBox(
+        x=0.5,
+        y=0.5,
+        w=0.2,
+        h=0.2,
+        name="Alice Q",
+        source="iptc",
+        lineage=_BENCH_LINEAGE,
+    )
+]
 W = H = 1000
 
 
@@ -21,7 +51,8 @@ def test_green_exact_overlap_matches() -> None:
     assert result.matched_faces == 1
     assert result.iou_values[0] == 1.0
     scored = detection_pr(
-        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=result.matched_faces)]
+        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=result.matched_faces)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
     )
     assert scored.true_positives == 1
     assert scored.false_positives == 0
@@ -29,6 +60,12 @@ def test_green_exact_overlap_matches() -> None:
 
 
 def test_red_translation_unmatched_count_only_perfect() -> None:
+    """IoU miss is FP+FN; count-only (no matched_faces) stays perfect.
+
+    Count-only arithmetic is TP=min(pred, labeled). The test declares
+    exhaustive because omission is not exhaustive — this is count math
+    on a fully-boxed image, not roster_only ground truth.
+    """
     result = match_detection_boxes(
         GT,
         [{"x": 700, "y": 400, "width": 200, "height": 200}],
@@ -37,11 +74,15 @@ def test_red_translation_unmatched_count_only_perfect() -> None:
     )
     assert result.matched_faces == 0
     matched = detection_pr(
-        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=result.matched_faces)]
+        [ImageDetection("img", pred_faces=1, labeled_faces=1, matched_faces=result.matched_faces)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
     )
     assert matched.false_positives == 1
     assert matched.false_negatives == 1
-    count_only = detection_pr([ImageDetection("img", pred_faces=1, labeled_faces=1)])
+    count_only = detection_pr(
+        [ImageDetection("img", pred_faces=1, labeled_faces=1)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+    )
     assert count_only.true_positives == 1
     assert count_only.precision == 1.0
     assert count_only.recall == 1.0
@@ -96,8 +137,12 @@ def test_degenerate_leading_gt_indices_stay_on_original_list() -> None:
     from scripts.bench.export_map import to_face_metric_inputs
     from scripts.eval_harness.manifest import EntryPolicy, GoldenEntry, GoldenManifest
 
-    degenerate = FaceBox(x=0.0, y=0.0, w=0.0, h=0.0, name="Ghost", source="iptc")
-    real = FaceBox(x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc")
+    degenerate = FaceBox(
+        x=0.0, y=0.0, w=0.0, h=0.0, name="Ghost", source="iptc", lineage=_BENCH_LINEAGE
+    )
+    real = FaceBox(
+        x=0.5, y=0.5, w=0.2, h=0.2, name="Alice Q", source="iptc", lineage=_BENCH_LINEAGE
+    )
     result = match_detection_boxes(
         [degenerate, real],
         [{"x": 400, "y": 400, "width": 200, "height": 200}],
@@ -107,7 +152,8 @@ def test_degenerate_leading_gt_indices_stay_on_original_list() -> None:
     assert result.matched_faces == 1
     assert result.matched_gt_indices == [1]
     manifest = GoldenManifest(
-        manifest_version=2,
+        manifest_version=SUPPORTED_MANIFEST_VERSION,
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
         roster=["Ghost", "Alice Q"],
         entries=[
             GoldenEntry(

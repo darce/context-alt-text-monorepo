@@ -2,6 +2,8 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { MediaMeta } from '../../api/mediaApi';
+import { cropFaceFromImage } from '../../../components/ui/cropFaceFromImage';
+import { isDedicatedFaceThumbUrl } from '../../../components/ui/isDedicatedFaceThumbUrl';
 
 /**
  * Structural minimum IdentityThumbnail actually reads.
@@ -13,6 +15,8 @@ export interface ThumbnailIdentity {
   media_id: number;
   identity_id?: string;
   thumb_url?: string | null;
+  /** Durable WP attachment URL used to crop after scan-time blobs expire. */
+  attachment_url?: string | null;
   /** Full-media URL when no dedicated thumb_url (RosterEntryInstance path). */
   media_url?: string | null;
   /** Pixel-space face bbox. Null/absent → no canvas crop. */
@@ -76,13 +80,31 @@ export const IdentityThumbnail = ({
 }: IdentityThumbnailProps): React.JSX.Element => {
   const [cropped, setCropped] = React.useState<OwnedCrop | null>(null);
   const [isIntersecting, setIsIntersecting] = React.useState(false);
+  const [thumbFailed, setThumbFailed] = React.useState(false);
+  const [fallbackFailed, setFallbackFailed] = React.useState(false);
   const hostRef = React.useRef<HTMLSpanElement | null>(null);
-  const sourceUrl = mediaMeta?.url ?? identity.media_url ?? null;
+  // The sovereign mapper emits bbox in the pixel space of the URL it ships with:
+  // a deleted original degrades both to a surviving sub-size together. Splitting
+  // that pair — mapper bbox against a WP-core media URL, scaled by the original's
+  // dimensions — misplaces the crop, so the mapper URL wins and its bbox is read
+  // in the loaded image's own space [E21-21-BR-01] [rg-015].
+  const mapperUrl = identity.attachment_url ?? identity.media_url ?? null;
+  const sourceUrl = mapperUrl ?? mediaMeta?.url ?? null;
   const cropOwnerId = thumbnailCropOwnerId(identity);
+  const dedicatedThumbUrl = isDedicatedFaceThumbUrl(identity.thumb_url) ? (identity.thumb_url ?? null) : null;
+  const effectiveThumbUrl = thumbFailed ? null : dedicatedThumbUrl;
 
-  // Canvas crop path only (no thumb_url). thumb_url / bare media_url skip the
-  // observer and do not construct Image(). Zero-area bbox is not usable.
-  const needsCanvasCrop = !identity.thumb_url && Boolean(sourceUrl) && isUsableBbox(identity.bbox);
+  React.useEffect(() => {
+    setThumbFailed(false);
+  }, [identity.thumb_url]);
+
+  React.useEffect(() => {
+    setFallbackFailed(false);
+  }, [sourceUrl, cropOwnerId]);
+
+  // Canvas crop path only (no usable thumb_url). Dedicated blob errors fall
+  // through here via thumbFailed so attachment_url + bbox can still paint.
+  const needsCanvasCrop = !effectiveThumbUrl && Boolean(sourceUrl) && isUsableBbox(identity.bbox);
 
   React.useEffect(() => {
     if (!needsCanvasCrop) {
@@ -113,7 +135,7 @@ export const IdentityThumbnail = ({
   }, [needsCanvasCrop]);
 
   React.useEffect(() => {
-    if (identity.thumb_url) {
+    if (effectiveThumbUrl) {
       setCropped(null);
       return;
     }
@@ -147,58 +169,19 @@ export const IdentityThumbnail = ({
         return;
       }
 
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
+      const dataUrl = cropFaceFromImage({
+        image: img,
+        bbox,
+        size,
+        originalWidth: mapperUrl ? undefined : mediaMeta?.width,
+        originalHeight: mapperUrl ? undefined : mediaMeta?.height,
+        paddingRatio: PADDING_RATIO,
+      });
+      if (!dataUrl) {
         setCropped({ ownerId, src: sourceUrl });
         return;
       }
-
-      const naturalWidth = img.naturalWidth || img.width;
-      const naturalHeight = img.naturalHeight || img.height;
-      const originalWidth = mediaMeta?.width ?? naturalWidth;
-      const originalHeight = mediaMeta?.height ?? naturalHeight;
-      const scaleX = naturalWidth / originalWidth || 1;
-      const scaleY = naturalHeight / originalHeight || 1;
-
-      const scaledX = bbox.x * scaleX;
-      const scaledY = bbox.y * scaleY;
-      const scaledWidth = bbox.width * scaleX;
-      const scaledHeight = bbox.height * scaleY;
-
-      const paddingX = scaledWidth * PADDING_RATIO;
-      const paddingY = scaledHeight * PADDING_RATIO;
-
-      const expandedX = Math.max(0, scaledX - paddingX);
-      const expandedY = Math.max(0, scaledY - paddingY);
-      const expandedWidth = scaledWidth + 2 * paddingX;
-      const expandedHeight = scaledHeight + 2 * paddingY;
-
-      const centerX = expandedX + expandedWidth / 2;
-      const centerY = expandedY + expandedHeight / 2;
-
-      const squareSize = Math.max(expandedWidth, expandedHeight);
-      const maxSx = Math.max(0, naturalWidth - squareSize);
-      const maxSy = Math.max(0, naturalHeight - squareSize);
-
-      const sx = clamp(centerX - squareSize / 2, 0, maxSx);
-      const sy = clamp(centerY - squareSize / 2, 0, maxSy);
-      const sWidth = Math.min(squareSize, naturalWidth - sx);
-      const sHeight = Math.min(squareSize, naturalHeight - sy);
-
-      const scale = size / Math.max(sWidth, sHeight);
-      const destWidth = sWidth * scale;
-      const destHeight = sHeight * scale;
-
-      const dx = (size - destWidth) / 2;
-      const dy = (size - destHeight) / 2;
-
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(img, sx, sy, sWidth, sHeight, dx, dy, destWidth, destHeight);
-      setCropped({ ownerId, src: canvas.toDataURL('image/jpeg', 0.92) });
+      setCropped({ ownerId, src: dataUrl });
     };
 
     // Assign handlers before src so load/error cannot race past the bindings.
@@ -215,10 +198,11 @@ export const IdentityThumbnail = ({
     };
   }, [
     cropOwnerId,
-    identity.thumb_url,
+    effectiveThumbUrl,
     identity.bbox,
     identity.media_url,
     isIntersecting,
+    mapperUrl,
     mediaMeta?.height,
     mediaMeta?.url,
     mediaMeta?.width,
@@ -232,8 +216,10 @@ export const IdentityThumbnail = ({
   // Ignore a previous identity's crop on this render — effect cleanup is
   // post-paint and would leak one frame [WBUX-5-R2-S3-BR-01].
   const croppedSrc = cropped !== null && cropped.ownerId === cropOwnerId ? cropped.src : null;
-  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? (needsCanvasCrop ? null : sourceUrl);
+  const fallbackSrc = needsCanvasCrop ? croppedSrc : sourceUrl;
+  const resolvedSrc = effectiveThumbUrl ?? (fallbackFailed ? null : fallbackSrc);
   const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
+  const imageFailedLabel = __('Image failed to load', 'alt-context');
 
   if (!resolvedSrc) {
     // Sized via the size prop (inline, no CSS file) so rows with/without faces
@@ -253,8 +239,10 @@ export const IdentityThumbnail = ({
     // [A11Y-11] [A11Y-12]. Decorative alt="" and genuinely-missing media must
     // NOT be buttons: an aria-hidden control that still fires onClick violates
     // keyboard operability and name/role/value [WBUX-5-D-03] [A11Y-04].
-    const pendingCrop = needsCanvasCrop && !croppedSrc;
+    const pendingCrop = needsCanvasCrop && !croppedSrc && !fallbackFailed;
     const namedPending = pendingCrop && resolvedAlt !== '';
+    const claimedThenFailed = Boolean(dedicatedThumbUrl) && thumbFailed && !pendingCrop;
+    const loudError = (claimedThenFailed || fallbackFailed) && resolvedAlt !== '';
     const boxStyle: React.CSSProperties = {
       width: size,
       height: size,
@@ -262,6 +250,21 @@ export const IdentityThumbnail = ({
       verticalAlign: 'middle',
       flexShrink: 0,
     };
+    if (loudError) {
+      return (
+        <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+          <div
+            className="acx-cluster-card__face--placeholder"
+            role="img"
+            aria-label={imageFailedLabel}
+            data-face-error="true"
+            style={boxStyle}
+          >
+            {imageFailedLabel}
+          </div>
+        </span>
+      );
+    }
     if (onClick && namedPending) {
       return (
         <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
@@ -311,10 +314,15 @@ export const IdentityThumbnail = ({
         data-identity-id={identity.identity_id}
         data-media-id={identity.media_id}
         onClick={onClick}
+        onError={() => {
+          if (effectiveThumbUrl) {
+            setThumbFailed(true);
+            return;
+          }
+          setFallbackFailed(true);
+        }}
         loading="lazy"
       />
     </span>
   );
 };
-
-const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));

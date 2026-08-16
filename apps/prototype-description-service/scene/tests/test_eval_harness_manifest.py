@@ -10,20 +10,47 @@ import pytest
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    AnnotationMode,
     GoldenEntry,
     GoldenManifest,
     ManifestError,
     ReferenceFact,
     RubricEmptyWarning,
+    ScoreInvariant,
     SliceTag,
     load_manifest,
 )
 
 
+_MOCK_PROVENANCE = {
+    "source": "fixture",
+    "license": "fixture",
+    "note": "vendored eval-corpus fixture",
+}
+
+
+def _test_lineage(*, decision: str = "named", capture_session_id: str | None = "test-session") -> dict:
+    """Explicit test lineage — every field comes from this helper (rg-015)."""
+    return {
+        "labeler_id": "test-labeler",
+        "batch_id": "test-batch",
+        "capture_session_id": capture_session_id,
+        "pass_index": 0,
+        "labeled_at": "2026-08-14T00:00:00Z",
+        "tool_version": "test",
+        "saw_machine_proposals": False,
+        "label_source": "operator_blind",
+        "decision": decision,
+        "confidence": "high",
+        "arbitration_of": None,
+    }
+
+
 def _valid_manifest_dict() -> dict:
     img_hash = hashlib.sha256(b"fake image bytes").hexdigest()
     return {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": "roster_only",
         "roster": ["Alice Example", "Bob Example"],
         "entries": [
             {
@@ -37,6 +64,7 @@ def _valid_manifest_dict() -> dict:
                 "must_right": ["Alice Example"],
                 "easy_wrong": ["Bob Example"],
                 "policy": {"recognition_enabled": True},
+                "provenance": dict(_MOCK_PROVENANCE),
             },
             {
                 "path": "mock_images/scene-002.jpg",
@@ -49,6 +77,7 @@ def _valid_manifest_dict() -> dict:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": dict(_MOCK_PROVENANCE),
             },
         ],
     }
@@ -199,11 +228,91 @@ def test_unsupported_manifest_version_rejected(tmp_path):  # S1-04
         load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
-def test_face_count_below_labeled_rejected(tmp_path):  # HARM-04 / S3-01 schema
+def test_face_count_below_labeled_rejected(tmp_path):  # boxes_cover_face_count boxed form
+    """Boxed form: face_count=0 with one named box still fails coverage.
+
+    Distinct from present_identities_fit_face_count (unboxed identity claim).
+    """
     data = _valid_manifest_dict()
-    data["entries"][0]["face_count"] = 0  # but present_identities has 1 name
-    with pytest.raises(ManifestError, match="face_count"):
-        load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = []
+    data["entries"][0]["must_right"] = []
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(decision="named"),
+        }
+    ]
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_face_count_below_present_identities_rejected_unboxed(tmp_path):
+    """S2R2-05: face_count=0 + present identity + no boxes is rejected.
+
+    The retired _face_count_covers_labeled predicate. Identification must
+    not treat an unbacked identity claim as labeled ground truth.
+    """
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = ["Alice Example"]
+    data["entries"][0]["face_boxes"] = []
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "present_identities_fit_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_face_count_below_present_identities_rejected_exhaustive(tmp_path):
+    """S2R2-05: same unbacked claim is rejected under exhaustive."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 0
+    data["entries"][0]["present_identities"] = ["Alice Example"]
+    data["entries"][0]["face_boxes"] = []
+    data["entries"][1]["face_count"] = 0
+    data["entries"][1]["face_boxes"] = []
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "present_identities_fit_face_count"
+
+
+def test_face_count_one_two_identities_rejected(tmp_path):
+    """S2R2-05 near-miss: face_count=1, two identities, one box. 1 < 2."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["present_identities"] = ["Alice Example", "Bob Example"]
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(decision="named"),
+        }
+    ]
+    with pytest.raises(ManifestError, match="present_identities_fit_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "present_identities_fit_face_count"
+    assert exc_info.value.entry_index == 0
 
 
 def test_must_right_name_not_in_roster_rejected(tmp_path):  # S1-05
@@ -324,7 +433,8 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
     assert not [w for w in caught if issubclass(w.category, RubricEmptyWarning)], (
         "seed corpus must define Must-Right/Easy-Wrong rubrics (RubricEmptyWarning fired)"
     )
-    assert manifest.manifest_version == 2
+    assert manifest.manifest_version == 3
+    assert manifest.annotation_mode.value == "roster_only"
     for entry in manifest.entries:
         pack = entry.context_pack
         assert pack.title or pack.caption or pack.description, f"{entry.path}: empty context_pack"
@@ -404,7 +514,10 @@ def test_legacy_entry_defaults_additive_fields(tmp_path):
     manifest = load_manifest(_write_manifest(tmp_path, _valid_manifest_dict()), skip_hash_verification=True)
     e = manifest.entries[0]
     assert e.difficulty is None and e.domain is None
-    assert e.reference_facts == [] and e.spatial_facts == [] and e.provenance is None
+    assert e.reference_facts == [] and e.spatial_facts == []
+    # provenance is required (FIR-11 Slice 1); remaining Golden-100 fields still default.
+    assert e.provenance.source.value == "fixture"
+    assert e.provenance.license.value == "fixture"
     # FIR-5 S1 / DATA-03: scalar domain + no tags/demographic_cohort still loads.
     assert e.tags == [] and e.demographic_cohort is None
     assert manifest.roster_cohorts == {}
@@ -453,6 +566,18 @@ def test_spatial_binary_relation_requires_reference(tmp_path):
         load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
+def test_seed_corpus_uses_fixture_provenance():
+    """Vendored seed pixels are fixture/fixture, not operator/mock_entity (PROV-01)."""
+    seed_dir = os.path.join(os.path.dirname(__file__), "seed")
+    for name in ("golden.json", "bakeoff_golden.json"):
+        manifest = load_manifest(os.path.join(seed_dir, name))
+        assert manifest.entries, f"{name} must not be empty"
+        for entry in manifest.entries:
+            assert entry.provenance.source.value == "fixture", entry.path
+            assert entry.provenance.license.value == "fixture", entry.path
+            assert entry.provenance.note == "vendored eval-corpus fixture", entry.path
+
+
 def test_golden38_subset_pin():
     """The historical golden-38 media_ids are frozen (subset-pin, plan S1)."""
     path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
@@ -481,6 +606,7 @@ def test_multi_tag_roundtrip():
         "easy_wrong": [],
         "policy": {"recognition_enabled": True},
         "tags": [SliceTag.MASKED, SliceTag.SUNGLASSES],
+        "provenance": dict(_MOCK_PROVENANCE),
     }
     entry = GoldenEntry.model_validate(payload)
     assert entry.tags == [SliceTag.MASKED, SliceTag.SUNGLASSES]
@@ -523,6 +649,7 @@ def test_unknown_tag_string_rejected_by_slicetag_enum():
         "easy_wrong": [],
         "policy": {"recognition_enabled": True},
         "tags": ["wearing_hat"],  # not a SliceTag member
+        "provenance": dict(_MOCK_PROVENANCE),
     }
     with pytest.raises(ValidationError) as exc_info:
         GoldenEntry.model_validate(payload)
@@ -695,3 +822,248 @@ def test_seed_corpus_inventory_exposes_stratification_gaps_honestly():
         require_metric_backing(manifest, "face_boxes")
     # And accepts a populated one:
     require_metric_backing(manifest, "domain")
+
+
+# --- FIR-11 Slice 2: annotation mode, coverage, lineage ----------------------
+
+
+def test_exhaustive_face_count_mismatch_fails_validation(tmp_path):
+    """Negative: exhaustive face_count=3 with one box fails coverage."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 3
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_roster_only_more_boxes_than_face_count_fails(tmp_path):
+    """roster_only allows fewer boxes than face_count, never more."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "roster_only"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.2,
+            "y": 0.2,
+            "w": 0.1,
+            "h": 0.1,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        },
+        {
+            "x": 0.7,
+            "y": 0.7,
+            "w": 0.1,
+            "h": 0.1,
+            "name": None,
+            "source": "operator",
+            "lineage": _test_lineage(decision="stranger"),
+        },
+    ]
+    with pytest.raises(ManifestError, match="boxes_cover_face_count") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "boxes_cover_face_count"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_box_without_lineage_fails_validation(tmp_path):
+    """Negative: a box without LabelLineage fails (PROV-01)."""
+    data = _valid_manifest_dict()
+    data["entries"][0]["face_boxes"] = [
+        {"x": 0.5, "y": 0.4, "w": 0.2, "h": 0.3, "name": "Alice Example", "source": "operator"}
+    ]
+    with pytest.raises(ManifestError, match="label_lineage_required") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "label_lineage_required"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_exhaustive_box_missing_capture_session_id_fails(tmp_path):
+    """Negative: exhaustive box without capture_session_id fails."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(capture_session_id=None),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    with pytest.raises(ManifestError, match="capture_session_id_required") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    err = exc_info.value
+    assert err.invariant == "capture_session_id_required"
+    assert err.entry_index == 0
+    assert err.entry_path == data["entries"][0]["path"]
+    assert "scene-001.jpg" in str(err)
+
+
+def test_missing_annotation_mode_fails(tmp_path):
+    data = _valid_manifest_dict()
+    del data["annotation_mode"]
+    with pytest.raises(ManifestError, match="annotation_mode is required") as exc_info:
+        load_manifest(_write_manifest(tmp_path, data))
+    assert exc_info.value.invariant == "annotation_mode_required"
+    assert "exhaustive|roster_only" in str(exc_info.value)
+
+
+def test_exhaustive_matching_boxes_loads(tmp_path):
+    """Positive pair: exhaustive with matching count and lineage+session loads."""
+    data = _valid_manifest_dict()
+    data["annotation_mode"] = "exhaustive"
+    data["entries"][0]["face_count"] = 1
+    data["entries"][0]["face_boxes"] = [
+        {
+            "x": 0.5,
+            "y": 0.4,
+            "w": 0.2,
+            "h": 0.3,
+            "name": "Alice Example",
+            "source": "operator",
+            "lineage": _test_lineage(),
+        }
+    ]
+    data["entries"][1]["face_count"] = 0
+    data["entries"][1]["face_boxes"] = []
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
+    assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
+
+
+def test_retired_face_count_covers_labeled_is_gone():
+    """The retired GoldenEntry check must not exist (replaced, not composed)."""
+    assert not hasattr(GoldenEntry, "_face_count_covers_labeled")
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "scripts",
+        "eval_harness",
+        "manifest.py",
+    )
+    source = open(path, encoding="utf-8").read()
+    assert "_face_count_covers_labeled" not in source
+    assert "SUPPORTED_MANIFEST_VERSION = 3" in source
+
+
+def test_seed_corpus_is_roster_only():
+    manifest = _load_seed_manifest()
+    assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
+    assert manifest.manifest_version == 3
+
+
+def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypatch):
+    """Behavioural: CLI score/score-face never call load_legacy_manifest.
+
+    A source-text grep would stay green on a rename or a moved call.
+    Audit-arm liveness is pinned by test_golden150_draft (legacy reader
+    loads the frozen v2 artifact), not by invoking the patched sentinel.
+    """
+    import scripts.eval_harness.cli as cli_mod
+    import scripts.eval_harness.manifest as man_mod
+
+    hits: list[tuple] = []
+
+    def _sentinel(*args, **kwargs):
+        hits.append((args, kwargs))
+        raise RuntimeError("legacy-sentinel-hit")
+
+    monkeypatch.setattr(man_mod, "load_legacy_manifest", _sentinel)
+    if hasattr(cli_mod, "load_legacy_manifest"):
+        monkeypatch.setattr(cli_mod, "load_legacy_manifest", _sentinel)
+
+    data = _valid_manifest_dict()
+    man_path = tmp_path / "golden.json"
+    man_path.write_text(json.dumps(data))
+    record_path = tmp_path / "run.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "base_url": "x",
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                },
+                "items": [
+                    {
+                        "media_id": 1,
+                        "path": data["entries"][0]["path"],
+                        "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
+                        "identities": ["Alice Example"],
+                        "face_count": 1,
+                        "error": None,
+                    },
+                    {
+                        "media_id": 2,
+                        "path": data["entries"][1]["path"],
+                        "describe": {"alt_text_draft": "empty.", "visual_facts": {"objects": []}},
+                        "identities": [],
+                        "face_count": 0,
+                        "error": None,
+                    },
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert exc.value.code == 3
+    assert hits == []
+
+    face_record_path = tmp_path / "face-run.json"
+    face_record_path.write_text(
+        json.dumps(
+            {
+                "schema": "acx-eval/v1",
+                "kind": "face_run_record",
+                "provenance": {
+                    "manifest_sha256": "m" * 64,
+                    "head_sha": "0" * 40,
+                    "started_at": "t",
+                    "leg": "candidate",
+                },
+                "items": [],
+            }
+        )
+    )
+    # roster_only score-face raises via the CLI wrapper; pin the invariant.
+    with pytest.raises(SystemExit, match=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY) as exc_info:
+        cli_mod.main(
+            ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
+        )
+    assert "score_face_run_record refuses roster_only" in str(exc_info.value)
+    assert hits == []

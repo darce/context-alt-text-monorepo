@@ -80,7 +80,7 @@ const makeCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabeled
   is_auto_label: false,
   identity_count: 3,
   user_confirmed: false,
-  representatives: [],
+  representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false, thumb_url: 'http://example.test/face.jpg' }],
   ...overrides,
 });
 
@@ -94,6 +94,7 @@ const makeQueues = (overrides: Partial<WorkbenchFindingsQueues> = {}): Workbench
   topUnlabeledClusters: [],
   // Mirrors the hook fallback: server total defaults to the fetched page length.
   topUnlabeledTotal: overrides.topUnlabeledClusters?.length ?? 0,
+  topUnlabeledTruncated: false,
   ...overrides,
 });
 
@@ -104,6 +105,7 @@ const makeState = (overrides: Partial<WorkbenchFindingsSourceState> = {}): Workb
   isLoading: false,
   isError: false,
   isTopUnlabeledError: false,
+  isAssignmentError: false,
   queueSettled: true,
   ...overrides,
 });
@@ -147,6 +149,32 @@ describe('buildWorkbenchFindings', () => {
     expect(model.counts.total).toBe(25);
     // Next action still targets the loaded page.
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'top-1' });
+  });
+
+  // E21-20-REV1-01 / TEST-15: page-local zeros must not be subtracted from the
+  // server-wide total. Goes red against `topUnlabeledTotal - zeroEvidenceClusterCount`.
+  it('does not subtract page-local zero-evidence clusters from the server unlabeled total', () => {
+    const loadedPage = [
+      makeCluster({ id: 'zero-a', identity_count: 0 }),
+      makeCluster({ id: 'zero-b', representatives: [] }),
+      makeCluster({ id: 'zero-c', identity_count: 0, representatives: [] }),
+      ...Array.from({ length: 17 }, (_, index) =>
+        makeCluster({ id: `reviewable-${index}`, identity_count: 4 + index }),
+      ),
+    ];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: loadedPage,
+        topUnlabeledTotal: 42,
+      }),
+      makeState(),
+    );
+
+    expect(model.zeroEvidenceClusterCount).toBe(3);
+    expect(model.counts.unlabeledClusters).toBe(42);
+    expect(model.counts.total).toBe(42);
+    expect(model.hasFindings).toBe(true);
+    expect(model.queue).toHaveLength(17);
   });
 
   it('prioritizes the highest-score assignment suggestion as next action', () => {
@@ -332,7 +360,7 @@ describe('buildWorkbenchFindings', () => {
               { id: 'rep-1', media_id: 11, thumb_url: 'http://example.test/cluster-thumb.jpg', is_pinned: false },
             ],
           }),
-          makeCluster({ id: 'no-face', identity_count: 2 }),
+          makeCluster({ id: 'no-face', identity_count: 2, representatives: [] }),
         ],
       }),
       makeState(),
@@ -344,6 +372,65 @@ describe('buildWorkbenchFindings', () => {
       'cluster-with-face',
     ]);
     expect(model.previews[0].thumbUrl).toBe('http://example.test/assign-thumb.jpg');
+  });
+
+  it('keeps a preview whose only imagery is an attachment URL and still drops rows with no imagery', () => {
+    const assignmentOnly = 'http://example.test/assign-attachment.jpg';
+    const clusterOnly = 'http://example.test/cluster-attachment.jpg';
+
+    const assignmentModel = buildWorkbenchFindings(
+      makeQueues({
+        reviewItems: makeReviewItems(
+          makeSuggestion({
+            id: 'attach-only',
+            identity_id: 'identity-attach',
+            suggested_cluster_id: 'cluster-attach',
+            identity_attachment_url: assignmentOnly,
+          }),
+        ),
+        assignmentTotal: 1,
+        nameSuggestions: [makeName()],
+        nameTotal: 1,
+      }),
+      makeState(),
+    );
+
+    expect(assignmentModel.previews.map((preview) => preview.key)).toEqual(['assignment-attach-only']);
+    expect(assignmentModel.previews[0].thumbUrl).toBeNull();
+    expect(assignmentModel.previews[0].mediaUrl).toBeNull();
+    expect(assignmentModel.previews[0].attachmentUrl).toBe(assignmentOnly);
+
+    const clusterModel = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [
+          makeCluster({
+            id: 'attach-only',
+            identity_count: 4,
+            representatives: [
+              {
+                id: 'rep-attach',
+                media_id: 12,
+                thumb_url: null,
+                media_url: null,
+                attachment_url: clusterOnly,
+                is_pinned: false,
+              },
+            ],
+          }),
+          makeCluster({
+            id: 'no-imagery',
+            identity_count: 3,
+            representatives: [{ id: 'rep-empty', media_id: 13, thumb_url: null, media_url: null, is_pinned: false }],
+          }),
+        ],
+      }),
+      makeState(),
+    );
+
+    expect(clusterModel.previews.map((preview) => preview.key)).toEqual(['cluster-attach-only']);
+    expect(clusterModel.previews[0].thumbUrl).toBeNull();
+    expect(clusterModel.previews[0].mediaUrl).toBeNull();
+    expect(clusterModel.previews[0].attachmentUrl).toBe(clusterOnly);
   });
 
   const FACE_BBOX = { x: 12, y: 24, width: 80, height: 96 };
@@ -1195,6 +1282,7 @@ describe('useWorkbenchFindings', () => {
     // Would fail against old code that used topUnlabeledClusters.length (page size).
     expect(result.current.counts.unlabeledClusters).toBe(42);
     expect(result.current.counts.total).toBe(42);
+    expect(result.current.topUnlabeledTruncated).toBe(true);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'page-head' });
   });
 
@@ -1343,5 +1431,49 @@ describe('useWorkbenchFindings', () => {
       clusterId: 'memo-cluster',
       label: 'Default Label',
     });
+  });
+
+  // Carry-over / TEST-15: panel tests mock useWorkbenchFindings, so
+  // `const isAssignmentError = false` stays green there. This hook test fails
+  // if that assignmentQuery.isError wiring is dropped.
+  it('REV2-01 carry-over: wires isAssignmentError from assignmentQuery.isError', async () => {
+    vi.mocked(fetchPendingSuggestions).mockRejectedValue(new Error('assignment endpoint down'));
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      singleton_count: 0,
+      has_clusters: false,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFindings(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isAssignmentError).toBe(true);
+    expect(result.current.isError).toBe(false);
+    expect(result.current.hasFindings).toBe(false);
   });
 });

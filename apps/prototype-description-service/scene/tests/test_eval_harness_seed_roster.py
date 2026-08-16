@@ -182,9 +182,11 @@ def _scene_fixture(tmp_path):
                 "must_right": ["Alice Example"],
                 "easy_wrong": ["Bob Example"],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = {"manifest_version": 2, "roster": ["Alice Example", "Bob Example"], "entries": entries}
+    manifest = {"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Alice Example", "Bob Example"], "entries": entries}
     manifest_path = tmp_path / "golden.json"
     manifest_path.write_text(json.dumps(manifest))
     return str(manifest_path), str(tmp_path / "images")
@@ -223,6 +225,7 @@ def test_seed_scenes_zero_face_scene_never_uploaded(tmp_path):  # VLM-2C-S3-BR-0
             "must_right": [],
             "easy_wrong": ["Bob Example"],
             "policy": {"recognition_enabled": True},
+            "provenance": {"source": "fixture", "license": "fixture"},
         }
     )
     with open(manifest_path, "w") as handle:
@@ -307,6 +310,7 @@ def test_seed_scenes_resolves_nfd_filenames(tmp_path):  # VLM-2C-R2-HARM-BR-01
             "must_right": ["Alice Example"],
             "easy_wrong": ["Bob Example"],
             "policy": {"recognition_enabled": True},
+            "provenance": {"source": "fixture", "license": "fixture"},
         }
     )
     with open(manifest_path, "w") as handle:

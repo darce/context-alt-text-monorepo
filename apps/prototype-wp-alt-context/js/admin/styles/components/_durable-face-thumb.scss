@@ -1,0 +1,48 @@
+.acx-durable-face-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  vertical-align: middle;
+
+  &--data-missing,
+  &--error {
+    width: 100%;
+    height: 100%;
+    min-width: var(--acx-thumb-size-sm);
+    min-height: var(--acx-thumb-size-sm);
+    background-color: var(--acx-color-data-placeholder);
+    color: var(--acx-color-text-muted);
+  }
+
+  &--error {
+    box-shadow: var(--acx-shadow-inset-danger);
+  }
+
+  // Shape + dashed outline (not color alone) mark a non-face scene [sr-004].
+  &--uncropped {
+    overflow: hidden;
+    border-radius: var(--acx-radius-sm);
+    outline: 1px dashed var(--acx-color-border);
+    outline-offset: calc(var(--acx-space-2) * -1);
+    background-color: var(--acx-color-data-placeholder);
+  }
+
+  &__uncropped {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  &__fallback-label {
+    font-size: var(--acx-text-xs);
+    font-weight: var(--acx-font-weight-medium);
+    padding: var(--acx-space-2);
+    text-align: center;
+  }
+
+  &--hide-missing-label &__fallback-label {
+    display: none;
+  }
+}

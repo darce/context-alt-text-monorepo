@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +12,9 @@ const identity: ClusterIdentity = {
   confidence: 0.8,
   bbox: { x: 0, y: 0, width: 20, height: 40 },
 };
+
+const DEDICATED_THUMB = 'https://example.test/wp-content/uploads/recognition/face-thumbs/rep-1.jpg';
+const ATTACHMENT_AS_THUMB = 'https://example.com/thumb.jpg';
 
 /**
  * Interactive-element contract for !namedPending placeholders [A11Y-11][TEST-17].
@@ -100,18 +103,35 @@ describe('IdentityThumbnail', () => {
     expect(container.querySelector('.acx-cluster-card__face--placeholder')).toBeInTheDocument();
   });
 
-  it('uses backend-provided thumbnail when available', () => {
-    render(<IdentityThumbnail identity={{ ...identity, thumb_url: 'https://example.com/thumb.jpg' }} size={96} />);
+  it('uses a dedicated face-thumb blob when available [REV1-07]', () => {
+    render(<IdentityThumbnail identity={{ ...identity, thumb_url: DEDICATED_THUMB }} size={96} />);
     const image = screen.getByRole('img');
-    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+    expect(image).toHaveAttribute('src', DEDICATED_THUMB);
+  });
+
+  it('does not paint a non-dedicated attachment thumb_url as a face chip [REV1-07]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{
+          ...identity,
+          thumb_url: ATTACHMENT_AS_THUMB,
+          attachment_url: 'https://example.com/full-res.jpg',
+        }}
+        size={96}
+      />,
+    );
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector(`img[src="${ATTACHMENT_AS_THUMB}"]`)).toBeNull();
+    expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
   });
 
   it('calls onClick when provided', async () => {
     const onClick = vi.fn();
-    // thumb_url path paints a real <img> immediately (no canvas-crop wait).
+    // Dedicated thumb_url path paints a real <img> immediately (no canvas-crop wait).
     render(
       <IdentityThumbnail
-        identity={{ ...identity, thumb_url: 'https://example.com/thumb.jpg' }}
+        identity={{ ...identity, thumb_url: DEDICATED_THUMB }}
         onClick={onClick}
       />,
     );
@@ -261,14 +281,102 @@ describe('IdentityThumbnail', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('names a claimed dedicated blob that 404s with no fallback [REV1-08]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{ media_id: 100, identity_id: 'expired-blob', thumb_url: DEDICATED_THUMB }}
+        size={96}
+      />,
+    );
+
+    const image = screen.getByRole('img');
+    expect(image).toHaveAttribute('src', DEDICATED_THUMB);
+    fireEvent.error(image);
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Image failed to load' })).toBeInTheDocument();
+    expect(screen.getByText('Image failed to load')).toBeInTheDocument();
+    expect(document.querySelector('[data-face-error="true"]')).not.toBeNull();
+    expect(document.querySelector('[data-face-missing="true"]')).toBeNull();
+  });
+
+  it('names a wrapping link after a claimed blob 404s [REV1-08]', () => {
+    render(
+      <a href="https://example.com/media/100">
+        <IdentityThumbnail
+          identity={{ media_id: 100, identity_id: 'expired-blob', thumb_url: DEDICATED_THUMB }}
+          size={96}
+        />
+      </a>,
+    );
+
+    fireEvent.error(screen.getByRole('img'));
+
+    expect(screen.getByRole('link')).toHaveAccessibleName('Image failed to load');
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('clears a fallback source img that 404s [REV1-08]', () => {
+    const fallback = 'https://example.com/expired-attachment.jpg';
+    render(
+      <IdentityThumbnail
+        identity={{
+          media_id: 100,
+          identity_id: 'fallback-404',
+          thumb_url: DEDICATED_THUMB,
+          attachment_url: fallback,
+          bbox: null,
+        }}
+        size={96}
+      />,
+    );
+
+    const dedicated = screen.getByRole('img');
+    expect(dedicated).toHaveAttribute('src', DEDICATED_THUMB);
+    fireEvent.error(dedicated);
+
+    const fallbackImg = screen.getByRole('img');
+    expect(fallbackImg).toHaveAttribute('src', fallback);
+    fireEvent.error(fallbackImg);
+
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Image failed to load' })).toBeInTheDocument();
+    expect(screen.getByText('Image failed to load')).toBeInTheDocument();
+  });
+
+  it('keeps decorative alt="" unnamed after a claimed blob 404 [REV1-08]', () => {
+    render(
+      <IdentityThumbnail
+        identity={{ media_id: 100, thumb_url: DEDICATED_THUMB }}
+        alt=""
+        size={96}
+      />,
+    );
+
+    const image = document.querySelector('img');
+    expect(image).not.toBeNull();
+    if (!image) {
+      return;
+    }
+    fireEvent.error(image);
+
+    const placeholder = document.querySelector('.acx-cluster-card__face--placeholder');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder).toHaveAttribute('aria-hidden', 'true');
+    expect(placeholder?.getAttribute('role')).toBeNull();
+    expect(screen.queryByText('Image failed to load')).not.toBeInTheDocument();
+  });
+
   describe('lazy canvas crop [page-load]', () => {
     const OriginalImage = globalThis.Image;
     const OriginalIO = globalThis.IntersectionObserver;
     let imageConstructCount = 0;
+    let lastImageSrc = '';
     let observerCallback: IntersectionObserverCallback | null = null;
 
     beforeEach(() => {
       imageConstructCount = 0;
+      lastImageSrc = '';
       observerCallback = null;
 
       class ControlledIntersectionObserver implements IntersectionObserver {
@@ -312,6 +420,7 @@ describe('IdentityThumbnail', () => {
         }
         set src(value: string) {
           this._src = value;
+          lastImageSrc = value;
           queueMicrotask(() => {
             const handler = this.onload;
             if (handler) {
@@ -400,19 +509,89 @@ describe('IdentityThumbnail', () => {
       });
     });
 
-    it('does not construct Image for thumb_url path (no canvas crop)', () => {
+    it('crops from the mapper URL in its own pixel space, not the WP-core media meta [E21-21-BR-01]', async () => {
+      const drawImage = vi.fn();
+      HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+        clearRect: vi.fn(),
+        drawImage,
+      })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+
+      // Deleted original: the mapper degraded url+bbox together to a surviving
+      // sub-size. The WP-core read still advertises the ORIGINAL dimensions, so
+      // pairing them with the mapper bbox would divide it by ~15x.
+      render(
+        <IdentityThumbnail
+          identity={{
+            media_id: 100,
+            identity_id: 'identity-degraded',
+            media_url: 'https://example.test/uploads/original-768x512.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+          }}
+          mediaMeta={{ url: 'https://example.test/uploads/original-150x150.jpg', width: 1536, height: 1024 }}
+          size={32}
+        />,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        const host = document.querySelector('[data-face-pending="true"]')?.parentElement;
+        expect(host).toBeTruthy();
+        if (!host) {
+          return;
+        }
+        const entry: IntersectionObserverEntry = {
+          isIntersecting: true,
+          target: host,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: host.getBoundingClientRect(),
+          intersectionRect: host.getBoundingClientRect(),
+          rootBounds: null,
+        };
+        observerCallback?.([entry], {} as IntersectionObserver);
+      });
+
+      await waitFor(() => {
+        expect(drawImage).toHaveBeenCalled();
+      });
+
+      expect(lastImageSrc).toBe('https://example.test/uploads/original-768x512.jpg');
+      // scale 1 against the loaded 100x100 stub: sy = 40 - 52/2 = 14. Scaling the
+      // bbox by 100/1024 instead collapses sy to well under 1.
+      const [, sx, sy] = drawImage.mock.calls[0] as [unknown, number, number];
+      expect(sx).toBe(0);
+      expect(sy).toBeCloseTo(14, 5);
+    });
+
+    it('does not construct Image for a dedicated face-thumb blob (no canvas crop) [REV1-07]', () => {
       render(
         <IdentityThumbnail
           identity={{
             ...identity,
-            thumb_url: 'https://example.com/thumb.jpg',
+            thumb_url: DEDICATED_THUMB,
             media_url: 'https://example.com/full-res.jpg',
           }}
           size={32}
         />,
       );
       expect(imageConstructCount).toBe(0);
-      expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+      expect(screen.getByRole('img')).toHaveAttribute('src', DEDICATED_THUMB);
+    });
+
+    it('crops a non-dedicated attachment thumb_url instead of painting the scene [REV1-07]', () => {
+      render(
+        <IdentityThumbnail
+          identity={{
+            ...identity,
+            thumb_url: ATTACHMENT_AS_THUMB,
+            attachment_url: 'https://example.com/full-res.jpg',
+          }}
+          size={32}
+        />,
+      );
+      expect(imageConstructCount).toBe(0);
+      expect(document.querySelector('img')).toBeNull();
+      expect(document.querySelector('[data-face-pending="true"]')).not.toBeNull();
     });
 
     it('pending crop inside a wrapping link keeps accessible name from default alt [A11Y-02]', () => {

@@ -1,0 +1,371 @@
+{
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
+  "roster": [
+    "Ada Example",
+    "Bea Example",
+    "Cara Example",
+    "Anne Hathaway"
+  ],
+  "entries": [
+    {
+      "path": "celebs/anne_hathaway_11.jpg",
+      "sha256": "1100000000000000000000000000000000000000000000000000000000000011",
+      "media_id": 11,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "personal/alicia_graff_375.jpg",
+      "sha256": "3750000000000000000000000000000000000000000000000000000000000375",
+      "media_id": 375,
+      "face_count": 0,
+      "present_identities": [],
+      "base_caption": "synthetic scrape fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic placeholder"
+      }
+    },
+    {
+      "path": "personal/unlabeled_0603.jpg",
+      "sha256": "6030000000000000000000000000000000000000000000000000000000000603",
+      "media_id": 603,
+      "face_count": 1,
+      "present_identities": [],
+      "base_caption": "synthetic camera-roll fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "tags": [
+        "profile"
+      ],
+      "provenance": {
+        "source": "operator",
+        "license": "consented",
+        "note": "will be retagged"
+      }
+    },
+    {
+      "path": "fixtures/ada_example_100.jpg",
+      "sha256": "1000000000000000000000000000000000000000000000000000000000000100",
+      "media_id": 100,
+      "face_count": 1,
+      "present_identities": [
+        "Ada Example"
+      ],
+      "base_caption": "Ada own-capture survivor",
+      "must_right": [
+        "Ada Example"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "will be retagged from attestation"
+      }
+    },
+    {
+      "path": "fixtures/bea_example_101.jpg",
+      "sha256": "1010000000000000000000000000000000000000000000000000000000000101",
+      "media_id": 101,
+      "face_count": 1,
+      "present_identities": [
+        "Bea Example"
+      ],
+      "base_caption": "Bea own-repost survivor",
+      "must_right": [
+        "Bea Example"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "will be retagged from attestation"
+      }
+    },
+    {
+      "path": "fixtures/cara_unknown_102.jpg",
+      "sha256": "1020000000000000000000000000000000000000000000000000000000000102",
+      "media_id": 102,
+      "face_count": 1,
+      "present_identities": [
+        "Cara Example"
+      ],
+      "base_caption": "unknown drop",
+      "must_right": [
+        "Cara Example"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "fixtures/cara_third_103.jpg",
+      "sha256": "1030000000000000000000000000000000000000000000000000000000000103",
+      "media_id": 103,
+      "face_count": 1,
+      "present_identities": [
+        "Cara Example"
+      ],
+      "base_caption": "third_party drop",
+      "must_right": [
+        "Cara Example"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_13.jpg",
+      "sha256": "1300000000000000000000000000000000000000000000000000000000000013",
+      "media_id": 13,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_14.jpg",
+      "sha256": "1400000000000000000000000000000000000000000000000000000000000014",
+      "media_id": 14,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_15.jpg",
+      "sha256": "1500000000000000000000000000000000000000000000000000000000000015",
+      "media_id": 15,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_21.jpg",
+      "sha256": "2100000000000000000000000000000000000000000000000000000000000021",
+      "media_id": 21,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_22.jpg",
+      "sha256": "2200000000000000000000000000000000000000000000000000000000000022",
+      "media_id": 22,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "celebs/celeb_23.jpg",
+      "sha256": "2300000000000000000000000000000000000000000000000000000000000023",
+      "media_id": 23,
+      "face_count": 1,
+      "present_identities": [
+        "Anne Hathaway"
+      ],
+      "base_caption": "synthetic celeb fixture",
+      "must_right": [
+        "Anne Hathaway"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "provenance": {
+        "source": "celeb",
+        "license": "fixture",
+        "note": "synthetic"
+      }
+    },
+    {
+      "path": "personal/scrape_438.jpg",
+      "sha256": "4380000000000000000000000000000000000000000000000000000000000438",
+      "media_id": 438,
+      "face_count": 0,
+      "present_identities": [],
+      "base_caption": "synthetic scrape fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic placeholder"
+      }
+    },
+    {
+      "path": "personal/scrape_484.jpg",
+      "sha256": "4840000000000000000000000000000000000000000000000000000000000484",
+      "media_id": 484,
+      "face_count": 0,
+      "present_identities": [],
+      "base_caption": "synthetic scrape fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "provenance": {
+        "source": "operator",
+        "license": "mock_entity",
+        "note": "synthetic placeholder"
+      }
+    },
+    {
+      "path": "personal/unlabeled_0633.jpg",
+      "sha256": "6330000000000000000000000000000000000000000000000000000000000633",
+      "media_id": 633,
+      "face_count": 1,
+      "present_identities": [],
+      "base_caption": "synthetic camera-roll fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "tags": [
+        "profile"
+      ],
+      "provenance": {
+        "source": "operator",
+        "license": "consented",
+        "note": "will be retagged"
+      }
+    },
+    {
+      "path": "personal/unlabeled_0648.jpg",
+      "sha256": "6480000000000000000000000000000000000000000000000000000000000648",
+      "media_id": 648,
+      "face_count": 1,
+      "present_identities": [],
+      "base_caption": "synthetic camera-roll fixture",
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": false
+      },
+      "tags": [
+        "profile"
+      ],
+      "provenance": {
+        "source": "operator",
+        "license": "consented",
+        "note": "will be retagged"
+      }
+    }
+  ]
+}

@@ -115,4 +115,53 @@ class MemberResponseMapperTest extends TestCase
         $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-50/50', $parts['path']);
         $this->assertStringNotContainsString('/uploads/50.jpg', $payload[0]['thumb_url']);
     }
+
+    /**
+     * E21-15 / STOR-07: blob thumb_url stays first-choice; durable attachment_url + bbox
+     * are emitted beside it so clients can crop after scan-time blobs are cleaned up.
+     */
+    public function testMapClusterMembersEmitsAttachmentUrlAndBboxBesideFaceThumb(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][50] = 'http://example.test/uploads/50.jpg';
+
+        $rows = [
+            [
+                'identity_uuid' => 'identity-50',
+                'attachment_id' => 50,
+                'thumb_path' => '/recognition/face-thumbs/job-50/50?x=2&y=3&width=40&height=50',
+                'bbox_json' => '{"pixels":{"x":2,"y":3,"width":40,"height":50}}',
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_members($rows);
+
+        $parts = \parse_url($payload[0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-50/50', $parts['path']);
+        $this->assertSame('http://example.test/uploads/50.jpg', $payload[0]['attachment_url']);
+        $this->assertSame(
+            array(
+                'x' => 2,
+                'y' => 3,
+                'width' => 40,
+                'height' => 50,
+            ),
+            $payload[0]['bbox']
+        );
+    }
+
+    public function testMapClusterMembersEmitsNullAttachmentUrlWhenUnknown(): void
+    {
+        $rows = [
+            [
+                'identity_uuid' => 'identity-50',
+                'attachment_id' => 50,
+                'thumb_path' => '/recognition/face-thumbs/job-50/50?x=2&y=3&width=40&height=50',
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_members($rows);
+
+        $this->assertNull($payload[0]['attachment_url']);
+        $this->assertNull($payload[0]['bbox']);
+    }
 }

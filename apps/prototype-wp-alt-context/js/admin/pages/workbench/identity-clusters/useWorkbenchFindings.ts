@@ -15,11 +15,14 @@ import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFa
 import type { SuggestionReviewItem } from './SuggestionCards';
 import {
   buildReviewQueue,
+  CLUSTER_EVIDENCE,
+  clusterEvidence,
   emptyNextAction,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   NONE_REASON,
   queueItemToNextAction,
+  type ClusterEvidence,
   type NextActionKind,
   type NoneReason,
   type ReviewQueueBand,
@@ -31,9 +34,11 @@ import { isHumanLabeledTarget } from './suggestionProjection';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
 export {
+  CLUSTER_EVIDENCE,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
   NONE_REASON,
+  type ClusterEvidence,
   type NextActionKind,
   type NoneReason,
   type ReviewQueueBand,
@@ -47,10 +52,12 @@ export {
   buildReviewQueue,
   bulkSelectableIdsInFilters,
   clampQueueIndex,
+  clusterEvidence,
   filterReviewQueue,
   filterReviewQueueByBand,
   filterReviewQueueComposite,
   intersectSelectionWithFilters,
+  isZeroEvidenceCluster,
   matchesSimilarityBand,
   nextQueueIndex,
   prevQueueIndex,
@@ -74,6 +81,7 @@ export interface WorkbenchFindingsCounts {
 export interface WorkbenchFindingPreview {
   key: string;
   thumbUrl: string | null;
+  attachmentUrl?: string | null;
   mediaUrl: string | null;
   label: string | null;
   /**
@@ -96,6 +104,8 @@ export interface WorkbenchFindingsQueues {
   nameTotal: number;
   topUnlabeledClusters: TopUnlabeledCluster[];
   topUnlabeledTotal: number;
+  /** Server envelope: the loaded top-unlabeled page is not the full backlog. */
+  topUnlabeledTruncated: boolean;
 }
 
 export interface WorkbenchFindingsSourceState {
@@ -106,6 +116,8 @@ export interface WorkbenchFindingsSourceState {
   isError: boolean;
   /** Projection outage on top-unlabeled — distinct from primary-queue isError. */
   isTopUnlabeledError: boolean;
+  /** Outage on the assignment queue alone — distinct from the all-queues isError. */
+  isAssignmentError: boolean;
   /** All four queue-source queries finished initial load (data or error). */
   queueSettled: boolean;
 }
@@ -113,6 +125,19 @@ export interface WorkbenchFindingsSourceState {
 export interface WorkbenchFindingsViewModel {
   counts: WorkbenchFindingsCounts;
   previews: WorkbenchFindingPreview[];
+  /**
+   * Loaded-page-only count of clusters gated out of the queue
+   * (identity_count === 0 or no representatives). Page-scoped repair signal —
+   * do not subtract it from counts.unlabeledClusters / total, which stay
+   * honest to the server envelope. Repair-row and queue-drain logic key off
+   * this loaded-page count (E21-20-REV1-01).
+   */
+  zeroEvidenceClusterCount: number;
+  /**
+   * True when the top-unlabeled envelope reports truncated. Repair copy must
+   * qualify the page-local zero count (E21-20-REV2-04).
+   */
+  topUnlabeledTruncated: boolean;
   hasFindings: boolean;
   isLoading: boolean;
   isError: boolean;
@@ -122,6 +147,13 @@ export interface WorkbenchFindingsViewModel {
    * Required: an omitted flag silently restores the laundered-empty behaviour.
    */
   isTopUnlabeledError: boolean;
+  /**
+   * True when the assignment queue failed while other sources returned data.
+   * Without it, a lone assignment 500 leaves hasAnyData true and isError false,
+   * so the panel renders the "No findings yet" all-clear while the primary
+   * review queue is down (E21-20-REV2-01).
+   */
+  isAssignmentError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
   /**
@@ -260,6 +292,7 @@ const collectPreviews = (
     previews.push({
       key: `assignment-${suggestion.suggestionId}`,
       thumbUrl: suggestion.enrichment?.identityThumbUrl ?? null,
+      attachmentUrl: suggestion.enrichment?.identityAttachmentUrl ?? null,
       mediaUrl: suggestion.enrichment?.identityMediaUrl ?? null,
       label,
       labelIsSuggested,
@@ -275,6 +308,7 @@ const collectPreviews = (
     previews.push({
       key: `merge-${merge.id}`,
       thumbUrl: merge.cluster_a_representative_thumb_url ?? null,
+      attachmentUrl: merge.cluster_a_representative_attachment_url ?? null,
       mediaUrl: merge.cluster_a_representative_media_url ?? null,
       label,
       labelIsSuggested: false,
@@ -288,6 +322,7 @@ const collectPreviews = (
     previews.push({
       key: `name-${name.id}`,
       thumbUrl: representative?.thumb_url ?? null,
+      attachmentUrl: representative?.attachment_url ?? null,
       mediaUrl: representative?.media_url ?? null,
       label,
       // suggested_name is always a machine suggestion.
@@ -305,6 +340,7 @@ const collectPreviews = (
     previews.push({
       key: `cluster-${cluster.id}`,
       thumbUrl: representative?.thumb_url ?? null,
+      attachmentUrl: representative?.attachment_url ?? null,
       mediaUrl: representative?.media_url ?? null,
       label,
       labelIsSuggested: Boolean(label),
@@ -315,7 +351,9 @@ const collectPreviews = (
   // Exact-capture dedupe, then diversity-first cap (HAI-17).
   return selectDiversePreviews(
     dedupePreviewsByCapture(
-      previews.filter((preview) => preview.thumbUrl !== null || preview.mediaUrl !== null),
+      previews.filter(
+        (preview) => preview.thumbUrl !== null || preview.mediaUrl !== null || preview.attachmentUrl != null,
+      ),
     ),
     PREVIEW_LIMIT,
   );
@@ -325,12 +363,20 @@ export const buildWorkbenchFindings = (
   queues: WorkbenchFindingsQueues,
   state: WorkbenchFindingsSourceState,
 ): WorkbenchFindingsViewModel => {
+  const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
+  const evidenceClusters = sortedClusters.filter(
+    (cluster) => clusterEvidence(cluster) === CLUSTER_EVIDENCE.PRESENT,
+  );
+  const zeroEvidenceClusterCount = sortedClusters.length - evidenceClusters.length;
+  // Server envelope stays honest: page-local zeros are a repair signal, not a
+  // deduction from the unlabeled total (E21-20-REV1-01).
+  const unlabeledClusters = queues.topUnlabeledTotal;
   const counts: WorkbenchFindingsCounts = {
     assignments: queues.assignmentTotal,
     merges: queues.mergeTotal,
     names: queues.nameTotal,
-    unlabeledClusters: queues.topUnlabeledTotal,
-    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + queues.topUnlabeledTotal,
+    unlabeledClusters,
+    total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + unlabeledClusters,
   };
 
   // WHY: assignment + top-unlabeled are the canonical availability signals; merge/name
@@ -342,12 +388,11 @@ export const buildWorkbenchFindings = (
     state.nameDataSource === DATA_SOURCE.BACKEND_PROXY ||
     state.topUnlabeledDataSource === DATA_SOURCE.BACKEND_PROXY;
 
-  const sortedClusters = sortClustersBySize(queues.topUnlabeledClusters);
   const queue = buildReviewQueue({
     reviewItems: queues.reviewItems,
     mergeSuggestions: queues.mergeSuggestions,
     nameSuggestions: queues.nameSuggestions,
-    sortedClusters,
+    sortedClusters: evidenceClusters,
   });
 
   // WHY: a top-unlabeled 500 with an empty primary queue is still a failure, not
@@ -356,11 +401,14 @@ export const buildWorkbenchFindings = (
 
   return {
     counts,
-    previews: collectPreviews(queues, sortedClusters),
+    previews: collectPreviews(queues, evidenceClusters),
+    zeroEvidenceClusterCount,
+    topUnlabeledTruncated: queues.topUnlabeledTruncated,
     hasFindings: counts.total > 0,
     isLoading: state.isLoading,
     isError,
     isTopUnlabeledError: state.isTopUnlabeledError,
+    isAssignmentError: state.isAssignmentError,
     isUnavailable,
     isReadOnly,
     queueSettled: state.queueSettled,
@@ -390,6 +438,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     nameDataSource,
     topUnlabeledClusters,
     topUnlabeledTotal,
+    topUnlabeledTruncated,
     topUnlabeledDataSource,
     reviewItems,
   } = useSuggestionReviewQueries();
@@ -404,6 +453,10 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   // Separate flag so a top-unlabeled 500 is visible even when primary queues
   // returned empty success (UI-03 / UI-06) without blanking partial findings.
   const isTopUnlabeledError = topUnlabeledQuery.isError;
+  // REV2-01: same class as isTopUnlabeledError. An assignment-only outage keeps
+  // hasAnyData true (merge/name/top-unlabeled succeeded empty), so isError stays
+  // false and the panel would otherwise announce an all-clear over a dead queue.
+  const isAssignmentError = assignmentQuery.isError;
   // BR-06: every source must settle before clamp/index restore — partial
   // assignment+merge data must not look like a complete empty/short queue.
   const queueSettled =
@@ -428,6 +481,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       nameTotal,
       topUnlabeledClusters,
       topUnlabeledTotal: resolvedTopUnlabeledTotal,
+      topUnlabeledTruncated,
     },
     {
       assignmentDataSource,
@@ -436,6 +490,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       isLoading,
       isError,
       isTopUnlabeledError,
+      isAssignmentError,
       queueSettled,
     },
   );

@@ -5,6 +5,7 @@ import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
@@ -157,7 +158,11 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
           )}
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
@@ -178,7 +183,11 @@ export const SuggestionCard = ({
               className="acx-suggestion-card__thumb"
             />
           ) : (
-            <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder" />
+            <Avatar
+              size="lg"
+              className="acx-suggestion-card__thumb"
+              missingLabel={REPRESENTATIVE_VOCABULARY.imageUnavailable}
+            />
           )}
           <span className="acx-suggestion-card__face-label">{displayLabel}</span>
         </div>

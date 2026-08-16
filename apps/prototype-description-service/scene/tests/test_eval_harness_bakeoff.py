@@ -242,7 +242,8 @@ def test_face_metric_methods_are_inert_stubs() -> None:
 def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path: Path) -> None:
     manifest = GoldenManifest.model_validate(
         {
-            "manifest_version": 2,
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
             "roster": ["Caitlin Weaver"],
             "entries": [
                 {
@@ -255,6 +256,7 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
                     "must_right": ["Caitlin Weaver"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "fixture", "license": "fixture"},
                 }
             ],
         }
@@ -324,7 +326,8 @@ def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: P
     """A non-2xx from the candidate must isolate to a per-item error string, not crash the walk."""
     manifest = GoldenManifest.model_validate(
         {
-            "manifest_version": 2,
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
             "roster": ["Caitlin Weaver"],
             "entries": [
                 {
@@ -337,6 +340,7 @@ def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: P
                     "must_right": ["Caitlin Weaver"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
+                    "provenance": {"source": "fixture", "license": "fixture"},
                 }
             ],
         }
@@ -367,9 +371,11 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries})
+    manifest = GoldenManifest.model_validate({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries})
     client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
     try:
         with pytest.raises(BoundedStallError) as excinfo:

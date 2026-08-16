@@ -5,20 +5,32 @@
 - head_sha: `7537eca39b9d19782f432a1fa5759597983c604c`
 - base_url: http://127.0.0.1:8099
 - fetch manifest_sha256: `1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b`
-- score manifest_sha256: `1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b` (matches fetch: True)
+- score manifest_sha256: `73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539` (matches fetch: False)
 - started_at: 2026-07-07T18:56:35Z
 - images: 6/10 scored, 4 failed
+- notes: S2R4-14 F23-G re-score HELD: docs/tasks/vlm/VLM-2B-bakeoff-MiniCPM-V-4.5-run-record.json against apps/prototype-description-service/scene/tests/seed/bakeoff_golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7 exited 1 (partial-corpus: 6/10 scored, 4 failed — the same failures already listed in this artifact). regen_eval_report.py will not publish an exit-1 report (S2R4-03). faces.identification is therefore still the pre-S2R3-08 leftover (precision=null, recall=0.0, populated per-identity table). Do not read those rows as current-scorer identification P/R.
+- notes: Provenance unchanged: fetch=1701e471455afd740c5c1474d81dee9a0c470efe253a167f55f15202ea65952b score=73cbe11306079262f3c97ddc620499e19cb85d432f9b7c87bf9c5b0911f86539 (matches fetch: False). Caption numbers were not rewritten.
+- notes: S2R4-15 S2R3-07 rebaseline (commit a90a091e) still published in this held artifact: must_right_defined_images 9→8; mean_gated_score 0.667→0.800; a name_precision line was added (now 1.000). These numbers were not re-scored in F23-G (partial-corpus hold).
+- ⚠ produced by the throwaway `bakeoff` transport (VLM-2B) — face detection/identification sections below are **vacuous by design** (stub `analyze`/`media_identities`); 0% is expected, NOT a recognition regression.
 
 ## Caption metrics (deterministic tier)
 
 - insertion rate: 0.800
-- Must-Right failed images (hard gate): 1 (rubric-defined images: 9)
+- name precision: 1.000 (wrong-name images: 0, rate: 0.000)
+- Must-Right failed images (hard gate): 1 (rubric-defined images: 8)
 - policy violations: 0
-- mean gated score: 0.667
+- mean gated score: 0.800
+
+## Quality axes (short surface, report-only signals)
+
+- meta-framing images: 4
+- mean context duplication: 0.116
+- name front-loaded rate: 0.750
+- sentence band [1, 4] ok rate: 1.000
 
 ## Face detection (identity-agnostic)
 
-- precision: null recall: 0.000 (tp=0 fp=0 fn=11)
+- REFUSED (detection_refuses_roster_only): detection P/R is not computed unless annotation_mode is exhaustive
 
 ## Face identification (named assertions)
 

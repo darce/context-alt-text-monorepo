@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
 import { selectClusterSuggestions } from '../useClusterSuggestions';
@@ -301,6 +301,111 @@ describe('ClusterEditForm', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /reject/i }));
     expect(onRejectSuggestion).toHaveBeenCalledWith('sug-real-alice');
+  });
+
+  it('shows an at-rest incomplete-list hint from envelope total, not option count (REV1-01)', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        atRestTruncated
+        atRestTotal={80}
+        isAtRestMode
+      />,
+    );
+
+    expect(screen.getByText('Showing 2 of 80 labels — type to search for more')).toBeInTheDocument();
+  });
+
+  it('pins the at-rest hint first number to the rendered overlay row count', () => {
+    const options = Array.from({ length: 12 }, (_, index) => ({
+      value: `cluster:u${index}`,
+      label: `Union Label ${index}`,
+      source: 'cluster' as const,
+      group: 'All Labels',
+    }));
+
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        options={options}
+        atRestTruncated
+        atRestTotal={80}
+        isAtRestMode
+      />,
+    );
+
+    const renderedOptionRows = screen.getAllByRole('button', { name: /confirm match/i });
+    expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+      `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
+    );
+  });
+
+  it('scopes the at-rest hint id per form instance so each combobox describes its own total', () => {
+    render(
+      <>
+        <div data-testid="form-a">
+          <ClusterEditForm
+            {...defaultProps}
+            labelInput=""
+            atRestTruncated
+            atRestTotal={80}
+            isAtRestMode
+          />
+        </div>
+        <div data-testid="form-b">
+          <ClusterEditForm
+            {...defaultProps}
+            labelInput=""
+            atRestTruncated
+            atRestTotal={40}
+            isAtRestMode
+          />
+        </div>
+      </>,
+    );
+
+    const formA = within(screen.getByTestId('form-a'));
+    const formB = within(screen.getByTestId('form-b'));
+    const hintA = formA.getByText('Showing 2 of 80 labels — type to search for more');
+    const hintB = formB.getByText('Showing 2 of 40 labels — type to search for more');
+
+    expect(hintA.id).not.toBe(hintB.id);
+    expect(formA.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+      'Showing 2 of 80 labels — type to search for more',
+    );
+    expect(formB.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+      'Showing 2 of 40 labels — type to search for more',
+    );
+  });
+
+  it('hides the at-rest incomplete-list hint once the loader leaves at-rest mode', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="To"
+        atRestTruncated
+        atRestTotal={80}
+        isAtRestMode={false}
+      />,
+    );
+
+    expect(screen.queryByText(/Showing \d+ of \d+ labels — type to search for more/)).not.toBeInTheDocument();
+  });
+
+  it('does not invent an incomplete-list hint when the at-rest page is complete', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput=""
+        atRestTruncated={false}
+        atRestTotal={12}
+      />,
+    );
+
+    expect(screen.queryByText(/Showing \d+ of \d+ labels/)).not.toBeInTheDocument();
   });
 
   it('threads option.suggestion_id into onConfirmSuggestion (BR-16 / L1R-01)', async () => {

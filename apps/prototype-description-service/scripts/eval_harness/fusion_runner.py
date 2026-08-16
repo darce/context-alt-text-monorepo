@@ -675,20 +675,46 @@ def _match_key(fact_source: Any, fact_label: Any, fact_id: Any) -> str:
     return f"{fact_source}:{str(fact_label).lower()}"
 
 
+# Keys ``score_run_record`` / ``build_reports`` actually read. S2R4-05's
+# ``{**e.model_dump(), ...}`` restored face_boxes (intended) and every other
+# GoldenEntry field (not intended) on a path that publishes artifacts.
+SCORER_ENTRY_KEYS: frozenset[str] = frozenset(
+    {
+        "path",
+        "media_id",
+        "face_count",
+        "present_identities",
+        "must_right",
+        "easy_wrong",
+        "policy",
+        "face_boxes",
+        "context_pack",
+        "provenance",
+    }
+)
+
+
 def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
-    """Shapes expected by ``report.score_run_record`` / ``build_reports``."""
-    return [
-        {
-            "path": e.path,
-            "media_id": e.media_id,
-            "face_count": e.face_count,
-            "present_identities": list(e.present_identities),
-            "must_right": list(e.must_right),
-            "easy_wrong": list(e.easy_wrong),
-            "policy": {"recognition_enabled": e.policy.recognition_enabled},
-        }
-        for e in manifest.entries
-    ]
+    """Shapes expected by ``report.score_run_record`` / ``build_reports``.
+
+    Projects the scorer-contract keys and fill-stamps the parent
+    ``annotation_mode`` only when the dump has no stamp of its own.
+    The resolver reads the stamp (data wins); an explicit kwarg cannot
+    widen a ``roster_only`` stamp to exhaustive.
+    """
+    mode = (
+        manifest.annotation_mode.value
+        if hasattr(manifest.annotation_mode, "value")
+        else str(manifest.annotation_mode)
+    )
+    projected: list[dict[str, Any]] = []
+    for entry in manifest.entries:
+        dumped = entry.model_dump()
+        row = {key: dumped[key] for key in SCORER_ENTRY_KEYS if key in dumped}
+        stamp = dumped.get("annotation_mode")
+        row["annotation_mode"] = mode if stamp is None else stamp
+        projected.append(row)
+    return projected
 
 
 def _head_sha() -> str | None:
@@ -725,6 +751,30 @@ def main(argv: list[str] | None = None) -> int:
         default=Audience.LOCAL.value,
         help="public ALSO emits a redacted publishable-only <stem>-report.public.{json,md} (VLM-6 S5 W1)",
     )
+    from .cli import (
+        ALLOW_REFUSED_ALL,
+        REFUSED_METRIC_EXIT_CODE,
+        RefusedMetric,
+        _parse_allow_refused_metric,
+        collect_refused_metrics,
+        consented_refused_metrics,
+    )
+
+    named = ", ".join(member.value for member in RefusedMetric)
+    parser.add_argument(
+        "--allow-refused",
+        action="append",
+        nargs="?",
+        const=ALLOW_REFUSED_ALL,
+        type=_parse_allow_refused_metric,
+        metavar="METRIC",
+        help=(
+            "exit 0 for the named refused metric. Repeatable. "
+            f"Bare --allow-refused is equivalent to naming every metric ({named}). "
+            "Default: refused metrics exit 3 — a missing score is not "
+            "clean evaluation evidence"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -741,11 +791,14 @@ def main(argv: list[str] | None = None) -> int:
     modes: list[Mode] = ["staged", "adhoc"] if args.mode == "both" else [args.mode]  # type: ignore[list-item]
     entries = manifest_entries_as_dicts(manifest)
 
+    exit_code = 0
     for mode in modes:
         record = run_fusion_eval(manifest, mode=mode, head_sha=head, limit=args.limit)
         mis = score_misattachments(record, manifest)
         json_report, md_report = build_reports(
-            record, entries, score_manifest_sha256=record["provenance"]["manifest_sha256"]
+            record,
+            entries,
+            score_manifest_sha256=record["provenance"]["manifest_sha256"],
         )
         # Append mis-attachment summary to markdown (report.py unchanged).
         md_report = md_report.rstrip() + "\n\n## Mis-attachment (E20-FUSION)\n\n"
@@ -779,8 +832,23 @@ def main(argv: list[str] | None = None) -> int:
             (out_dir / f"{stem}-report.public.json").write_text(public_json)
             (out_dir / f"{stem}-report.public.md").write_text(public_md)
         print(f"{mode}: misattachments={mis['misattachments']}/{mis['labeled_facts']} → {out_dir / stem}-report.md")
+        scored = json.loads(json_report)
+        blocked = {
+            name: invariant
+            for name, invariant in collect_refused_metrics(scored).items()
+            if name not in consented_refused_metrics(args.allow_refused)
+        }
+        if blocked:
+            print(
+                f"fusion {mode} gate failed: refused metric(s) ("
+                + ", ".join(f"{name}={invariant}" for name, invariant in blocked.items())
+                + "); pass --allow-refused=METRIC to accept a run with no score "
+                "for those metrics (bare --allow-refused names every metric)",
+                file=sys.stderr,
+            )
+            exit_code = REFUSED_METRIC_EXIT_CODE
 
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -47,12 +47,16 @@ from .face_assignment import (
 )
 from .face_metrics import (
     CLUSTER_PAIR_FLOOR,
+    DETECTION_EMPTY_OBSERVATIONS_INVARIANT,
+    DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+    IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT,
     POSITIONAL_EVAL_NOT_EVALUABLE,
     SAMPLING_FRAME_CLUSTERING,
     SAMPLING_FRAME_FACE_ID,
     SAMPLING_FRAME_UNKNOWN_REJECTION,
     UNKNOWN_REJECTION_ERROR_TARGET,
     UNKNOWN_REJECTION_N_FLOOR,
+    IDENTIFICATION_UNBOXED_INVARIANT,
     ImageDetection,
     ImageIdentities,
     clustering_sweep,
@@ -65,8 +69,21 @@ from .face_metrics import (
     named_box_name,
     positional_identification,
     predicted_names_for_positional,
+    require_boxed_identification_gt,
+    require_exhaustive_box_coverage,
 )
-from .manifest import Provenance, ProvenanceSource, ReferenceFact, SliceTag, SpatialFact
+from .manifest import (
+    AnnotationMode,
+    ManifestError,
+    Provenance,
+    ProvenanceSource,
+    ReferenceFact,
+    ScoreInvariant,
+    SliceTag,
+    SpatialFact,
+    parse_annotation_mode,
+    refusal_explanation,
+)
 from .placement_metrics import PlacementScores, placement_accuracy, score_placement
 from .schema import SCHEMA, DocKind
 from .synthetic_occlusion import (
@@ -89,6 +106,44 @@ FACE_BAKEOFF_PROTOCOL_ID = "fir-5-face-bakeoff-v0.11.0"
 
 # Release-surface label (RLSE-11): gate_proposal is never a release artifact.
 GATE_PROPOSAL_RELEASE_SURFACE = "proposal_only_not_release"
+
+# roster_only is more restrictive: it can only narrow an exhaustive stamp.
+_MODE_RESTRICTIVENESS = {
+    AnnotationMode.EXHAUSTIVE: 0,
+    AnnotationMode.ROSTER_ONLY: 1,
+}
+if frozenset(_MODE_RESTRICTIVENESS) != frozenset(AnnotationMode):
+    raise RuntimeError(
+        "_MODE_RESTRICTIVENESS keys drifted from AnnotationMode: "
+        f"table={sorted(member.value for member in _MODE_RESTRICTIVENESS)} "
+        f"enum={sorted(member.value for member in AnnotationMode)}"
+    )
+
+
+def _mode_restrictiveness(mode: AnnotationMode) -> int:
+    """Lattice rank for most-restrictive-wins. Unknown tokens refuse typed."""
+    rank = _MODE_RESTRICTIVENESS.get(mode)
+    if rank is None:
+        raise ManifestError(
+            f"unrecognised annotation_mode {mode!r}; "
+            f"expected one of {[member.value for member in AnnotationMode]}",
+            invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+        )
+    return rank
+
+
+def _invariant_is(actual: object, *members: ScoreInvariant) -> bool:
+    """Identity match against canonical ScoreInvariant members (S2R5-08)."""
+    return any(actual is member for member in members)
+
+# Aliases for the two historical sentences. Markdown looks up by the fired
+# invariant via refusal_explanation — these names are not a default reason.
+DETECTION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+)
+IDENTIFICATION_REFUSED_EXPLANATION = refusal_explanation(
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+)
 
 # Bake-off protocol posture disclosed on every scored face artifact (FIR5RC-07).
 # Measured protocol changes (weighted prototypes, ambiguity margin, matched
@@ -260,6 +315,10 @@ class ReportError(Exception):
     """The run record cannot be scored: wrong document kind, unknown schema, or a
     run-record item whose media_id is absent from the score-time manifest."""
 
+    def __init__(self, message: str, *, invariant: str | None = None) -> None:
+        super().__init__(message)
+        self.invariant = invariant
+
 
 # PUBLIC provenance is fail-closed: only these keys may leave the render boundary
 # (VLM6-R3-01 / VLM6-R4-07). Deny-lists leak on schema growth; an allow-list drops
@@ -404,6 +463,55 @@ def _entry_is_publishable(entry: dict[str, Any] | None) -> bool:
         return Provenance.model_validate(raw).is_publishable
     except ValidationError:
         return False
+
+
+def _refused_identification_metric(invariant: str) -> dict[str, Any]:
+    """Caption-path identification block when boxed GT is missing (EVAL-03)."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "precision": None,
+        "recall": None,
+        "macro_precision": None,
+        "macro_recall": None,
+        "per_identity": {},
+        "true_rejections": None,
+        "excluded_images": None,
+        "wrong_names": None,
+        "ignored_wrong_names": None,
+    }
+
+
+def _entry_recognition_enabled(entry: Mapping[str, Any]) -> bool:
+    """Match identification_pr: policy-disabled rows are not live claims."""
+    policy = entry.get("policy") or {}
+    if isinstance(policy, Mapping):
+        return bool(policy.get("recognition_enabled", True))
+    return bool(getattr(policy, "recognition_enabled", True))
+
+
+def _scored_identification_entries(
+    run_record: Mapping[str, Any],
+    manifest_entries: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Entries that would enter identification scoring (matched, non-error)."""
+    by_id = _entry_index(list(manifest_entries))
+    out: list[dict[str, Any]] = []
+    for item in run_record.get("items") or []:
+        if item.get("error"):
+            continue
+        entry = by_id.get(int(item["media_id"]))
+        if entry is None:
+            continue
+        out.append(entry)
+    return out
+
+
+def _identification_metric_entries(
+    entries: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Population identification_pr actually scores (recognition enabled)."""
+    return [entry for entry in entries if _entry_recognition_enabled(entry)]
 
 
 def _filter_for_public_audience(
@@ -1607,6 +1715,74 @@ def build_score_verdict(
     }
 
 
+def _resolve_score_annotation_mode(
+    annotation_mode: AnnotationMode | str | None,
+    manifest_entries: Sequence[Mapping[str, Any]],
+) -> AnnotationMode | None:
+    """Resolve detection contract once from the data.
+
+    Every scored entry must carry a stamp and those stamps must agree
+    (mixed stamps fail loud). An explicit argument is compared against the
+    stamp after that check — it may only *narrow* (most-restrictive-wins).
+    Explicit ``exhaustive`` never overrides a ``roster_only`` stamp.
+    Omission is not exhaustive.
+
+    Zero entries **refuses** (``detection_refuses_empty_entries``), it is
+    not scored as exhaustive. ``missing`` is only assigned inside the
+    per-entry loop; an empty list never enters that loop, so returning
+    ``explicit`` would fail-open an exhaustive request through the empty
+    lattice cell (S2R3-01). Caption scoring maps this invariant onto a
+    refused detection block — PUBLIC audience filtering can legitimately
+    produce an empty entry list after withholding, and that path must
+    still emit a report. Face scoring raises; it already fail-closes on
+    any non-exhaustive resolve. Not a hard load error: an empty filtered
+    public slice is a valid (vacuous) score, not a corrupt document.
+
+    Per-entry lattice is raw-mapping-only by design (S2R3-10).
+    ``GoldenEntry`` forbids ``annotation_mode`` (``extra="forbid"``, no
+    field). Typed ``GoldenManifest`` is document-homogeneous: flatteners
+    stamp the parent mode onto dumped entries. Mixed / per-entry stamps
+    exist only on raw mappings passed to this resolver.
+    """
+    explicit = parse_annotation_mode(annotation_mode)
+    if len(manifest_entries) == 0:
+        raise ManifestError(
+            "score entries are empty; zero entries cannot witness a "
+            "detection contract (refusing explicit exhaustive fail-open)",
+            invariant=ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+        )
+    stamped: set[AnnotationMode] = set()
+    missing = False
+    for entry in manifest_entries:
+        raw = entry.get("annotation_mode") if isinstance(entry, Mapping) else None
+        parsed = parse_annotation_mode(raw)
+        if parsed is None:
+            missing = True
+        else:
+            stamped.add(parsed)
+    # Mixed is strictly more dangerous than missing (S2R3-09): a document
+    # that is both missing a stamp and mixed across the others must not
+    # collapse to the missing-stamp refusal. Report both; mixed wins.
+    if len(stamped) > 1:
+        missing_note = "; also missing stamp on one or more entries" if missing else ""
+        raise ReportError(
+            f"mixed annotation_mode on score entries: "
+            f"{sorted(member.value for member in stamped)}{missing_note}; "
+            "refusing to guess which detection contract applies",
+            invariant=ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE,
+        )
+    if missing:
+        return None
+    if not stamped:
+        return explicit
+    data = next(iter(stamped))
+    if explicit is None:
+        return data
+    if _mode_restrictiveness(explicit) > _mode_restrictiveness(data):
+        return explicit
+    return data
+
+
 def score_run_record(
     run_record: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
@@ -1615,8 +1791,19 @@ def score_run_record(
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
     rubric_gate: str = "enforce",
+    annotation_mode: AnnotationMode | str | None = None,
 ) -> dict[str, Any]:
-    """Pure scoring: run record + manifest labels -> metrics dict."""
+    """Pure scoring: run record + manifest labels -> metrics dict.
+
+    Detection P/R is computed only when the resolved ``annotation_mode`` is
+    ``AnnotationMode.EXHAUSTIVE``. Mode is resolved from per-entry stamps
+    (every scored entry must declare one; they must agree). An explicit
+    argument may only narrow the stamp — it cannot widen ``roster_only``
+    to exhaustive. ``roster_only``, a missing stamp, and an unrecognised
+    token refuse; they never silently score unlabeled non-roster faces as
+    false positives. Identification and caption metrics still run.
+    Face-bakeoff scoring (``score_face_run_record``) raises instead.
+    """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
@@ -1635,6 +1822,7 @@ def score_run_record(
     # VLM6-R2-G-01: GT-side y-missing disclosure (not predicted DEGRADED stamp).
     labeled_y_missing_images = 0
     labeled_y_missing_paths: list[str] = []
+    identification_entries: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     distractor_injected = 0
     distractor_taken = 0
@@ -1763,7 +1951,14 @@ def score_run_record(
         # roster identities — otherwise every stranger face is a detection FP and
         # true_rejections is unreachable (S3-01, HARM-04). Required, not defaulted:
         # a missing face_count must fail loud, never silently re-create the bug.
-        stranger_faces = max(face_count - len(entry["present_identities"]), 0)
+        n_labeled = len(entry["present_identities"])
+        if face_count < n_labeled:
+            raise ReportError(
+                f"{path} media_id={media_id}: face_count={face_count} < "
+                f"len(present_identities)={n_labeled} "
+                "(present_identities_fit_face_count)"
+            )
+        stranger_faces = face_count - n_labeled
         detections.append(
             ImageDetection(
                 image=path,
@@ -1850,6 +2045,7 @@ def score_run_record(
                 image_height=order_h if order_known else None,
             )
         )
+        identification_entries.append(entry)
         row: dict[str, Any] = {
             "path": path,
             "media_id": media_id,
@@ -1918,23 +2114,80 @@ def score_run_record(
             row["distractor_taken"] = taken
         per_image.append(row)
 
-    det = detection_pr(detections)
-    ident = identification_pr(identifications)
+    try:
+        mode = _resolve_score_annotation_mode(annotation_mode, manifest_entries)
+    except ManifestError as exc:
+        if not _invariant_is(
+            exc.invariant,
+            ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+            ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES,
+        ):
+            raise
+        det = None
+        detection_invariant = exc.invariant
+    else:
+        if mode is AnnotationMode.EXHAUSTIVE:
+            try:
+                require_exhaustive_box_coverage(manifest_entries)
+            except ManifestError as exc:
+                if not _invariant_is(
+                    exc.invariant, DETECTION_UNCOVERED_FACE_COUNT_INVARIANT
+                ):
+                    raise
+                det = None
+                detection_invariant = exc.invariant
+            else:
+                if not detections:
+                    det = None
+                    detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
+                else:
+                    det = detection_pr(detections, annotation_mode=mode)
+                    detection_invariant = None
+        elif mode is AnnotationMode.ROSTER_ONLY:
+            det = None
+            detection_invariant = ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+        else:
+            det = None
+            detection_invariant = ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
     # Order-sensitive binding score (A-02): set-based identification_pr cannot
     # distinguish a correct left-to-right interleave from a swap of the same names.
     # Uses positional_items (face_boxes L→R labeled order), not alphabetical
-    # present_identities (FL30A-GATE-01).
+    # present_identities (FL30A-GATE-01). Independent of the boxed-GT refusal
+    # below — its own evaluable/status/vacuity_signal covers missing face_boxes.
     positional = positional_identification(positional_items)
 
-    # Presentation split only: ignore-list moves pairs into ignored_wrong_names
-    # for operator triage visibility. The wrong-name floor rate still counts
-    # live + ignored (F1-5); a side file must not zero a hard gate.
-    ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
-    live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
-    ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
-    # Images that actually entered identification_pr counting (recognition_enabled).
-    # Zero ⇒ wrong-name floor is vacuous regardless of asserted names (F1-5 / EVAL-19).
-    identification_evaluated = len(identifications) - len(ident.excluded_images)
+    if not identification_entries:
+        ident = None
+        identification_invariant = IDENTIFICATION_EMPTY_OBSERVATIONS_INVARIANT
+    else:
+        try:
+            require_boxed_identification_gt(
+                _identification_metric_entries(identification_entries)
+            )
+        except ManifestError as exc:
+            if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
+                raise
+            ident = None
+            identification_invariant = exc.invariant
+        else:
+            ident = identification_pr(identifications)
+            identification_invariant = None
+
+    if ident is None:
+        live_wrong: list[list[str]] = []
+        ignored_wrong: list[list[str]] = []
+        identification_evaluated = 0
+    else:
+        # Presentation split only: ignore-list moves pairs into ignored_wrong_names
+        # for operator triage visibility. The wrong-name floor rate still counts
+        # live + ignored (F1-5); a side file must not zero a hard gate.
+        ignored_pairs = {tuple(p) for p in (ignore_list or {}).get("wrong_names", [])}
+        live_wrong = [list(p) for p in ident.wrong_names if tuple(p) not in ignored_pairs]
+        ignored_wrong = [list(p) for p in ident.wrong_names if tuple(p) in ignored_pairs]
+        # Images that actually entered identification_pr counting (recognition_enabled).
+        # Zero ⇒ wrong-name floor is vacuous regardless of asserted names (F1-5 / EVAL-19).
+        identification_evaluated = len(identifications) - len(ident.excluded_images)
 
     # Surface fetch-time ordering degradation (A-07): missing/malformed bboxes
     # must not silently reinstate alphabetical name order without a number.
@@ -2107,51 +2360,85 @@ def score_run_record(
         "placement": place_block,
         "quality": _quality_block(caption_scores, SHORT_SENTENCE_BAND),
         "faces": {
-            "detection": {
-                **_pr_dict(det.precision, det.recall),
-                "tp": det.true_positives,
-                "fp": det.false_positives,
-                "fn": det.false_negatives,
-            },
-            "identification": {
-                **_pr_dict(ident.precision, ident.recall),
-                "macro_precision": ident.macro_precision,
-                "macro_recall": ident.macro_recall,
-                "per_identity": {
-                    name: {
-                        **_pr_dict(pr.precision, pr.recall),
-                        "tp": pr.true_positives,
-                        "fp": pr.false_positives,
-                        "fn": pr.false_negatives,
-                    }
-                    for name, pr in ident.per_identity.items()
-                },
-                "true_rejections": ident.true_rejections,
-                "excluded_images": ident.excluded_images,
-                # recognition_enabled scored images; 0 ⇒ wrong-name floor vacuous (F1-5).
-                "evaluated_images": identification_evaluated,
-                "wrong_names": live_wrong,
-                "ignored_wrong_names": ignored_wrong,
-                # A-02 / VLM6-B-10: order-sensitive score + machine-readable
-                # vacuity (evaluable/status/vacuity_signal/sampling_frame).
-                # Gate consumers must not treat position_accuracy is None alone
-                # as a soft skip — status/not_evaluable blocks adoption (EVAL-23).
-                "positional": {
-                    "position_accuracy": positional.position_accuracy,
-                    "position_hits": positional.position_hits,
-                    "position_total": positional.position_total,
-                    "exact_order_rate": positional.exact_order_rate,
-                    "exact_order_images": positional.exact_order_images,
-                    "compared_images": positional.compared_images,
-                    "swap_images": positional.swap_images,
-                    # Legacy entries without face_boxes: order unknown (FL30A-GATE-01).
-                    "excluded_images": list(positional.excluded_images),
-                    "evaluable": positional.evaluable,
-                    "status": positional.status,
-                    "vacuity_signal": positional.vacuity_signal,
-                    "sampling_frame": positional.sampling_frame,
-                },
-            },
+            "detection": (
+                {
+                    "refused": True,
+                    "invariant": detection_invariant,
+                    "precision": None,
+                    "recall": None,
+                    "tp": None,
+                    "fp": None,
+                    "fn": None,
+                }
+                if det is None
+                else {
+                    **_pr_dict(det.precision, det.recall),
+                    "tp": det.true_positives,
+                    "fp": det.false_positives,
+                    "fn": det.false_negatives,
+                }
+            ),
+            # A-02 / VLM6-B-10: "positional" is always computed — it has its own
+            # evaluable/status/vacuity_signal/sampling_frame vacuity contract and
+            # is independent of the boxed-GT refusal that can null out set-based
+            # identification below (EVAL-23: consumers must not treat
+            # position_accuracy is None alone as a soft skip).
+            "identification": (
+                {
+                    **_refused_identification_metric(identification_invariant),
+                    "evaluated_images": None,
+                    "positional": {
+                        "position_accuracy": positional.position_accuracy,
+                        "position_hits": positional.position_hits,
+                        "position_total": positional.position_total,
+                        "exact_order_rate": positional.exact_order_rate,
+                        "exact_order_images": positional.exact_order_images,
+                        "compared_images": positional.compared_images,
+                        "swap_images": positional.swap_images,
+                        "excluded_images": list(positional.excluded_images),
+                        "evaluable": positional.evaluable,
+                        "status": positional.status,
+                        "vacuity_signal": positional.vacuity_signal,
+                        "sampling_frame": positional.sampling_frame,
+                    },
+                }
+                if ident is None
+                else {
+                    **_pr_dict(ident.precision, ident.recall),
+                    "macro_precision": ident.macro_precision,
+                    "macro_recall": ident.macro_recall,
+                    "per_identity": {
+                        name: {
+                            **_pr_dict(pr.precision, pr.recall),
+                            "tp": pr.true_positives,
+                            "fp": pr.false_positives,
+                            "fn": pr.false_negatives,
+                        }
+                        for name, pr in ident.per_identity.items()
+                    },
+                    "true_rejections": ident.true_rejections,
+                    "excluded_images": ident.excluded_images,
+                    # recognition_enabled scored images; 0 ⇒ wrong-name floor vacuous (F1-5).
+                    "evaluated_images": identification_evaluated,
+                    "wrong_names": live_wrong,
+                    "ignored_wrong_names": ignored_wrong,
+                    "positional": {
+                        "position_accuracy": positional.position_accuracy,
+                        "position_hits": positional.position_hits,
+                        "position_total": positional.position_total,
+                        "exact_order_rate": positional.exact_order_rate,
+                        "exact_order_images": positional.exact_order_images,
+                        "compared_images": positional.compared_images,
+                        "swap_images": positional.swap_images,
+                        # Legacy entries without face_boxes: order unknown (FL30A-GATE-01).
+                        "excluded_images": list(positional.excluded_images),
+                        "evaluable": positional.evaluable,
+                        "status": positional.status,
+                        "vacuity_signal": positional.vacuity_signal,
+                        "sampling_frame": positional.sampling_frame,
+                    },
+                }
+            ),
             # A-07 / VLM6-R2-04 / S2-07: degraded_images means identity_ordering
             # stamp was DEGRADED — not positional exclusions. Vacuity of
             # face_boxes-absent images is ``order_unknown_excluded`` (own counter;
@@ -2453,6 +2740,14 @@ def _markdown(scored: dict[str, Any]) -> str:
                 f"withheld_manifest_entries={withheld_manifest}/{redaction.get('total_manifest_entries', '?')}"
             )
         lines.append(f"- redaction: audience=`{redaction['audience']}` — " + "; ".join(redaction_bits))
+    estimand = scored.get("estimand")
+    if estimand:
+        lines.append(
+            f"- estimand: population=`{estimand.get('population')}` — "
+            f"annotation_mode and coverage resolved on `{estimand.get('resolved_on')}` "
+            f"({estimand.get('n_items')} items / {estimand.get('n_entries')} entries); "
+            "not the unfiltered corpus"
+        )
     if "seeded" in model.get("adapters", []):
         lines.append(
             "- ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown "
@@ -2625,14 +2920,17 @@ def _markdown(scored: dict[str, Any]) -> str:
         "",
         "## Face detection (identity-agnostic)",
         "",
-        f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "
-        f"(tp={det['tp']} fp={det['fp']} fn={det['fn']})",
+        (
+            f"- REFUSED ({det.get('invariant')}): {refusal_explanation(det.get('invariant'))}"
+            if det.get("refused")
+            else (
+                f"- precision: {_fmt(det['precision'])} recall: {_fmt(det['recall'])} "
+                f"(tp={det['tp']} fp={det['fp']} fn={det['fn']})"
+            )
+        ),
         "",
         "## Face identification (named assertions)",
         "",
-        f"- micro precision: {_fmt(ident['precision'])} recall: {_fmt(ident['recall'])}",
-        f"- macro precision: {_fmt(ident['macro_precision'])} recall: {_fmt(ident['macro_recall'])}",
-        f"- true rejections (strangers): {ident['true_rejections']}",
     ]
     positional_block = ident.get("positional") or {}
     if positional_block:
@@ -2672,22 +2970,31 @@ def _markdown(scored: dict[str, Any]) -> str:
             f"- ⚠ identity order unknown (no face_boxes) on "
             f"{ordering['order_unknown_excluded']} image(s) — positional excluded",
         ]
-    lines += [
-        "",
-        "### Wrong-name errors (top product risk — every instance listed)",
-        "",
-    ]
-    if ident["wrong_names"]:
-        lines += [f"- `{image}` → asserted **{name}**" for image, name in ident["wrong_names"]]
-    else:
-        lines.append("- none")
-    lines.append(f"- ignored (triaged): {len(ident['ignored_wrong_names'])}")
-    lines += ["", "### Per-identity (macro components)", ""]
-    for name, pr in ident["per_identity"].items():
+    if ident.get("refused"):
         lines.append(
-            f"- {name}: precision={_fmt(pr['precision'])} recall={_fmt(pr['recall'])} "
-            f"(tp={pr['tp']} fp={pr['fp']} fn={pr['fn']})"
+            f"- REFUSED ({ident.get('invariant')}): "
+            f"{refusal_explanation(ident.get('invariant'))}"
         )
+    else:
+        lines += [
+            f"- micro precision: {_fmt(ident['precision'])} recall: {_fmt(ident['recall'])}",
+            f"- macro precision: {_fmt(ident['macro_precision'])} recall: {_fmt(ident['macro_recall'])}",
+            f"- true rejections (strangers): {ident['true_rejections']}",
+            "",
+            "### Wrong-name errors (top product risk — every instance listed)",
+            "",
+        ]
+        if ident["wrong_names"]:
+            lines += [f"- `{image}` → asserted **{name}**" for image, name in ident["wrong_names"]]
+        else:
+            lines.append("- none")
+        lines.append(f"- ignored (triaged): {len(ident['ignored_wrong_names'])}")
+        lines += ["", "### Per-identity (macro components)", ""]
+        for name, pr in ident["per_identity"].items():
+            lines.append(
+                f"- {name}: precision={_fmt(pr['precision'])} recall={_fmt(pr['recall'])} "
+                f"(tp={pr['tp']} fp={pr['fp']} fn={pr['fn']})"
+            )
     lines += ["", "## Per-item failures", ""]
     if scored["failures"]:
         lines += [f"- `{f['path']}` (media_id={f['media_id']}): {f['error']}" for f in scored["failures"]]
@@ -2704,6 +3011,7 @@ def build_reports(
     *,
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
+    annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
     rubric_gate: str = "enforce",
 ) -> tuple[str, str]:
@@ -2715,6 +3023,13 @@ def build_reports(
     identity-bearing detail, non-publishable per_image rows, and provenance
     via a fail-closed allow-list (VLM6-R3-01/02). Signature unchanged for the
     concurrent cli lane.
+
+    A filtered artifact is a different estimand (S2R5-03): PUBLIC declares its
+    scored population in ``estimand`` rather than silently reusing an
+    unfiltered refusal or dropping the evidence that would have refused a
+    metric. Because this path scores the full corpus *before* redacting
+    (VLM6-R3-03), ``estimand.resolved_on`` is ``"full_corpus"`` — not
+    ``"publishable_items"`` — even for ``audience=PUBLIC``.
 
     ``rubric_gate`` is the operator-declared Must-Right exit-gate mode
     (``enforce``|``skip``); stamped into ``verdict.rubric_gate`` (F1b-2 / F1-12).
@@ -2728,6 +3043,7 @@ def build_reports(
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
         rubric_gate=rubric_gate,
+        annotation_mode=annotation_mode,
     )
     if audience is Audience.PUBLIC:
         scored = _redact_caption_report_for_public(
@@ -2735,6 +3051,16 @@ def build_reports(
             run_record=run_record,
             manifest_entries=manifest_entries,
         )
+        redaction = scored.get("redaction") or {}
+        scored["estimand"] = {
+            "audience": Audience.PUBLIC.value,
+            "population": "publishable_items",
+            "n_items": redaction.get("total_items"),
+            "n_entries": redaction.get("total_manifest_entries"),
+            "withheld_items": redaction.get("withheld_items"),
+            "total_items": redaction.get("total_items"),
+            "resolved_on": "full_corpus",
+        }
     return json.dumps(scored, indent=2, sort_keys=True, ensure_ascii=False) + "\n", _markdown(scored)
 
 
@@ -2815,6 +3141,49 @@ def synthetic_real_divergence(
         "reason": "d_exceeds_threshold" if d > threshold else "within_threshold",
         "n_real": int(n_real),
         "real_floor": int(real_floor),
+    }
+
+
+def _refused_face_identification_block(invariant: str) -> dict[str, Any]:
+    """Identification slice that cannot be computed honestly (EVAL-03)."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "precision": None,
+        "recall": None,
+        "tp": None,
+        "fp": None,
+        "fn": None,
+        "n_named_probes": None,
+        "n_recall_eligible": None,
+        "wrong_names": None,
+        "detection_recall_coupling_flag": None,
+        "sampling_frame": None,
+        "precision_numerator": None,
+        "precision_denominator": None,
+        "recall_numerator": None,
+        "recall_denominator": None,
+        "missed_gt": None,
+        "unmatched_detections": None,
+        **_slice_status(meets_floor=False, reasons=[invariant]),
+    }
+
+
+def _refused_unknown_rejection_block(invariant: str) -> dict[str, Any]:
+    """Unknown-rejection must not credit probes dropped for lack of boxes."""
+    return {
+        "refused": True,
+        "invariant": invariant,
+        "rate": None,
+        "correct_rejects": None,
+        "false_accepts": None,
+        "n": None,
+        "n_floor": UNKNOWN_REJECTION_N_FLOOR,
+        "error_target": UNKNOWN_REJECTION_ERROR_TARGET,
+        "sampling_frame": None,
+        "rate_numerator": None,
+        "rate_denominator": None,
+        **_slice_status(meets_floor=False, reasons=[invariant]),
     }
 
 
@@ -2942,12 +3311,51 @@ def _slice_status(*, meets_floor: bool, reasons: Sequence[str] | None = None) ->
     }
 
 
+def _annotation_mode_of(manifest: Any) -> AnnotationMode | None:
+    """Read annotation_mode from a GoldenManifest or mapping; never invent one.
+
+    Mapping content wins over a dict-subclass attribute (S2R4-12). Attribute
+    first inverted most-restrictive-wins when the key said roster_only.
+    """
+    if isinstance(manifest, Mapping) and "annotation_mode" in manifest:
+        return parse_annotation_mode(manifest.get("annotation_mode"))
+    raw = getattr(manifest, "annotation_mode", None)
+    return parse_annotation_mode(raw)
+
+
+def _stamp_typed_document_mode(entries: list[dict[str, Any]], mode_value: str) -> None:
+    """Stamp the loaded document mode onto GoldenEntry dumps.
+
+    ``GoldenEntry`` has no ``annotation_mode`` field (S2R3-10). The
+    document-level field on a typed ``GoldenManifest`` *is* the loaded
+    contract (ADR-015). CLI ``_face_score_once`` passes that object
+    straight into ``build_face_reports``; without this stamp every
+    score-face run would refuse. This is a flatten, not a fill: raw
+    mappings never enter this helper (S2R3-02).
+    """
+    for entry in entries:
+        if entry.get("annotation_mode") is None:
+            entry["annotation_mode"] = mode_value
+
+
 def _entries_as_dicts(manifest: Any) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
-    """Normalize GoldenManifest | mapping | entry-list into plain dicts."""
+    """Normalize GoldenManifest | mapping | entry-list into plain dicts.
+
+    Typed ``GoldenEntry`` cannot carry a per-entry stamp (S2R3-10): the
+    field does not exist and ``extra="forbid"``. On a typed manifest this
+    therefore stamps the *document* mode onto every dumped entry. A raw
+    mapping's parent ``annotation_mode`` is a caller assertion, not
+    per-entry evidence — it is not copied downward (S2R3-02). The
+    per-entry lattice (mixed / disagreeing stamps) is raw-mapping-only.
+    """
+    mode = _annotation_mode_of(manifest)
+    mode_value = None if mode is None else mode.value
     if hasattr(manifest, "entries") and hasattr(manifest, "roster"):
         entries = [e.model_dump() if hasattr(e, "model_dump") else dict(e) for e in manifest.entries]
         roster_cohorts = dict(getattr(manifest, "roster_cohorts", {}) or {})
         roster = list(getattr(manifest, "roster", []) or [])
+        if mode_value is not None:
+            _stamp_typed_document_mode(entries, mode_value)
         return entries, roster_cohorts, roster
     if isinstance(manifest, Mapping):
         raw_entries = list(manifest.get("entries") or [])
@@ -3322,6 +3730,24 @@ def score_face_run_record(
     """
     _validate_face_record_kind(face_run_record)
     entries, roster_cohorts, _roster = _entries_as_dicts(manifest)
+    parent = _annotation_mode_of(manifest)
+    mode = _resolve_score_annotation_mode(parent, entries)
+    if mode is not AnnotationMode.EXHAUSTIVE:
+        # Parent roster_only may only *narrow* (fail closed). It must not
+        # mint exhaustive, but it still names the more specific refusal
+        # when raw-mapping entries carry no stamp of their own (S2R3-02).
+        if mode is AnnotationMode.ROSTER_ONLY or parent is AnnotationMode.ROSTER_ONLY:
+            raise ManifestError(
+                "score_face_run_record refuses roster_only manifests; unlabeled "
+                "non-roster faces would be scored as false positives",
+                invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
+            )
+        raise ManifestError(
+            "score_face_run_record requires annotation_mode=exhaustive; "
+            "omission is not exhaustive",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
+        )
+    require_exhaustive_box_coverage(entries)
     entry_by_id = _entry_index(entries)
     gt_by_media = _gt_by_media(entries)
     total_boxes = _total_gt_boxes(entries)
@@ -3364,70 +3790,100 @@ def score_face_run_record(
     assignment = score_face_assignment(scoreable, gt_by_media)
     detection = _detection_from_assignment(assignment)
 
+    try:
+        require_boxed_identification_gt(
+            [entry_by_id[int(item["media_id"])] for item in scoreable]
+        )
+    except ManifestError as exc:
+        if not _invariant_is(exc.invariant, IDENTIFICATION_UNBOXED_INVARIANT):
+            raise
+        identification_invariant = exc.invariant
+    else:
+        identification_invariant = None
+
     # Full-corpus identification + unknown-rejection (includes private strangers).
-    id_pr = face_identification_pr(
-        assignment.decisions,
-        missed_gt=assignment.missed_gt,
-        unmatched_detections=assignment.false_detections,
-        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
-    )
-    unknown = face_unknown_rejection(
-        assignment.decisions,
-        missed_stranger_gt=assignment.missed_stranger_gt,
-    )
-
-    # Headline = celebs01 named probes only (provenance.source == CELEB).
-    # Coupling counts are headline-scoped (not full-corpus) so the honesty flag
-    # matches the published rate's sampling frame (FIR5V11-05 / REF-27).
-    celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
-    headline_decisions = [d for d in assignment.decisions if d.media_id in celebs01_ids and d.true_name is not None]
-    headline_missed_gt, headline_unmatched, headline_assoc_notes = _association_counts_for_media(
-        assignment,
-        celebs01_ids,
-        gt_by_media=gt_by_media,
-        probe_media_ids={d.media_id for d in headline_decisions},
-    )
-    headline_id = face_identification_pr(
-        headline_decisions,
-        missed_gt=headline_missed_gt,
-        unmatched_detections=headline_unmatched,
-        sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
-    )
-
+    # Unboxed identity claims cannot be scored as named probes OR as stranger
+    # rejects — both would silently drop the claim from the ID denominator
+    # and recycle it as unknown-rejection credit (S2R4-01).
     # FIR5RR-07: mid-grid-unfitted τ can never back a gating number — every
     # τ-dependent slice is forced DIRECTIONAL with an explicit reason.
     tau_unfitted = assignment.tau_fit_status != "fitted"
     tau_unfitted_reason = f"tau_fit_status={assignment.tau_fit_status}"
 
-    headline_reasons: list[str] = []
-    if zero_box_corpus:
-        headline_reasons.append("zero_box_corpus")
-    elif headline_id.n_recall_eligible < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR:
-        headline_reasons.append(
-            f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"
+    celebs01_ids = {mid for mid, e in entry_by_id.items() if _is_celebs01(e)}
+    headline_assoc_notes: list[str] = []
+    if identification_invariant is None:
+        id_pr = face_identification_pr(
+            assignment.decisions,
+            missed_gt=assignment.missed_gt,
+            unmatched_detections=assignment.false_detections,
+            sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["full_corpus_identification"],
         )
-    if tau_unfitted:
-        headline_reasons.append(tau_unfitted_reason)
-    headline_floor_met = (
-        not zero_box_corpus and not tau_unfitted and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
-    )
-    headline_status = _slice_status(
-        meets_floor=headline_floor_met,
-        reasons=headline_reasons,
-    )
+        unknown = face_unknown_rejection(
+            assignment.decisions,
+            missed_stranger_gt=assignment.missed_stranger_gt,
+        )
 
-    unknown_reasons: list[str] = []
-    if zero_box_corpus:
-        unknown_reasons.append("zero_box_corpus")
-    elif not unknown.meets_floor:
-        unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
-    if tau_unfitted:
-        unknown_reasons.append(tau_unfitted_reason)
-    unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
-    unknown_status = _slice_status(
-        meets_floor=unknown_floor_met,
-        reasons=unknown_reasons,
-    )
+        # Headline = celebs01 named probes only (provenance.source == CELEB).
+        # Coupling counts are headline-scoped (not full-corpus) so the honesty
+        # flag matches the published rate's sampling frame (FIR5V11-05 / REF-27).
+        headline_decisions = [
+            d
+            for d in assignment.decisions
+            if d.media_id in celebs01_ids and d.true_name is not None
+        ]
+        headline_missed_gt, headline_unmatched, headline_assoc_notes = (
+            _association_counts_for_media(
+                assignment,
+                celebs01_ids,
+                gt_by_media=gt_by_media,
+                probe_media_ids={d.media_id for d in headline_decisions},
+            )
+        )
+        headline_id = face_identification_pr(
+            headline_decisions,
+            missed_gt=headline_missed_gt,
+            unmatched_detections=headline_unmatched,
+            sampling_frame=FACE_BAKEOFF_SAMPLING_FRAMES["headline_identification"],
+        )
+
+        headline_reasons: list[str] = []
+        if zero_box_corpus:
+            headline_reasons.append("zero_box_corpus")
+        elif headline_id.n_recall_eligible < HEADLINE_ID_RECALL_ELIGIBLE_FLOOR:
+            headline_reasons.append(
+                f"n_recall_eligible={headline_id.n_recall_eligible}<{HEADLINE_ID_RECALL_ELIGIBLE_FLOOR}"
+            )
+        if tau_unfitted:
+            headline_reasons.append(tau_unfitted_reason)
+        headline_floor_met = (
+            not zero_box_corpus
+            and not tau_unfitted
+            and headline_id.n_recall_eligible >= HEADLINE_ID_RECALL_ELIGIBLE_FLOOR
+        )
+        headline_status = _slice_status(
+            meets_floor=headline_floor_met,
+            reasons=headline_reasons,
+        )
+
+        unknown_reasons: list[str] = []
+        if zero_box_corpus:
+            unknown_reasons.append("zero_box_corpus")
+        elif not unknown.meets_floor:
+            unknown_reasons.append(f"n={unknown.n}<{UNKNOWN_REJECTION_N_FLOOR}")
+        if tau_unfitted:
+            unknown_reasons.append(tau_unfitted_reason)
+        unknown_floor_met = not zero_box_corpus and not tau_unfitted and unknown.meets_floor
+        unknown_status = _slice_status(
+            meets_floor=unknown_floor_met,
+            reasons=unknown_reasons,
+        )
+    else:
+        id_pr = None
+        unknown = None
+        headline_id = None
+        headline_status = None
+        unknown_status = None
 
     # Clustering on named matched faces only (strangers excluded).
     named_matched = [m for m in assignment.matched if m.true_name is not None]
@@ -3476,24 +3932,39 @@ def score_face_run_record(
             )
         )
 
-    # Demographic Fair-SA (always DIRECTIONAL — no floor).
-    single_subject = _build_single_subject_cohort_by_media(entries)
-    demo = demographic_rollup(
-        assignment.decisions,
-        roster_cohorts,
-        single_subject_cohort_by_media=single_subject,
-        # FIR5RR-05: per-cohort miss fields stay None (not attributed); the
-        # coupling flag is inherited from the full-corpus identification frame.
-        parent_detection_coupling=id_pr.detection_recall_coupling_flag,
-    )
-    demo_block = {
-        "section_header": demo.section_header,
-        "directional": True,
-        "directional_reasons": list(demo.directional_reasons),
-        "status": DIRECTIONAL_LABEL,
-        "label": DIRECTIONAL_LABEL,
-        "by_cohort": {cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())},
-    }
+    # Demographic Fair-SA (always DIRECTIONAL — no floor). Identification
+    # refusal also refuses the per-cohort ID rollup — it is the same estimand.
+    if identification_invariant is None:
+        single_subject = _build_single_subject_cohort_by_media(entries)
+        demo = demographic_rollup(
+            assignment.decisions,
+            roster_cohorts,
+            single_subject_cohort_by_media=single_subject,
+            # FIR5RR-05: per-cohort miss fields stay None (not attributed); the
+            # coupling flag is inherited from the full-corpus identification frame.
+            parent_detection_coupling=id_pr.detection_recall_coupling_flag,
+        )
+        demo_block = {
+            "section_header": demo.section_header,
+            "directional": True,
+            "directional_reasons": list(demo.directional_reasons),
+            "status": DIRECTIONAL_LABEL,
+            "label": DIRECTIONAL_LABEL,
+            "by_cohort": {
+                cohort: _face_pr_dict(pr) for cohort, pr in sorted(demo.by_cohort.items())
+            },
+        }
+    else:
+        demo_block = {
+            "refused": True,
+            "invariant": identification_invariant,
+            "section_header": "demographic Fair-SA (DIRECTIONAL)",
+            "directional": True,
+            "directional_reasons": [identification_invariant],
+            "status": DIRECTIONAL_LABEL,
+            "label": DIRECTIONAL_LABEL,
+            "by_cohort": {},
+        }
 
     # Occlusion slices (synthetic + real divergence).
     # FIR5RR-01 (CAL-07/EVAL-07): each twin is scored at its source identity's
@@ -3615,8 +4086,8 @@ def score_face_run_record(
         }
 
     # Floor-gated rollup of every gating slice.
-    slices: dict[str, Any] = {
-        "headline_identification": {
+    if identification_invariant is None:
+        headline_block = {
             **_face_pr_dict(headline_id),
             "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
             "floor_unit": "recall_eligible_celebs01",
@@ -3625,8 +4096,8 @@ def score_face_run_record(
             # disclosed here (their manifest named faces were counted as misses).
             "association_provenance_notes": list(headline_assoc_notes),
             **headline_status,
-        },
-        "unknown_rejection": {
+        }
+        unknown_block = {
             "rate": unknown.rate,
             "correct_rejects": unknown.correct_rejects,
             "false_accepts": unknown.false_accepts,
@@ -3640,14 +4111,55 @@ def score_face_run_record(
             # rate_denominator (already required into face_unknown_rejection).
             "missed_stranger_gt": int(assignment.missed_stranger_gt),
             **unknown_status,
-        },
+        }
+        full_id_block = _face_pr_dict(id_pr)
+        coupling_block = {
+            "identification_recall": headline_id.recall,
+            "detection_recall": detection["recall"],
+            "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
+            "missed_gt": headline_id.missed_gt,
+            "unmatched_detections": headline_id.unmatched_detections,
+            "sampling_frame": headline_id.sampling_frame,
+            "flag": (
+                "identification recall is computed only over faces this leg detected and "
+                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
+                "detected subset — report id-recall ALONGSIDE detection-recall"
+            ),
+        }
+    else:
+        headline_block = {
+            **_refused_face_identification_block(identification_invariant),
+            "n_floor": HEADLINE_ID_RECALL_ELIGIBLE_FLOOR,
+            "floor_unit": "recall_eligible_celebs01",
+            "error_target": HEADLINE_ID_ERROR_TARGET,
+            "association_provenance_notes": list(headline_assoc_notes),
+        }
+        unknown_block = _refused_unknown_rejection_block(identification_invariant)
+        full_id_block = _refused_face_identification_block(identification_invariant)
+        coupling_block = {
+            "refused": True,
+            "invariant": identification_invariant,
+            "identification_recall": None,
+            "detection_recall": detection["recall"],
+            "detection_recall_coupling_flag": None,
+            "missed_gt": None,
+            "unmatched_detections": None,
+            "sampling_frame": None,
+            "flag": (
+                "identification recall is not computed from identity claims that "
+                "carry no per-face box lineage"
+            ),
+        }
+    slices: dict[str, Any] = {
+        "headline_identification": headline_block,
+        "unknown_rejection": unknown_block,
         "clustering": {
             **cluster_block,
             "sampling_frame": SAMPLING_FRAME_CLUSTERING,
         },
         "occlusion": occlusion_out,
         "demographic": demo_block,
-        "full_corpus_identification": _face_pr_dict(id_pr),
+        "full_corpus_identification": full_id_block,
     }
 
     # Gate-proposal: EXCLUDE every DIRECTIONAL slice (SC4). Never emit demoted verdict.
@@ -3678,19 +4190,7 @@ def score_face_run_record(
         "operator_authority": "FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote",
         "proposed_slices": proposed,
         "excluded_directional": sorted(excluded),
-        "identification_detection_coupling": {
-            "identification_recall": headline_id.recall,
-            "detection_recall": detection["recall"],
-            "detection_recall_coupling_flag": headline_id.detection_recall_coupling_flag,
-            "missed_gt": headline_id.missed_gt,
-            "unmatched_detections": headline_id.unmatched_detections,
-            "sampling_frame": headline_id.sampling_frame,
-            "flag": (
-                "identification recall is computed only over faces this leg detected and "
-                "§C-matched (enrolled); weak detection can inflate id-recall on the easy "
-                "detected subset — report id-recall ALONGSIDE detection-recall"
-            ),
-        },
+        "identification_detection_coupling": coupling_block,
         "p95_scan_latency": "FIR-6-owned; not measured here.",
         "scope_amendments_for_operator_ack": [
             "p95 full-scan latency deferred to FIR-6 (not measured in FIR-5)",
@@ -4287,23 +4787,36 @@ def _markdown_face(scored: dict[str, Any]) -> str:
         "",
     ]
     hl = slices.get("headline_identification") or {}
-    lines.append(
-        f"- **headline_identification**: status=`{_fmt_prov(hl.get('status', hl.get('label', '?')))}` "
-        f"directional={_fmt_prov(hl.get('directional'))} "
-        f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
-        f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
-        f"n_recall_eligible={_fmt_prov(hl.get('n_recall_eligible'))}/{_fmt_prov(hl.get('n_floor'))} "
-        f"frame=`{_fmt_prov(hl.get('sampling_frame'), default='')}`"
-    )
+    if hl.get("refused"):
+        lines.append(
+            f"- **headline_identification**: REFUSED ({hl.get('invariant')}): "
+            f"{refusal_explanation(hl.get('invariant'))}"
+        )
+    else:
+        lines.append(
+            f"- **headline_identification**: status=`{_fmt_prov(hl.get('status', hl.get('label', '?')))}` "
+            f"directional={_fmt_prov(hl.get('directional'))} "
+            f"precision={_fmt_rate_n_over_n(hl.get('precision'), hl.get('precision_numerator'), hl.get('precision_denominator'))} "
+            f"recall={_fmt_rate_n_over_n(hl.get('recall'), hl.get('recall_numerator'), hl.get('recall_denominator'))} "
+            f"n_recall_eligible={_fmt_prov(hl.get('n_recall_eligible'))}/{_fmt_prov(hl.get('n_floor'))} "
+            f"frame=`{_fmt_prov(hl.get('sampling_frame'), default='')}`"
+        )
     unk = slices.get("unknown_rejection") or {}
-    lines.append(
-        f"- **unknown_rejection**: status=`{_fmt_prov(unk.get('status', unk.get('label', '?')))}` "
-        f"directional={_fmt_prov(unk.get('directional'))} "
-        f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
-        f"n={_fmt_prov(unk.get('n'))}/{_fmt_prov(unk.get('n_floor'))} "
-        f"missed_stranger_gt={_fmt_prov(unk.get('missed_stranger_gt'))} "
-        f"frame=`{_fmt_prov(unk.get('sampling_frame'), default='')}`"
-    )
+    if unk.get("refused"):
+        lines.append(
+            f"- **unknown_rejection**: REFUSED ({unk.get('invariant')}): "
+            "unknown-rejection is not scored from identity claims that carry "
+            "no per-face box lineage"
+        )
+    else:
+        lines.append(
+            f"- **unknown_rejection**: status=`{_fmt_prov(unk.get('status', unk.get('label', '?')))}` "
+            f"directional={_fmt_prov(unk.get('directional'))} "
+            f"rate={_fmt_rate_n_over_n(unk.get('rate'), unk.get('rate_numerator', unk.get('correct_rejects')), unk.get('rate_denominator', unk.get('n')))} "
+            f"n={_fmt_prov(unk.get('n'))}/{_fmt_prov(unk.get('n_floor'))} "
+            f"missed_stranger_gt={_fmt_prov(unk.get('missed_stranger_gt'))} "
+            f"frame=`{_fmt_prov(unk.get('sampling_frame'), default='')}`"
+        )
     cl = slices.get("clustering") or {}
     lines.append(
         f"- **clustering**: status=`{_fmt_prov(cl.get('status', cl.get('label', '?')))}` "

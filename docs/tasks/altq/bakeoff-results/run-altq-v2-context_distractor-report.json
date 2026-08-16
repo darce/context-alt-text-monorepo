@@ -22,93 +22,26 @@
   "eval_mode": "context_distractor",
   "faces": {
     "detection": {
-      "fn": 57,
-      "fp": 0,
+      "fn": null,
+      "fp": null,
+      "invariant": "detection_refuses_roster_only",
       "precision": null,
-      "recall": 0.0,
-      "tp": 0
+      "recall": null,
+      "refused": true,
+      "tp": null
     },
     "identification": {
-      "excluded_images": [],
-      "ignored_wrong_names": [],
+      "excluded_images": null,
+      "ignored_wrong_names": null,
+      "invariant": "identification_refuses_unboxed_identity_claims",
       "macro_precision": null,
-      "macro_recall": 0.0,
-      "per_identity": {
-        "Bea Burke": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Caitlin Weaver": {
-          "fn": 14,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Cristina Quintana": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Daniel Arce": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Ellyn Heald": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Erika Hansen Miller": {
-          "fn": 1,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Kirstie Mccarrel": {
-          "fn": 5,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Liam Maloney": {
-          "fn": 2,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Maria Correonero": {
-          "fn": 7,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        },
-        "Ryann Wiseman": {
-          "fn": 3,
-          "fp": 0,
-          "precision": null,
-          "recall": 0.0,
-          "tp": 0
-        }
-      },
+      "macro_recall": null,
+      "per_identity": {},
       "precision": null,
-      "recall": 0.0,
-      "true_rejections": 10,
-      "wrong_names": []
+      "recall": null,
+      "refused": true,
+      "true_rejections": null,
+      "wrong_names": null
     }
   },
   "failures": [],
@@ -124,6 +57,11 @@
       "p95": 12.562
     }
   },
+  "notes": [
+    "S2R4-14 F23-G re-score: docs/tasks/altq/bakeoff-results/run-altq-v2-context_distractor.json against apps/prototype-description-service/scene/tests/seed/golden.json at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7. Identification was SCORED precision=None recall=0.0 per_identity=10; current scorer publishes REFUSED(identification_refuses_unboxed_identity_claims). Numbers are the scorer's output, not hand-edited.",
+    "Provenance: fetch manifest_sha256=747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f score_manifest_sha256=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). The fetch-time manifest is a pre-v3 snapshot the current loader cannot load (manifest_version 3 only, e30a8ce0). This re-score uses the in-tree v3 descendant of the same file, not a different corpus. Previous published score SHA was fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d.",
+    "Caption axes are unchanged versus the previously published report."
+  ],
   "per_image": [
     {
       "cache_hit": false,
@@ -1034,7 +972,7 @@
     "base_url": "http://localhost:8000",
     "eval_mode": "context_distractor",
     "head_sha": "4be31eae6967cebddc04c6a0234d583600450662",
-    "manifest_matches_fetch": true,
+    "manifest_matches_fetch": false,
     "manifest_sha256": "747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f",
     "model": {
       "adapters": [
@@ -1048,7 +986,7 @@
       ]
     },
     "prompt_variant": "v2",
-    "score_manifest_sha256": "747e603176269cedbdfc376d5f8cff794179c378f9fd219247907db59cb0aa4f",
+    "score_manifest_sha256": "fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d",
     "started_at": "2026-07-16T21:08:41Z"
   },
   "quality": {

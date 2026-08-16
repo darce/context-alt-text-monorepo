@@ -182,13 +182,15 @@ def _tiny_manifest(n: int, tmp_path: Path) -> GoldenManifest:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
     # Distinct sha per entry
     for i, e in enumerate(entries):
         e["sha256"] = f"{i:02x}" * 32
     return GoldenManifest.model_validate(
-        {"manifest_version": 2, "roster": ["Caitlin Weaver"], "entries": entries}
+        {"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries}
     )
 
 
@@ -810,7 +812,8 @@ def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
     assert cv2.imwrite(str(img_dir / "alice.jpg"), img)
     manifest = GoldenManifest.model_validate(
         {
-            "manifest_version": 2,
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
             "roster": ["Alice Q"],
             "entries": [
                 {
@@ -824,7 +827,27 @@ def test_twin_pass_with_fused_leg_and_pinned_cache_detector(
                     "policy": {"recognition_enabled": True},
                     "context_pack": {"caption": "x"},
                     "face_boxes": [
-                        {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Q", "source": "iptc"}
+                        {
+                            "x": 0.4,
+                            "y": 0.4,
+                            "w": 0.4,
+                            "h": 0.4,
+                            "name": "Alice Q",
+                            "source": "iptc",
+                            "lineage": {
+                                "labeler_id": "test-labeler",
+                                "batch_id": "test-batch",
+                                "capture_session_id": "test-session",
+                                "pass_index": 0,
+                                "labeled_at": "2026-08-14T00:00:00Z",
+                                "tool_version": "test",
+                                "saw_machine_proposals": False,
+                                "label_source": "operator_blind",
+                                "decision": "named",
+                                "confidence": "high",
+                                "arbitration_of": None,
+                            },
+                        }
                     ],
                     "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 }
@@ -886,7 +909,8 @@ def test_twin_pass_landmark_cache_provenance_from_detector(
     assert cv2.imwrite(str(img_dir / "bob.jpg"), img)
     manifest = GoldenManifest.model_validate(
         {
-            "manifest_version": 2,
+            "manifest_version": 3,
+            "annotation_mode": "roster_only",
             "roster": ["Bob R"],
             "entries": [
                 {
@@ -900,7 +924,27 @@ def test_twin_pass_landmark_cache_provenance_from_detector(
                     "policy": {"recognition_enabled": True},
                     "context_pack": {"caption": "x"},
                     "face_boxes": [
-                        {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Bob R", "source": "iptc"}
+                        {
+                            "x": 0.4,
+                            "y": 0.4,
+                            "w": 0.4,
+                            "h": 0.4,
+                            "name": "Bob R",
+                            "source": "iptc",
+                            "lineage": {
+                                "labeler_id": "test-labeler",
+                                "batch_id": "test-batch",
+                                "capture_session_id": "test-session",
+                                "pass_index": 0,
+                                "labeled_at": "2026-08-14T00:00:00Z",
+                                "tool_version": "test",
+                                "saw_machine_proposals": False,
+                                "label_source": "operator_blind",
+                                "decision": "named",
+                                "confidence": "high",
+                                "arbitration_of": None,
+                            },
+                        }
                     ],
                     "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
                 }

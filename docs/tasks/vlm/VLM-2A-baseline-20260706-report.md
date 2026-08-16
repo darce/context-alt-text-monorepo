@@ -5,46 +5,36 @@
 - head_sha: `2fe574fac42acc260afd04ccfb2fdb68774459d8`
 - base_url: https://api.altcontext.com
 - fetch manifest_sha256: `9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c`
-- score manifest_sha256: `ee94088b7cc9d43532b8457c3787251877328f5f800375c942b245218bee5fe0` (matches fetch: False)
+- score manifest_sha256: `fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d` (matches fetch: False)
 - started_at: 2026-07-06T20:11:45Z
 - images: 37/37 scored, 0 failed
+- notes: S2R4-15 F23-G disclosure at code 896bd17d4277b83ba54993007cb8ae5bbe2e0de7: S2R3-08 republish already refused identification; metrics not rewritten this wave. Current faces.identification is REFUSED(identification_refuses_unboxed_identity_claims); this wave did not re-score the run-record (already an honest refusal).
+- notes: S2R4-18 provenance: fetch=9f9b134a71e5e1c2e5aa361d7139680081877841abefc0c4f3f7c55917e9927c score=fc7ce54817e521460c38a2034c84c6537f9a13e78c18b080d5f78f80ae2a8d1d (matches fetch: False). 5918693d golden.json naive SHA 9f9b134a (v1); current loader is v3-only.
+- notes: FIR-11-S2R3-14 identification/caption rebaseline disclosed: against the current golden the detection-refusal wave scored faces.identification.true_rejections=10 (was 6) and caption.must_right_defined_images=37 / must_right_failed_images=34 (was 0 / 0). Those values are the current golden's score of the same run-record — the seed already carried 37 rubric rows. A later S2R3-08 refusal set identification to REFUSED so true_rejections is now null; the caption 37/34 numbers remain. This is a latent re-score drift the refusal wave surfaced, not a number the wave invented.
 - ⚠ produced by the model-free `seeded` stub adapter — harness-shakedown numbers, NOT a caption-model baseline.
-- ⚠ no Must-Right/Easy-Wrong rubric entries in the corpus — the caption hard gate is vacuous.
 
 ## Caption metrics (deterministic tier)
 
 - insertion rate: 0.000
-- Must-Right failed images (hard gate): 0 (rubric-defined images: 0)
+- name precision: null (wrong-name images: 0, rate: 0.000)
+- Must-Right failed images (hard gate): 34 (rubric-defined images: 37)
 - policy violations: 0
 - mean gated score: 0.081
 
+## Quality axes (short surface, report-only signals)
+
+- meta-framing images: 0
+- mean context duplication: 0.000
+- name front-loaded rate: 0.000
+- sentence band [1, 4] ok rate: 1.000
+
 ## Face detection (identity-agnostic)
 
-- precision: 0.762 recall: 0.941 (tp=48 fp=15 fn=3)
+- REFUSED (detection_refuses_roster_only): detection P/R is not computed unless annotation_mode is exhaustive
 
 ## Face identification (named assertions)
 
-- micro precision: 1.000 recall: 0.306
-- macro precision: 1.000 recall: 0.338
-- true rejections (strangers): 6
-
-### Wrong-name errors (top product risk — every instance listed)
-
-- none
-- ignored (triaged): 0
-
-### Per-identity (macro components)
-
-- Bea Burke: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Caitlin Weaver: precision=1.000 recall=0.071 (tp=1 fp=0 fn=13)
-- Cristina Quintana: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Daniel Arce: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Ellyn Heald: precision=1.000 recall=1.000 (tp=1 fp=0 fn=0)
-- Erika Hansen Miller: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Kirstie Mccarrel: precision=1.000 recall=0.400 (tp=2 fp=0 fn=3)
-- Liam Maloney: precision=1.000 recall=1.000 (tp=2 fp=0 fn=0)
-- Maria Correonero: precision=1.000 recall=0.571 (tp=4 fp=0 fn=3)
-- Ryann Wiseman: precision=1.000 recall=0.333 (tp=1 fp=0 fn=2)
+- REFUSED (identification_refuses_unboxed_identity_claims): identification P/R is not computed from identity claims that carry no per-face box lineage
 
 ## Per-item failures
 

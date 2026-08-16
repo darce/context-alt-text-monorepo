@@ -1,0 +1,437 @@
+{
+ "q1_eu_ai_act": {
+  "product_context": "Consumer photo-library person-tagging / face-clustering on user-uploaded photos (not public-space surveillance; not law enforcement). Inference on remote SaaS backend.",
+  "a_risk_class": {
+   "summary": "Not an Art.5 prohibition if you do not scrape the open internet/CCTV to build FR DBs, do not do real-time RBI in public spaces for LE, and do not categorise by race/politics/religion/sexual orientation etc. High-risk Annex III biometrics may still be in play for 'remote biometric identification' (1a); pure person-clustering without sensitive-attribute inference is outside Annex III 1b/1c. Classification for private-library tagging is contested\u2014document an Art.6 assessment.",
+   "evidence": [
+    {
+     "claim": "Art.5(1)(e) prohibits AI that creates/expands facial recognition databases via untargeted scraping of facial images from the internet or CCTV\u2014out of scope for user-uploaded own-library processing.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/5/"
+    },
+    {
+     "claim": "Art.5(1)(g) prohibits biometric categorisation systems that deduce race, political opinions, trade union membership, religion/beliefs, sex life or sexual orientation from biometrics (with narrow LE/labelling exceptions)\u2014not mere 'Person A / Person B' identity clustering.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/5/"
+    },
+    {
+     "claim": "Art.5(1)(h) prohibits real-time remote biometric identification in publicly accessible spaces for law enforcement (with limited exceptions)\u2014not applicable to private photo-library SaaS.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/5/"
+    },
+    {
+     "claim": "Annex III point 1 high-risk biometrics (where permitted under Union/national law): (a) remote biometric identification systems (excluding verification whose sole purpose is confirm-claimant-is-who-they-claim); (b) biometric categorisation according to sensitive/protected attributes inferred from biometrics; (c) emotion recognition.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/annex/3/"
+    },
+    {
+     "claim": "Art.3 defines 'remote biometric identification system' as AI identifying natural persons without their active involvement, typically at a distance, by comparing a person's biometric data with biometric data in a reference database; 'biometric categorisation system' assigns persons to categories on biometric data unless ancillary to another commercial service and strictly necessary for objective technical reasons.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/3/"
+    },
+    {
+     "claim": "Commission AI Act Service Desk biometrics guidance lists 'facial/voice recognition for media archives' (identify selected individuals from audiovisual content against a reference database without active involvement) as in-scope for Annex III 1(a) RBI\u2014closest official analogy to photo tagging against a gallery.",
+     "grade": "CONFIRMED",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/biometrics"
+    },
+    {
+     "claim": "Same Commission guidance: biometric categorisation high-risk only where assigning sensitive/protected attributes (Art.9 GDPR style); age/gender categorisation examples are often out of 1(b). Person-label clusters without sensitive inference are not 1(b).",
+     "grade": "CONFIRMED",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/biometrics"
+    },
+    {
+     "claim": "Whether a closed, account-holder-only face gallery (Google/Apple Photos style) is 'RBI high-risk' remains unsettled; conservative reading treats 1:N matching of templates from third-party faces in user libraries as potential RBI; provider should document Art.6 classification (and any Art.6(3) non-high-risk argument) before market placement.",
+     "grade": "ANECDOTAL",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/biometrics"
+    },
+    {
+     "claim": "If classified high-risk Annex III, provider obligations include risk management, data governance, technical documentation, transparency to deployers, human oversight, accuracy/robustness/cybersecurity, conformity assessment, CE marking, and registration (Arts.8\u201316, 43, 47\u201349, Annex IV).",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/annex/3/"
+    }
+   ]
+  },
+  "b_obligations_timeline": {
+   "summary": "Phased. After Digital Omnibus on AI, EC Service Desk: Annex III high-risk rules apply 2 Dec 2027 (not original 2 Aug 2026). GPAI Chapter V already from 2 Aug 2025. Prohibitions from 2 Feb 2025. Art.50 transparency from 2 Aug 2026.",
+   "evidence": [
+    {
+     "claim": "Official EC AI Act Service Desk timeline (post-Digital Omnibus): 1 Aug 2024 entry into force; 2 Feb 2025 prohibitions + general provisions/AI literacy; 2 Aug 2025 GPAI rules + governance; 2 Aug 2026 majority of rules + Art.50 transparency + enforcement of GPAI/prohibitions/transparency; 2 Dec 2027 Annex III high-risk rules; 2 Aug 2028 Annex I product-embedded high-risk.",
+     "grade": "CONFIRMED",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/ai-act/timeline/timeline-implementation-eu-ai-act"
+    },
+    {
+     "claim": "Digital Omnibus provisional political agreement deferred standalone Annex III high-risk obligations to 2 December 2027 and Annex I product-embedded high-risk to 2 August 2028 (from original Aug 2026 / Aug 2027).",
+     "grade": "CONFIRMED",
+     "url": "https://www.gibsondunn.com/eu-ai-act-omnibus-agreement-postponed-high-risk-deadlines-and-other-key-changes/"
+    },
+    {
+     "claim": "GPAI model provider obligations (Art.53 et seq.) apply from 2 August 2025; models placed on the market before that date must comply by 2 August 2027 (Art.111 transitional).",
+     "grade": "CONFIRMED",
+     "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+    },
+    {
+     "claim": "Art.50 transparency obligations start applying 2 August 2026 per EC Service Desk.",
+     "grade": "CONFIRMED",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/ai-act/timeline/timeline-implementation-eu-ai-act"
+    }
+   ]
+  },
+  "c_gpai_vs_task_specific": {
+   "summary": "Task-specific face-recognition / embedding models are generally NOT GPAI. Art.53 training-content public summary binds providers of general-purpose AI models only.",
+   "evidence": [
+    {
+     "claim": "Art.3(63): GPAI model = model trained with large data using self-supervision at scale that displays significant generality and can competently perform a wide range of distinct tasks, integrable into various downstream systems.",
+     "grade": "CONFIRMED",
+     "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+    },
+    {
+     "claim": "Recital 98: models with \u22651B parameters trained with large self-supervised data should be considered to display significant generality; Recital 99: large generative models are typical GPAI examples.",
+     "grade": "CONFIRMED",
+     "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+    },
+    {
+     "claim": "Commission Q&A indicative criterion: training compute >10^23 FLOP and ability to generate language / text-to-image / text-to-video for GPAI classification guidance.",
+     "grade": "CONFIRMED",
+     "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+    },
+    {
+     "claim": "Art.53(1)(d) obliges GPAI providers to draw up and make publicly available a sufficiently detailed summary of training content per AI Office template\u2014this obligation is for general-purpose AI models, not ordinary narrow AI systems.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/53/"
+    },
+    {
+     "claim": "A proprietary in-house face-embedding model used only for person matching in photo libraries is a narrow/task-specific AI system/model and should not, on ordinary reading of Art.3(63), trigger GPAI Chapter V (including the training-data summary template).",
+     "grade": "ANECDOTAL",
+     "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+    }
+   ]
+  },
+  "d_provider_disclose_vs_document": {
+   "summary": "If non-high-risk: limited AI Act transparency (Art.50 if any emotion/biometric interaction labels apply); GDPR transparency dominates. If high-risk Annex III: heavy internal Annex IV tech docs + deployer info Art.13 + EU database registration Art.49/71; public CE/conformity. GPAI public training summary only if model is GPAI.",
+   "evidence": [
+    {
+     "claim": "High-risk providers must draw up technical documentation before placing on market (Art.11 + Annex IV content: system description, design specs, data governance, risk management, metrics, human oversight, cybersecurity, etc.)\u2014primarily internal / authority-facing, not a public dump.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/11/"
+    },
+    {
+     "claim": "Art.13 requires high-risk providers to design systems so deployers can interpret outputs and use them appropriately, and to provide instructions for use including characteristics, performance, limitations, human oversight measures.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/13/"
+    },
+    {
+     "claim": "Art.49 + Chapter VIII / Art.71: high-risk AI systems listed in Annex III must be registered in the EU database before placing on the market (provider registration duties).",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/49/"
+    },
+    {
+     "claim": "Art.53 GPAI public training-content summary and technical docs for authorities/downstream apply only to GPAI model providers, not to ordinary face models.",
+     "grade": "CONFIRMED",
+     "url": "https://artificialintelligenceact.eu/article/53/"
+    },
+    {
+     "claim": "No Commission guidance found that expressly carves consumer photo-tagging apps out of Annex III 1(a); closest official material is Service Desk RBI/media-archive examples\u2014classification must be product-specific legal analysis.",
+     "grade": "ANECDOTAL",
+     "url": "https://ai-act-service-desk.ec.europa.eu/en/biometrics"
+    }
+   ]
+  }
+ },
+ "q2_gdpr": {
+  "summary": "Face templates/embeddings used to uniquely identify persons are Art.9 special-category biometric data. Default ban; explicit consent (Art.9(2)(a)) is the realistic basis for consumer SaaS. DPIA almost always required. Privacy policy must cover biometric processing purpose, legal bases, retention, recipients (backend), rights, international transfers.",
+  "evidence": [
+   {
+    "claim": "Art.9(1) GDPR prohibits processing of 'biometric data for the purpose of uniquely identifying a natural person' unless an Art.9(2) exception applies; Art.9(2)(a) is explicit consent.",
+    "grade": "CONFIRMED",
+    "url": "https://gdpr-info.eu/art-9-gdpr/"
+   },
+   {
+    "claim": "Art.4(14) defines biometric data as personal data from specific technical processing of physical/physiological/behavioural characteristics that allow or confirm unique identification (e.g. facial images, fingerprints).",
+    "grade": "CONFIRMED",
+    "url": "https://gdpr-info.eu/art-4-gdpr/"
+   },
+   {
+    "claim": "Recital 51: photographs are not systematically special category; they become biometric special-category data only when processed through specific technical means allowing unique identification/authentication\u2014i.e. face templates/embeddings for matching cross that line.",
+    "grade": "CONFIRMED",
+    "url": "https://www.privacy-regulation.eu/en/recital-51-GDPR.htm"
+   },
+   {
+    "claim": "ICO: digital photos are not automatically biometric; they become biometric special category when you create digital templates used for automated matching/identification; DPIA required for special category on large scale / biometric in combination with other high-risk criteria.",
+    "grade": "CONFIRMED",
+    "url": "https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/lawful-basis/special-category-data/what-is-special-category-data/"
+   },
+   {
+    "claim": "EDPB Guidelines 3/2019 (video devices): raw video is not itself Art.9 biometric data until specific technical processing for unique identification; three criteria (nature, means of technical processing, purpose of unique ID) apply.",
+    "grade": "CONFIRMED",
+    "url": "https://www.edpb.europa.eu/system/files/documents/files/file1/edpb_guidelines_201903_video_devices_en_0.pdf"
+   },
+   {
+    "claim": "Comparable consumer FR: Facebook disabled Tag Suggest / facial recognition in EU after DPA pressure (2012 templates deletion); Meta later globally shut Face Recognition (2021) and deleted >1B facial templates\u2014illustrates regulatory/commercial risk of FR templates.",
+    "grade": "CONFIRMED",
+    "url": "https://about.fb.com/news/2021/11/update-on-use-of-face-recognition/"
+   },
+   {
+    "claim": "Clearview AI fined \u20ac30.5M by Dutch DPA (2024) for illegal collection of face images for FR; multiple EU DPAs (FR, GR, IT, NL) have sanctioned Clearview (~\u20ac100M cumulative reported)\u2014scraped internet FR is the polar opposite of consented private libraries but shows Art.9/lawfulness enforcement intensity.",
+    "grade": "CONFIRMED",
+    "url": "https://www.edpb.europa.eu/news/dutch-supervisory-authority-imposes-a-fine-on-clearview-because-of-illegal-data-collection-for_en"
+   },
+   {
+    "claim": "Legal basis used by comparable products: for consumer FR/tagging in EU, industry and DPA practice converge on explicit consent from data subjects; legitimate interest is generally unavailable for Art.9 biometrics.",
+    "grade": "ANECDOTAL",
+    "url": "https://www.hfw.com/insights/ico-publishes-draft-guidance-on-biometric-data/"
+   },
+   {
+    "claim": "Hard problem for photo libraries: account-holder consent does not substitute for consent of third-party photo subjects (family, guests) whose faces become templates\u2014GDPR requires data-subject consent for special category processing of those persons.",
+    "grade": "ANECDOTAL",
+    "url": "https://gdpr-info.eu/art-9-gdpr/"
+   },
+   {
+    "claim": "Privacy policy / Art.13\u201314 notice should state: biometric processing for person tagging; Art.6 + Art.9 legal bases; categories (photos, embeddings, labels); recipients (SaaS processor/controller, subprocessors); retention/deletion of templates; rights (access, erasure, withdraw consent); transfers; DPIA existence if required; no automated decisions with legal effects if none.",
+    "grade": "ANECDOTAL",
+    "url": "https://gdpr-info.eu/art-9-gdpr/"
+   }
+  ]
+ },
+ "q3_us_bipa": {
+  "summary": "Illinois BIPA \u00a715 requires notice + written release from the SUBJECT of the biometric identifier before collecting face geometry scans. Account-holder-only consent is insufficient when third parties appear in photos\u2014Facebook Tag Suggestions / Google Photos settlements turned on exactly that. Texas CUBI similar commercial-purpose consent (AG only). Washington RCW 19.375 narrower; excludes photos/data generated therefrom under that statute.",
+  "evidence": [
+   {
+    "claim": "BIPA defines biometric identifier to include 'scan of hand or face geometry' (photographs themselves excluded, but scans derived from photos are the classic litigated theory).",
+    "grade": "CONFIRMED",
+    "url": "https://law.justia.com/codes/illinois/chapter-740/act-740-ilcs-14/"
+   },
+   {
+    "claim": "BIPA \u00a715(b): before collecting/capturing biometric identifier/information, private entity must (1) inform subject in writing of collection/storage; (2) inform of purpose and retention term; (3) receive written release from the subject or legally authorized representative.",
+    "grade": "CONFIRMED",
+    "url": "https://law.justia.com/codes/illinois/chapter-740/act-740-ilcs-14/"
+   },
+   {
+    "claim": "BIPA \u00a715(a) public retention/destruction policy; \u00a715(c) ban on selling/profiting from biometrics; \u00a715(d) disclosure limits; \u00a720 private right of action ($1k negligent / $5k intentional-or-reckless per violation, plus fees)\u20142024 amendments cap recovery for same method/person collection as single violation.",
+    "grade": "CONFIRMED",
+    "url": "https://law.justia.com/codes/illinois/chapter-740/act-740-ilcs-14/"
+   },
+   {
+    "claim": "Facebook Tag Suggestions BIPA class settlement \u2248 $650M (final approval 2021)\u2014alleged face templates from uploaded photos without prior informed written consent of Illinois users.",
+    "grade": "CONFIRMED",
+    "url": "https://www.americanbar.org/groups/business_law/resources/business-law-today/2021-february/historic-biometric-privacy-settlement/"
+   },
+   {
+    "claim": "Google Photos face-grouping BIPA settlement \u2248 $100M (2022)\u2014alleged creation of face templates without consent.",
+    "grade": "CONFIRMED",
+    "url": "https://lawreview.law.uic.edu/news-stories/did-you-receive-a-settlement-check-in-the-mail-too-a-look-at-illinois-biometric-info-privacy-act/"
+   },
+   {
+    "claim": "Meta/Instagram later BIPA settlement \u2248 $68.5M (2023) reported in secondary sources.",
+    "grade": "CONFIRMED",
+    "url": "https://www.proskauer.com/blog/big-tech-biometrics-and-bipa-metas-recent-685m-class-action-settlement"
+   },
+   {
+    "claim": "Texas CUBI (Bus. & Com. Code ch. 503): for commercial purpose, may not capture biometric identifiers (incl. record of face geometry) without informing the individual and obtaining consent; restricts sale/disclosure; AG enforcement (no private right of action like BIPA); civil penalties up to $25k/violation reported in secondary charts.",
+    "grade": "CONFIRMED",
+    "url": "https://www.texasattorneygeneral.gov/consumer-protection/file-consumer-complaint/consumer-privacy-rights/biometric-identifier-act"
+   },
+   {
+    "claim": "Washington RCW 19.375: notice/consent (or opt-out mechanism) before enrolling biometric identifier for commercial purpose; definition excludes physical/digital photograph, video/audio or data generated therefrom\u2014significantly narrower for photo-library face geometry vs BIPA/CUBI.",
+    "grade": "CONFIRMED",
+    "url": "https://app.leg.wa.gov/RCW/default.aspx?cite=19.375&full=true"
+   },
+   {
+    "claim": "Templates from a user's own library still require \u00a715 consent from PHOTO SUBJECTS (not merely account holder) under BIPA text: written release must be executed by 'the subject of the biometric identifier'\u2014Facebook/Google settlements operationalize that reading for people depicted in photos.",
+    "grade": "CONFIRMED",
+    "url": "https://law.justia.com/codes/illinois/chapter-740/act-740-ilcs-14/"
+   },
+   {
+    "claim": "Practical SaaS implication: pure account-holder ToS clickwrap is weak for multi-person libraries; risk mitigations discussed in industry commentary include opt-in per face, subject invitation/consent flows, IL geo-blocking of FR, or on-device processing with subject control\u2014product/legal design choice, not settled statute text.",
+    "grade": "ANECDOTAL",
+    "url": "https://www.americanbar.org/groups/business_law/resources/business-law-today/2021-february/historic-biometric-privacy-settlement/"
+   }
+  ]
+ },
+ "q4_wporg": {
+  "summary": "Freemium SaaS is allowed if the service is real and documented; trialware/crippleware of local code is banned. External calls need user consent + privacy documentation in readme. GPL for all code hosted on wp.org; remote paid SaaS backend need not be GPL.",
+  "guidelines_page": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/",
+  "evidence": [
+   {
+    "claim": "Guideline 1: Plugins must be GPL-compatible; all code, data, images in the wp.org plugin directory must be GPL or GPL-compatible; GPLv2-or-later strongly recommended.",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Guideline 5 Trialware not permitted: may not lock functionality behind payment/upgrade, time/quota disable, or sandbox-only APIs. Paid service functionality IS permitted if all code inside the plugin is fully available; recommend external add-ons for premium code.",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Guideline 6 SaaS permitted: plugins may interface to external third-party (incl. paid) services; service must provide substance and be clearly documented in the readme, preferably with Terms of Use link. Forbidden: license-key-only services when all function is local; sham services that only move code off-plugin; pure storefronts.",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Guideline 7: Plugins may not contact external servers without explicit authorized consent (opt-in registration/checkbox). Documentation of how user data is collected/used in readme, preferably with privacy policy. SaaS exception: installing/activating/registering/configuring a documented service grants consent for those systems.",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Guideline 8: may not send executable code via third-party systems; no remote plugin/theme installs; non-service JS/CSS must be local (fonts exception).",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Guideline 9: implying users must pay to unlock included features is dishonest/prohibited; upselling ad-hoc products is acceptable within Guideline 11 (no admin hijacking).",
+    "grade": "CONFIRMED",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "Freemium norm: free wp.org client that honestly needs remote AI SaaS for alt-text/person tagging is allowed under G6; do not ship full local inference then key-gate it (G5 crippleware). Disclose remote processing, data sent, privacy policy in readme (G6+G7).",
+    "grade": "ANECDOTAL",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   },
+   {
+    "claim": "GPL scope: only what is distributed via wp.org must be GPL-compatible; proprietary remote backend weights/code hosted off-directory are normal for SaaS plugins\u2014so long as the plugin interface is GPL and not a sham.",
+    "grade": "ANECDOTAL",
+    "url": "https://developer.wordpress.org/plugins/wordpress-org/detailed-plugin-guidelines/"
+   }
+  ]
+ },
+ "q5_licenses": {
+  "models": [
+   {
+    "name": "SAM (Segment Anything Model 1)",
+    "org": "Meta / facebookresearch/segment-anything",
+    "license": "Apache-2.0 (code and model)",
+    "commercial_use": true,
+    "url": "https://github.com/facebookresearch/segment-anything",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "SAM 2",
+    "org": "Meta",
+    "license": "Apache-2.0 for code and model weights; SA-V dataset CC BY 4.0; eval code noted BSD-3 in Meta blog",
+    "commercial_use": true,
+    "url": "https://ai.meta.com/blog/segment-anything-2/",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "MobileSAM",
+    "org": "ChaoningZhang/MobileSAM",
+    "license": "Apache-2.0",
+    "commercial_use": true,
+    "url": "https://github.com/ChaoningZhang/MobileSAM",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "EfficientSAM",
+    "org": "yformer/EfficientSAM",
+    "license": "Apache-2.0",
+    "commercial_use": true,
+    "url": "https://github.com/yformer/EfficientSAM",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "RT-DETR",
+    "org": "Baidu / lyuwenyu/RT-DETR (official)",
+    "license": "Apache-2.0",
+    "commercial_use": true,
+    "url": "https://github.com/lyuwenyu/RT-DETR",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "D-FINE",
+    "org": "Peterande/D-FINE (ICLR 2025)",
+    "license": "Apache-2.0",
+    "commercial_use": true,
+    "url": "https://github.com/Peterande/D-FINE",
+    "grade": "CONFIRMED"
+   },
+   {
+    "name": "PP-PicoDet",
+    "org": "PaddlePaddle/PaddleDetection",
+    "license": "Apache-2.0 (PaddleDetection repository license; PicoDet is a PaddleDetection model family)",
+    "commercial_use": true,
+    "url": "https://github.com/PaddlePaddle/PaddleDetection",
+    "grade": "CONFIRMED",
+    "note": "Repo-level Apache-2.0; confirm any specific pretrained weight notice in model zoo cards before shipping."
+   }
+  ],
+  "cpu_cost_notes": {
+   "evidence": [
+    {
+     "claim": "Ultralytics docs: MobileSAM ~12 ms/image vs original SAM ~456 ms (same pipeline, Tiny-ViT 5M vs ViT-H 637M); MobileSAM ~5\u00d7 smaller and ~7\u00d7 faster than original SAM in published claims.",
+     "grade": "CONFIRMED",
+     "url": "https://docs.ultralytics.com/models/mobile-sam"
+    },
+    {
+     "claim": "Ultralytics SAM-2 model table reports Meta SAM-b CPU latency on order of ~41,703 ms/image in their comparison table (desktop-class CPU figures\u2014orders of magnitude too slow for interactive on-device ARM without quantization/specialized engines).",
+     "grade": "CONFIRMED",
+     "url": "https://docs.ultralytics.com/models/sam-2"
+    },
+    {
+     "claim": "MobileSAM authors state the model can run relatively smoothly on CPU; project Apache-2.0.",
+     "grade": "CONFIRMED",
+     "url": "https://kornia.readthedocs.io/en/latest/models/mobile_sam.html"
+    },
+    {
+     "claim": "PP-PicoDet paper: PicoDet-S reaches ~123\u2013150 FPS on mobile ARM CPU (Snapdragon 865, input 320) with NCNN/Paddle Lite\u2014detection, not SAM segmentation, but shows mobile ARM feasibility for light detectors.",
+     "grade": "CONFIRMED",
+     "url": "https://ar5iv.labs.arxiv.org/html/2111.00902"
+    },
+    {
+     "claim": "Practical implication for ARM: full SAM2 is GPU/edge-NPU class; MobileSAM/EfficientSAM-class models are the realistic CPU/edge path; remote backend inference remains the reliable SaaS default for quality SAM-class masks.",
+     "grade": "ANECDOTAL",
+     "url": "https://docs.ultralytics.com/models/mobile-sam"
+    }
+   ]
+  }
+ },
+ "q6_distillation": {
+  "summary": "No settled case law that NC model licenses automatically 'reach' pure outputs. Contract/license text of the NC model + ToS of commercial APIs control. InsightFace: code MIT; buffalo-class weights NC/research-only unless commercial pack licensed. OpenAI ToS expressly forbids using Output to develop competing models. Treat distillation from NC FR weights as high legal risk; train on synthetic/consented data or buy commercial licenses.",
+  "evidence": [
+   {
+    "claim": "InsightFace official README: code MIT (academic+commercial OK); training data with annotation and models trained with that data are non-commercial research only; both manual and auto-downloaded models follow NC research policy; contact recognition-oss-pack@insightface.ai for buffalo_l etc. commercial licensing.",
+    "grade": "CONFIRMED",
+    "url": "https://github.com/deepinsight/insightface"
+   },
+   {
+    "claim": "InsightFace commercial site sells commercial usage rights for open-source model packages including buffalo_l, buffalo_s/m, antelopev2\u2014implying default open weights are not free for commercial product use.",
+    "grade": "CONFIRMED",
+    "url": "https://www.insightface.ai/solutions/face-recognition-licensing"
+   },
+   {
+    "claim": "Whether an NC license on weights reaches embeddings/pseudo-labels/distilled student models is not clearly answered by InsightFace public license text; industry commentary treats using NC weights in any commercial pipeline (incl. distillation teachers) as non-compliant unless licensed\u2014opinion, not adjudicated.",
+    "grade": "ANECDOTAL",
+    "url": "https://github.com/deepinsight/insightface"
+   },
+   {
+    "claim": "OpenAI Terms of Use: 'You may not \u2026 Use Output to develop models that compete with OpenAI'\u2014contractual ban on competitive distillation from service outputs (not copyright statute).",
+    "grade": "CONFIRMED",
+    "url": "https://openai.com/policies/row-terms-of-use/"
+   },
+   {
+    "claim": "Industry analyses of OpenAI\u2013DeepSeek and similar disputes treat anti-distillation ToS clauses as the primary lever; enforceability of form ToS and proof of distillation remain contested (legal opinion).",
+    "grade": "ANECDOTAL",
+    "url": "https://law.asia/openai-deepseek-ai-distillation/"
+   },
+   {
+    "claim": "Stanford Alpaca / self-instruct lineage: academic project using LLaMA (then non-commercial Meta license) + OpenAI-generated instruction data; widely discussed as ToS/license-risk precedent for commercial products, not a court holding that distillation is legal or illegal.",
+    "grade": "ANECDOTAL",
+    "url": "https://news.ycombinator.com/item?id=35375670"
+   },
+   {
+    "claim": "EU AI Act angle: Art.53(1)(c) GPAI copyright policy and training-content summary do not create a free right to train on third-party model outputs; copyright in model-generated data is unsettled under EU law; if training data includes personal data (face images), GDPR Art.9 still applies regardless of license laundering theories.",
+    "grade": "ANECDOTAL",
+    "url": "https://digital-strategy.ec.europa.eu/en/faqs/general-purpose-ai-models-ai-act-questions-answers"
+   },
+   {
+    "claim": "Commercial FR vendors: InsightFace sells OSS-model commercial packs and closed high-accuracy models\u2014evidence that commercial licensing exists and is the intended path for product use of their FR weights. Public Rekognition/Azure-style cloud ToS typically restrict reverse-engineering and competitive use of services; specific 'may train on API outputs' grants are rare for FR APIs (vendor-specific ToS review required).",
+    "grade": "ANECDOTAL",
+    "url": "https://www.insightface.ai/solutions/face-recognition-licensing"
+   },
+   {
+    "claim": "Risk-engineering conclusion for proprietary in-house FR: do not use InsightFace buffalo NC weights as distillation teachers in a commercial product without a paid commercial license; train on synthetic + consented data or commercially licensed teachers; treat NC-output distillation as ANECDOTAL legal grey zone with contract risk.",
+    "grade": "ANECDOTAL",
+    "url": "https://github.com/deepinsight/insightface"
+   }
+  ]
+ },
+ "summary_for_decision": "EU AI Act: your private photo-library person-tagger is outside Art.5 bans if you only process user-uploaded libraries and do not scrape the open web or do LE/public RBI or sensitive-attribute categorisation. Annex III high-risk RBI (1a) is the residual classification risk\u2014Commission guidance treats media-archive FR matching as high-risk RBI; private-library tagging is not expressly exempt. If high-risk, full Chapter III duties apply from 2 Dec 2027 (post-Omnibus EC timeline); Art.50 transparency from 2 Aug 2026; prohibitions already live since 2 Feb 2025. A narrow in-house face model is almost certainly not GPAI\u2014so no Art.53 training-data public summary. GDPR: face embeddings for unique ID are Art.9 special category \u2192 explicit consent + DPIA; account-holder ToS is not enough for third-party faces. US: BIPA \u00a715 written release must come from photo subjects; Facebook $650M / Google $100M prove templates from user photo libraries still need subject consent; Texas CUBI similar (AG); Washington 19.375 largely carves out photo-derived data. WordPress.org: freemium SaaS OK under Guidelines 5\u20137 if remote service is real, documented in readme, privacy-disclosed, and local plugin is not trial-crippled; GPL applies to directory-hosted code only. Licenses: SAM1/SAM2, MobileSAM, EfficientSAM, RT-DETR, D-FINE, PP-PicoDet (via PaddleDetection) are Apache-2.0 commercial-friendly; SAM2-class is too heavy for practical ARM CPU\u2014MobileSAM-class (~12ms class claims) or remote backend. Distillation: do not use InsightFace buffalo NC models as commercial teachers without paid license; OpenAI-style ToS bans competitive distillation from outputs; NC-output 'laundering' is ANECDOTAL grey\u2014prefer synthetic/consented training or commercial FR licenses. Not legal advice; retain EU/US privacy counsel for Art.6 AI Act classification memo, BIPA subject-consent UX, and DPIA."
+}

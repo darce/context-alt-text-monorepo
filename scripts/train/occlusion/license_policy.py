@@ -311,7 +311,8 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
   6. **Derived NC-axis package floor** (FIR-7-B10-01 / B10-02 / B10-05):
      NC-axis ``PACKAGE_DENYLIST`` entries are **generated** from the
      canonical NC id surface (``_PINNED_NC_MODEL_IDS`` ∪
-     ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci ``yolo_nas`` base stem), covering
+     ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci ``yolo_nas`` base stem ∪ the
+     Deci SuperGradients framework identity), covering
      both underscore and compact spellings of every id, **minus** an
      explicit exclusion set. Bare ``buffalo`` stays excluded —
      ``buffalo_bill_detector`` must admit; real InsightFace packs are
@@ -674,6 +675,11 @@ _NC_MODEL_DETAIL_NOTES: dict[str, str] = {
     "yolo_nas": (
         "Deci YOLO-NAS pretrained weights are non-commercial "
         "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "super_gradients": (
+        "Deci SuperGradients framework (YOLO-NAS training stack) is "
+        "non-commercial (Deci licence); NC-weights and output-derived "
+        "data are banned"
     ),
     # vec2face NC synthetic-face lineage (FIR-7-A8-04) — was falling through
     # to the generic fallback despite being a first-class NC seed.
@@ -1159,7 +1165,8 @@ def _nc_package_floor_seed_surface() -> set[str]:
 
     Single source of truth for the NC-axis floor (FIR-7-B10-01 / A11-4):
     exactly ``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ the
-    Deci ``yolo_nas`` base stem, minus ``_NC_PACKAGE_FLOOR_EXCLUSIONS``
+    Deci ``yolo_nas`` base stem ∪ the Deci SuperGradients framework
+    identity, minus ``_NC_PACKAGE_FLOOR_EXCLUSIONS``
     and ``_NC_SURFACE_DELIBERATE_EXCLUSIONS``. No other derivation
     sources. Compact spellings of underscore-bearing seeds are emitted
     as sibling keys so rule (c)'s 3-char remainder cap cannot make
@@ -1173,6 +1180,10 @@ def _nc_package_floor_seed_surface() -> set[str]:
     raw |= set(_NC_EXPLICIT_VARIANTS)
     # Deci YOLO-NAS base stem (pinned surface has size/pose variants only).
     raw.add("yolo_nas")
+    # Deci SuperGradients framework (FIR-7-PANEL-rv3-02 / CARD-26).
+    # Canonical fold covers super-gradients / super_gradients / super.gradients;
+    # deci-ai/super-gradients hits via the slash-component walk (A6-02).
+    raw.add("super_gradients")
     out: set[str] = set()
     for rid in raw:
         if rid in _NC_PACKAGE_FLOOR_EXCLUSIONS:
@@ -1205,6 +1216,8 @@ def _generate_nc_package_denylist_entries() -> dict[str, PackageDenylistEntry]:
         display = seed
         if seed.startswith("yolo_nas") or seed.startswith("yolonas"):
             display = f"YOLO-NAS ({seed})"
+        elif seed.startswith("super_gradient") or seed.startswith("supergradient"):
+            display = f"SuperGradients ({seed})"
         elif seed.startswith("buffalo") or seed in {
             "insightface",
             "retinaface",

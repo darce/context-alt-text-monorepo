@@ -65,6 +65,7 @@ the repo root or from this directory (rg-006).
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import re
 import shutil
@@ -4403,6 +4404,27 @@ _APPLIERS = {
 # ---------------------------------------------------------------------------
 
 
+_GUARD_HOME_DIR: str | None = None
+
+
+def _guard_owned_home_dir() -> str:
+    """Empty, guard-owned HOME for child subprocesses (FIR-7-PANEL7D-rv2-01).
+
+    The caller's real HOME may contain
+    ``~/.local/lib/python*/site-packages/*.pth`` files that inject arbitrary
+    code into every child interpreter (import-time execution, no opt-in).
+    Point HOME at a fresh empty directory instead of copying the caller's
+    HOME value, so no ``.pth``/``.local`` payload is reachable even if user
+    site packages were somehow re-enabled. Cached + cleaned at process exit
+    (SECD-02 / SECD-03 complete mediation).
+    """
+    global _GUARD_HOME_DIR
+    if _GUARD_HOME_DIR is None:
+        _GUARD_HOME_DIR = tempfile.mkdtemp(prefix="licpol-guard-home-")
+        atexit.register(shutil.rmtree, _GUARD_HOME_DIR, ignore_errors=True)
+    return _GUARD_HOME_DIR
+
+
 def _scrubbed_env() -> dict[str, str]:
     """Build child env from an allowlist; pytest/python injection vars excluded."""
     env: dict[str, str] = {}
@@ -4417,6 +4439,12 @@ def _scrubbed_env() -> dict[str, str]:
             env[key] = val
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    # FIR-7-PANEL7D-rv2-01: never trust the caller's HOME — a
+    # ``~/.local/.../*.pth`` sitecustomize hook runs at child interpreter
+    # startup, before any pytest scrubbing takes effect. Point HOME at a
+    # guard-owned empty directory and disable user-site lookup outright.
+    env["HOME"] = _guard_owned_home_dir()
+    env["PYTHONNOUSERSITE"] = "1"
     # Belt: ensure injection vectors are absent even if allowlist grows.
     for bad in _ENV_DENY_EXACT:
         env.pop(bad, None)
@@ -4536,6 +4564,10 @@ def _collect_nodeids(test_path: Path) -> tuple[tuple[str, ...], str | None]:
     """Collect full normalised nodeids from one unmutated suite file (RF-01)."""
     cmd = [
         sys.executable,
+        # FIR-7-PANEL7D-rv2-01: interpreter-level user-site disable. This is
+        # independent of env scrubbing (a .pth hook can run before any
+        # env-derived check) — structural, not advisory.
+        "-s",
         "-m",
         "pytest",
         str(test_path.name),
@@ -4927,6 +4959,8 @@ def _run_suite(
         junit_path.unlink()
     cmd = [
         sys.executable,
+        # FIR-7-PANEL7D-rv2-01: interpreter-level user-site disable.
+        "-s",
         "-m",
         "pytest",
         str(test_path),
@@ -5040,6 +5074,38 @@ def _parent_env_injection_vars() -> list[str]:
     return bad
 
 
+def _child_user_site_error() -> str | None:
+    """Verify the scrubbed child env actually disables user-site imports.
+
+    FIR-7-PANEL7D-rv2-01: env scrubbing (HOME redirect + PYTHONNOUSERSITE)
+    and the interpreter ``-s`` flag on every pytest invocation are two
+    *independent* controls. This check deliberately omits ``-s`` so it
+    proves the env alone (what ``_scrubbed_env`` builds) is sufficient —
+    if it hard-coded ``-s`` here, the check could never fail regardless of
+    what the env contains, which is not a check at all
+    (perceived-enforced-boundaries.md: a control that cannot fail is not
+    verified). Returns an error message, or None when the env is provably
+    clean on its own.
+    """
+    env = _scrubbed_env()
+    proc = subprocess.run(
+        [sys.executable, "-c", "import site; print(site.ENABLE_USER_SITE)"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or out != "False":
+        return (
+            "HARNESS-ERROR: child env does not disable user-site imports "
+            f"(site.ENABLE_USER_SITE check: rc={proc.returncode} "
+            f"stdout={out!r} stderr={(proc.stderr or '').strip()!r}). "
+            "A ~/.local/**/*.pth hook could execute inside every child "
+            "pytest, including --collect-only (SECD-02 / SECD-03)."
+        )
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -5087,6 +5153,11 @@ def main(argv: list[str] | None = None) -> int:
             "closes the 'export and forget' path.",
             flush=True,
         )
+        return 2
+
+    user_site_error = _child_user_site_error()
+    if user_site_error is not None:
+        print(user_site_error, flush=True)
         return 2
 
     selected = (

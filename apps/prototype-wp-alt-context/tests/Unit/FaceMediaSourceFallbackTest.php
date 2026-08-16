@@ -159,7 +159,7 @@ class FaceMediaSourceFallbackTest extends TestCase
                 'attachment_id' => self::MEDIA_ID,
                 'similarity' => 0.9,
                 'bbox_json' => '{"pixels":{"x":380,"y":72,"width":120,"height":162}}',
-            ]]],
+            ],],],
         );
 
         return $clusters[0]['representative_identity'];

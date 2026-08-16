@@ -102,7 +102,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2412  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2434  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -2046,6 +2046,18 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestGate11ClearanceFloorOnEveryDoor::test_uncleared_dcface_fails_every_door_with_exact_reason[synthetic_source]',
     'test_license_policy.py::TestGate11ClearanceFloorOnEveryDoor::test_uncleared_dcface_fails_every_door_with_exact_reason[tooling]',
     'test_license_policy.py::TestGate11ClearanceFloorOnEveryDoor::test_uncleared_dcface_fails_every_door_with_exact_reason[training_data]',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_audit_spdx_evil_lic_agpl_direct',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_audit_spdx_evil_lic_research_direct',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_forged_clearance_decision_rejected',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_forged_license_agpl_rejected',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_forged_license_on_tooling_rejected',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_forged_license_research_only_rejected',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_forged_photo_clearance_rejected',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_hide_derived_nc_still_caught',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_honest_subclass_still_evaluates_correctly',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_normalize_token_first_on_operator_owned_path',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_source_strip_helper_toop_ffhq',
+    'test_license_policy.py::TestGate15StrSubclassMethodLaundering::test_toop_source_research_still_caught',
     'test_license_policy.py::TestGate16ClearanceAxesNotInterchangeable::test_dcface_token_on_photo_clearance_does_not_satisfy_lineage[model_ingest]',
     'test_license_policy.py::TestGate16ClearanceAxesNotInterchangeable::test_dcface_token_on_photo_clearance_does_not_satisfy_lineage[occluder_asset]',
     'test_license_policy.py::TestGate16ClearanceAxesNotInterchangeable::test_dcface_token_on_photo_clearance_does_not_satisfy_lineage[synthetic_source]',
@@ -2143,6 +2155,7 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_package_denylist_outranks_registration',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_registration_outranks_licence',
     'test_license_policy.py::TestGate20FloorPrecedenceAdjacentPairs::test_source_taint_outranks_clearance',
+    'test_license_policy.py::TestGate22FloorStep4NotDoorLocalLoop::test_floor_step4_not_door_local_loop_is_gate22',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_gate32_every_door_has_at_least_one_pass_witness[model_ingest]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_gate32_every_door_has_at_least_one_pass_witness[occluder_asset]',
     'test_license_policy.py::TestGate27FiveDoorCategoryInvariant::test_gate32_every_door_has_at_least_one_pass_witness[synthetic_source]',
@@ -2421,6 +2434,23 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_clearance_decision_uppercase_refused',
     'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_photo_clearance_lowercase_canonical_admits',
     'test_license_policy.py::TestRv13ClearanceAxesExactMatchNormalisation::test_photo_clearance_uppercase_refused',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_offset0_yolox_z_still_unknown_residual',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_legit_sep_tag_still_admits[ayolox_tiny]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_legit_sep_tag_still_admits[xyolox_s]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_legit_sep_tag_still_admits[xyolox_s_trt]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_legit_sep_tag_still_admits[xyolox_tiny]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_legit_sep_tag_still_admits[xyoloxs]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[ayolox_z]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[myxyolox_z]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_extra]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_s_free]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_z]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_xyolox_z_denies_with_either_peel_flag_off[_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_xyolox_z_denies_with_either_peel_flag_off[_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED]',
+    'test_license_policy.py::TestRv302SuperGradientsSeedsDeciNcFloor::test_framework_identity_is_nc_floor_hit[deci-ai/super-gradients]',
+    'test_license_policy.py::TestRv302SuperGradientsSeedsDeciNcFloor::test_framework_identity_is_nc_floor_hit[super-gradients]',
+    'test_license_policy.py::TestRv302SuperGradientsSeedsDeciNcFloor::test_framework_identity_is_nc_floor_hit[super_gradients]',
+    'test_license_policy.py::TestRv302SuperGradientsSeedsDeciNcFloor::test_provenance_row_fails_nc_model_derived',
     'test_license_policy.py::TestSelfGeneratedIsSourceNotLicense::test_br25_contract3_self_generated_apache_still_passes',
     'test_license_policy.py::TestSelfGeneratedIsSourceNotLicense::test_br25_scraped_with_self_generated_license_fails',
     'test_license_policy.py::TestSyntheticFailClosedAndRowValidation::test_br37_audit_derived_from_model_none_is_empty_opt_out',
@@ -2496,14 +2526,6 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[synthface3]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_unregistered_sources_pending[unknown-synthetic-gan-v9]',
     'test_license_policy.py::TestUnregisteredSourceFailClosed::test_br22_vec2face_successor_is_nc_package_floor',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_clearance_decision_rejected',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_agpl_rejected',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_on_tooling_rejected',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_license_research_only_rejected',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_forged_photo_clearance_rejected',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_hide_derived_nc_still_caught',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_honest_subclass_still_evaluates_correctly',
-    'test_license_policy_hardening.py::TestGate15StrSubclassMethodLaundering::test_toop_source_research_still_caught',
     'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_provenance_token_in_source_no_longer_required',
     'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_tooling_internal_lineage_clears_without_provenance_in_source',
     'test_license_policy_hardening.py::TestGate21OperatorOwnedLineageRegistry::test_tooling_source_is_package_shape_also_clears',
@@ -3385,6 +3407,93 @@ def audit_provenance_row(row, category=PolicyCategory.TRAINING_DATA):  # type: i
         )
     return r
 """
+
+
+def _m27_strip_source_token_bound_strip(src: str) -> str:
+    """Bind ``_strip_source_token`` to instance ``.strip()`` (GATE-15 / rv1-03).
+
+    A ``str`` subclass (``ToOp``) that overrides ``strip`` launders its
+    payload through the training-data door once this helper stops using
+    the unbound ``str.strip``.
+    """
+    old = "    return str.strip(value)"
+    new = "    return value.strip()  # MUTATION M27: bound strip (GATE-15 launder)"
+    return _replace_unique(src, old, new, "M27")
+
+
+def _m28_operator_owned_source_bound_normalize(src: str) -> str:
+    """Inline bound strip/lower into ``_is_operator_owned_source`` (rv1-02).
+
+    Bypasses the unbound ``_normalize_token`` helper so a ``str``
+    subclass with overridden ``strip``/``lower`` can launder a foreign
+    source into the operator-owned set.
+    """
+    old = "    return _normalize_token(source) in _POSITIVE_TRAINING_SOURCES"
+    new = (
+        "    return source.strip().lower() in _POSITIVE_TRAINING_SOURCES"
+        "  # MUTATION M28: bound strip/lower"
+    )
+    return _replace_unique(src, old, new, "M28")
+
+
+def _m29_drop_super_gradients_nc_floor_seed(src: str) -> str:
+    """Drop the ``super_gradients`` NC-floor seed (FIR-7-PANEL-rv3-02).
+
+    Deci SuperGradients framework identities (``super-gradients`` /
+    ``super_gradients`` / ``deci-ai/super-gradients``) fall through to
+    admit; an Apache-2.0 wrapper around the framework PASSes despite
+    transitive Deci NC lineage.
+    """
+    old = '    raw.add("super_gradients")'
+    new = (
+        "    # MUTATION M29: super_gradients NC-floor seed dropped\n"
+        '    # raw.add("super_gradients")'
+    )
+    return _replace_unique(src, old, new, "M29")
+
+
+def _m30_sep_rem_last_segment_only(src: str) -> str:
+    """Classify only the last segment of ``sep_rem``, not the full value.
+
+    Reintroduces the pre-FIR-7-PANEL7D-rv3-01 bug: multi-segment
+    separator remainders (``xyolox_z_v8``) peel on a legitimate last
+    segment even though the full remainder is not legitimate.
+    """
+    old = (
+        "                            ) and not _is_legitimate_residual_segment(\n"
+        "                                sep_rem, _seed_c\n"
+        "                            ):"
+    )
+    new = (
+        "                            ) and not _is_legitimate_residual_segment(\n"
+        '                                sep_rem.rsplit("_", 1)[-1], _seed_c'
+        "  # MUTATION M30\n"
+        "                            ):"
+    )
+    return _replace_unique(src, old, new, "M30")
+
+
+def _m31_mid_exception_fail_closed_and_gated(src: str) -> str:
+    """Re-AND-gate the mid-exception fail-closed on all three peel flags.
+
+    Reintroduces the pre-FIR-7-PANEL7D-rv3-02 bug: the junk-prefix
+    unknown-rem fail-closed silently admits whenever either peel-owner
+    flag (``_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED`` /
+    ``_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED``) is False, instead
+    of depending on ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED`` alone.
+    """
+    old = (
+        "                    if _MID_EXCEPTION_UNKNOWN_REM_ENABLED:"
+        "  # FIR-7-PANEL7D-rv3-02 sole flag"
+    )
+    new = (
+        "                    if (  # MUTATION M31: reintroduce AND-gate\n"
+        "                        _MID_EXCEPTION_UNKNOWN_REM_ENABLED\n"
+        "                        and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED\n"
+        "                        and _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED\n"
+        "                    ):"
+    )
+    return _replace_unique(src, old, new, "M31")
 
 
 MUTATIONS: list[Mutation] = [
@@ -4366,6 +4475,55 @@ MUTATIONS: list[Mutation] = [
             "test_red_proof_steal_flag_turns_fastsam_residual_red",
         ),
     ),
+    # FIR-7-PANEL7D findings 4(b): defect mutants for the fixcode2 lane's own
+    # code (rv1-02/rv1-03 GATE-15 helpers, rv3-01 full-sep_rem classification,
+    # rv3-02 flag-decoupled fail-closed, rv3-02 super_gradients NC seed).
+    # Per-mutant KILLED proof for M27-M31 is deferred to the parallel remote
+    # guard run (scope change, FIR-7-PANEL7D-4b); anchor uniqueness is
+    # verified locally via _apply_mutation.
+    Mutation(
+        name="M27",
+        description=(
+            "GATE-15 / rv1-03: _strip_source_token bound-strip laundering"
+        ),
+        apply="m27",
+        expected_victims=(
+            "test_source_strip_helper_toop_ffhq",
+            "test_toop_source_research_still_caught",
+        ),
+    ),
+    Mutation(
+        name="M28",
+        description=(
+            "rv1-02: _is_operator_owned_source bound strip/lower laundering"
+        ),
+        apply="m28",
+        expected_victims=("test_normalize_token_first_on_operator_owned_path",),
+    ),
+    Mutation(
+        name="M29",
+        description="rv3-02: super_gradients NC-floor seed dropped",
+        apply="m29",
+        expected_victims=(
+            "test_framework_identity_is_nc_floor_hit",
+            "test_provenance_row_fails_nc_model_derived",
+        ),
+    ),
+    Mutation(
+        name="M30",
+        description="rv3-01: sep_rem classified by last segment, not full value",
+        apply="m30",
+        expected_victims=(
+            "test_prefixed_sep_unknown_rem_denies",
+            "test_xyolox_z_denies_with_either_peel_flag_off",
+        ),
+    ),
+    Mutation(
+        name="M31",
+        description="rv3-02: mid-exception fail-closed re-AND-gated on peel flags",
+        apply="m31",
+        expected_victims=("test_xyolox_z_denies_with_either_peel_flag_off",),
+    ),
 ]
 
 _APPLIERS = {
@@ -4396,6 +4554,11 @@ _APPLIERS = {
     "m24": _m24_deny_reconst_to_legitimate,
     "m25": _m25_unknown_default_to_legitimate,
     "m26": _m26_b141_unbounded_defer_steal_skip,
+    "m27": _m27_strip_source_token_bound_strip,
+    "m28": _m28_operator_owned_source_bound_normalize,
+    "m29": _m29_drop_super_gradients_nc_floor_seed,
+    "m30": _m30_sep_rem_last_segment_only,
+    "m31": _m31_mid_exception_fail_closed_and_gated,
 }
 
 

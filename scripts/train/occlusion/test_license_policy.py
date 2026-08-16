@@ -14820,3 +14820,374 @@ class TestF17StackedExceptionStemAttribution:
         )
         assert policy._package_denylist_hit("fastsamxyolox") is not None
         assert policy._package_denylist_hit("xyoloxsyolox") is not None
+
+
+# ===========================================================================
+# Moved from test_license_policy_hardening.py (FIR-7-PANEL7D-rv2-02): the
+# guard's kill file is test_license_policy.py only — hardening-file pins
+# are executed by test-scripts but are invisible to mutation_guard.py.
+# ===========================================================================
+# ---------------------------------------------------------------------------
+# GATE-15 — str subclasses with lying methods must not launder axes
+# ---------------------------------------------------------------------------
+
+
+class EvilCD(str):
+    """Forged clearance_decision: strip lies about the operator token."""
+
+    def strip(self, *a: Any, **k: Any) -> str:
+        return "dcface_operator_clearance_20260723"
+
+
+class EvilLic(str):
+    """Forged licence: strip/casefold present an allowlisted tag."""
+
+    def strip(self, *a: Any, **k: Any) -> str:
+        return "MIT"
+
+    def casefold(self) -> str:
+        return "mit"
+
+
+class EvilPC(str):
+    """Forged photo_clearance: strip presents an allowed status."""
+
+    def strip(self, *a: Any, **k: Any) -> str:
+        return "allowed"
+
+
+class Hide(str):
+    """Hide NC lineage by stripping to empty."""
+
+    def strip(self, *a: Any, **k: Any) -> str:
+        return ""
+
+
+class ToOp(str):
+    """Launder research source into operator-owned provenance."""
+
+    def strip(self, *a: Any, **k: Any) -> str:
+        return "self-generated"
+
+
+class HonestStr(str):
+    """Honest subclass — inherited strip/casefold/lower (numpy.str_ shape).
+
+    Distinguishes the correct unbound-method fix from ``type(raw) is str``
+    rejection of all subclasses.
+    """
+
+
+class TestGate15StrSubclassMethodLaundering:
+    """GATE-15: unbound builtins; honest subclasses still evaluate correctly."""
+
+    def test_forged_clearance_decision_rejected(self) -> None:
+        row = {
+            "source": "dcface",
+            "derived_from_model": "",
+            "license": "MIT",
+            "clearance_decision": EvilCD("pending_legal_clearance"),
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.PENDING_LEGAL_CLEARANCE
+
+    def test_forged_license_agpl_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "derived_from_model": "",
+            "license": EvilLic("AGPL-3.0"),
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_forged_license_research_only_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "derived_from_model": "",
+            "license": EvilLic("research-only"),
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
+
+    def test_audit_spdx_evil_lic_agpl_direct(self) -> None:
+        """FIR-7-PANEL-rv1-01: call audit_spdx directly, not via _license_values_of.
+
+        Binding ``spdx_id.strip()`` / ``.casefold()`` at audit_spdx:6445
+        must turn this pin red (forged MIT allowlist hit). Row-door pins
+        stay green because ``_license_values_of`` already unbound-strips.
+        """
+        result = policy.audit_spdx(EvilLic("AGPL-3.0"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_audit_spdx_evil_lic_research_direct(self) -> None:
+        result = policy.audit_spdx(EvilLic("research-only"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
+
+    def test_forged_license_on_tooling_rejected(self) -> None:
+        row = {
+            "package": "umap-learn",
+            "license": EvilLic("AGPL-3.0"),
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_forged_photo_clearance_rejected(self) -> None:
+        row = {
+            "source": "self-generated",
+            "derived_from_model": "",
+            "license": "MIT",
+            "photo_clearance": EvilPC("denied"),
+        }
+        result = policy.audit_occluder_asset(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.UNCLEARED_OCCLUDER_ASSET
+
+    def test_hide_derived_nc_still_caught(self) -> None:
+        row = {
+            "source": "self-generated",
+            "derived_from_model": Hide("buffalo_l"),
+            "license": "MIT",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
+
+    def test_toop_source_research_still_caught(self) -> None:
+        row = {
+            "source": ToOp("ffhq"),
+            "derived_from_model": "",
+            "license": "MIT",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
+
+    def test_normalize_token_first_on_operator_owned_path(self) -> None:
+        """FIR-7-PANEL-rv1-02: first normalisation is ``_normalize_token``.
+
+        ``_is_operator_owned_source`` is the only production caller that
+        feeds a raw token to ``_normalize_token`` without a prior unbound
+        strip. Binding the helper to ``value.strip().lower()`` must treat
+        ``ToOp('ffhq')`` as ``self-generated`` and turn this pin red.
+        """
+        assert policy._is_operator_owned_source(ToOp("ffhq")) is False
+
+    def test_source_strip_helper_toop_ffhq(self) -> None:
+        """FIR-7-PANEL-rv1-03: pin the single unbound source-strip helper.
+
+        Binding this helper alone (``value.strip()``) must turn this pin
+        red. The floor, ``audit_source``, and the training-data door all
+        call it — a single-site bound-strip mutation is no longer silent.
+        """
+        assert policy._strip_source_token(ToOp("ffhq")) == "ffhq"
+
+    def test_honest_subclass_still_evaluates_correctly(self) -> None:
+        """Negative control: honest subclass (numpy.str_ shape) must PASS.
+
+        A ``type(raw) is str`` fix would reject this; unbound builtins do not.
+        """
+        row = {
+            "source": HonestStr("self-generated"),
+            "derived_from_model": HonestStr(""),
+            "license": HonestStr("MIT"),
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is True, (
+            f"honest str subclass must still pass: {result.reason} {result.detail}"
+        )
+
+        # Allowlisted tooling package with honest subclass licence.
+        tooling = {
+            "package": HonestStr("umap-learn"),
+            "license": HonestStr("BSD-3-Clause"),
+            "derived_from_model": HonestStr(""),
+        }
+        t_result = policy.audit_tooling_row(tooling)
+        assert t_result.ok is True, (
+            f"honest subclass tooling row must pass: "
+            f"{t_result.reason} {t_result.detail}"
+        )
+
+        # Occluder asset with honest photo_clearance.
+        asset = {
+            "source": HonestStr("self-generated"),
+            "derived_from_model": HonestStr(""),
+            "license": HonestStr("MIT"),
+            "photo_clearance": HonestStr("allowed"),
+        }
+        a_result = policy.audit_occluder_asset(asset)
+        assert a_result.ok is True, (
+            f"honest subclass occluder asset must pass: "
+            f"{a_result.reason} {a_result.detail}"
+        )
+
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv1-04 — GATE-22 is floor step 4, not the door-local loop
+# (moved from test_license_policy_hardening.py TestGate22PackageDenylistOutranksRegistration
+# so mutation_guard.py's kill file carries this pin — FIR-7-PANEL7D-rv2-02)
+# ---------------------------------------------------------------------------
+
+
+class TestGate22FloorStep4NotDoorLocalLoop:
+    """GATE-22 / BR-24: model_id denylist is invisible to the door-local loop."""
+
+    def test_floor_step4_not_door_local_loop_is_gate22(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FIR-7-PANEL-rv1-04: GATE-22 is floor step 4, not the door-local loop.
+
+        ``model_id=ultralytics`` is invisible to the door-local first-wins
+        walk (``package`` / ``package_name`` / ``source``). Dropping
+        ``_floor_package_identity_denylist`` while leaving that loop
+        intact must PASS this row — the mutation the existing 3/3 pins
+        do not catch.
+        """
+        row = {
+            "package": "umap-learn",
+            "model_id": "ultralytics",
+            "derived_from_model": "",
+        }
+        result = policy.audit_tooling_row(row)
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_PACKAGE
+
+        monkeypatch.setattr(
+            policy, "_floor_package_identity_denylist", lambda *_a, **_k: None
+        )
+        dropped = policy.audit_tooling_row(row)
+        assert dropped.ok is True, (
+            "red-proof: without floor step 4 the door-local loop misses "
+            f"model_id denylist: {dropped.reason} {dropped.detail}"
+        )
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-01 — separator-aligned mid-exception rem must fail closed
+# ---------------------------------------------------------------------------
+
+
+class TestRv301SepAlignedMidExceptionFailClosed:
+    """Junk prefix + exception stem + separator rem must not admit.
+
+    ``yolox_z`` already lands on ``yolox_unknown_residual``. Prefixed
+    twins (``xyolox_z`` / ``xyolox_extra`` / ``xyolox_s_free``) used to
+    hit the ``has_sep`` ``continue`` and fall out as None (permit).
+    """
+
+    DENY: tuple[str, ...] = (
+        "xyolox_z",
+        "xyolox_extra",
+        "xyolox_s_free",
+        "ayolox_z",
+        "myxyolox_z",
+    )
+
+    ADMIT: tuple[str, ...] = (
+        "xyolox_s",
+        "xyolox_tiny",
+        "xyoloxs",
+        "ayolox_tiny",
+        "xyolox_s_trt",
+    )
+
+    @pytest.mark.parametrize("token", DENY)
+    def test_prefixed_sep_unknown_rem_denies(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (separator-aligned mid-exception unknown rem)"
+        )
+        assert hit.package_id == "yolox_unknown_residual", (
+            f"{token!r}: expected yolox_unknown_residual, got {hit.package_id!r}"
+        )
+
+    def test_offset0_yolox_z_still_unknown_residual(self) -> None:
+        hit = policy._package_denylist_hit("yolox_z")
+        assert hit is not None
+        assert hit.package_id == "yolox_unknown_residual"
+
+    @pytest.mark.parametrize("token", ADMIT)
+    def test_prefixed_legit_sep_tag_still_admits(self, token: str) -> None:
+        assert policy._package_denylist_hit(token) is None, (
+            f"{token!r} must stay ADMIT (legitimate separator rem)"
+        )
+
+    @pytest.mark.parametrize(
+        "flag_name",
+        [
+            "_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED",
+            "_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED",
+        ],
+    )
+    def test_xyolox_z_denies_with_either_peel_flag_off(
+        self, monkeypatch: pytest.MonkeyPatch, flag_name: str
+    ) -> None:
+        """FIR-7-PANEL7D-rv3-02: fail-closed must not be AND-gated on peel flags.
+
+        Before the decoupling, ``xyolox_z`` fell back to admit whenever
+        either ``_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED`` or
+        ``_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED`` was False,
+        because the junk-prefix unknown-rem fail-closed was AND-gated on
+        both peel-owner flags in addition to
+        ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED``. Fail-closed must depend on
+        ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED`` alone.
+        """
+        monkeypatch.setattr(policy, flag_name, False)
+        hit = policy._package_denylist_hit("xyolox_z")
+        assert hit is not None, (
+            f"xyolox_z must still DENY with {flag_name}=False (rv3-02)"
+        )
+        assert hit.package_id == "yolox_unknown_residual"
+
+
+# ---------------------------------------------------------------------------
+# FIR-7-PANEL-rv3-02 — Deci SuperGradients package identities seed the NC floor
+# ---------------------------------------------------------------------------
+
+
+class TestRv302SuperGradientsSeedsDeciNcFloor:
+    """Framework/package identities carrying Deci NC terms must not permit.
+
+    Only the model stem ``yolo_nas`` used to seed the Deci NC floor, so
+    ``super-gradients`` / ``super_gradients`` / ``deci-ai/super-gradients``
+    returned None and a permissive SPDX wrapper PASSed.
+    """
+
+    FRAMEWORK_IDS: tuple[str, ...] = (
+        "super-gradients",
+        "super_gradients",
+        "deci-ai/super-gradients",
+    )
+
+    @pytest.mark.parametrize("token", FRAMEWORK_IDS)
+    def test_framework_identity_is_nc_floor_hit(self, token: str) -> None:
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, f"{token!r} must hit the Deci NC package floor"
+        assert hit.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"{token!r}: expected nc_model_derived, got {hit.reason}"
+        )
+        assert "super" in hit.package_id.replace("_", ""), (
+            f"{token!r}: expected super_gradients* package_id, got {hit.package_id!r}"
+        )
+
+    def test_provenance_row_fails_nc_model_derived(self) -> None:
+        # derived_from_model is structurally required on the training-data
+        # door; empty is the valid opt-out. Without the NC floor seed this
+        # row PASSes (Apache-2.0 launders Deci NC framework terms).
+        row = {
+            "package": "super-gradients",
+            "license": "Apache-2.0",
+            "source": "self-generated",
+            "derived_from_model": "",
+        }
+        result = policy.audit_provenance_row(row)
+        assert result.ok is False, (
+            "super-gradients + Apache-2.0 must not PASS (transitive Deci NC)"
+        )
+        assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED, (
+            f"expected nc_model_derived, got {result.reason} ({result.detail})"
+        )

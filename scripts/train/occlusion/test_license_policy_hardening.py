@@ -109,6 +109,22 @@ class TestGate15StrSubclassMethodLaundering:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
 
+    def test_audit_spdx_evil_lic_agpl_direct(self) -> None:
+        """FIR-7-PANEL-rv1-01: call audit_spdx directly, not via _license_values_of.
+
+        Binding ``spdx_id.strip()`` / ``.casefold()`` at audit_spdx:6445
+        must turn this pin red (forged MIT allowlist hit). Row-door pins
+        stay green because ``_license_values_of`` already unbound-strips.
+        """
+        result = policy.audit_spdx(EvilLic("AGPL-3.0"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.DENYLISTED_LICENSE
+
+    def test_audit_spdx_evil_lic_research_direct(self) -> None:
+        result = policy.audit_spdx(EvilLic("research-only"))
+        assert result.ok is False
+        assert result.reason is policy.RejectionReason.RESEARCH_ONLY_LICENSE
+
     def test_forged_license_on_tooling_rejected(self) -> None:
         row = {
             "package": "umap-learn",

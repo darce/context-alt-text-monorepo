@@ -166,6 +166,16 @@ class TestGate15StrSubclassMethodLaundering:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
 
+    def test_normalize_token_first_on_operator_owned_path(self) -> None:
+        """FIR-7-PANEL-rv1-02: first normalisation is ``_normalize_token``.
+
+        ``_is_operator_owned_source`` is the only production caller that
+        feeds a raw token to ``_normalize_token`` without a prior unbound
+        strip. Binding the helper to ``value.strip().lower()`` must treat
+        ``ToOp('ffhq')`` as ``self-generated`` and turn this pin red.
+        """
+        assert policy._is_operator_owned_source(ToOp("ffhq")) is False
+
     def test_source_strip_helper_toop_ffhq(self) -> None:
         """FIR-7-PANEL-rv1-03: pin the single unbound source-strip helper.
 

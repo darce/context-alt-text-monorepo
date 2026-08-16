@@ -162,6 +162,12 @@ Convergence polish on the R4P panel pass (verdict: pass; no structural change). 
 | Producer sign-off checklist items added to Slices 0, 1, and 4; Slice 3 checklist opens by verifying Slice 4's recorded sign-off (the ordering gate's consumer side) | FIR-11-R4P-23 |
 | Ship-rule gold-floor prose states the 0.90-floor coin flip plainly (P(pass) = 0.61, 39% producer risk; MLE-style threshold, not a level-α test) and pins the gold item unit (one subject-identification decision) | FIR-11-R4P-24 |
 
+## Rev 8 Changelog
+
+| Change | Addresses |
+| --- | --- |
+| Slice 1 proof + Verification Strategy: frozen golden150 draft fails v3 `load_manifest` on `manifest_version` first (GF-10); the six unprovenanced paths are asserted on the `load_legacy_manifest` audit-arm read | FIR-11-PANEL-rv3-02 |
+
 ---
 
 ## Objective
@@ -419,7 +425,7 @@ Functions named. **(new)** marks a symbol that does not exist yet — verified a
 - Deterministic tests: `cd apps/prototype-description-service && uv run --extra dev pytest scripts/eval_harness/tests -q`. Every new invariant gets a paired positive/negative test — **[TEST-15]** discrimination guard: prove the green can go red.
 - Contract/fixture verification:
   - `uv run python -m scripts.eval_harness.cli score-face --manifest <golden-v2> --run-record <rec> --check-determinism`, **asserted in CI as a non-zero-exit gate**, not read by eye.
-  - Loading `golden150-draft-20260723.json` under the v3 gate loader must fail with a named error listing all 6 paths; loading it under `load_legacy_manifest` must succeed. Both asserted.
+  - v3 `load_manifest` rejects the frozen draft `golden150-draft-20260723.json` on `manifest_version` FIRST (`test_unsupported_version_reported_before_missing_provenance`); the six unprovenanced paths are asserted on the `load_legacy_manifest` audit-arm read (`test_golden150_draft_fails_naming_all_six_unprovenanced_paths`).
 - Runtime-parity: `make bakeoff-face EVAL_ARGS="--manifest <golden-v2> --leg buffalo"` on CPU with `ACX_EVAL_BENCH=1`; full gate via `make check-remote` at the merge SHA.
 - Manual: 10 queue items are labeled to confirm no cluster, name, box, or count hint is visible, gold items are indistinguishable, and the inconclusive channel is reachable. **The walkthrough is performed by the second labeler (or, single-labeler case, its items are excluded from the audit sample)** — running the original adjudicator through a rehearsal on live audit items would institutionalise the contamination the blind protocol exists to avoid (GF-02).
 
@@ -501,7 +507,7 @@ Changes:
 Proof:
 
 - Negative test: a fixture entry with no `provenance` key raises `ManifestError`.
-- Loading `golden150-draft-20260723.json` unmodified under the v3 loader fails, naming all 6 paths.
+- v3 `load_manifest` rejects the frozen draft `golden150-draft-20260723.json` on `manifest_version` FIRST (`test_unsupported_version_reported_before_missing_provenance`); the six unprovenanced paths are asserted on the `load_legacy_manifest` audit-arm read (`test_golden150_draft_fails_naming_all_six_unprovenanced_paths`).
 
 ### Slice 2: Annotation mode, coverage invariant, label lineage *(contract hygiene — buys no power)*
 

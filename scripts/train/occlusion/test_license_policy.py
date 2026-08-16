@@ -2016,12 +2016,38 @@ class TestBr53SourceAxisClosedOnEveryDoor:
         assert result.reason is policy.RejectionReason.NC_MODEL_DERIVED
 
     def test_clean_source_still_passes_every_door_that_admits_it(self) -> None:
-        # Guards against a blanket-reject "fix" that would make the floor vacuous.
-        row = {"model_id": "rt-detr", "license": "Apache-2.0", "derived_from_model": ""}
-        result = policy.audit_provenance_row(
-            dict(row), category=policy.PolicyCategory.MODEL_INGEST
+        """FIR-7-PANEL-rv5-02: every door whose required fields this row meets.
+
+        Enumerated from each door's required-field / allowlist contract in
+        ``audit_provenance_row`` / ``audit_tooling_row`` /
+        ``audit_model_ingest`` / ``audit_occluder_asset``:
+        TRAINING_DATA requires source (self-generated is positive);
+        TOOLING requires an allowlisted package (numba);
+        MODEL_INGEST requires a registered model_id (rt-detr);
+        OCCLUDER_ASSET requires photo_clearance + a registered source.
+        SYNTHETIC_SOURCE requires a registered synthetic head —
+        self-generated is operator-owned, not a synthetic generator, so
+        that door does not admit this row.
+        """
+        row = {
+            "model_id": "rt-detr",
+            "package": "numba",
+            "source": "self-generated",
+            "license": "Apache-2.0",
+            "derived_from_model": "",
+            "photo_clearance": "cleared",
+        }
+        admitting = (
+            policy.PolicyCategory.TRAINING_DATA,
+            policy.PolicyCategory.TOOLING,
+            policy.PolicyCategory.MODEL_INGEST,
+            policy.PolicyCategory.OCCLUDER_ASSET,
         )
-        assert result.ok is True, f"clean ingest row must still pass: {result.detail}"
+        for category in admitting:
+            result = policy.audit_provenance_row(dict(row), category=category)
+            assert result.ok is True, (
+                f"clean row must still pass {category.value}: {result.detail}"
+            )
 
 
 class TestTaintOutranksLicenseFloor:
@@ -9124,14 +9150,33 @@ class TestB125CarveOutTest15Debts:
 class TestA123SharedWeightsDoorHelper:
     """FIR-7-A12-3: derived/source doors share one axis sequence helper."""
 
-    def test_helper_exists_and_both_doors_call_it(self) -> None:
-        import inspect
+    def test_helper_exists_and_both_doors_call_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FIR-7-PANEL-rv5-01: both doors must *call* the shared helper.
 
-        assert hasattr(policy, "_audit_weights_lineage_token")
-        src_derived = inspect.getsource(policy.audit_derived_from_model)
-        src_source = inspect.getsource(policy.audit_source)
-        assert "_audit_weights_lineage_token" in src_derived
-        assert "_audit_weights_lineage_token" in src_source
+        A hasattr + getsource substring pin stays green when either call
+        site is deleted. Monkeypatch the helper to a sentinel FAIL and
+        assert both doors surface it.
+        """
+        sentinel = policy._fail(
+            policy.RejectionReason.NC_MODEL_DERIVED,
+            detail="sentinel-helper-fired",
+            category=policy.PolicyCategory.TRAINING_DATA,
+        )
+
+        def _boom(*_a: object, **_k: object) -> object:
+            return sentinel
+
+        monkeypatch.setattr(policy, "_audit_weights_lineage_token", _boom)
+        # Tokens that otherwise PASS so a missing call site cannot hide
+        # behind an earlier reject.
+        derived = policy.audit_derived_from_model("yolox_s")
+        source = policy.audit_source("yolox_s")
+        assert derived.ok is False, "derived door did not surface helper sentinel"
+        assert derived.detail == "sentinel-helper-fired"
+        assert source.ok is False, "source door did not surface helper sentinel"
+        assert source.detail == "sentinel-helper-fired"
 
     def test_doors_agree_on_dual_axis_and_nc_only(self) -> None:
         for token in (

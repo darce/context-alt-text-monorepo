@@ -83,9 +83,11 @@ def load_bench_manifest(
     path: str | Path,
     images_dir: str | Path | None = None,
     require_detection_exhaustiveness: bool = False,
+    *,
+    skip_hash_verification: bool = False,
 ) -> GoldenManifest:
     images = None if images_dir is None else str(images_dir)
-    manifest = load_manifest(str(path), images_dir=images)
+    manifest = load_manifest(str(path), images_dir=images, skip_hash_verification=skip_hash_verification)
     non_exhaustive: list[int] = []
     for entry in manifest.entries:
         exhaustive = bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)

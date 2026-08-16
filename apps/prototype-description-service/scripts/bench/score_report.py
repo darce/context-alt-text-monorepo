@@ -380,14 +380,18 @@ def _baseline_superset_checked(root: Path, pair: StackPairConfig) -> bool:
 
 
 def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
+    # Metadata-only reader: report scoring never opens image bytes, only reads
+    # manifest fields (media_id/path/labels) already pinned by the run. Naming
+    # the skip explicitly (VLM6-MERGE-01 / rg-015 / OBS-04) keeps every other
+    # load_bench_manifest/load_manifest caller on default hash verification.
     for candidate in (run_dir / "manifest.json",):
         if candidate.is_file():
-            return load_bench_manifest(candidate, None)
+            return load_bench_manifest(candidate, None, skip_hash_verification=True)
     run_doc = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     path = run_doc.get("manifest_path")
     if not path:
         raise BenchError("config_invalid", "run-dir has no manifest.json or manifest_path")
-    return load_bench_manifest(path, None)
+    return load_bench_manifest(path, None, skip_hash_verification=True)
 
 
 def _load_pair(run_dir: Path) -> StackPairConfig:

@@ -601,6 +601,33 @@ class TestRv301SepAlignedMidExceptionFailClosed:
             f"{token!r} must stay ADMIT (legitimate separator rem)"
         )
 
+    @pytest.mark.parametrize(
+        "flag_name",
+        [
+            "_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED",
+            "_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED",
+        ],
+    )
+    def test_xyolox_z_denies_with_either_peel_flag_off(
+        self, monkeypatch: pytest.MonkeyPatch, flag_name: str
+    ) -> None:
+        """FIR-7-PANEL7D-rv3-02: fail-closed must not be AND-gated on peel flags.
+
+        Before the decoupling, ``xyolox_z`` fell back to admit whenever
+        either ``_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED`` or
+        ``_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED`` was False,
+        because the junk-prefix unknown-rem fail-closed was AND-gated on
+        both peel-owner flags in addition to
+        ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED``. Fail-closed must depend on
+        ``_MID_EXCEPTION_UNKNOWN_REM_ENABLED`` alone.
+        """
+        monkeypatch.setattr(policy, flag_name, False)
+        hit = policy._package_denylist_hit("xyolox_z")
+        assert hit is not None, (
+            f"xyolox_z must still DENY with {flag_name}=False (rv3-02)"
+        )
+        assert hit.package_id == "yolox_unknown_residual"
+
 
 # ---------------------------------------------------------------------------
 # FIR-7-PANEL-rv3-02 — Deci SuperGradients package identities seed the NC floor

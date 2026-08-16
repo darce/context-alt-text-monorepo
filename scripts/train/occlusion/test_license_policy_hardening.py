@@ -150,6 +150,15 @@ class TestGate15StrSubclassMethodLaundering:
         assert result.ok is False
         assert result.reason is policy.RejectionReason.RESEARCH_ONLY_SOURCE
 
+    def test_source_strip_helper_toop_ffhq(self) -> None:
+        """FIR-7-PANEL-rv1-03: pin the single unbound source-strip helper.
+
+        Binding this helper alone (``value.strip()``) must turn this pin
+        red. The floor, ``audit_source``, and the training-data door all
+        call it — a single-site bound-strip mutation is no longer silent.
+        """
+        assert policy._strip_source_token(ToOp("ffhq")) == "ffhq"
+
     def test_honest_subclass_still_evaluates_correctly(self) -> None:
         """Negative control: honest subclass (numpy.str_ shape) must PASS.
 

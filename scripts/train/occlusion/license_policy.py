@@ -2866,6 +2866,17 @@ def _derived_ingest_key(derived: str) -> str | None:
     return None
 
 
+def _strip_source_token(value: str) -> str:
+    """Unbound strip for source-axis tokens (GATE-15 / FIR-7-PANEL-rv1-03).
+
+    Single helper used by :func:`_source_axis_taint` (floor),
+    :func:`audit_source`, and the training-data door. A bound-strip
+    mutation of this helper alone must turn the ToOp pin red — three
+    independent ``str.strip`` sites previously required a dual mutation.
+    """
+    return str.strip(value)
+
+
 def _source_axis_taint(
     row_or_source: Mapping[str, Any] | str,
     *,
@@ -2879,12 +2890,12 @@ def _source_axis_taint(
     here; doors that require a source enforce that themselves.
     """
     if isinstance(row_or_source, str):
-        text = str.strip(row_or_source)
+        text = _strip_source_token(row_or_source)
     else:
         raw = row_or_source.get("source")
         if not isinstance(raw, str):
             return None
-        text = str.strip(raw)
+        text = _strip_source_token(raw)
     if not text:
         return None
     result = audit_source(text)
@@ -3111,9 +3122,9 @@ def _floor_taint_and_clearance(
     # exempting registry heads cannot widen a verdict.
     if category is PolicyCategory.SYNTHETIC_SOURCE:
         raw_for_taint = row.get("source") if "source" in row else None
-        if isinstance(raw_for_taint, str) and str.strip(raw_for_taint):
+        if isinstance(raw_for_taint, str) and _strip_source_token(raw_for_taint):
             head = _resolve_registry_head(
-                str.strip(raw_for_taint), SYNTHETIC_SOURCE_ENTRIES
+                _strip_source_token(raw_for_taint), SYNTHETIC_SOURCE_ENTRIES
             )
             if head is None:
                 source_taint = _source_axis_taint(row, category=category)
@@ -6580,13 +6591,13 @@ def audit_source(source: str | None) -> LicenseAuditResult:
     )
     if type_err is not None:
         return type_err
-    if source is None or not str.strip(source):
+    if source is None or not _strip_source_token(source):
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="source field is required for training-data rows",
             category=PolicyCategory.TRAINING_DATA,
         )
-    text = str.strip(source)
+    text = _strip_source_token(source)
     c = canonical(text)
     if c is None:
         return _fail(
@@ -7247,7 +7258,7 @@ def audit_provenance_row(
 
     source = ""
     if "source" in row and isinstance(row["source"], str):
-        source = str.strip(row["source"])
+        source = _strip_source_token(row["source"])
 
     # Training-data audits always require source (row cannot waive via category).
     if not source:

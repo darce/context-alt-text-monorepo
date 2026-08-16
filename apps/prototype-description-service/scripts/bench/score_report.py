@@ -473,7 +473,16 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
             elif join_fail:
                 attrition_join += 1
 
-    detection_set = [e.media_id for e in accepted if is_detection_exhaustive(e)]
+    # Document-level mode wins (sr-007): entry-level box/count match is not
+    # exhaustiveness when annotation_mode is roster_only. Route through the
+    # same resolver score_head_to_head uses so the accepted-set artifact
+    # agrees with refused detection cells (rg-015).
+    candidate_entries = [e for e in accepted if is_detection_exhaustive(e)]
+    detection_manifest = _subset_manifest(manifest, candidate_entries)
+    if _detection_score_mode(detection_manifest, manifest) is not AnnotationMode.EXHAUSTIVE:
+        detection_set: list[int] = []
+    else:
+        detection_set = [e.media_id for e in candidate_entries]
     zero_det = 0
     exports_by = {stack_id: load_leg_exports(root, stack_id) for stack_id in stacks}
     for entry in accepted:

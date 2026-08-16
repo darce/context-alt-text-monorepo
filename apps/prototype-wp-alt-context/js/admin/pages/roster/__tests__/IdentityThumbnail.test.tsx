@@ -371,10 +371,12 @@ describe('IdentityThumbnail', () => {
     const OriginalImage = globalThis.Image;
     const OriginalIO = globalThis.IntersectionObserver;
     let imageConstructCount = 0;
+    let lastImageSrc = '';
     let observerCallback: IntersectionObserverCallback | null = null;
 
     beforeEach(() => {
       imageConstructCount = 0;
+      lastImageSrc = '';
       observerCallback = null;
 
       class ControlledIntersectionObserver implements IntersectionObserver {
@@ -418,6 +420,7 @@ describe('IdentityThumbnail', () => {
         }
         set src(value: string) {
           this._src = value;
+          lastImageSrc = value;
           queueMicrotask(() => {
             const handler = this.onload;
             if (handler) {
@@ -504,6 +507,60 @@ describe('IdentityThumbnail', () => {
         expect(img.getAttribute('src')).toMatch(/^data:image\/jpeg/);
         expect(img).not.toHaveAttribute('src', 'https://example.com/full-res.jpg');
       });
+    });
+
+    it('crops from the mapper URL in its own pixel space, not the WP-core media meta [E21-21-BR-01]', async () => {
+      const drawImage = vi.fn();
+      HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+        clearRect: vi.fn(),
+        drawImage,
+      })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+
+      // Deleted original: the mapper degraded url+bbox together to a surviving
+      // sub-size. The WP-core read still advertises the ORIGINAL dimensions, so
+      // pairing them with the mapper bbox would divide it by ~15x.
+      render(
+        <IdentityThumbnail
+          identity={{
+            media_id: 100,
+            identity_id: 'identity-degraded',
+            media_url: 'https://example.test/uploads/original-768x512.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+          }}
+          mediaMeta={{ url: 'https://example.test/uploads/original-150x150.jpg', width: 1536, height: 1024 }}
+          size={32}
+        />,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        const host = document.querySelector('[data-face-pending="true"]')?.parentElement;
+        expect(host).toBeTruthy();
+        if (!host) {
+          return;
+        }
+        const entry: IntersectionObserverEntry = {
+          isIntersecting: true,
+          target: host,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: host.getBoundingClientRect(),
+          intersectionRect: host.getBoundingClientRect(),
+          rootBounds: null,
+        };
+        observerCallback?.([entry], {} as IntersectionObserver);
+      });
+
+      await waitFor(() => {
+        expect(drawImage).toHaveBeenCalled();
+      });
+
+      expect(lastImageSrc).toBe('https://example.test/uploads/original-768x512.jpg');
+      // scale 1 against the loaded 100x100 stub: sy = 40 - 52/2 = 14. Scaling the
+      // bbox by 100/1024 instead collapses sy to well under 1.
+      const [, sx, sy] = drawImage.mock.calls[0] as [unknown, number, number];
+      expect(sx).toBe(0);
+      expect(sy).toBeCloseTo(14, 5);
     });
 
     it('does not construct Image for a dedicated face-thumb blob (no canvas crop) [REV1-07]', () => {

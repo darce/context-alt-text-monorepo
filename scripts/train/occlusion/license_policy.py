@@ -144,8 +144,11 @@ walker (FIR-7-A10-02 / B11-01 / B12-1 / F10):
              artifact rem (``yolox_z`` / ``yolos_ti``), and junk-prefix
              mid-token exception + unknown rem (F15-5:
              ``xyoloxsextra`` / ``myyoloxsextra`` →
-             ``yolox_unknown_residual``; ``ayoloxs`` / ``xyoloxs``
-             stay admit). R18-01: a deny/NC *stem* glued through
+             ``yolox_unknown_residual``; separator-aligned twins
+             ``xyolox_z`` / ``xyolox_extra`` / ``xyolox_s_free``
+             fail-close the same way — never None; ``ayoloxs`` /
+             ``xyoloxs`` / ``xyolox_s`` / ``xyolox_tiny`` stay admit).
+             R18-01: a deny/NC *stem* glued through
              1–3 junk + exception spelling (``fastsamxyoloxextra`` /
              ``arcfacexyoloxextra``) is owned by that stem — the
              skip is only for an exact folded deny/NC prefix so
@@ -308,7 +311,8 @@ lineage doors (``audit_derived_from_model`` / ``audit_source``) keep exact
   6. **Derived NC-axis package floor** (FIR-7-B10-01 / B10-02 / B10-05):
      NC-axis ``PACKAGE_DENYLIST`` entries are **generated** from the
      canonical NC id surface (``_PINNED_NC_MODEL_IDS`` ∪
-     ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci ``yolo_nas`` base stem), covering
+     ``_NC_EXPLICIT_VARIANTS`` ∪ the Deci ``yolo_nas`` base stem ∪ the
+     Deci SuperGradients framework identity), covering
      both underscore and compact spellings of every id, **minus** an
      explicit exclusion set. Bare ``buffalo`` stays excluded —
      ``buffalo_bill_detector`` must admit; real InsightFace packs are
@@ -671,6 +675,11 @@ _NC_MODEL_DETAIL_NOTES: dict[str, str] = {
     "yolo_nas": (
         "Deci YOLO-NAS pretrained weights are non-commercial "
         "(Deci licence); NC-weights and output-derived data are banned"
+    ),
+    "super_gradients": (
+        "Deci SuperGradients framework (YOLO-NAS training stack) is "
+        "non-commercial (Deci licence); NC-weights and output-derived "
+        "data are banned"
     ),
     # vec2face NC synthetic-face lineage (FIR-7-A8-04) — was falling through
     # to the generic fallback despite being a first-class NC seed.
@@ -1156,7 +1165,8 @@ def _nc_package_floor_seed_surface() -> set[str]:
 
     Single source of truth for the NC-axis floor (FIR-7-B10-01 / A11-4):
     exactly ``_PINNED_NC_MODEL_IDS`` ∪ ``_NC_EXPLICIT_VARIANTS`` ∪ the
-    Deci ``yolo_nas`` base stem, minus ``_NC_PACKAGE_FLOOR_EXCLUSIONS``
+    Deci ``yolo_nas`` base stem ∪ the Deci SuperGradients framework
+    identity, minus ``_NC_PACKAGE_FLOOR_EXCLUSIONS``
     and ``_NC_SURFACE_DELIBERATE_EXCLUSIONS``. No other derivation
     sources. Compact spellings of underscore-bearing seeds are emitted
     as sibling keys so rule (c)'s 3-char remainder cap cannot make
@@ -1170,6 +1180,10 @@ def _nc_package_floor_seed_surface() -> set[str]:
     raw |= set(_NC_EXPLICIT_VARIANTS)
     # Deci YOLO-NAS base stem (pinned surface has size/pose variants only).
     raw.add("yolo_nas")
+    # Deci SuperGradients framework (FIR-7-PANEL-rv3-02 / CARD-26).
+    # Canonical fold covers super-gradients / super_gradients / super.gradients;
+    # deci-ai/super-gradients hits via the slash-component walk (A6-02).
+    raw.add("super_gradients")
     out: set[str] = set()
     for rid in raw:
         if rid in _NC_PACKAGE_FLOOR_EXCLUSIONS:
@@ -1202,6 +1216,8 @@ def _generate_nc_package_denylist_entries() -> dict[str, PackageDenylistEntry]:
         display = seed
         if seed.startswith("yolo_nas") or seed.startswith("yolonas"):
             display = f"YOLO-NAS ({seed})"
+        elif seed.startswith("super_gradient") or seed.startswith("supergradient"):
+            display = f"SuperGradients ({seed})"
         elif seed.startswith("buffalo") or seed in {
             "insightface",
             "retinaface",
@@ -2850,6 +2866,17 @@ def _derived_ingest_key(derived: str) -> str | None:
     return None
 
 
+def _strip_source_token(value: str) -> str:
+    """Unbound strip for source-axis tokens (GATE-15 / FIR-7-PANEL-rv1-03).
+
+    Single helper used by :func:`_source_axis_taint` (floor),
+    :func:`audit_source`, and the training-data door. A bound-strip
+    mutation of this helper alone must turn the ToOp pin red — three
+    independent ``str.strip`` sites previously required a dual mutation.
+    """
+    return str.strip(value)
+
+
 def _source_axis_taint(
     row_or_source: Mapping[str, Any] | str,
     *,
@@ -2863,12 +2890,12 @@ def _source_axis_taint(
     here; doors that require a source enforce that themselves.
     """
     if isinstance(row_or_source, str):
-        text = str.strip(row_or_source)
+        text = _strip_source_token(row_or_source)
     else:
         raw = row_or_source.get("source")
         if not isinstance(raw, str):
             return None
-        text = str.strip(raw)
+        text = _strip_source_token(raw)
     if not text:
         return None
     result = audit_source(text)
@@ -3095,9 +3122,9 @@ def _floor_taint_and_clearance(
     # exempting registry heads cannot widen a verdict.
     if category is PolicyCategory.SYNTHETIC_SOURCE:
         raw_for_taint = row.get("source") if "source" in row else None
-        if isinstance(raw_for_taint, str) and str.strip(raw_for_taint):
+        if isinstance(raw_for_taint, str) and _strip_source_token(raw_for_taint):
             head = _resolve_registry_head(
-                str.strip(raw_for_taint), SYNTHETIC_SOURCE_ENTRIES
+                _strip_source_token(raw_for_taint), SYNTHETIC_SOURCE_ENTRIES
             )
             if head is None:
                 source_taint = _source_axis_taint(row, category=category)
@@ -4995,6 +5022,25 @@ def _peel_composed_trailing_rem_segments(
     return None
 
 
+def _token_tail_after_compact_len(token: str, compact_len: int) -> str:
+    """Suffix of ``token`` after the first ``compact_len`` non-``_`` chars.
+
+    Maps a compact-form offset back onto the underscore-preserving token
+    so separator rem (``s_free`` / ``s_trt``) is classified with
+    separator semantics, not the compact-joined remainder.
+    """
+    if compact_len <= 0:
+        return token.lstrip("_")
+    seen = 0
+    for i, ch in enumerate(token):
+        if ch == "_":
+            continue
+        seen += 1
+        if seen == compact_len:
+            return token[i + 1 :].lstrip("_")
+    return ""
+
+
 def _compact_mid_exception_deny_adjacency(
     token: str,
 ) -> PackageDenylistEntry | None:
@@ -5169,6 +5215,56 @@ def _compact_mid_exception_deny_adjacency(
                                 )
                             if owned is not None:
                                 return owned
+                    # FIR-7-PANEL-rv3-01: no-owner is not permit, but
+                    # only for *junk-prefix* + *unknown* rem, and only
+                    # when the peel-owner arms are live (their TEST-15
+                    # red-proofs must still admit when those flags drop).
+                    # Do not steal deny/NC prefix owners, defer/reconst
+                    # rem (suffix steal ``my_yoloxyolo`` → yolo), or a
+                    # trailing composed rem in the honest-yolo / shield
+                    # / family-tag inventories (R22 fence:
+                    # ``xyoloxs_v8`` / ``xyoloxextra_v8``).
+                    if (
+                        _MID_EXCEPTION_UNKNOWN_REM_ENABLED
+                        and _MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED
+                        and _MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED
+                    ):
+                        prefix_owned = (
+                            _deny_has_folded_ab_claim(prefix)
+                            or _mid_exception_prefix_deny_owner(prefix)
+                            is not None
+                            or _underscore_preserving_glued_seed_owner(token)
+                            is not None
+                        )
+                        if not prefix_owned:
+                            sep_rem = (
+                                _token_tail_after_compact_len(
+                                    token, idx + len(spelling)
+                                )
+                                or rem
+                            )
+                            last = sep_rem.rsplit("_", 1)[-1]
+                            peelable = last in _HONEST_YOLO_COMPACT_REMS or (
+                                _is_legitimate_residual_segment(
+                                    last, _seed_c
+                                )
+                            )
+                            if not peelable:
+                                outcome, entry = (
+                                    _classify_exception_residual(
+                                        _seed_c,
+                                        _seed_k,
+                                        sep_rem,
+                                        compact_glue=False,
+                                    )
+                                )
+                                if outcome == _RESIDUAL_UNKNOWN:
+                                    return (
+                                        entry
+                                        or _unknown_exception_residual_entry(
+                                            _seed_c, sep_rem
+                                        )
+                                    )
                     start = idx + 1
                     continue
                 deny = _deny_folded_ab_hit(rem)
@@ -6521,13 +6617,13 @@ def audit_source(source: str | None) -> LicenseAuditResult:
     )
     if type_err is not None:
         return type_err
-    if source is None or not str.strip(source):
+    if source is None or not _strip_source_token(source):
         return _fail(
             RejectionReason.UNKNOWN_SOURCE,
             detail="source field is required for training-data rows",
             category=PolicyCategory.TRAINING_DATA,
         )
-    text = str.strip(source)
+    text = _strip_source_token(source)
     c = canonical(text)
     if c is None:
         return _fail(
@@ -7188,7 +7284,7 @@ def audit_provenance_row(
 
     source = ""
     if "source" in row and isinstance(row["source"], str):
-        source = str.strip(row["source"])
+        source = _strip_source_token(row["source"])
 
     # Training-data audits always require source (row cannot waive via category).
     if not source:
@@ -7306,10 +7402,12 @@ def audit_tooling_row(row: Mapping[str, Any]) -> LicenseAuditResult:
 
     cat = PolicyCategory.TOOLING
 
-    # Taint + clearance only — registration and licence deferred until after
-    # the package gate so denylisted_package is the authoritative reason when
-    # package + registration (or package + licence) both fire (BR-24 / GATE-22).
-    # BR-69: call each half explicitly; never a flag that drops an axis.
+    # Taint + clearance + floor step 4 (`_floor_package_identity_denylist`).
+    # GATE-22 is that floor step, not the door-local first-wins loop below:
+    # a denylisted token in any identity field (including `model_id`, which
+    # the door-local loop never sees) must report denylisted_package before
+    # registration or row SPDX. Inverting the door-local order leaves GATE-22
+    # green because step 4 already fired. BR-69: call each half explicitly.
     common = _floor_taint_and_clearance(row, category=cat)
     if common is not None:
         return common

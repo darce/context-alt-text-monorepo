@@ -58,9 +58,10 @@ const renderConfirm = (overrides: ConfirmOverrides = {}) => {
 
   const { result } = renderHook(() =>
     useClusterConfirmSuggestion({
-      clusterLabel: overrides.clusterLabel ?? 'bob',
       members: overrides.members ?? [member()],
-      editableClusterId: overrides.editableClusterId ?? 'editable',
+      // null is a valid unlabeled-card state — only fall back when the override is omitted.
+      editableClusterId:
+        overrides.editableClusterId !== undefined ? overrides.editableClusterId : 'editable',
       canEdit: overrides.canEdit ?? true,
       canSearchForMatch: overrides.canSearchForMatch ?? false,
       options: overrides.options ?? [],
@@ -86,7 +87,6 @@ describe('useClusterConfirmSuggestion casing grid (B6)', () => {
   it('case-only confirm bob→Bob applies merge (exact no-op before runMatchedAction)', async () => {
     // Predicted first failure: cancelEditing; merge not called (case-insensitive bail)
     const { result, mutations, cancelEditing, queueSaveStatus } = renderConfirm({
-      clusterLabel: 'bob',
       options: [
         {
           value: 'cluster:other-bob',
@@ -102,20 +102,55 @@ describe('useClusterConfirmSuggestion casing grid (B6)', () => {
       await result.current.handleConfirmSuggestion('other-bob', 'Bob');
     });
 
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(cancelEditing).not.toHaveBeenCalled();
     expect(queueSaveStatus).toHaveBeenCalled();
   });
 
-  it('exact same confirm Bob→Bob still no-ops without merge', async () => {
-    // Predicted first failure: none if exact compare lands; stays green as no-op
-    const { result, mutations, cancelEditing } = renderConfirm({
-      clusterLabel: 'Bob',
+  it('same-label different-target-id must NOT no-op (BR-42)', async () => {
+    // BR-42: bail is cluster-id equality, not label. Bob→other-bob must merge.
+    // Predicted first failure (pre-fix label bail): cancelEditing; merge not called
+    const { result, mutations, cancelEditing, queueSaveStatus } = renderConfirm({
+      editableClusterId: 'editable',
       members: [member({ cluster_label: 'Bob' })],
+      options: [
+        {
+          value: 'cluster:other-bob',
+          label: 'Bob',
+          source: 'cluster',
+          group: 'Suggested',
+          identityCount: 2,
+        },
+      ],
     });
 
     await act(async () => {
       await result.current.handleConfirmSuggestion('other-bob', 'Bob');
+    });
+
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
+    expect(cancelEditing).not.toHaveBeenCalled();
+    expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('confirm of already-editable cluster id still no-ops (BR-42)', async () => {
+    const { result, mutations, cancelEditing } = renderConfirm({
+      editableClusterId: 'editable',
+      members: [member({ cluster_label: 'Bob' })],
+    });
+
+    await act(async () => {
+      await result.current.handleConfirmSuggestion('editable', 'Bob');
     });
 
     expect(cancelEditing).toHaveBeenCalled();
@@ -124,7 +159,6 @@ describe('useClusterConfirmSuggestion casing grid (B6)', () => {
 
   it('confirm with a genuinely different label still merges', async () => {
     const { result, mutations, cancelEditing } = renderConfirm({
-      clusterLabel: 'Alice',
       members: [member({ cluster_label: 'Alice' })],
       options: [
         {
@@ -141,7 +175,80 @@ describe('useClusterConfirmSuggestion casing grid (B6)', () => {
       await result.current.handleConfirmSuggestion('other-bob', 'Bob');
     });
 
-    expect(mutations.merge).toHaveBeenCalledWith('other-bob', 'Bob', expect.any(AbortSignal));
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      undefined,
+    );
     expect(cancelEditing).not.toHaveBeenCalled();
+  });
+
+  it('threads suggestionId into merge so confirm resolves the pending row by id (BR-16 / L1R-01)', async () => {
+    // Predicted first failure on f54f7c87 production: merge called without suggestionId
+    // (handleConfirmSuggestion dropped the third arg → runMatchedAction never carried it).
+    const { result, mutations } = renderConfirm({
+      editableClusterId: 'editable',
+      members: [member()],
+      options: [
+        {
+          value: 'cluster:other-bob',
+          label: 'Bob',
+          source: 'cluster',
+          group: 'Suggested',
+          identityCount: 2,
+          suggestion_id: 'sug-confirm-1',
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.handleConfirmSuggestion('other-bob', 'Bob', 'sug-confirm-1');
+    });
+
+    expect(mutations.merge).toHaveBeenCalledWith(
+      'other-bob',
+      'Bob',
+      expect.any(AbortSignal),
+      'sug-confirm-1',
+    );
+  });
+
+  it('threads suggestionId into assignToCluster for unlabeled confirm (BR-16 / L1R-01)', async () => {
+    // Predicted first failure: assignToCluster called without the fourth suggestionId arg.
+    // Small known count skips requestConfirm so the call is deterministic.
+    const assignToCluster = vi.fn();
+    const merge = vi.fn();
+    const members = [member({ cluster_id: 'unlabeled' })];
+    const { result, requestConfirm } = renderConfirm({
+      editableClusterId: null,
+      canEdit: false,
+      canSearchForMatch: true,
+      members,
+      mutations: { isPending: false, merge, assignToCluster },
+      options: [
+        {
+          value: 'cluster:alice',
+          label: 'Alice',
+          source: 'cluster',
+          group: 'Suggested',
+          identityCount: 1,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.handleConfirmSuggestion('alice', 'Alice', 'sug-assign-1');
+    });
+
+    expect(requestConfirm).not.toHaveBeenCalled();
+    expect(merge).not.toHaveBeenCalled();
+    expect(assignToCluster).toHaveBeenCalledTimes(1);
+    expect(assignToCluster).toHaveBeenCalledWith(
+      members[0].identity_id,
+      'alice',
+      expect.any(AbortSignal),
+      'sug-assign-1',
+    );
   });
 });

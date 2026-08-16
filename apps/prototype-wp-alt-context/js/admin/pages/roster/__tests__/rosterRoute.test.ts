@@ -7,6 +7,7 @@ import {
   parseRosterRoute,
   selectDeterministicDefaultWorkspaceEntry,
   workbenchReviewQueueUrl,
+  writeRosterFaceParam,
 } from '../rosterRoute';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -83,6 +84,18 @@ describe('parseRosterRoute route compat (E21-9 Slice 5a + E21-10 lands-second)',
 
     const queue = parseRosterRoute(new URLSearchParams('queue=needs-review&tab=clusters'));
     expect(queue.requiresProjectionGateNotice).toBe(true);
+  });
+
+  it('reads the face= cursor from person workspace deep links', () => {
+    const parsed = parseRosterRoute(new URLSearchParams('person=p1&face=identity-2'));
+    expect(parsed.selectedFaceId).toBe('identity-2');
+    expect(parsed.requiresProjectionGateNotice).toBe(true);
+  });
+
+  it('writes face= with replace-style params and keeps person=', () => {
+    const next = writeRosterFaceParam(new URLSearchParams('person=p1'), 'identity-2', 'p1');
+    expect(next.get('person')).toBe('p1');
+    expect(next.get('face')).toBe('identity-2');
   });
 
   // E21-10 Slice 4 lands-second: getLegacyTab retired (E21-9); no tab rewrite, no Clusters tab.

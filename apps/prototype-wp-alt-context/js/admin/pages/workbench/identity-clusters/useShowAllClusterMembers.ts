@@ -48,6 +48,8 @@ export interface UseShowAllClusterMembersResult {
   isExpanding: boolean;
   expandError: string | null;
   showAll: () => Promise<void>;
+  /** Re-run the first-page members query (UI-05 error-branch recovery). */
+  refetch: () => void;
 }
 
 export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMembersResult => {
@@ -70,10 +72,12 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
     data: membersResponse,
     isLoading,
     isError,
+    refetch: refetchMembers,
   } = useQuery({
     queryKey: queryKeys.clusters.memberList(clusterId),
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
+    retry: false,
   });
 
   // Any refetch that changes the envelope identity (invalidation after a
@@ -202,6 +206,10 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
     }
   }, [clusterId, isExpanding, membersResponse]);
 
+  const refetch = useCallback((): void => {
+    void refetchMembers();
+  }, [refetchMembers]);
+
   return {
     members,
     membersResponse,
@@ -213,5 +221,6 @@ export const useShowAllClusterMembers = (clusterId: string): UseShowAllClusterMe
     isExpanding,
     expandError,
     showAll,
+    refetch,
   };
 };

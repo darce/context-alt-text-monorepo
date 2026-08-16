@@ -2240,6 +2240,21 @@ if (!isset($GLOBALS['wpdb'])) {
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
         public array $mockResults = [];
+        /**
+         * When true, get_results returns null (WordPress behaviour on MySQL failure).
+         * Pair with last_error to drive fail-loud repository guards.
+         */
+        public bool $get_results_returns_null = false;
+        /**
+         * When true, get_var returns null and leaves last_error for the caller.
+         */
+        public bool $get_var_returns_null = false;
+        /**
+         * When true, get_row returns null and leaves last_error for the caller.
+         */
+        public bool $get_row_returns_null = false;
+        /** MySQL error text mirrored from real $wpdb->last_error. */
+        public string $last_error = '';
         /** @var array<string,mixed>|null */
         public ?array $mockRow = null;
         /**
@@ -2264,6 +2279,15 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $updateResults = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
+        /** @var array<string,array<int,string>> */
+        public array $tableColumns = [];
+        /**
+         * Achieved index names per table (Key_name). Used by SHOW INDEX / DROP INDEX
+         * probes in lifecycle schema tests (LO-03).
+         *
+         * @var array<string,array<int,string>>
+         */
+        public array $tableIndexes = [];
         /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
         public $onGetVar = null;
 
@@ -2271,6 +2295,21 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $sql);
             $this->queries[] = $normalizedSql;
+
+            if (preg_match(
+                '/^ALTER\s+TABLE\s+`?([^\s`]+)`?\s+DROP\s+INDEX\s+`?([^\s`]+)`?/i',
+                $normalizedSql,
+                $dropMatches
+            )) {
+                $table = $dropMatches[1];
+                $index = $dropMatches[2];
+                if (isset($this->tableIndexes[$table]) && is_array($this->tableIndexes[$table])) {
+                    $this->tableIndexes[$table] = array_values(array_filter(
+                        $this->tableIndexes[$table],
+                        static fn(string $name): bool => $name !== $index
+                    ));
+                }
+            }
 
             $result = $this->defaultQueryResult;
             if (array_key_exists($normalizedSql, $this->queryResults)) {
@@ -2287,7 +2326,15 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $result;
             }
 
-            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT)\b/i', $normalizedSql) ? 1 : 0;
+            // Real mysqli returns int rows-affected for UPDATE. Coerce boolean-true
+            // default success to 0 so seed row-count checks match production.
+            // (INSERT left alone: 0 is falsy and would break truthy-success checks.)
+            if ($result === true && preg_match('/^UPDATE\b/i', $normalizedSql)) {
+                $this->rows_affected = 0;
+                return 0;
+            }
+
+            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT|ALTER)\b/i', $normalizedSql) ? 1 : 0;
             return $result;
         }
 
@@ -2357,7 +2404,46 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
 
-            $results = $this->mockResults;
+            if ($this->get_results_returns_null) {
+                return null;
+            }
+
+            if (preg_match('/^SHOW COLUMNS FROM\s+`?([^\s`]+)`?/i', $normalizedSql, $matches)) {
+                $tableName = $matches[1];
+                $showError = $GLOBALS['__ac_show_columns_error'] ?? null;
+                $showErrorTable = $GLOBALS['__ac_show_columns_error_table'] ?? null;
+                if (is_string($showError) && $showError !== ''
+                    && ($showErrorTable === null || $showErrorTable === $tableName)
+                ) {
+                    $this->last_error = $showError;
+                    return [];
+                }
+
+                $results = array_map(
+                    static fn(string $column): array => ['Field' => $column],
+                    $this->tableColumns[$tableName] ?? []
+                );
+            } elseif (preg_match(
+                '/^SHOW INDEX FROM\s+`?([^\s`]+)`?(?:\s+WHERE\s+Key_name\s*=\s*\'([^\']*)\')?/i',
+                $normalizedSql,
+                $indexMatches
+            )) {
+                // Test injection: null SHOW INDEX without poisoning SHOW COLUMNS
+                // (FIX-2 / LO-03 probe failure vs empty result set).
+                if (!empty($GLOBALS['__ac_show_index_returns_null'])) {
+                    return null;
+                }
+                $tableName = $indexMatches[1];
+                $keyName = $indexMatches[2] ?? null;
+                $results = [];
+                foreach ($this->tableIndexes[$tableName] ?? [] as $indexName) {
+                    if ($keyName === null || $keyName === $indexName) {
+                        $results[] = ['Key_name' => $indexName];
+                    }
+                }
+            } else {
+                $results = $this->mockResults;
+            }
             if ($results === []) {
                 $results = $this->resolveStoredSelectResults($normalizedSql);
             }
@@ -2376,6 +2462,10 @@ if (!isset($GLOBALS['wpdb'])) {
         {
             $normalizedSql = trim((string) $query);
             $this->queries[] = $normalizedSql;
+
+            if ($this->get_row_returns_null) {
+                return null;
+            }
 
             if ($this->mockRowSequence !== null) {
                 $row = array_key_exists($this->mockRowSequenceIndex, $this->mockRowSequence)
@@ -2414,6 +2504,10 @@ if (!isset($GLOBALS['wpdb'])) {
                 ($this->onGetVar)($normalizedSql);
             }
 
+            if ($this->get_var_returns_null) {
+                return null;
+            }
+
             if (array_key_exists($normalizedSql, $this->queryResults)) {
                 return $this->queryResults[$normalizedSql];
             }
@@ -2425,6 +2519,13 @@ if (!isset($GLOBALS['wpdb'])) {
                 if (is_string($firstKey) || is_int($firstKey)) {
                     return $firstRow[$firstKey];
                 }
+            }
+
+            // A total expression always yields a row on a successful query, so
+            // "no stored rows" must model 0 rather than the null this stub uses
+            // for a failed query (GD-03).
+            if ($this->mockVar === null && preg_match('/^SELECT\s+(EXISTS\s*\(|COUNT\s*\()/i', $normalizedSql) === 1) {
+                return 0;
             }
 
             return $this->mockVar;
@@ -2737,6 +2838,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queryResults = [];
             $this->defaultQueryResult = true;
             $this->mockResults = [];
+            $this->get_results_returns_null = false;
+            $this->get_var_returns_null = false;
+            $this->get_row_returns_null = false;
+            $this->last_error = '';
             $this->mockRow = null;
             $this->mockRowSequence = null;
             $this->mockRowSequenceIndex = 0;
@@ -2748,6 +2853,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
             $this->tableRows = [];
+            $this->tableColumns = [];
+            $this->tableIndexes = [];
             $this->onGetVar = null;
         }
     }
@@ -2758,6 +2865,10 @@ if (!isset($GLOBALS['wpdb'])) {
 if (!function_exists('dbDelta')) {
     /**
      * Record dbDelta invocations for lifecycle schema tests.
+     *
+     * Column extraction uses LifecycleManager::parse_create_table_column_names
+     * (SV-03 single grammar) so the stub cannot tautologically re-implement
+     * production's intended-column parse.
      *
      * @param string|array<int,string> $queries SQL string or list of SQL strings.
      * @return array<int,string>
@@ -2783,6 +2894,50 @@ if (!function_exists('dbDelta')) {
 
             $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
             $executed[] = $normalized;
+
+            if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb']) && property_exists($GLOBALS['wpdb'], 'tableColumns')) {
+                $tableName = null;
+                if (preg_match('/^CREATE TABLE\s+`?([^\s`(]+)`?/i', $normalized, $tableMatch)) {
+                    $tableName = $tableMatch[1];
+                }
+
+                $columns = null;
+                if (class_exists(\AltContext\Support\LifecycleManager::class)
+                    && method_exists(\AltContext\Support\LifecycleManager::class, 'parse_create_table_column_names')
+                ) {
+                    $columns = \AltContext\Support\LifecycleManager::parse_create_table_column_names($normalized);
+                }
+
+                if (is_array($columns) && $tableName !== null) {
+                    $skip = $GLOBALS['__ac_dbdelta_silent_skip_column'] ?? null;
+                    $skipTable = $GLOBALS['__ac_dbdelta_silent_skip_table'] ?? null;
+                    if (is_string($skip) && $skip !== '') {
+                        $columns = array_values(array_filter(
+                            $columns,
+                            static function (string $name) use ($skip, $skipTable, $tableName): bool {
+                                if ($name !== $skip) {
+                                    return true;
+                                }
+                                if ($skipTable === null || $skipTable === $tableName) {
+                                    return false;
+                                }
+                                return true;
+                            }
+                        ));
+                    }
+                    $GLOBALS['wpdb']->tableColumns[$tableName] = $columns;
+                }
+            }
+
+            // Test injection: simulate MySQL rejecting a statement (sets $wpdb->last_error).
+            // Match is a substring of the SQL (typically a table suffix like acx_identity_members).
+            $failOn = $GLOBALS['__ac_dbdelta_fail_on_match'] ?? null;
+            if (is_string($failOn) && $failOn !== '' && str_contains($normalized, $failOn)) {
+                $error = $GLOBALS['__ac_dbdelta_fail_error'] ?? "dbDelta simulated failure for {$failOn}";
+                if (isset($GLOBALS['wpdb']) && is_object($GLOBALS['wpdb'])) {
+                    $GLOBALS['wpdb']->last_error = (string) $error;
+                }
+            }
         }
 
         return $executed;

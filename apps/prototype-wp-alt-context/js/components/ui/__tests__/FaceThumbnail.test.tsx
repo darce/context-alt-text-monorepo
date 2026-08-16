@@ -93,6 +93,19 @@ describe('FaceThumbnail', () => {
       expect(img).toHaveAttribute('alt', 'Detected face');
     });
 
+    it('forwards loading prop to the img and omits the attribute when unset', () => {
+      const { rerender } = render(
+        <FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="lazy" />,
+      );
+      expect(screen.getByRole('img')).toHaveAttribute('loading', 'lazy');
+
+      rerender(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} loading="eager" />);
+      expect(screen.getByRole('img')).toHaveAttribute('loading', 'eager');
+
+      rerender(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} />);
+      expect(screen.getByRole('img')).not.toHaveAttribute('loading');
+    });
+
     it('shows accessible error message on load failure', async () => {
       render(<FaceThumbnail mediaUrl="invalid-url" bbox={mockBbox} />);
       const img = screen.getByRole('img');
@@ -170,6 +183,11 @@ describe('FaceThumbnail', () => {
       await waitFor(() => {
         const wrapper = container.firstChild as HTMLElement;
         expect(wrapper).toHaveClass('acx-face-thumbnail--error');
+        expect(wrapper.querySelector('.acx-face-thumbnail__warning-icon')).not.toBeNull();
+        expect(wrapper.querySelector('.acx-face-thumbnail__broken-icon')).not.toBeNull();
+        expect(wrapper.querySelector('.acx-face-thumbnail__error-label')).toHaveTextContent(
+          'Face image unavailable',
+        );
       });
     });
 

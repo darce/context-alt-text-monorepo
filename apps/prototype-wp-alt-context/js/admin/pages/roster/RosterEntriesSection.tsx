@@ -3,9 +3,16 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
 import { Filter, UserPlus, Plus, Users, X } from 'lucide-react';
 import { toWorkbench } from '../../navigation/appLinks';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'alt-context',
+);
 
 type QueueFilterId = RosterEntry['queue_memberships'][number];
 
@@ -24,6 +31,9 @@ const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 /** URL key for directory text search — same short `s` convention as workbench. */
 const SEARCH_PARAM = 's';
+
+/** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
+export const SEARCH_STATUS_DEBOUNCE_MS = 300;
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -111,6 +121,7 @@ export interface RosterEntriesSectionProps {
 export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
   const [createHiddenBySearchNotice, setCreateHiddenBySearchNotice] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const createPerson = useCreatePerson();
@@ -169,9 +180,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
 
   /**
    * Extend the existing filter status surface with a search result summary so
-   * SR users hear one status region (no second live region / A11Y-21). The
-   * summary only appears when search is active and the list is non-empty —
-   * empty-search copy is a separate, distinct message below.
+   * SR users hear one status region (no second live region / A11Y-21). Match
+   * counts debounce; empty-search / empty-filter copy joins the same region
+   * immediately [E21-19-REV1-02].
    */
   const searchStatus =
     hasActiveSearch && visibleEntries.length > 0
@@ -182,8 +193,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           trimmedSearch,
         )
       : null;
-
-  const statusLines = [activeFilterStatus, searchStatus].filter((line): line is string => line !== null);
+  // Filter/table stay live; only non-null status-region rewrites are delayed
+  // [ROSTER-W-03]. Transition to null flushes immediately [E21-19-REV1-01].
+  const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
 
   const emptySearchMessage = hasActiveSearch
     ? hasCategoricalFilter
@@ -251,12 +263,19 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     }
 
     const submittedName = newName.trim();
+    // BR-60: reject reserved machine-shaped person names before create.
+    if (!isHumanLabeledTarget(submittedName)) {
+      setNameError(RESERVED_LABEL_MESSAGE);
+      return;
+    }
+    setNameError(null);
     createPerson.mutate(
       { name: submittedName },
       {
         onSuccess: () => {
           setNewName('');
           setIsAdding(false);
+          setNameError(null);
           // A successful create that vanishes behind an active search reads as
           // a failed add. Surface the recovery when the new name would not match.
           if (hasActiveSearch && !submittedName.toLowerCase().includes(normalizedSearch)) {
@@ -298,6 +317,16 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
     visibleEntries.length === 0 &&
     !hasActiveSearch;
 
+  const immediateEmptyStatus =
+    isEmptySearchResult && emptySearchMessage !== null
+      ? emptySearchMessage
+      : isEmptyFilterResult
+        ? emptyFilterMessage
+        : null;
+  const statusLines = [activeFilterStatus, announcedSearchStatus, immediateEmptyStatus].filter(
+    (line): line is string => line !== null,
+  );
+
   return (
     <div className="acx-roster-section" data-testid="roster-entries-section">
       <header className="acx-roster-section__header">
@@ -311,7 +340,14 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           )}
         </div>
         {!isAdding && (
-          <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
+          <button
+            type="button"
+            className="acx-button acx-button--primary"
+            onClick={() => {
+              setNameError(null);
+              setIsAdding(true);
+            }}
+          >
             <UserPlus size={16} aria-hidden="true" />
             {__('Add Person', 'alt-context')}
           </button>
@@ -391,10 +427,26 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               className="acx-input"
               placeholder={__('Full Name', 'alt-context')}
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={(e) => {
+                setNewName(e.target.value);
+                if (nameError) {
+                  setNameError(null);
+                }
+              }}
               disabled={createPerson.isPending}
               autoFocus
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'acx-roster-add-name-error' : undefined}
             />
+            {nameError && (
+              <p
+                id="acx-roster-add-name-error"
+                className="acx-roster-section__name-error"
+                role="alert"
+              >
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="acx-form-actions">
             <button
@@ -408,7 +460,10 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
             <button
               type="button"
               className="acx-button acx-button--secondary"
-              onClick={() => setIsAdding(false)}
+              onClick={() => {
+                setNameError(null);
+                setIsAdding(false);
+              }}
               disabled={createPerson.isPending}
             >
               <X size={16} aria-hidden="true" />
@@ -448,7 +503,6 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           </div>
         ) : isEmptySearchResult && emptySearchMessage !== null ? (
           <div className="acx-roster-section__filter" data-testid="roster-search-empty">
-            <p>{emptySearchMessage}</p>
             <button type="button" className="acx-link-button" onClick={clearSearch}>
               {__('Clear search', 'alt-context')}
             </button>
@@ -458,9 +512,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
               </button>
             )}
           </div>
-        ) : isEmptyFilterResult ? (
-          <p>{emptyFilterMessage}</p>
-        ) : (
+        ) : isEmptyFilterResult ? null : (
           <RosterEntriesTable entries={visibleEntries} />
         ))}
     </div>

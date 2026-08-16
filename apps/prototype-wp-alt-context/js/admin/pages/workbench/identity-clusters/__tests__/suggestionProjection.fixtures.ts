@@ -24,6 +24,15 @@ export const buildPendingRow = (
   ...overrides,
 });
 
+/** Attachment-only preview source — no thumbUrl / mediaUrl, so collectPreviews must consult attachment. */
+export const ATTACHMENT_ONLY_URL = 'https://example.test/attachment-only.jpg';
+
+export const attachmentOnlyPendingRow = buildPendingRow({
+  id: 'sug-attachment-only',
+  identity_id: 'identity-attachment-only',
+  identity_attachment_url: ATTACHMENT_ONLY_URL,
+});
+
 const MULTI_IDENTITY_ID = 'identity-multi';
 const CLUSTER_FIRST_IDENTITY_ID = 'identity-cluster-first';
 const ALL_INELIGIBLE_IDENTITY_ID = 'identity-all-ineligible';

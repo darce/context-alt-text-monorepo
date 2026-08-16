@@ -23,7 +23,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
         deploy-rollback-dev-fir \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
-        deploy-status \
+        deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
         reset-remote db-reset-remote demo-walkthrough-proof walkthrough-first-visitor
 
@@ -40,6 +40,11 @@ deploy-help:
 	@echo "    make deploy-dev-fir                        Same image (:dev tag), restart acx-dev-fir (isolated FIR stack), verify"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
+	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev REMOTE_BUILD=0   Local VLM image build+deploy (never remote)"
+	@echo "  VLM notes (rg-006): remote build of *vlm* targets is refused (refuse_remote_vlm_build)."
+	@echo "    Required: REMOTE_BUILD=0, ACX_BUILD_TARGET=runtime-vlm, seed weights into \$$ACX_MODELS_PATH/huggingface_cache"
+	@echo "    on the VM first. Compose selects the -vlm repo via sticky ACX_IMAGE_REPO shipped by the deploy script."
+	@echo "    Free-space floor (REMOTE_BUILD_MIN_FREE_GB) still applies on the VM pull/smoke path for VLM."
 	@echo ""
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
@@ -47,10 +52,12 @@ deploy-help:
 	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path; also affects dev-fir — shared :dev tag)"
 	@echo "    make deploy-rollback-dev-fir               Refuses: FIR-only rollback impossible (shared :dev tag)"
 	@echo ""
-	@echo "  Verify / status:"
+	@echo "  Verify / status / sticky-repo reset:"
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
-	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env"
+	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (reads remote ACX_IMAGE_REPO for VLM)"
 	@echo "    make deploy-status                         Snapshot /health for dev, dev-fir, staging, prod"
+	@echo "    make deploy-clear-image-repo ENV=dev       Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
+	@echo "    make deploy-clear-image-repo ENV=prod CONFIRM=PROMOTE   Same for prod (CONFIRM required)"
 	@echo ""
 	@echo "  Destructive remote reset (stops unit, clears env Postgres state, restarts, verifies /ready):"
 	@echo "    ACX_RESET_SITE_URL is REQUIRED — the WordPress site URL the plugin will hit."
@@ -89,8 +96,12 @@ deploy-help:
 	@echo "  Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
 	@echo "                      ACX_DEPLOY_PLATFORM ACX_REMOTE_BUILD_DIR ACX_ALLOW_DIRTY"
 	@echo "                      REMOTE_BUILD (default 1; set 0 for local), ACX_REMOTE_BUILD (env equivalent)"
+	@echo "                      ACX_BUILD_TARGET (e.g. runtime-vlm; charset [A-Za-z0-9_.-]+ only)"
+	@echo "                      ACX_IMAGE_VARIANT (recognition|vlm; vlm requires *vlm* build target)"
+	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_BOOT_SMOKE"
 
 # Build only (no push). Override the tag with TAG=staging.
+# ACX_BUILD_TARGET / ACX_IMAGE_VARIANT are passed through the environment.
 deploy-build:
 	@"$(DEPLOY_SCRIPT)" build $(TAG)
 
@@ -145,6 +156,8 @@ deploy-rollback-dev-fir:
 	@exit 2
 
 # Verify a deployed environment matches local HEAD.
+# Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
+# ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
 deploy-verify:
 	@"$(DEPLOY_SCRIPT)" verify $(ENV)
 
@@ -160,6 +173,20 @@ deploy-verify-prod:
 # Cross-env health snapshot. Cheap triage tool.
 deploy-status:
 	@"$(DEPLOY_SCRIPT)" status
+
+# D9 / S2-A-10: remove sticky ACX_IMAGE_REPO from remote .env (compose → recognition default).
+# Prod requires CONFIRM=PROMOTE — same lever as deploy-prod / reset-remote — because a
+# mistyped ENV=prod is latent (no restart) and only bites at the next unattended unit restart.
+deploy-clear-image-repo:
+	@if [ -z "$(ENV)" ]; then \
+		echo "deploy-clear-image-repo: ENV is required (dev|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@if [ "$(ENV)" = "prod" ] && [ "$(CONFIRM)" != "PROMOTE" ]; then \
+		echo "deploy-clear-image-repo: ENV=prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart)" >&2; \
+		exit 2; \
+	fi
+	@"$(DEPLOY_SCRIPT)" clear-image-repo $(ENV)
 
 # Destructive remote reset. Requires explicit ENV=<dev|staging|prod> and confirmation
 # levers (CONFIRM_REMOTE_RESET=RESET; CONFIRM=PROMOTE additionally for prod). Pass

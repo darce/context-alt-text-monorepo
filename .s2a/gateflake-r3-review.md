@@ -5,7 +5,7 @@
 **Task:** `MAINT-GATE-FLAKES-20260815`
 **Subject:** commit `a7def04e` on `feature/maint-gate-flakes-20260815`, file `apps/prototype-description-service/scene/tests/test_describe_async_worker.py`
 **Posture:** adversarial. Two prior review passes each found a real defect in work that looked clean. Assume the same until shown otherwise.
-**Sandbox note:** this checkout is history-stripped (`e568db1`). `a7def04e` is not a distinct SHA here. Review is of the current tree contents matching the claimed s3 change (file URL, default `AsyncAdaptedQueuePool`, connect-listener `sleep_ms`, `job_timeout_seconds=0.5`, poll `GATEFLAKE-S3-LOCK` instrument).
+**Sandbox note:** this checkout is history-stripped (`e568db1` sha-guard:ignore — foreign sandbox-clone root SHA, does not exist in this repo's history). `a7def04e` is not a distinct SHA here. Review is of the current tree contents matching the claimed s3 change (file URL, default `AsyncAdaptedQueuePool`, connect-listener `sleep_ms`, `job_timeout_seconds=0.5`, poll `GATEFLAKE-S3-LOCK` instrument).
 **Scope:** this file only. Test file and production worker not edited.
 
 Canon: **TEST-08**, **TEST-15**, **TEST-16**, **CON-17**, **REF-25**, **DBG-01**.
@@ -366,7 +366,7 @@ No s1-style "the class is dead" resting on idle runs. I am not quoting an unsupp
 
 ### What I could NOT verify
 
-- Distinct SHA `a7def04e` — sandbox is history-stripped (`e568db1`). Review is of tree contents matching the claimed s3 diff.
+- Distinct SHA `a7def04e` — sandbox is history-stripped (`e568db1` sha-guard:ignore — foreign sandbox-clone root SHA, does not exist in this repo's history). Review is of tree contents matching the claimed s3 diff.
 - s3's exact 6-burner 25/25 timeout battery — not re-run; budget spent on cancel-test cliff at 12/16.
 - Timeout test under 12/16 burners — not run. 0.5s hedge not re-timed (r2b already did n=15).
 - Process-kill leak behaviour — not tested.

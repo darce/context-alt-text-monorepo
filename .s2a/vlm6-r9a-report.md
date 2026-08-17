@@ -72,9 +72,17 @@ scene/tests/test_eval_harness_face_determinism_anchor.py::test_fixture_local_det
 
 ## Commits
 
-1. `2253cd7` A — renderer wording
-2. `4893e79` B — media 9 note
-3. `dc4c4cd` C — regen + digest re-pin
-4. `653e46e` D — test pins
-5. `b2f76f2` live-render hook so face TEST-15 can fail
+The five items below were authored as separate sandbox-clone commits; the
+sandbox history is stripped (VLM6-S2A-F3-02), so those hashes never resolve
+at the destination and are not reproduced here. Matched against destination
+`git log` by subject/diff content: all five landed squashed into one
+destination commit, `74a76de2dd5e2a5a548998f069230dfb1ffea330` — `fix(eval):
+state trap FN share as non-derivable in the fixture-local detection caveat
+(VLM6-R2-C-02)`.
+
+1. A — renderer wording
+2. B — media 9 note
+3. C — regen + digest re-pin
+4. D — test pins
+5. E — live-render hook so face TEST-15 can fail
 6. this report

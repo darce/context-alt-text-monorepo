@@ -5042,15 +5042,19 @@ def _token_tail_after_compact_len(token: str, compact_len: int) -> str:
 
 
 def _mid_exception_r22_sep_rem_fence(
-    token: str, compact_end: int, spelling: str, sep_rem: str
+    token: str, compact_end: int, spelling: str, sep_rem: str, seed_c: str
 ) -> bool:
     """True when the R22 fence must skip junk-prefix unknown-rem fail-closed.
 
-    ``xyoloxs_v8`` / ``xyoloxextra_v8`` either glue the first rem char
-    onto the seed or are a single honest-yolo rem after a compact-tag
-    spelling (``yoloxs`` + ``v8``). Separator-aligned multi-segment rem
-    (``xyolox_z_v8``) is never fenced — last-segment honesty is not a
-    skip (FIR-7-PANEL7D-rv3-01 / SECD-05 / CARD-26).
+    ``xyoloxs_v8`` glues the first rem char onto the seed — but only when
+    that glued run (up to the next ``_`` or end of token) is itself a
+    legitimate known tag, not arbitrary alnum debris (FIR-7-PANEL7L-rvA-01:
+    ``xyoloxz_v8`` / ``xyoloxevil_v8`` / ``xyolosz_v8`` / ``xppyoloz_v8``
+    are junk glue and must fail-closed, not blanket-admit on
+    ``nxt.isalnum()``). ``xyoloxs_v8`` is also a single honest-yolo rem
+    after a compact-tag spelling (``yoloxs`` + ``v8``). Separator-aligned
+    multi-segment rem (``xyolox_z_v8``) is never fenced — last-segment
+    honesty is not a skip (FIR-7-PANEL7D-rv3-01 / SECD-05 / CARD-26).
     """
     if not token or compact_end <= 0:
         return False
@@ -5062,7 +5066,22 @@ def _mid_exception_r22_sep_rem_fence(
         if seen == compact_end:
             nxt = token[i + 1 : i + 2]
             if nxt and nxt.isalnum():
-                return True
+                tail_end = token.find("_", i + 1)
+                glued = (
+                    token[i + 1 : tail_end]
+                    if tail_end != -1
+                    else token[i + 1 :]
+                )
+                if (
+                    glued in _EXCEPTION_FAMILY_COMPACT_TAGS.get(
+                        seed_c, frozenset()
+                    )
+                    or glued in _HONEST_YOLO_COMPACT_REMS
+                    or _is_legitimate_exception_compact_spelling(
+                        spelling + glued
+                    )
+                ):
+                    return True
             break
     if (
         sep_rem
@@ -5282,6 +5301,7 @@ def _compact_mid_exception_deny_adjacency(
                                 idx + len(spelling),
                                 spelling,
                                 sep_rem,
+                                _seed_c,
                             ) and not _is_legitimate_residual_segment(
                                 sep_rem, _seed_c
                             ):

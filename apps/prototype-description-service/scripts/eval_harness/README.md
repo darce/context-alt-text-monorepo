@@ -27,13 +27,84 @@ cd apps/prototype-description-service   # load-bearing: repo root has a differen
 uv run python -m scripts.eval_harness.cli seed-roster --entities "$GOLDEN_IMAGES_DIR/mock_entities"
 
 # full run (fetch + score); or from repo root: make eval-captions
+# Shipped golden is roster_only (34/37 unboxed claims) → score ends in exit 3.
+# That is a correct refusal, not a harness bug. Do not add --allow-refused
+# unless you explicitly consent to a no-score report (see Exit contract).
 uv run python -m scripts.eval_harness.cli run
 
-# smoke: 3 images
+# smoke: 3 images (same exit-3 contract on the default golden)
 uv run python -m scripts.eval_harness.cli run --limit 3
 
-# offline re-score of a recorded run (deterministic; bit-identical check)
+# offline re-score of a recorded run (deterministic; bit-identical check).
+# Same exit 3 against the shipped golden. Reports are still written on exit 3.
 uv run python -m scripts.eval_harness.cli score --run-record scripts/eval_harness/out/run-<stamp>.json --check-determinism
+```
+
+## Exit contract (`score` / `run`)
+
+`python -m scripts.eval_harness.cli score|run` exits:
+
+| Exit | Meaning |
+| --- | --- |
+| **0** | Clean score, or refused metrics **with** `--allow-refused` |
+| **1** | Partial corpus (`failed>0`), determinism failure, `ManifestError`/`ReportError`, env failures |
+| **2** | argparse |
+| **3** | Detection and/or identification **REFUSED** and no `--allow-refused` |
+
+Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.
+
+### What REFUSED means
+
+A REFUSED metric means the scorer could not compute it honestly:
+
+- **Detection** — `annotation_mode=roster_only` (the labelled face count is only a lower bound, so detection P/R would overstate), or the mode is missing/unrecognised.
+- **Identification** — identity claims with no per-face box lineage (`identification_refuses_unboxed_identity_claims`).
+
+Refusal is a **correct outcome**, not a failure to paper over. Exit 3 exists so a refusal cannot be mistaken for a clean score.
+
+The shipped default manifest (`scene/tests/seed/golden.json`) is `roster_only` with 34/37 unboxed claims, so every `score`/`run` against it exits 3 unless the caller consents.
+
+### What the operator should do
+
+1. **Add per-face boxes** (and set `annotation_mode=exhaustive` only when every face is boxed) so detection P/R and boxed identification can be computed honestly; or
+2. **Consent explicitly** with `--allow-refused` if you want the caption report and accept that `faces.detection` / `faces.identification` carry `refused: true` and null numbers. State why at the call site — do not hide the flag in a wrapper.
+
+`--allow-refused` does not invent numbers. It only changes the process exit from 3 to 0.
+
+`--allow-refused` help text (from `score-face --help`; same flag on `score --help`):
+
+```
+  --allow-refused [METRIC]
+                        exit 0 for the named refused metric. Repeatable
+                        (--allow-refused=detection --allow-
+                        refused=identification). Bare --allow-refused is
+                        equivalent to naming every metric (detection,
+                        identification). Default: refused metrics exit 3 — a
+                        missing score is not clean evaluation evidence
+```
+
+### Worked offline example (no live tenant)
+
+Copy a committed run-record out of tree so `score` does not write reports next to published artifacts:
+
+```bash
+cd apps/prototype-description-service
+WORK=$(mktemp -d)
+cp ../../docs/tasks/vlm/VLM-2A-baseline-20260706-run-record.json "$WORK/run.json"
+uv run python -m scripts.eval_harness.cli score \
+  --run-record "$WORK/run.json" \
+  --manifest scene/tests/seed/golden.json
+# expected: exit 3; report written at $WORK/run-report.{json,md}
+```
+
+To accept the refused report (still no detection/identification numbers):
+
+```bash
+uv run python -m scripts.eval_harness.cli score \
+  --run-record "$WORK/run.json" \
+  --manifest scene/tests/seed/golden.json \
+  --allow-refused
+# expected: exit 0; same refused JSON, different process status
 ```
 
 ## Hosted provider matrix (E20-11)
@@ -76,10 +147,12 @@ uv run python -m scripts.eval_harness.cli run \
 - Provider, per-image price, estimated spend, and per-item `latency_s` land in
   the run-record provenance/items; each hosted item's
   `describe.provider_disclosure.left_service_boundary` is `true`.
-- Scoring caveat: the MVP corpus ships empty context packs/rubrics, so provider
-  comparison is scoped to context-independent caption metrics + latency + cost
-  (see the E20-11 decision memo). Insertion/named-entity claims need the
-  VLM-2C manifest population first.
+- Scoring caveat: `scene/tests/seed/golden.json` carries Must-Right /
+  Easy-Wrong rows on all 37 images (`must_right_defined_images: 37`). Hosted
+  comparison can therefore include insertion/named-entity claims against
+  those rubrics, plus latency + cost (see the E20-11 decision memo). A
+  corpus that still ships empty rubrics emits `RubricEmptyWarning` and
+  `must_right_defined_images: 0`; that is not the state of the golden.
 
 ## Artifacts and retention
 
@@ -100,11 +173,86 @@ JSON sections: `provenance` (fetch-time `manifest_sha256`, `score_manifest_sha25
 + `manifest_matches_fetch` flag, base_url, HEAD sha, started_at, and a `model`
 block naming the **adapter(s)/model_id(s)/model_version(s)** that produced the
 captions), `counts`, `caption` (insertion_rate, Must-Right failed + rubric-defined
-images, policy violations, mean gated score), `faces.detection` (count-based P/R
-against ground-truth `face_count`), `faces.identification` (micro + macro P/R,
-per-identity table, wrong_names listed individually, true_rejections, excluded
-policy-disabled images), `per_image`, `failures`. Deterministic sections are
+images, policy violations, mean gated score), `faces.detection`,
+`faces.identification`, `per_image`, `failures`. Deterministic sections are
 bit-identical across re-scores of the same run record.
+
+### Face metric shapes (scored vs REFUSED)
+
+A consumer **MUST** check `refused` before reading any number on
+`faces.detection` or `faces.identification`. A refused block sets
+`precision` / `recall` / `wrong_names` (and the other counters) to JSON
+`null`. `len(wrong_names)` on that value is a TypeError, not "zero errors".
+
+**Scored `faces.detection`** (only when `annotation_mode=exhaustive`):
+
+```json
+{"precision": 0.5, "recall": 1.0, "tp": 1, "fp": 1, "fn": 0}
+```
+
+**REFUSED `faces.detection`** (`roster_only` / missing / unrecognised mode):
+
+```json
+{
+  "refused": true,
+  "invariant": "detection_refuses_roster_only",
+  "precision": null,
+  "recall": null,
+  "tp": null,
+  "fp": null,
+  "fn": null
+}
+```
+
+**Scored `faces.identification`** (only when every identity claim has
+per-face box lineage):
+
+```json
+{
+  "precision": 1.0,
+  "recall": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "per_identity": {
+    "Alice Example": {"precision": 1.0, "recall": 1.0, "tp": 1, "fp": 0, "fn": 0}
+  },
+  "true_rejections": 0,
+  "excluded_images": 0,
+  "wrong_names": [],
+  "ignored_wrong_names": []
+}
+```
+
+`wrong_names` is a list of `[path, name]` pairs (or `[]`). Only then is
+`len(wrong_names)` safe.
+
+**REFUSED `faces.identification`** (unboxed identity claims):
+
+```json
+{
+  "refused": true,
+  "invariant": "identification_refuses_unboxed_identity_claims",
+  "precision": null,
+  "recall": null,
+  "macro_precision": null,
+  "macro_recall": null,
+  "per_identity": {},
+  "true_rejections": null,
+  "excluded_images": null,
+  "wrong_names": null,
+  "ignored_wrong_names": null
+}
+```
+
+The markdown report renders the same refusal as
+`REFUSED (<invariant>): <explanation>` — detection:
+"detection P/R is not computed unless annotation_mode is exhaustive";
+identification: "identification P/R is not computed from identity claims
+that carry no per-face box lineage". The JSON block carries `invariant`;
+the explanation string is markdown-only.
+
+The shipped golden produces the refused shapes above on every `score`/`run`
+(see Exit contract).
 
 **Baseline caveat:** the committed `docs/tasks/vlm/VLM-2A-baseline-*` artifacts were
 produced by the model-free `seeded` stub adapter (`adapter=seeded`,
@@ -112,10 +260,12 @@ produced by the model-free `seeded` stub adapter (`adapter=seeded`,
 markdown header say so explicitly. They are **not** a caption-model baseline; a
 real-model baseline must be captured with a live run before the §12 bake-off gate.
 
-**Rubric caveat (MVP):** the golden corpus currently ships with empty `must_right`
-/ `easy_wrong` for every entry, so the Must-Right hard gate and Easy-Wrong rubric
-are vacuous. The loader emits a `RubricEmptyWarning` and the report surfaces
-`must_right_defined_images: 0`, so this is disclosed, not silent.
+**Rubric caveat:** `scene/tests/seed/golden.json` now carries Must-Right /
+Easy-Wrong rows (the committed VLM-2A baseline reports
+`must_right_defined_images: 37`). A corpus with empty rubrics still
+emits `RubricEmptyWarning` and surfaces `must_right_defined_images: 0`;
+that is no longer the state of the golden used by the published VLM-2A
+baseline.
 
 ## Failure semantics (rg-007)
 

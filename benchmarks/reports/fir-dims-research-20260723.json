@@ -1,0 +1,375 @@
+{
+ "q1_opencv5": {
+  "release": {
+   "announced": "2026-06-04/05 (CVPR 2026 timing; opencv.org post dated 2026-06-05)",
+   "sources": [
+    "https://opencv.org/opencv-5/",
+    "https://github.com/opencv/opencv/wiki/OpenCV-5",
+    "https://www.phoronix.com/news/OpenCV-5.0-Released"
+   ]
+  },
+  "dnn_module": {
+   "new_engine": true,
+   "summary": "New graph-based inference engine coexists with classic 4.x engine. Typed operation graph with shape inference, constant folding, operator fusion (including FlashAttention-style attention fusion), unified buffer pool. ENGINE_AUTO (default) tries new engine first then falls back; ENGINE_CLASSIC / ENGINE_NEW / ENGINE_ORT selectable via readNet* engine arg or OPENCV_FORCE_DNN_ENGINE env (1=classic, 2=new, 3=auto, 4=ORT).",
+   "onnx_coverage": "Claimed jump from ~22\u201323% ONNX operators (4.x) to >80% (5.x); dynamic shapes, If/Loop subgraphs, QDQ quantize/dequantize graphs supported.",
+   "int8_fp16": "Core adds first-class CV_16F (fp16/hfloat) and CV_16BF (bfloat16) plus CV_Bool, CV_32U/64U/64S. New engine supports QDQ quantized graphs. No claim that new engine natively runs all models as int8/fp16 kernels beyond QDQ + type support; new engine is CPU-only at 5.0.",
+   "gpu": "New engine CPU-only at 5.0; GPU planned later. Workarounds: force classic engine (CUDA/OpenVINO targets) or build WITH_ONNXRUNTIME(+GPU).",
+   "arm_neon_perf": "HAL vendor paths: Intel IPP/SSE-AVX, Arm KleidiCV (NEON/SVE/SME; validated AWS Graviton 4 & Cortex-A), Qualcomm FastCV, RISC-V RVV. Universal Intrinsics 2.0; blog claims 3\u20134\u00d7 on common ARM ops (resize/warp). Phoronix: tuned paths for Arm KleidiCV among others.",
+   "llm_vlm": "Built-in tokenizer + KV-cache; samples for VLMs/LLMs (Qwen 2.5, Gemma 3, PaliGemma, GPT-family) and LaMa/LDM inpainting.",
+   "removed_parsers": "Darknet and Caffe parsers removed; convert to ONNX. TFLite still via classic engine.",
+   "model_repo": "Migrated to https://huggingface.co/opencv (ONNX)."
+  },
+  "face_apis_models": {
+   "FaceDetectorYN_FaceRecognizerSF": "No OpenCV-5 wiki/migration-guide claim of FaceDetectorYN / FaceRecognizerSF API breaks. Migration guide still recommends YuNet via FaceDetectorYN.create as modern replacement for Haar. 4.x and 5.x face_recognize.cpp still expose feature() + match() (cosine or L2 after L2-normalize); feature dim is model-defined (SFace ONNX forward).",
+   "opencv_zoo_yunet_2026may": "face_detection_yunet_2026may.onnx is default with dynamic H/W dims for OpenCV 5.x ORT engine (OPENCV_FORCE_DNN_ENGINE=4); re-export of face_detection_yunet_2023mar.onnx with symbolic dims. Also 2023mar fixed-shape + int8 block-quantized variants. License: MIT. Source train: libfacedetection.train (WIDER Face).",
+   "sface": "face_recognition_sface remains; Apache-2.0 zoo files; MobileFaceNet + SFace loss; int8bq variant present. No new 2026 SFace weights called out in zoo README."
+  },
+  "migration_gotchas_4x_to_5x": [
+   "C++17 minimum; Python 2 removed (Python \u22653.6).",
+   "Legacy C API fully removed (CvMat/IplImage/cvCreateMat etc.).",
+   "OpenVX support removed; G-API and classic ML moved to opencv_contrib.",
+   "features2d renamed features; Haar CascadeClassifier + HOGDescriptor \u2192 xobjdetect in contrib.",
+   "calib3d split \u2192 geometry / calib / stereo / ptcloud (C++ calib3d.hpp shim still works; Java imports change).",
+   "1D/0D Mat semantics: std::vector\u2192Mat is true 1D (not Nx1); may break .rows/.cols assumptions.",
+   "New Mat types (BF16, Bool, 64-bit ints) \u2014 switch(mat.depth()) needs default.",
+   "DNN: Darknet/Caffe loaders gone; new engine CPU-only; GPU needs classic or ORT.",
+   "Imgproc: INTER_NEAREST matches Pillow; warp bilinear/bicubic numerically differ from 4.x; text rendering STB/Rubik (Hershey still API-compatible but looks different).",
+   "VideoCapture::get unsupported props return -1 (was 0)."
+  ],
+  "evidence": [
+   {
+    "claim": "New DNN engine, >80% ONNX coverage, ENGINE_* selection, CPU-only new engine, ORT optional, Darknet/Caffe removed, FP16/BF16 types, Arm KleidiCV HAL",
+    "url": "https://github.com/opencv/opencv/wiki/OpenCV-5",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "Migration breaking changes (C API, modules, 1D Mat, DNN engines, Python 2)",
+    "url": "https://github.com/opencv/opencv/wiki/OpenCV-4-to-5-migration",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "Public announcement ~2026-06-04/05; graph engine, 80%+ ONNX, KleidiCV/NEON, LLM/VLM",
+    "url": "https://opencv.org/opencv-5/",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "YuNet 2026may dynamic-shape ONNX for OpenCV 5 ORT; MIT; WIDER-trained lineage",
+    "url": "https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/README.md",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "SFace zoo Apache-2.0; int8bq variant",
+    "url": "https://github.com/opencv/opencv_zoo/blob/main/models/face_recognition_sface/README.md",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "FaceRecognizerSF API: feature() + match() cosine/L2; no hard-coded dim in C++ wrapper",
+    "url": "https://raw.githubusercontent.com/opencv/opencv/5.x/modules/objdetect/src/face_recognize.cpp",
+    "grade": "CONFIRMED"
+   }
+  ]
+ },
+ "q2_wider_license": {
+  "official_terms": {
+   "site_wording": "License section states exactly: \"Creative Common License (cc by-nc-nd)\".",
+   "url": "http://shuoyang1213.me/WIDERFACE/",
+   "cc_meaning": "CC BY-NC-ND: free to Share with Attribution; NonCommercial; NoDerivatives (no distribution of remixed/transformed material under the CC deed). Version not specified on CUHK page; HF dataset card labels cc-by-nc-nd-4.0.",
+   "research_vs_commercial": "NC clause forbids commercial use of the licensed material (images/annotations as licensed). Site does not separately say \"research only\" beyond the NC license label.",
+   "image_sources": "Images selected from the publicly available WIDER dataset (CUHK event recognition); 32,203 images / 393,703 faces; 61 event classes; 40/10/50 train/val/test split."
+  },
+  "downstream_weights_redistribution": {
+   "opencv_zoo_yunet": {
+    "weights_license": "MIT (all files in face_detection_yunet directory)",
+    "train_data": "libfacedetection.train trains on WIDER Face; zoo README points to that repo and WIDER metrics",
+    "url_weights": "https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/README.md",
+    "url_train": "https://github.com/ShiqiYu/libfacedetection.train",
+    "pattern": "Permissive MIT weights despite NC training images \u2014 common open-source practice; does not legally erase dataset NC terms for the images themselves."
+   },
+   "paddle_blazeface": {
+    "code_license": "Apache-2.0 (PaddleDetection LICENSE)",
+    "train_data": "Configs train/eval on WIDER-FACE; ships .pdparams download links",
+    "url": "https://github.com/PaddlePaddle/PaddleDetection/blob/develop/configs/face_detection/README.md",
+    "pattern": "Apache-licensed detector weights trained on WIDER; same dataset-vs-weights tension."
+   }
+  },
+  "legal_analyses_anecdotal": [
+   {
+    "topic": "Dataset NC license vs commercial redistribution of trained weights",
+    "summary": "Community consensus is unsettled: whether weights are derivative works of training images, copyrightable at all, or a database; open-source projects often relicense weights permissively while datasets stay NC.",
+    "url": "https://opensource.stackexchange.com/questions/14459/ml-model-license-in-contradiction-to-that-of-dataset",
+    "grade": "ANECDOTAL"
+   },
+   {
+    "topic": "EU database/sui generis and model weights",
+    "summary": "Kluwer Copyright Blog explores whether weights could be a protected database; acknowledges obstacles (numbers, arrangement).",
+    "url": "https://legalblogs.wolterskluwer.com/copyright-blog/are-ai-models-weights-protected-databases/",
+    "grade": "ANECDOTAL"
+   },
+   {
+    "topic": "US fair use for AI training (USCO May 2025 report coverage)",
+    "summary": "USCO-style spectrum: noncommercial research more likely fair use; commercial uses competing in market when licenses available less likely. Not specific to WIDER FACE.",
+    "url": "https://www.skadden.com/insights/publications/2025/05/copyright-office-report",
+    "grade": "ANECDOTAL"
+   }
+  ],
+  "evidence": [
+   {
+    "claim": "WIDER FACE license label CC BY-NC-ND; images from WIDER",
+    "url": "http://shuoyang1213.me/WIDERFACE/",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "HF card license cc-by-nc-nd-4.0",
+    "url": "https://huggingface.co/datasets/wider_face",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "CC BY-NC-ND non-commercial + no derivatives deed terms",
+    "url": "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "OpenCV zoo YuNet MIT; trained via libfacedetection.train on WIDER",
+    "url": "https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/README.md",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "PaddleDetection BlazeFace trained on WIDER; Apache-2.0 project",
+    "url": "https://github.com/PaddlePaddle/PaddleDetection/blob/develop/configs/face_detection/README.md",
+    "grade": "CONFIRMED"
+   }
+  ]
+ },
+ "q3_verilook": {
+  "product_version": "VeriLook 2025.2 (brochure updated 2026-02-25)",
+  "template_size": {
+   "single_face_record_bytes": 322,
+   "note": "\"Single face record size in a template (bytes) = 322\" for both mobile and PC engines"
+  },
+  "extraction_times": {
+   "pc_face_client_sec": 0.6,
+   "pc_face_extractor_sec": 1.34,
+   "mobile_face_client_sec": 1.2,
+   "mobile_face_extractor_sec": 1.34,
+   "pc_ref": "Intel Core i7-8xxx or better",
+   "mobile_ref": "\u2265 Snapdragon S4 / Krait 300 4\u00d71.51 GHz (Android); also iOS / Linux ARM mobile components",
+   "detection_ms_640x480_pc": {
+    "roll_pm15": 37,
+    "roll_pm45": 38,
+    "roll_pm180": 56
+   },
+   "marketing_detection_range_sec": "0.01\u20130.86 s depending on roll/yaw/accuracy (overview page)"
+  },
+  "matching": {
+   "pc_faces_per_sec": 40000,
+   "mobile_faces_per_sec": 3000,
+   "api_model": "Template-vs-template via Face Matcher / Mobile Face Matcher (1:1 verification and 1:N identification). Fused multi-biometric matching available with other Neurotec matchers.",
+   "raw_vector_export": "DENY evidence of open float embedding export for pgvector: docs describe proprietary biometric templates (binary, 322 B), standards wrappers (ISO 19794 face image, CBEFF, etc.), not a documented raw 128/512-D vector API.",
+   "external_vector_db": "Templates can be stored as binary blobs in any DB supporting binary (PostgreSQL, MySQL, Oracle, SQLite, files). Matching Server uses Face Matcher component \u2014 matching is through Neurotechnology matcher, not cosine distance in pgvector. Storing templates externally for search still requires their matcher to score them."
+  },
+  "template_format": "Proprietary compact face features template (322 bytes). Not an open embedding format.",
+  "arm_linux": {
+   "supported": true,
+   "requirements": "Linux 4.19+; ARMHF (EABI 32-bit hard-float ARMv7) required for Linux ARM platform section; 1.5 GHz recommended; \u22651 GB free RAM; glibc 2.28+; GStreamer for capture. Brochure advises contacting Neurotechnology for target device suitability. Mobile Face Matcher/Extractor/Client licenses cover Linux ARM.",
+   "note_for_oci_a1": "OCI A1 is aarch64 (ARM64). Brochure Linux ARM section specifies ARMHF ARMv7 hard-float \u2014 confirm aarch64 binary availability with vendor before planning A1 deployment; macOS section separately lists Apple M1 ARM."
+  },
+  "customer_retrain_face_models": {
+   "verilook": "DENY \u2014 no public VeriLook SDK/docs offer customer retraining or fine-tuning of the face DNN. Enrollment of multiple samples per person is supported; model weights are closed.",
+   "other_neurotechnology": "SentiSight.ai offers customer training of custom *image recognition* models (not VeriLook face biometric engine). Custom projects can be ordered."
+  },
+  "evidence": [
+   {
+    "claim": "322-byte template; extraction 0.60\u20131.34 s; match 3k/40k fps; posture/liveness specs",
+    "url": "https://download.neurotechnology.com/VeriLook_SDK_Brochure_2026-02-25.pdf",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "Tech specs page mirrors performance tables and usage recommendations",
+    "url": "https://www.neurotechnology.com/verilook-technical-specifications.html",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "Linux ARM ARMHF requirements; templates saveable as binary in any DB; matcher components",
+    "url": "https://download.neurotechnology.com/VeriLook_SDK_Brochure_2026-02-25.pdf",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "No VeriLook customer retrain; SentiSight allows custom image-model training",
+    "url": "https://www.neurotechnology.com/sentisight.html",
+    "grade": "CONFIRMED"
+   }
+  ]
+ },
+ "q4_apple_person": {
+  "source": "Apple ML Research blog, 2021-07-28 (iOS 15 Photos); no later official successor post fetched with superseding architecture details",
+  "pipeline": {
+   "detectors": "Single DNN on full image outputs face and upper-body (torso) boxes; associate face\u2194body by area, position, intersection.",
+   "embeddings": "Separate face embedding network and upper-body embedding network produce feature vectors; same-person crops close, different far.",
+   "combination_formula": "D_ij = min(F_ij, \u03b1\u00b7F_ij + \u03b2\u00b7T_ij) where F is face distance, T upper-body distance. Face-only \u2192 compare to cluster mean face; body helps only if same moment; body-only \u2192 use body distance.",
+   "when_torso_trusted": "First-pass clustering compares upper-body embeddings only within the same \"moment\" (assets linked by time/location metadata) because clothing is assumed consistent same day/event. Second pass is face-only HAC across moment boundaries.",
+   "clustering": "Pass 1: conservative agglomerative clustering on combined face+body (high precision, many small clusters; running average centroids). Pass 2: hierarchical agglomerative clustering (HAC) on face embeddings only (median linkage, sampling for scale). Gallery = K largest clusters via size/distance heuristics + user input.",
+   "assignment": "Sparse coding against dictionary of canonical exemplars per cluster (not pure nearest centroid); assign by max energy of sparse code.",
+   "filtering": "Uncertainty/confidence branch + OOD filters remove false positives and unclear faces/bodies before they pollute gallery.",
+   "embedding_dims": "NOT STATED in the Apple blog. Architecture inspired by AirFace / MobileNetv3 bottlenecks + MobileFaceNet-style global depthwise; ArcFace-style angular margin training \u2014 dim omitted.",
+   "on_device_perf": "Face embedding <4 ms on Apple Neural Engine (claimed 8\u00d7 vs GPU equivalent)."
+  },
+  "evidence": [
+   {
+    "claim": "Face + upper-body dual embeddings; same-moment torso constraint; two-pass clustering; sparse coding assignment; dims not disclosed",
+    "url": "https://machinelearning.apple.com/research/recognizing-people-photos",
+    "grade": "CONFIRMED"
+   }
+  ]
+ },
+ "q5_dims_evidence": {
+  "primary_ablations": [
+   {
+    "paper": "FaceNet (Schroff et al., CVPR 2015)",
+    "finding": "Table 5 Embedding Dimensionality on hold-out VAL@FAR=1e-3 for NN1: 64D 86.8%\u00b11.7; 128D 87.9%\u00b11.9; 256D 87.7%\u00b11.9; 512D 85.6%\u00b12.0. Authors: differences statistically insignificant; larger may need more training. Chose 128D; float128 can quantize to 128-byte without accuracy loss.",
+    "url": "https://ar5iv.labs.arxiv.org/html/1503.03832",
+    "grade": "CONFIRMED",
+    "128_vs_512_same_backbone": "In this controlled table, 128D slightly beats 512D (insignificant); does NOT show 128 underperforms 512."
+   },
+   {
+    "paper": "ArcFace (Deng et al.)",
+    "finding": "Standard feature size set to 512 following prior work; x_i \u2208 R^512 throughout. No dedicated 128/256/512/1024 accuracy ablation table found in the paper HTML.",
+    "url": "https://ar5iv.labs.arxiv.org/html/1801.07698",
+    "grade": "CONFIRMED"
+   },
+   {
+    "paper": "MagFace",
+    "finding": "Uses 512-D features at test (cosine on 512-D); no dim sweep vs 128.",
+    "url": "https://ar5iv.labs.arxiv.org/html/2103.06627",
+    "grade": "CONFIRMED"
+   },
+   {
+    "paper": "CosFace",
+    "finding": "Theoretical note: as #classes C grows relative to feature dim K, upper bound on cosine margin shrinks (C \u226b K hurts separability). Motivates sufficient dim for large-ID training sets but is not an empirical 128 vs 512 table.",
+    "url": "https://ar5iv.labs.arxiv.org/html/1801.09414",
+    "grade": "CONFIRMED"
+   },
+   {
+    "paper": "AdaFace",
+    "finding": "No embedding-dim ablation; batch-size 128/256/512 studied instead.",
+    "url": "https://ar5iv.labs.arxiv.org/html/2204.00964",
+    "grade": "CONFIRMED"
+   }
+  ],
+  "industry_practice": {
+   "sface_opencv": "OpenCV zoo SFace = MobileFaceNet lineage commonly 128-D (user pipeline); zoo does not print dim in README; C++ wrapper forwards ONNX output as-is.",
+   "arcface_default": "InsightFace/ArcFace ecosystem default 512-D for ResNet backbones."
+  },
+  "does_128_underperform_512_same_backbone_data": {
+   "answer": "No strong primary-source evidence that 128D systematically underperforms 512D at matched backbone+data. FaceNet's own ablation is the cleanest published same-backbone sweep and finds 128\u2248256\u2265512 within noise. Modern SOTA papers standardize on 512 without re-proving dim. Mobile models (MobileFaceNet/SFace) deliberately use 128 for efficiency and still hit high LFW-class scores. For large-ID galleries, CosFace theory suggests higher dim helps packing classes on the hypersphere \u2014 that is capacity/packing argument, not a measured 128-vs-512 delta.",
+   "grade_note": "Controlled 128 vs 512 underperformance claim: NOT CONFIRMED by ArcFace/MagFace/AdaFace primary tables; FaceNet contradicts it."
+  },
+  "pgvector_ann_cost_scaling": {
+   "storage": "vector float32 storage \u221d N \u00d7 d; halfvec halves bytes. HNSW index memory also scales with dim (graph stores full vectors or compressed depending on build).",
+   "index_limits": "pgvector HNSW/IVFFlat: vector up to 2000 dims; halfvec up to 4000.",
+   "query_cost": "Distance (L2/IP/cosine) is O(d) per candidate; higher d increases distance time and typically worsens constant-factor HNSW recall/latency tradeoff for fixed m/ef. Practical rule: 128\u2192512 is ~4\u00d7 vector bytes and ~4\u00d7 distance math; index RAM and build time rise similarly.",
+   "url": "https://github.com/pgvector/pgvector",
+   "grade": "CONFIRMED"
+  },
+  "evidence": [
+   {
+    "claim": "FaceNet Table 5 dims 64/128/256/512 VAL numbers; insignificant differences",
+    "url": "https://ar5iv.labs.arxiv.org/html/1503.03832",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "ArcFace standard 512-D",
+    "url": "https://ar5iv.labs.arxiv.org/html/1801.07698",
+    "grade": "CONFIRMED"
+   },
+   {
+    "claim": "pgvector dim limits and HNSW notes",
+    "url": "https://github.com/pgvector/pgvector",
+    "grade": "CONFIRMED"
+   }
+  ]
+ },
+ "q6_image_embedding_models": [
+  {
+   "model": "DINOv2 (Meta)",
+   "code_license": "Apache-2.0",
+   "weights_license": "Apache-2.0 (re-released from earlier CC-BY-NC research preview)",
+   "training_data": "LVD-142M curated retrieval from ~1.2B uncurated web images near ImageNet-22k/1k, Google Landmarks, fine-grained sets",
+   "provenance_caveat": "Web-crawled uncurated pool; possible copyrighted/personal images despite curation/dedup. Apache weights are commercially usable under Apache terms, but training-data provenance remains a residual compliance risk.",
+   "cpu_friendly": "ViT-S/B usable on CPU; still heavier than MobileCLIP-S0",
+   "urls": [
+    "https://github.com/facebookresearch/dinov2/blob/main/LICENSE",
+    "https://ai.meta.com/blog/dinov2-facet-computer-vision-fairness-evaluation/",
+    "https://arxiv.org/html/2304.07193v2"
+   ],
+   "grade": "CONFIRMED"
+  },
+  {
+   "model": "SigLIP / SigLIP2 (Google)",
+   "code_license": "Apache-2.0 (big_vision / OpenCLIP conversions)",
+   "weights_license": "Apache-2.0 on HF model cards (e.g. google/siglip-base-patch16-224, timm SigLIP2)",
+   "training_data": "WebLI (web image-text pairs; SigLIP2 multilingual WebLI)",
+   "provenance_caveat": "Large web-scraped image-text; not a clean consented corpus. License on weights is permissive; data rights for commercial use of models trained on WebLI are a known industry gray area.",
+   "cpu_friendly": "ViT-B viable on CPU with care; SO400M heavy",
+   "urls": [
+    "https://huggingface.co/google/siglip-base-patch16-224",
+    "https://huggingface.co/timm/ViT-B-16-SigLIP2"
+   ],
+   "grade": "CONFIRMED"
+  },
+  {
+   "model": "OpenCLIP (LAION-trained variants)",
+   "code_license": "MIT (open_clip repository)",
+   "weights_license": "Typically MIT or public research release per checkpoint; depends on specific weight file / HF card",
+   "training_data": "LAION-400M/2B, DataComp-1B, DFN, etc. \u2014 large web CLIP crawls",
+   "provenance_caveat": "LAION datasets have had known issues (CSAM filtering history, copyright, privacy). Strongest provenance risk among common open VLMs. Prefer DataComp/DFN cards and read each weight's LICENSE.",
+   "cpu_friendly": "ViT-B/32 and ConvNeXt-Base reasonable on ARM CPU",
+   "urls": [
+    "https://github.com/mlfoundations/open_clip",
+    "https://raw.githubusercontent.com/mlfoundations/open_clip/main/LICENSE"
+   ],
+   "grade": "CONFIRMED"
+  },
+  {
+   "model": "MobileCLIP / MobileCLIP2 (Apple)",
+   "code_license": "MIT (software)",
+   "weights_license": "Apple Machine Learning Research Model License \u2014 Research Purposes only (explicit non-commercial; no product use). Model Derivatives also research-only.",
+   "training_data": "DataCompDR / DFNDR multi-modal reinforced datasets; LICENSE_DATA is CC BY-NC-ND 4.0",
+   "provenance_caveat": "Weights NOT commercially safe under Apple research license despite MIT code. Do not use in production SaaS without separate Apple commercial grant.",
+   "cpu_friendly": "Yes \u2014 designed for mobile/CPU (S0/S1/S2 excellent latency)",
+   "urls": [
+    "https://raw.githubusercontent.com/apple/ml-mobileclip/main/LICENSE",
+    "https://raw.githubusercontent.com/apple/ml-mobileclip/main/LICENSE_MODELS",
+    "https://raw.githubusercontent.com/apple/ml-mobileclip/main/LICENSE_DATA",
+    "https://github.com/apple/ml-mobileclip"
+   ],
+   "grade": "CONFIRMED"
+  },
+  {
+   "model": "Commercially-safer CPU-friendly alternatives (posture notes)",
+   "candidates": [
+    {
+     "name": "DINOv2 ViT-S/14 (Apache-2.0)",
+     "why": "Cleanest widely used whole-image embedding license among SOTA self-supervised models; solid CPU path; still web-data trained",
+     "caveat": "LVD-142M web provenance"
+    },
+    {
+     "name": "SigLIP base (Apache-2.0 weights)",
+     "why": "Apache card + good zero-shot/text alignment for content search",
+     "caveat": "WebLI scrape"
+    },
+    {
+     "name": "OpenCLIP DataComp ViT-B/32 or ViT-B/16",
+     "why": "MIT code, smaller footprints for ARM A1",
+     "caveat": "DataComp still web-scale; check checkpoint card"
+    },
+    {
+     "name": "Avoid MobileCLIP weights for commercial SaaS",
+     "why": "Research-only weights license + NC data license"
+    }
+   ],
+   "note": "No major open whole-image embedder today has fully consented, commercially-clean, non-web training data at SOTA quality. \"Clean training-data posture\" is relative: prefer Apache/MIT weights + documented datasets; for strict compliance retrain on your consented/synthetic photo library (mirrors your face-pipeline plan).",
+   "grade": "ANECDOTAL"
+  }
+ ],
+ "summary_for_decision": "OpenCV 5 (Jun 2026) is a real win for your ARM CPU path: new DNN engine + 80%+ ONNX + Arm KleidiCV/NEON, with YuNet 2026may dynamic-shape ONNX aimed at the 5.x ORT engine; FaceDetectorYN/SFace APIs look stable, but expect C++17, contrib moves, and CPU-only new engine until GPU lands. WIDER FACE is explicitly CC BY-NC-ND (HF: 4.0); zoo YuNet (MIT) and Paddle BlazeFace (Apache) still redistribute WIDER-trained weights \u2014 common practice but a residual commercial risk if you ship those weights; safer to retrain detector+embedder on synthetic/consented data and own the weights. VeriLook is a strong closed biometric (322 B proprietary templates, ~0.6 s PC extract, 40k match/s) with Linux ARM components, but DENY customer face-model retrain and DENY first-class raw vector\u2192pgvector matching \u2014 templates store as blobs, scoring must go through their matcher. Apple Photos confirms dual face+torso embeddings with same-moment torso trust and two-pass clustering; dims unpublished. On embedding dim: FaceNet\u2019s same-backbone ablation does not show 128\u226a512 (128 was best within noise); ArcFace/MagFace standardize on 512 without proving 128 fails; pgvector cost scales ~linear in d (storage, distance, HNSW RAM) \u2014 jump 128\u2192512 mainly for large-ID packing headroom, not magic accuracy. For content-search embeddings prefer DINOv2 or SigLIP (Apache weights) over MobileCLIP (research-only weights) or LAION OpenCLIP if provenance sensitivity is high; none are fully \"clean data,\" so consented retrain remains the cleanest commercial posture for both face and whole-image features on OCI A1."
+}

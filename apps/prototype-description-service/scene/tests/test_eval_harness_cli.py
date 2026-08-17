@@ -16,11 +16,26 @@ from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
 
+_TEST_LINEAGE_NAMED = {
+    "labeler_id": "test-labeler",
+    "batch_id": "test-batch",
+    "capture_session_id": "test-session",
+    "pass_index": 0,
+    "labeled_at": "2026-08-14T00:00:00Z",
+    "tool_version": "test",
+    "saw_machine_proposals": False,
+    "label_source": "operator_blind",
+    "decision": "named",
+    "confidence": "high",
+    "arbitration_of": None,
+}
+
 
 def _manifest(n: int) -> GoldenManifest:
     sha = "a" * 64
     return GoldenManifest(
-        manifest_version=2,
+        manifest_version=3,
+        annotation_mode="roster_only",
         roster=["Alice Example"],
         entries=[
             GoldenEntry(
@@ -33,6 +48,7 @@ def _manifest(n: int) -> GoldenManifest:
                 must_right=[],
                 easy_wrong=[],
                 policy={"recognition_enabled": True},
+                provenance={"source": "fixture", "license": "fixture"},
             )
             for i in range(1, n + 1)
         ],
@@ -377,7 +393,8 @@ def test_fetch_resolves_nfd_image_path(tmp_path):  # S6-03 / S7-01
     # On-disk form is NFD; manifest path is NFC (the rsync flip S1-07 documents).
     (images / nfd_name).write_bytes(b"fake-bytes")
     manifest = GoldenManifest(
-        manifest_version=2,
+        manifest_version=3,
+        annotation_mode="roster_only",
         roster=["Alice Example"],
         entries=[
             GoldenEntry(
@@ -390,6 +407,7 @@ def test_fetch_resolves_nfd_image_path(tmp_path):  # S6-03 / S7-01
                 must_right=[],
                 easy_wrong=[],
                 policy={"recognition_enabled": True},
+                provenance={"source": "fixture", "license": "fixture"},
             )
         ],
     )
@@ -421,9 +439,11 @@ def test_cmd_score_exits_nonzero_when_items_failed(tmp_path, monkeypatch):  # S7
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
+            "provenance": {"source": "fixture", "license": "fixture"},
         }
     ]
-    manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Example"], "entries": entries}))
+    manifest_path.write_text(json.dumps({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Alice Example"], "entries": entries}))
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -476,8 +496,31 @@ def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
     def _fd(bbox, emb):
         return {"bbox_px": bbox, "embedding": emb, "det_score": 0.95, "landmarks_px": [[0.0, 0.0]] * 5}
 
+    def _lineage(name):
+        return {
+            "labeler_id": "test-labeler",
+            "batch_id": "test-batch",
+            "capture_session_id": "test-session",
+            "pass_index": 0,
+            "labeled_at": "2026-08-14T00:00:00Z",
+            "tool_version": "test",
+            "saw_machine_proposals": False,
+            "label_source": "operator_blind",
+            "decision": "named" if name else "stranger",
+            "confidence": "high",
+            "arbitration_of": None,
+        }
+
     def _gt(name):
-        return {"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}
+        return {
+            "x": 0.4,
+            "y": 0.4,
+            "w": 0.4,
+            "h": 0.4,
+            "name": name,
+            "source": "iptc",
+            "lineage": _lineage(name),
+        }
 
     def _ent(path, mid, name, src, pub):
         return {
@@ -522,7 +565,8 @@ def _valid_face_manifest_and_record(dim: int = 8) -> tuple[dict, dict]:
         ],
     }
     manifest = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": "exhaustive",
         "roster": ["Alice Example"],
         "roster_cohorts": {"Alice Example": "cohort_a"},
         "entries": [
@@ -621,12 +665,31 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": name, "source": "iptc"}],
+                "face_boxes": [
+                    {
+                        "x": 0.4,
+                        "y": 0.4,
+                        "w": 0.4,
+                        "h": 0.4,
+                        "name": name,
+                        "source": "iptc",
+                        "lineage": dict(_TEST_LINEAGE_NAMED),
+                    }
+                ],
                 "provenance": {"source": "celeb", "license": "public_domain", "publishable": True},
             }
         )
     man_path = tmp_path / "man.json"
-    man_path.write_text(json.dumps({"manifest_version": 2, "roster": ["Alice Q", "Bob Z"], "entries": entries}))
+    man_path.write_text(
+        json.dumps(
+            {
+                "manifest_version": 3,
+                "annotation_mode": "exhaustive",
+                "roster": ["Alice Q", "Bob Z"],
+                "entries": entries,
+            }
+        )
+    )
 
     class _Det:
         """Pixel-blind fake: always one detection at the GT box (IoU 1.0)."""
@@ -735,7 +798,8 @@ def _leg_dispatch_manifest(tmp_path):
     man_path.write_text(
         json.dumps(
             {
-                "manifest_version": 2,
+                "manifest_version": 3,
+            "annotation_mode": "roster_only",
                 "roster": ["Alice Q"],
                 "entries": [
                     {

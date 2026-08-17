@@ -132,8 +132,8 @@ Anchors (measured, not competing): **Florence-2-base-ft** (Microsoft, US — 0.2
 ## Verification Strategy
 
 - Deterministic tests:
-  - `uv run --locked --extra dev pytest scene/tests scripts/eval_harness -q` (from `apps/prototype-description-service`)
-  - `uv run python -m scripts.eval_harness.cli score --run-record <pre-expansion record> --check-determinism` (manifest schema change must not perturb old scores)
+  - `.venv/bin/python -m pytest scene/tests scripts/eval_harness -q` (from `apps/prototype-description-service`)
+  - Copy a committed record out of tree (`WORK=$(mktemp -d) && cp ../../docs/tasks/vlm/bakeoff-results/S0-determinism-anchor-run-20260714.json "$WORK/run.json"`), then `.venv/bin/python -m scripts.eval_harness.cli score --run-record "$WORK/run.json" --manifest scene/tests/seed/golden.json --check-determinism` — caption re-score is bit-identical. **Expected exit 3**: detection/identification REFUSED on the current golden (`roster_only` / unboxed claims). A refused face block is not a perturbed caption score.
 - Runtime-parity / environment checks:
   - S3: incumbent anchor (`gpu_qwen30b`) scored first in-window — this run *establishes* the GPU incumbent baseline (no separate S0 GPU baseline exists) and validates the harness end-to-end on live GPU serving; a repeated-image determinism spot-check must be bit-identical before candidate runs proceed
   - S6: full eval-harness run on the adopted profile via the live service path (eval tenant)

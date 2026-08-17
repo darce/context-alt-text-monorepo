@@ -1,0 +1,20 @@
+{
+ "auc_floor": 0.75,
+ "labelled_images": 148,
+ "shippable": {
+  "profile": {
+   "signal": "eye_span_ratio",
+   "direction": -1,
+   "threshold": 0.8473,
+   "auc": 0.782,
+   "f1": 0.655,
+   "precision": 0.567,
+   "recall": 0.776
+  }
+ },
+ "named_but_undetected": [
+  221,
+  271,
+  556
+ ]
+}

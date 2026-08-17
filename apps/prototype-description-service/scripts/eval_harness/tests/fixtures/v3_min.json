@@ -1,0 +1,74 @@
+{
+ "manifest_version": 3,
+ "counts": {
+  "entries": 3,
+  "unlabeled": 0,
+  "identities": 3,
+  "identities_secondary_only": 0,
+  "flags": {
+   "identity_from_filename_only": 1,
+   "no_faces": 0
+  }
+ },
+ "identities": [
+  {
+   "slug": "anne_hathaway",
+   "name": "Anne Hathaway",
+   "primary_of": ["celebs/anne_hathaway_11.jpg"],
+   "appears_in": ["celebs/anne_hathaway_11.jpg"],
+   "primary_count": 1,
+   "appearance_count": 1
+  },
+  {
+   "slug": "audrey_hepburn",
+   "name": "Audrey Hepburn",
+   "primary_of": ["celebs/audrey_hepburn_15.jpg", "celebs/audrey_hepburn_16.jpg"],
+   "appears_in": ["celebs/audrey_hepburn_15.jpg", "celebs/audrey_hepburn_16.jpg"],
+   "primary_count": 2,
+   "appearance_count": 2
+  },
+  {
+   "slug": "kept_person",
+   "name": "Kept Person",
+   "primary_of": ["personal/kept_person_99.jpg"],
+   "appears_in": ["personal/kept_person_99.jpg"],
+   "primary_count": 1,
+   "appearance_count": 1
+  }
+ ],
+ "entries": [
+  {
+   "media_id": 11,
+   "path": "celebs/anne_hathaway_11.jpg",
+   "primary_identity": "Anne Hathaway",
+   "named_identities": ["Anne Hathaway"],
+   "named_boxes": [],
+   "detected_boxes": [{"bbox": [1, 2, 3, 4]}],
+   "named_face_count": 0,
+   "detected_face_count": 1,
+   "flags": ["identity_from_filename_only"]
+  },
+  {
+   "media_id": 15,
+   "path": "celebs/audrey_hepburn_15.jpg",
+   "primary_identity": "Audrey Hepburn",
+   "named_identities": ["Audrey Hepburn"],
+   "named_boxes": [],
+   "detected_boxes": [{"bbox": [5, 6, 7, 8]}],
+   "named_face_count": 0,
+   "detected_face_count": 1,
+   "flags": ["identity_from_filename_only"]
+  },
+  {
+   "media_id": 99,
+   "path": "personal/kept_person_99.jpg",
+   "primary_identity": "Kept Person",
+   "named_identities": ["Kept Person"],
+   "named_boxes": [{"name": "Kept Person", "bbox": [0, 0, 1, 1]}],
+   "detected_boxes": [{"bbox": [0, 0, 1, 1]}],
+   "named_face_count": 1,
+   "detected_face_count": 1,
+   "flags": []
+  }
+ ]
+}

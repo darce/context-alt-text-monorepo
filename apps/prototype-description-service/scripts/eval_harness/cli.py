@@ -30,8 +30,9 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Mapping, NamedTuple
 
 from scene.config.profiles import PROFILE_SPECS, DescriptionProfile
 from scene.domain.description import DescriptionAdapterKind
@@ -56,14 +57,27 @@ from .report import (
     build_face_reports,
     build_reports,
     occlusion_inputs_from_record,
-    score_face_run_record,
-    score_run_record,
 )
 from .schema import SCHEMA, DocKind
 from .seed_roster import seed, seed_scenes
 
 DEFAULT_KEEP = 10
 DEFAULT_STALL_LIMIT = 5
+# Refused detection/identification is not clean eval evidence. CI that checks
+# only process status must see a non-zero exit unless the caller opts in.
+REFUSED_METRIC_EXIT_CODE = 3
+
+
+class RefusedMetric(StrEnum):
+    """Named honesty fields an operator may consent to skip (sr-007)."""
+
+    DETECTION = "detection"
+    IDENTIFICATION = "identification"
+
+
+# Bare ``--allow-refused`` is strictly equivalent to naming every member.
+ALLOW_REFUSED_ALL = "*"
+
 OUT_DIR = Path(__file__).parent / "out"
 IGNORE_LIST_NAME = "ignore-list.json"
 _RUN_STAMP_RE = re.compile(r"^run-(\d{8}-\d{6})")
@@ -408,6 +422,102 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     return payload
 
 
+def _parse_allow_refused_metric(raw: str) -> str:
+    """argparse type: a RefusedMetric value, or the all-metrics sentinel."""
+    token = raw.strip()
+    if token in {ALLOW_REFUSED_ALL, "all"}:
+        return ALLOW_REFUSED_ALL
+    try:
+        return RefusedMetric(token).value
+    except ValueError:
+        names = ", ".join(member.value for member in RefusedMetric)
+        raise argparse.ArgumentTypeError(
+            f"{raw!r} is not a refused metric; expected one of: {names} "
+            "(bare --allow-refused names every metric)"
+        ) from None
+
+
+def consented_refused_metrics(raw: list[str] | None) -> frozenset[str]:
+    """Resolve repeatable ``--allow-refused`` values to a metric set.
+
+    Bare ``--allow-refused`` stores ``ALLOW_REFUSED_ALL`` and equals naming
+    every ``RefusedMetric`` member. Consenting to one metric never implies
+    another (S2R5-05).
+    """
+    if not raw:
+        return frozenset()
+    if ALLOW_REFUSED_ALL in raw:
+        return frozenset(member.value for member in RefusedMetric)
+    return frozenset(raw)
+
+
+def collect_refused_metrics(scored: Mapping[str, Any]) -> dict[str, str]:
+    """Return ``{metric: invariant}`` for refused honesty fields on a report."""
+    refused: dict[str, str] = {}
+    faces = scored.get("faces")
+    faces = faces if isinstance(faces, Mapping) else {}
+    detection = faces.get("detection")
+    if not isinstance(detection, Mapping):
+        detection = scored.get("detection")
+    if isinstance(detection, Mapping) and detection.get("refused"):
+        refused[RefusedMetric.DETECTION.value] = str(detection.get("invariant") or "unknown")
+    identification = faces.get("identification") if isinstance(faces, Mapping) else None
+    if isinstance(identification, Mapping) and identification.get("refused"):
+        refused[RefusedMetric.IDENTIFICATION.value] = str(
+            identification.get("invariant") or "unknown"
+        )
+    slices = scored.get("slices")
+    if isinstance(slices, Mapping):
+        for key in (
+            "headline_identification",
+            "full_corpus_identification",
+            "unknown_rejection",
+            "demographic",
+        ):
+            block = slices.get(key)
+            if isinstance(block, Mapping) and block.get("refused"):
+                refused.setdefault(
+                    RefusedMetric.IDENTIFICATION.value,
+                    str(block.get("invariant") or "unknown"),
+                )
+                break
+    return refused
+
+
+def raise_if_aborted_run(record: Mapping[str, Any], *, command: str) -> None:
+    """A partial run is not a corpus (S2R5-12 / AUDIT-08). Exit 1, not 3."""
+    if record.get("aborted"):
+        print(
+            f"{command} gate failed: run record is aborted; a partial run is not a corpus",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
+def raise_if_unconsented_refusals(
+    scored: Mapping[str, Any],
+    raw_allow: list[str] | None,
+    *,
+    command: str,
+) -> None:
+    """Exit 3 unless every refused metric was named (or bare-flagged)."""
+    blocked = {
+        name: invariant
+        for name, invariant in collect_refused_metrics(scored).items()
+        if name not in consented_refused_metrics(raw_allow)
+    }
+    if not blocked:
+        return
+    print(
+        f"{command} gate failed: refused metric(s) ("
+        + ", ".join(f"{name}={invariant}" for name, invariant in blocked.items())
+        + "); pass --allow-refused=METRIC to accept a run with no score "
+        "for those metrics (bare --allow-refused names every metric)",
+        file=sys.stderr,
+    )
+    raise SystemExit(REFUSED_METRIC_EXIT_CODE)
+
+
 def _reject_llm_judge(args: argparse.Namespace) -> None:
     """Reject the stub LLM-judge tier before any live work (§6c tiers 3-4 out of MVP).
 
@@ -473,18 +583,35 @@ def _cmd_score(args: argparse.Namespace) -> None:
     record_path = Path(args.run_record)
     record = json.loads(record_path.read_text())
     manifest = load_manifest(args.manifest)
-    entries = [e.model_dump() for e in manifest.entries]
+    # Fill document annotation_mode only when the dump has no stamp.
+    # Unconditional assign clobbers a real per-entry stamp (S2R6E-04).
+    # No explicit kwarg — the stamp is the only score-time source
+    # (FIR-11-S2-01 / S2R2-10).
+    entries = []
+    for e in manifest.entries:
+        row = e.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
     # Stamp the report with the manifest actually scored against, and verify it
     # against the run record's fetch-time sha instead of copying it blind (S3-04).
     manifest_sha = _manifest_sha(manifest)
     ignore_list = _load_ignore_list(record_path.parent)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
     json_doc, md_doc = build_reports(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore_list,
+        score_manifest_sha256=manifest_sha,
+        manifest_roster=roster,
     )
     if args.check_determinism:
         json_again, md_again = build_reports(
-            record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
+            record,
+            entries,
+            ignore_list=ignore_list,
+            score_manifest_sha256=manifest_sha,
+            manifest_roster=roster,
         )
         if json_doc != json_again or md_doc != md_again:
             sys.exit("determinism check FAILED: re-score produced different output")
@@ -493,15 +620,31 @@ def _cmd_score(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-report.json"), Path(f"{base}-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    scored = score_run_record(
-        record, entries, ignore_list=ignore_list, score_manifest_sha256=manifest_sha, manifest_roster=roster
-    )
+    # Gate the published object, not a second score_run_record call. S2R4-02's
+    # identification override lives only in build_reports; a rescore can
+    # disagree about the report's own honesty field (S2R5-13 / rg-015).
+    scored = json.loads(json_doc)
     print(md_path)
+    det = scored["faces"]["detection"]
+    if det.get("refused"):
+        det_bit = f"detection=REFUSED({det.get('invariant')})"
+    else:
+        det_bit = (
+            f"detection_p={det.get('precision')} "
+            f"detection_r={det.get('recall')}"
+        )
+    ident = scored["faces"]["identification"]
+    if ident.get("refused"):
+        id_bit = f"identification=REFUSED({ident.get('invariant')})"
+    else:
+        id_bit = f"wrong_names={len(ident['wrong_names'])}"
     print(
         f"scored={scored['counts']['scored']}/{scored['counts']['total']} "
         f"insertion_rate={scored['caption']['insertion_rate']} "
-        f"wrong_names={len(scored['faces']['identification']['wrong_names'])}"
+        f"{id_bit} "
+        f"{det_bit}"
     )
+    raise_if_aborted_run(record, command="score")
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
     failed = int(scored["counts"]["failed"])
@@ -510,6 +653,10 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"score gate failed: {failed} item(s) not scored (see failures[] in {json_path}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
+    raise_if_unconsented_refusals(
+        scored, getattr(args, "allow_refused", None), command="score"
+    )
+
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -764,17 +911,11 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     json_path, md_path = Path(f"{base}-face-report.json"), Path(f"{base}-face-report.md")
     json_path.write_text(json_doc)
     md_path.write_text(md_doc)
-    synth_pairs, real_pairs = occlusion_inputs_from_record(record, manifest)
-    scored = score_face_run_record(
-        record,
-        manifest,
-        score_manifest_sha256=manifest_sha,
-        occlusion_pairs_by_tag=synth_pairs,
-        real_occlusion_pairs_by_tag=real_pairs,
-    )
+    # Same published-object contract as ``score`` (S2R5-13): do not rescore.
+    scored = json.loads(json_doc)
     occlusion_eligible = sum(
         int((block.get("synthetic") or {}).get("n_eligible") or 0)
-        for block in (scored["slices"].get("occlusion") or {}).values()
+        for block in (scored.get("slices", {}).get("occlusion") or {}).values()
         if isinstance(block, dict)
     )
     print(md_path)
@@ -784,11 +925,15 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         f"occlusion_n_eligible={occlusion_eligible} "
         f"directional_excluded={len(scored['gate_proposal']['excluded_directional'])}"
     )
+    raise_if_aborted_run(record, command="score-face")
     failed = int(scored["counts"]["failed"])
     if failed > 0:
         sys.exit(
             f"score-face gate failed: {failed} item(s) not scored (see failures[] in {json_path})"
         )
+    raise_if_unconsented_refusals(
+        scored, getattr(args, "allow_refused", None), command="score-face"
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -834,14 +979,34 @@ def main(argv: list[str] | None = None) -> None:
     _provider_flags(fetch_p)
     fetch_p.set_defaults(func=_cmd_fetch)
 
+    def _allow_refused_flag(p: argparse.ArgumentParser) -> None:
+        named = ", ".join(member.value for member in RefusedMetric)
+        p.add_argument(
+            "--allow-refused",
+            action="append",
+            nargs="?",
+            const=ALLOW_REFUSED_ALL,
+            type=_parse_allow_refused_metric,
+            metavar="METRIC",
+            help=(
+                "exit 0 for the named refused metric. Repeatable "
+                f"(--allow-refused=detection --allow-refused=identification). "
+                f"Bare --allow-refused is equivalent to naming every metric "
+                f"({named}). Default: refused metrics exit 3 — a missing "
+                "score is not clean evaluation evidence"
+            ),
+        )
+
     score_p = sub.add_parser("score", help="run record -> reports (pure, offline)")
     _common(score_p)
     score_p.add_argument("--run-record", required=True)
+    _allow_refused_flag(score_p)
     score_p.set_defaults(func=_cmd_score)
 
     run_p = sub.add_parser("run", help="fetch then score")
     _common(run_p)
     _provider_flags(run_p)
+    _allow_refused_flag(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     seed_p = sub.add_parser("seed-roster", help="idempotent eval-tenant roster seeding")
@@ -888,6 +1053,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="post-score redact via redact_face_report_for_public (never pre-score drop)",
     )
+    _allow_refused_flag(score_face_p)
     score_face_p.set_defaults(func=_cmd_score_face)
 
 
@@ -907,7 +1073,9 @@ def main(argv: list[str] | None = None) -> None:
         FaceRunRecordError,
         PerfLegError,
     ) as exc:
-        sys.exit(f"{type(exc).__name__}: {exc}")
+        invariant = getattr(exc, "invariant", None)
+        suffix = f" [{invariant}]" if invariant else ""
+        sys.exit(f"{type(exc).__name__}: {exc}{suffix}")
 
 
 if __name__ == "__main__":

@@ -79,6 +79,36 @@ def write_pair_yaml(path: Path, **overrides: Any) -> Path:
     return write_pair(path, valid_pair_dict(**overrides))
 
 
+# v3 on-disk contract (ADR-015): document-level annotation_mode, provenance
+# on every entry, LabelLineage on every box. Bench fixtures never invent
+# exhaustiveness at score time.
+BENCH_TEST_PROVENANCE: dict[str, str] = {"source": "fixture", "license": "fixture"}
+
+
+def bench_test_lineage(*, name: str | None) -> dict[str, object]:
+    return {
+        "labeler_id": "bench-test",
+        "batch_id": "fir-11-bench-v3",
+        "capture_session_id": "bench-test-session",
+        "pass_index": 0,
+        "labeled_at": "2026-08-16T00:00:00Z",
+        "tool_version": "bench-test",
+        "saw_machine_proposals": False,
+        "label_source": "gold_reference",
+        "decision": "named" if name else "stranger",
+        "confidence": "high",
+        "arbitration_of": None,
+    }
+
+
+def _with_box_lineage(box: dict[str, Any]) -> dict[str, Any]:
+    if "lineage" in box:
+        return box
+    stamped = dict(box)
+    stamped["lineage"] = bench_test_lineage(name=box.get("name"))
+    return stamped
+
+
 def golden_entry(
     media_id: int,
     *,
@@ -89,6 +119,7 @@ def golden_entry(
     face_boxes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     names = present_identities if present_identities is not None else ["Alice Q"]
+    boxes = face_boxes if face_boxes is not None else []
     return {
         "path": path or f"fixtures/m{media_id}.jpg",
         "sha256": sha256 or (f"{media_id:064x}"),
@@ -99,7 +130,8 @@ def golden_entry(
         "must_right": [],
         "easy_wrong": [],
         "policy": {"recognition_enabled": True},
-        "face_boxes": face_boxes if face_boxes is not None else [],
+        "face_boxes": [_with_box_lineage(box) for box in boxes],
+        "provenance": dict(BENCH_TEST_PROVENANCE),
     }
 
 
@@ -124,11 +156,18 @@ def minimal_entry(
         "policy": {"recognition_enabled": True},
     }
     if face_boxes is not None:
-        entry["face_boxes"] = face_boxes
+        entry["face_boxes"] = [_with_box_lineage(box) for box in face_boxes]
+    entry["provenance"] = dict(BENCH_TEST_PROVENANCE)
     return entry
 
 
-def write_manifest(path: Path, media_ids: list[int], *, roster: list[str] | None = None) -> Path:
+def write_manifest(
+    path: Path,
+    media_ids: list[int],
+    *,
+    roster: list[str] | None = None,
+    annotation_mode: str = "exhaustive",
+) -> Path:
     shas = {1: SHA_A, 2: SHA_B, 3: SHA_C}
     entries = [
         golden_entry(
@@ -141,7 +180,8 @@ def write_manifest(path: Path, media_ids: list[int], *, roster: list[str] | None
         for mid in media_ids
     ]
     body = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": annotation_mode,
         "roster": roster or [],
         "entries": entries,
     }
@@ -218,7 +258,12 @@ def write_hashed_manifest(path: Path, images_dir: Path, media_ids: list[int]) ->
         )
         for mid in media_ids
     ]
-    payload = {"manifest_version": 2, "roster": ["Alice Q"], "entries": entries}
+    payload = {
+        "manifest_version": 3,
+        "annotation_mode": "exhaustive",
+        "roster": ["Alice Q"],
+        "entries": entries,
+    }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 

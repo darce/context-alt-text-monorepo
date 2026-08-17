@@ -123,11 +123,14 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
         # Machine-readable: report.py filters on this field (rg-009 — no kind/id match).
         "affects": ["detection_fn"],
+        # fn_count (VLM6-PANEL6L-rvE-01): this trap's own contribution to the
+        # corpus-wide detection fn, so the report caveat can state trap_fn=N of
+        # fn=M instead of declaring it undeclarable. Per-trap only — never a
+        # corpus-total denominator (stays correct as traps are added/removed).
+        "fn_count": 1,
         "note": (
-            "anonymous GT, zero detections; contributes exactly 1 detection FN "
-            "(no corpus-total denominator here — it goes stale whenever another "
-            "trap is added). Without this entry pre- and post-HARM-01 fn agree "
-            "(blind freeze)."
+            "anonymous GT, zero detections; contributes exactly 1 detection FN. "
+            "Without this entry pre- and post-HARM-01 fn agree (blind freeze)."
         ),
     },
     {
@@ -136,9 +139,11 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "kind": "HARM-05_mixed_named_anonymous_miss",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)",
         "affects": ["detection_fn"],
+        "fn_count": 2,
         "note": (
             "named Alice GT + anonymous GT, zero detections; contributes named FN "
-            "plus stranger FN. Discriminates identity-agnostic vs named-only recall."
+            "plus stranger FN (2 total). Discriminates identity-agnostic vs "
+            "named-only recall."
         ),
     },
     {

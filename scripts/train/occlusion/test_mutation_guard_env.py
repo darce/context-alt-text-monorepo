@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _MODULE_PATH = Path(__file__).resolve().parent / "mutation_guard.py"
 _SPEC = importlib.util.spec_from_file_location(
     "mutation_guard_env_subject",
@@ -126,6 +128,15 @@ class TestRv201ScrubbedEnvBlocksUserSitePth:
         from a safe one (feedback_verify_assertion_can_fail) instead of
         always returning None.
         """
+        if sys.prefix != sys.base_prefix:
+            # A venv interpreter disables user-site by construction
+            # (pyvenv.cfg), so the pre-fix leak cannot be simulated with
+            # sys.executable here; the arm is only discriminating under the
+            # canonical `python3 -m pytest` gate (make test-scripts).
+            pytest.skip(
+                "red arm needs a non-venv interpreter: venv python has "
+                "ENABLE_USER_SITE=False regardless of HOME/PYTHONNOUSERSITE"
+            )
         fake_home = tmp_path / "fakehome"
         fake_home.mkdir()
         _write_sentinel_pth(fake_home)

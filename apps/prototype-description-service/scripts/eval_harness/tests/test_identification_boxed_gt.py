@@ -42,6 +42,11 @@ _LINEAGE = {
 
 
 def _record(identities: list[str], *, face_count: int = 1, media_id: int = 1, path: str = "mock_images/alice.jpg") -> dict:
+    # Dict identity rows (greenfield rejects bare strings — VLM6-PANEL6L-SR-01);
+    # callers pass plain names, unpositioned=True since these claims carry no
+    # predicted box geometry (this file exercises identification P/R, not
+    # positional accuracy).
+    identity_rows = [{"name": name, "unpositioned": True} for name in identities]
     return {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -56,7 +61,7 @@ def _record(identities: list[str], *, face_count: int = 1, media_id: int = 1, pa
                 "media_id": media_id,
                 "path": path,
                 "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
-                "identities": identities,
+                "identities": identity_rows,
                 "face_count": face_count,
                 "error": None,
             }

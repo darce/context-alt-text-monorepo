@@ -75,12 +75,40 @@ _OVERSHOOT_RECORD = {
                 "alt_text_draft": "Alice Example by the pool.",
                 "visual_facts": {"objects": []},
             },
-            "identities": ["Alice Example"],
+            # Dict identity row (greenfield rejects bare strings — VLM6-PANEL6L-SR-01);
+            # shape mirrors fusion_runner.py::_identity_rows.
+            "identities": [
+                {
+                    "name": "Alice Example",
+                    "bbox": {"x": 0.5, "y": 0.4, "width": 0.2, "height": 0.3},
+                    "unpositioned": False,
+                }
+            ],
             "face_count": 3,
             "error": None,
         }
     ],
 }
+
+
+def _overshoot_record_for(manifest_path: Path) -> dict:
+    """Deep-copy _OVERSHOOT_RECORD stamped with the real score-time manifest sha.
+
+    The CLI ``score`` path folds fetch/score manifest drift into the verdict
+    (VLM6-F-03 / EVAL-13) and hard-fails on both a mismatched and a missing
+    fetch-time ``manifest_sha256``. A fixed placeholder can never match a
+    tmp_path-scoped manifest, so compute the real sha the same way cli.py does.
+    """
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest as _load_manifest
+
+    record = copy.deepcopy(_OVERSHOOT_RECORD)
+    manifest = _load_manifest(str(manifest_path), skip_hash_verification=True)
+    record["provenance"]["manifest_sha256"] = _manifest_sha(manifest)
+    return record
+
 
 EXHAUSTIVE_DETECTION = {"tp": 1, "fp": 2, "fn": 0, "precision": 1 / 3, "recall": 1.0}
 
@@ -286,7 +314,7 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
 
     man_path = _write_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
-    record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
@@ -316,7 +344,7 @@ def test_cli_score_allow_refused_exits_zero(
 
     man_path = _write_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
-    record_path.write_text(json.dumps(_OVERSHOOT_RECORD), encoding="utf-8")
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(
         [

@@ -1817,7 +1817,17 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # Distinct token from empty-rubric so a red run names the correct class.
     ident_block = (scored.get("faces") or {}).get("identification") or {}
     identification_evaluated = int(ident_block.get("evaluated_images") or 0)
-    if scored_n > 0 and identification_evaluated == 0:
+    # VLM6-DELTA-03: a structurally refused identification block (boxed GT
+    # missing / roster_only mode) serialises evaluated_images=None, which
+    # collapses to int(0) above — indistinguishable from a genuinely
+    # evaluated-but-zero corpus (recognition_enabled false corpus-wide).
+    # Refusal already has its own consent-gated exit via
+    # raise_if_unconsented_refusals below; this vacuity gate must not
+    # pre-empt that per-metric consent check for the refused case, or
+    # --allow-refused=identification becomes structurally unreachable
+    # whenever identification is refused (see test_cli_exit_gates.py
+    # S2R5-05 tests).
+    if scored_n > 0 and not ident_block.get("refused") and identification_evaluated == 0:
         excluded_n = len(ident_block.get("excluded_images") or [])
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY} identification denominator "

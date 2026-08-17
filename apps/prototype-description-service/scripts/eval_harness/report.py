@@ -4661,15 +4661,19 @@ def _fixture_local_detection_caveat_line(
     fn: object,
     scored_images: object,
 ) -> str | None:
-    """EVAL-03 / VLM6-R2-C-02: disclose fixture-local detection FN traps.
+    """EVAL-03 / VLM6-R2-C-02 / VLM6-PANEL6L-rvE-01: disclose fixture-local
+    detection FN traps.
 
     Filters solely on ``affects`` containing ``detection_fn``. Absent that tag,
     emit nothing so a real population corpus cannot grow a phantom caveat.
 
     ``N`` counts matching trap *media*, never trap-attributed FN: a trap image
-    with several GT faces contributes several FN (freeze media 10 contributes 2),
-    and the trap contract carries no per-entry FN count. Phrase the sentence so
-    ``N`` cannot be misread as an FN share (rg-015 — no invented derivation).
+    with several GT faces contributes several FN (freeze media 10 contributes 2).
+    When every matching trap declares its own ``fn_count`` (VLM6-PANEL6L-rvE-01
+    — a per-trap figure, never a corpus-total denominator, so it cannot go
+    stale as traps are added/removed), the sentence states the derived
+    trap_fn share; otherwise it falls back to declaring the share undisclosed
+    rather than inventing one (rg-015).
     """
     traps_fn = _corpus_traps_with_affect(traps, CORPUS_TRAP_AFFECTS_DETECTION_FN)
     if not traps_fn:
@@ -4680,12 +4684,20 @@ def _fixture_local_detection_caveat_line(
     )
     media_bits = ", ".join(f"{t.get('media_id')} `{t.get('path')}`" for t in ordered)
     n = len(ordered)
+    fn_counts = [t.get("fn_count") for t in ordered]
+    if all(isinstance(c, int) for c in fn_counts):
+        trap_fn = sum(fn_counts)
+        share_clause = f"trap_fn={trap_fn} of fn={_fmt_prov(fn)} is attributable to them"
+    else:
+        share_clause = (
+            "the FN share attributable to them is not derivable from this table "
+            "(a trap image with several GT faces misses several)"
+        )
     return (
         "- ⚠ fixture-local detection frame — recall is NOT a population estimate: "
         f"fn={_fmt_prov(fn)} includes misses from {n} deliberate trap media "
         f"({media_bits}) added so the pre-HARM-01 named-only FN formula goes red; "
-        "the FN share attributable to them is not derivable from this table "
-        "(a trap image with several GT faces misses several). This corpus is a "
+        f"{share_clause}. This corpus is a "
         f"synthetic determinism anchor "
         f"({_fmt_prov(scored_images)} images), not a sampled population."
     )

@@ -23,7 +23,7 @@ a distinct exit code so a rerun resumes cleanly.
 Usage (on-box):
     python3 florence_describe.py \
         --images-dir ~/corpus \
-        --tsv vlm-corpus-attachments-20260716.tsv \
+        --tsv ../../../../benchmarks/private/vlm-corpus-attachments-20260716.tsv \
         --out-jsonl ~/results/florence-base-ft.jsonl
 
 Every flag falls back to an env var: IMAGES_DIR, TSV, OUT_JSONL,

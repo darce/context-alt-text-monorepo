@@ -37,8 +37,11 @@ _PUBLIC_NAME = "Barack Obama"
 
 # Default 3-item fixture: two scored faces + one failed item.
 _DEFAULT_TP, _DEFAULT_FP, _DEFAULT_FN = 2, 0, 0
-_PUBLIC_TP = 1
 _LOCAL_TP = 2
+# build_reports scores the full corpus once, then redacts for PUBLIC
+# (report.py::build_reports docstring, VLM6-R3-03) — detection is never
+# re-scored on a filtered population, so PUBLIC == LOCAL here (VLM6-DELTA-11).
+_PUBLIC_TP = _LOCAL_TP
 
 
 def _named_box(name: str | None, *, x: float = 0.5) -> dict:
@@ -334,10 +337,22 @@ def test_public_redaction_keeps_scored_detection_and_withholds_private() -> None
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
     _assert_scored_detection(scored["faces"]["detection"], tp=_PUBLIC_TP, fp=0, fn=0)
+    # VLM6-DELTA-11: redaction block gained mode/unknown_media_items/
+    # withheld_manifest_entries/total_manifest_entries/note fields
+    # (report.py::_redact_caption_report_for_public, ~line 1026).
     assert scored["redaction"] == {
         "audience": "public",
+        "mode": "post_score_redact_caption_report",
         "withheld_items": 1,
+        "unknown_media_items": 0,
+        "withheld_manifest_entries": 1,
         "total_items": 2,
+        "total_manifest_entries": 2,
+        "note": (
+            "Aggregates scored on the full corpus (roster/rubric intact); "
+            "identity-bearing detail lists and non-publishable per_image rows "
+            "stripped. unknown_media_items are corpus-integrity failures, not privacy."
+        ),
     }
     assert "withheld 1 of 2 items" in md
     for blob in (json_doc, md):
@@ -345,7 +360,11 @@ def test_public_redaction_keeps_scored_detection_and_withholds_private() -> None
         assert _LOCAL_NAME not in blob
         assert "Wrong Celebrity" not in blob
     assert _PUBLIC_NAME in json_doc
-    assert _PUBLIC_PATH in json_doc
+    # RV4-05: PUBLIC per_image "path" is always the opaque media_id:N token —
+    # never an operator basename/path, even for a publishable item
+    # (_public_free_text_value, report.py ~line 792). VLM6-DELTA-11.
+    assert _PUBLIC_PATH not in json_doc
+    assert {row["media_id"] for row in scored["per_image"]} == {10}
 
 
 def test_public_scored_detection_is_deterministic() -> None:

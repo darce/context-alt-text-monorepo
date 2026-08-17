@@ -954,7 +954,13 @@ def test_overshoot_markdown_names_fp() -> None:
                 "media_id": 1,
                 "path": "mock_images/alice.jpg",
                 "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
-                "identities": ["Alice Example"],
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
                 "face_count": 3,
                 "error": None,
             }

@@ -41,31 +41,68 @@ def _named_box(name: str) -> dict[str, Any]:
     }
 
 
-def _manifest_doc(*, mode: str, boxed: bool) -> dict[str, Any]:
+def _manifest_doc(*, mode: str, boxed: bool, n: int = 1) -> dict[str, Any]:
+    # VLM6-DELTA-03: n>1 replicates the single canonical entry under distinct
+    # media_ids/paths so a test can clear SCORE_PASS_MIN_SCORED_IMAGES (=5,
+    # branch-only category-vacuity gate) without changing per-entry semantics.
     return {
         "manifest_version": 3,
         "annotation_mode": mode,
-        "roster": ["Alice Example"],
+        "roster": ["Alice Example", "Zed Zeta"],
         "entries": [
             {
-                "path": "mock_images/alice.jpg",
+                "path": f"mock_images/alice{i}.jpg",
                 "sha256": "a" * 64,
-                "media_id": 1,
+                "media_id": i,
                 "face_count": 1,
                 "present_identities": ["Alice Example"],
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
                 "must_right": ["Alice Example"],
-                "easy_wrong": [],
+                # VLM6-DELTA-03: non-empty so the branch-only empty-rubric gate
+                # (score empty-rubric gate: easy_wrong is vacuous corpus-wide)
+                # does not fire ahead of the refusal/consent gates these tests
+                # actually exercise. "Zed Zeta" never appears in base_caption or
+                # alt_text_draft, so the wrong-name trap stays untripped.
+                "easy_wrong": ["Zed Zeta"],
+                # VLM6-DELTA-03: one applicable, phrase-matched spatial_fact so
+                # score_placement() records a "correct" claim (claims=1) instead
+                # of an abstention — placement is a branch-only category-vacuity
+                # sub-check (report.py score_vacuous_category_labels) and an
+                # empty/abstained-only spatial_facts list leaves it vacuous
+                # regardless of corpus size. The phrase below is echoed
+                # verbatim in alt_text_draft below.
+                "spatial_facts": [
+                    {
+                        "subject": "Alice Example",
+                        "relation": "foreground",
+                        "phrases": ["in the foreground"],
+                    }
+                ],
+                # VLM6-DELTA-03: one false-polarity reference_fact (a fabrication
+                # trap the caption never states) so images_with_traps > 0 and
+                # fabricated_fact_is_vacuous() clears — without any authored
+                # trap, fabricated-fact rate is structurally non-observable
+                # (EVAL-19), independent of corpus size. Caption never mentions
+                # "a dog", so this trap is not tripped (clean pass, not a fail).
+                "reference_facts": [
+                    {
+                        "text": "a dog",
+                        "kind": "object",
+                        "polarity": "false",
+                        "phrases": ["a dog"],
+                    }
+                ],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
                 "face_boxes": [_named_box("Alice Example")] if boxed else [],
             }
+            for i in range(1, n + 1)
         ],
     }
 
 
-def _run_record(*, face_count: int = 3) -> dict[str, Any]:
+def _run_record(*, face_count: int = 3, n: int = 1) -> dict[str, Any]:
     return {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -77,27 +114,61 @@ def _run_record(*, face_count: int = 3) -> dict[str, Any]:
         },
         "items": [
             {
-                "media_id": 1,
-                "path": "mock_images/alice.jpg",
+                "media_id": i,
+                "path": f"mock_images/alice{i}.jpg",
                 "describe": {
-                    "alt_text_draft": "Alice Example by the pool.",
+                    # "in the foreground" echoes the spatial_fact phrase in
+                    # _manifest_doc() (near-verbatim correct placement claim);
+                    # "a dog" is never mentioned, so the reference_facts trap
+                    # is not tripped (VLM6-DELTA-03).
+                    "alt_text_draft": "Alice Example in the foreground by the pool.",
                     "visual_facts": {"objects": []},
                 },
-                "identities": ["Alice Example"],
+                "identities": [
+                    {
+                        "name": "Alice Example",
+                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "unpositioned": False,
+                    }
+                ],
+                # VLM6-DELTA-03: clears identity_ordering category-vacuity
+                # (report.py score_run_record counts ordering_positional only
+                # when this equals IdentityOrdering.POSITIONAL).
+                "identity_ordering": "positional",
                 "face_count": face_count,
                 "error": None,
             }
+            for i in range(1, n + 1)
         ],
     }
 
 
 def _write_score_inputs(
-    tmp_path: Path, *, mode: str, boxed: bool, record: dict[str, Any] | None = None
+    tmp_path: Path,
+    *,
+    mode: str,
+    boxed: bool,
+    record: dict[str, Any] | None = None,
+    n: int = 1,
 ) -> tuple[Path, Path]:
+    # VLM6-DELTA-02: stamp the record's provenance.manifest_sha256 with the real
+    # fetch-time hash of the manifest actually written to disk. A dummy sha
+    # ("m" * 64) trips the branch-only manifest-drift gate
+    # (_fold_manifest_drift_into_verdict / SCORE_GATE_PREFIX_MANIFEST_DRIFT)
+    # before a test's intended gate ever fires, masking every downstream
+    # assertion in this file (main has no such gate at all).
+    import scripts.eval_harness.cli as cli_mod
+    import scripts.eval_harness.manifest as man_mod
+
     man_path = tmp_path / f"{mode}.json"
-    man_path.write_text(json.dumps(_manifest_doc(mode=mode, boxed=boxed)), encoding="utf-8")
+    man_path.write_text(json.dumps(_manifest_doc(mode=mode, boxed=boxed, n=n)), encoding="utf-8")
+    loaded_manifest = man_mod.load_manifest(str(man_path), skip_hash_verification=True)
+    fetch_manifest_sha256 = cli_mod._manifest_sha(loaded_manifest)
+    record = dict(record) if record is not None else _run_record(n=n)
+    record = json.loads(json.dumps(record))  # defensive deep copy before mutating provenance
+    record.setdefault("provenance", {})["manifest_sha256"] = fetch_manifest_sha256
     rec_path = tmp_path / "run.json"
-    rec_path.write_text(json.dumps(record if record is not None else _run_record()), encoding="utf-8")
+    rec_path.write_text(json.dumps(record), encoding="utf-8")
     return man_path, rec_path
 
 
@@ -106,84 +177,72 @@ def _write_score_inputs(
 # ---------------------------------------------------------------------------
 
 
-def _wrap_published_detection(
-    build_reports, *, refused: bool, invariant: str = "published-only-refusal"
-):
-    """Rewrite only the published honesty field; a real rescore is untouched."""
-
-    def _wrapped(*args: Any, **kwargs: Any) -> tuple[str, str]:
-        json_doc, md_doc = build_reports(*args, **kwargs)
-        parsed = json.loads(json_doc)
-        if refused:
-            parsed["faces"]["detection"] = {
-                "refused": True,
-                "invariant": invariant,
-                "precision": None,
-                "recall": None,
-                "tp": None,
-                "fp": None,
-                "fn": None,
-            }
-        else:
-            parsed["faces"]["detection"] = {
-                "precision": 1.0,
-                "recall": 1.0,
-                "tp": 1,
-                "fp": 0,
-                "fn": 0,
-            }
-        return json.dumps(parsed, indent=2, sort_keys=True) + "\n", md_doc
-
-    return _wrapped
-
-
-def test_score_gate_exits_3_when_published_report_is_refused_even_if_rescore_is_clean(
+def test_score_gate_exits_0_when_scored_and_published_report_agree_clean(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S2R5-13 case A: published refused + real rescore clean → exit 3.
+    """S2R5-13 case A, re-pointed at the current single-build architecture.
 
-    Exhaustive boxed GT makes ``score_run_record`` clean. The wrap stamps
-    refusal only onto the published JSON. Gating a second score call
-    (any name) exits 0 — the pre-fix hole.
+    VLM6-DELTA-03: the original case A monkeypatched ``cli_mod.build_reports``
+    to stamp a refusal onto ONLY the published JSON, expecting the exit gate
+    (driven by a separate "real" rescore) to still catch it. Under FIR-11's
+    current ``_cmd_score`` (F2d / GATE-05, "the documents written are exactly
+    the documents ... certified — one build"), the default (no
+    ``--check-determinism``, no ``--audience public``) path never calls
+    ``build_reports`` at all: ``scored = score_run_record(...)`` is computed
+    once and serialised directly to ``run-report.json``. The monkeypatch is
+    therefore inert — proven live via ``uv run python3`` before this edit,
+    confirming exit 0 / verdict=pass with the wrap installed and ignored. The
+    published-vs-rescore divergence S2R5-13 guarded against is now
+    structurally impossible for the LOCAL report by construction, so this
+    test asserts that invariant directly: the single scored document that
+    decided the exit code is exactly what landed on disk.
     """
     import scripts.eval_harness.cli as cli_mod
 
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="exhaustive", boxed=True)
+    # n=5 clears SCORE_PASS_MIN_SCORED_IMAGES (branch-only category-vacuity
+    # gate); exhaustive + boxed GT is genuinely clean (no refusal at all).
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="exhaustive", boxed=True, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    monkeypatch.setattr(
-        cli_mod,
-        "build_reports",
-        _wrap_published_detection(cli_mod.build_reports, refused=True),
-    )
-    with pytest.raises(SystemExit) as exc:
-        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
-    assert exc.value.code == 3
-    published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
-    assert published["faces"]["detection"]["refused"] is True
-    assert published["faces"]["detection"]["invariant"] == "published-only-refusal"
-
-
-def test_score_gate_exits_0_when_published_report_is_clean_even_if_rescore_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """S2R5-13 case B: published clean + real rescore refused → exit 0.
-
-    roster_only makes ``score_run_record`` refuse detection. The wrap
-    stamps a clean detection only onto the published JSON. OR-ing the
-    two objects, or gating the rescore, exits 3 and dies here.
-    """
-    import scripts.eval_harness.cli as cli_mod
-
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=True)
-    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
-    monkeypatch.setattr(
-        cli_mod,
-        "build_reports",
-        _wrap_published_detection(cli_mod.build_reports, refused=False),
-    )
     cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
     published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
     assert published["faces"]["detection"].get("refused") is not True
+    assert published["verdict"]["verdict"] == "pass"
+
+
+def test_score_gate_exits_category_vacuity_when_roster_only_detection_is_unconsented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2R5-13 case B, re-pointed at the current single-build architecture.
+
+    VLM6-DELTA-03: the original case B monkeypatched ``build_reports`` to
+    stamp a clean detection onto ONLY the published JSON, expecting the exit
+    gate to green-exit over a "real" refused rescore. As with case A, the
+    monkeypatch never fires under the default score path (no
+    ``build_reports`` call at all — see the sibling test above), so there is
+    no published/rescore divergence to exercise. ``roster_only`` mode
+    structurally refuses detection regardless of GT boxing (report.py:
+    ``elif mode is AnnotationMode.ROSTER_ONLY: det = None``), and with no
+    ``--allow-refused`` this is a genuine, unconsented, vacuous category —
+    the canonical current behaviour is a hard non-zero exit via
+    ``SCORE_GATE_PREFIX_CATEGORY_VACUITY`` (fires ahead of
+    ``raise_if_unconsented_refusals`` in ``_cmd_score``), never a silent
+    exit 0. Verified live: exit code is the category-vacuity string, not
+    int 3 and not 0.
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    # n=5 clears SCORE_PASS_MIN_SCORED_IMAGES so the sole vacuity driver is
+    # the genuinely-refused, unconsented face_detection category.
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=True, n=5)
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_CATEGORY_VACUITY)
+    published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
+    assert published["faces"]["detection"]["refused"] is True
+    assert published["faces"]["detection"]["invariant"] == "detection_refuses_roster_only"
+    assert published["verdict"]["verdict"] == "not_ready"
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +553,15 @@ def test_score_exits_1_when_run_record_is_aborted(
 
     Filename is run.json (not *-aborted.json) so a path-spelling check
     cannot substitute for reading the flag.
+
+    main's ``raise_if_aborted_run`` exits int 1 pre-scoring. This branch moved
+    the aborted check to a post-write gate (VLM6-S2A-A-02, see cli.py
+    ``if record.get("aborted")`` in ``_cmd_score``) so a failing report is
+    still written for triage (OBS-04) before the exit fires; the gate raises
+    ``ScoreGateError`` and ``main()`` maps that to ``sys.exit(str(exc))``, so
+    the exit code is the class-unique gate string, not an int. main's
+    ``raise_if_aborted_run`` is dead code on this branch (defined, never
+    called) — out of scope here (VLM6-DELTA-03 territory, not this test).
     """
     import scripts.eval_harness.cli as cli_mod
 
@@ -505,14 +573,19 @@ def test_score_exits_1_when_run_record_is_aborted(
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
-    assert exc.value.code == 1
-    assert "aborted" in capsys.readouterr().err
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_ABORTED_RECORD)
+    assert "aborted" in exc.value.code
     assert (rec_path.with_name("run-report.json")).is_file()
 
 
 def test_score_face_exits_1_when_run_record_is_aborted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """See test_score_exits_1_when_run_record_is_aborted docstring: this branch
+    moved the aborted check to a post-write ScoreGateError gate (VLM6-R2-F-03),
+    so the exit code is the class-unique gate string, not int 1.
+    """
     import scripts.eval_harness.cli as cli_mod
 
     man_path, rec_path = _partial_id_face_inputs(tmp_path)
@@ -522,8 +595,9 @@ def test_score_face_exits_1_when_run_record_is_aborted(
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(rec_path)])
-    assert exc.value.code == 1
-    assert "aborted" in capsys.readouterr().err
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_ABORTED_RECORD)
+    assert "aborted" in exc.value.code
 
 
 # ---------------------------------------------------------------------------

@@ -1651,9 +1651,19 @@ def build_score_verdict(
 
     # Vacuity only when images were scored but none entered identification
     # (recognition_enabled false). All-failed runs are the failed-items class.
+    # VLM6-DELTA-03 (report-side): a structurally refused identification block
+    # (boxed GT missing / roster_only mode) also serialises evaluated_images=0,
+    # indistinguishable from a genuinely evaluated-but-zero corpus. Refusal is
+    # reported separately (faces.identification.refused / category-vacuity);
+    # this hard-fail reason must not fire for the refused case or it
+    # permanently contaminates every verdict computed against an unboxed
+    # corpus (e.g. the shipped scene/tests/seed/golden.json, README-documented
+    # as roster_only with 34/37 unboxed claims) with an unrelated FAIL reason
+    # (cli.py's parallel gate carries the identical exclusion — see
+    # _cmd_score's SCORE_GATE_PREFIX_WRONG_NAME_FLOOR_VACUITY check).
     scored_n = int(counts.get("scored") or 0)
     identification_evaluated = int(ident.get("evaluated_images") or 0)
-    if scored_n > 0 and identification_evaluated == 0:
+    if scored_n > 0 and not ident.get("refused") and identification_evaluated == 0:
         reasons.append("wrong-name floor vacuity: evaluated_images=0")
 
     # F1-7 / TEST-15: never compare a rounded rate. When the floor is 0.0 the

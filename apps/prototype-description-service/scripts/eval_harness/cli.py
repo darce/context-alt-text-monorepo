@@ -1355,7 +1355,18 @@ def _check_score_determinism_cross_process(
     record = json.loads(resolved_record.read_text())
     # Metadata-only: build_reports reads rubrics/roster/policy, never opens image bytes.
     manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
-    entries = [e.model_dump() for e in manifest.entries]
+    # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04 / FIR-11-S2-01) —
+    # GoldenEntry forbids a per-entry annotation_mode field, so model_dump()
+    # always omits it; without this fill, detection unconditionally refuses
+    # with DETECTION_REQUIRES_ANNOTATION_MODE regardless of the manifest's
+    # real document-level mode (missing stamp, not roster_only). Unconditional
+    # assign would clobber a real per-entry stamp were one ever present.
+    entries = []
+    for e in manifest.entries:
+        row = e.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
     manifest_sha = _manifest_sha(manifest)
     ignore_list = _load_ignore_list(resolved_record.parent)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
@@ -1386,7 +1397,12 @@ def _check_score_determinism_cross_process(
         "man=load_manifest(sys.argv[2],skip_hash_verification=True); "
         "rg=sys.argv[3]; "
         "aud=Audience(sys.argv[4]); "
-        "entries=[e.model_dump() for e in man.entries]; "
+        # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04) in the child
+        # too, or the subprocess re-score refuses detection with
+        # DETECTION_REQUIRES_ANNOTATION_MODE while the parent baseline passes.
+        # Single-expression form (no def) to stay a valid `python -c` one-liner.
+        "entries=[dict(d,annotation_mode=(d.get('annotation_mode') or man.annotation_mode)) "
+        "for d in (e.model_dump() for e in man.entries)]; "
         "sha=_manifest_sha(man); "
         "ignore=_load_ignore_list(rec_path.parent); "
         "roster=sorted(set(getattr(man,'roster',None) or [])); "
@@ -1883,7 +1899,21 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"{SCORE_GATE_PREFIX_QUALITY_FLOOR} {reason_hint} "
             f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {json_path})"
         )
-    if verdict_value == ScoreVerdict.NOT_READY.value:
+    # VLM6-DELTA-03 (category-vacuity / identification-refused interaction):
+    # a refused identification block (boxed GT missing / unboxed roster) drags
+    # several categories (positional, identity_ordering, wrong-name floor) into
+    # not_ready simultaneously — the category-vacuity message would be a noisy
+    # restatement of the same refusal already reported, per-metric, by
+    # raise_if_unconsented_refusals below. Detection-only refusal (roster_only
+    # mode, identification still boxed/measurable) stays surgical, so
+    # category-vacuity keeps firing there (S2R5-13 case B, verified live: exit
+    # code is the category-vacuity string). Skipping here for the
+    # identification-refused case is required so --allow-refused stays
+    # per-metric (S2R5-05): naming only one of two refused metrics must still
+    # reach raise_if_unconsented_refusals's per-metric message/exit 3, and
+    # naming both must reach its clean-return exit 0 — a category-vacuity
+    # gate blind to consent state would hard-fail both cases identically.
+    if verdict_value == ScoreVerdict.NOT_READY.value and not ident_block.get("refused"):
         reasons = list((scored.get("verdict") or {}).get("reasons") or [])
         reason_hint = "; ".join(reasons[:3]) if reasons else "category claim units π=0"
         _score_gate_fail(

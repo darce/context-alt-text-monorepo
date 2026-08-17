@@ -437,6 +437,10 @@ class RubricEmptyWarning(UserWarning):
     """The corpus defines no Must-Right/Easy-Wrong rubric entries (gate vacuous)."""
 
 
+class HashVerificationSkippedWarning(UserWarning):
+    """``load_manifest`` skipped image sha256 verification (metadata-only load)."""
+
+
 @dataclass(frozen=True)
 class FieldPopulation:
     """Per-field population count for a loaded corpus (VLM6-R2-03 inventory)."""
@@ -1258,7 +1262,14 @@ def load_manifest(
     if resolved_images:
         _verify_hashes(manifest, Path(resolved_images))
     elif skip_hash_verification:
-        pass  # explicit metadata-only opt-out (OBS-04: caller named the skip)
+        # Named skip is still a silent no-op unless surfaced (VLM6-PANEL6L-rvM-03
+        # / OBS-04): a caller that flips this on for a real pixel-reading path
+        # would otherwise never learn the pins went unverified.
+        warnings.warn(
+            f"load_manifest: hash verification skipped (metadata-only load) for {path}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
     else:
         raise ManifestError(
             "image hash verification is required by default but no images_dir was given "

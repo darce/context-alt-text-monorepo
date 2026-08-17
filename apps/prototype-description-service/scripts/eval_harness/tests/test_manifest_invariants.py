@@ -14,6 +14,7 @@ import pytest
 
 from scripts.eval_harness.manifest import (
     AnnotationMode,
+    HashVerificationSkippedWarning,
     LEGACY_IMPORT_CAPTURE_SESSION_ID,
     ManifestError,
     legacy_import_lineage,
@@ -484,3 +485,16 @@ def test_legacy_import_helper_session_does_not_load_exhaustive(tmp_path: Path) -
         load_manifest(str(path))
     assert exc_info.value.invariant == "capture_session_id_required"
     assert LEGACY_IMPORT_CAPTURE_SESSION_ID in str(exc_info.value)
+
+
+def test_skip_hash_verification_warns(tmp_path: Path) -> None:
+    """VLM6-PANEL6L-rvM-03: the metadata-only skip must not be a silent no-op."""
+    with pytest.warns(HashVerificationSkippedWarning, match="hash verification skipped"):
+        load_manifest(str(PROVENANCED), skip_hash_verification=True)
+
+
+def test_verified_load_does_not_warn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder) -> None:
+    """Paired positive (TEST-15): a real images_dir verified load stays silent."""
+    monkeypatch.setattr("scripts.eval_harness.manifest._verify_hashes", lambda manifest, images_root: None)
+    load_manifest(str(PROVENANCED), images_dir=str(tmp_path))
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in recwarn.list)

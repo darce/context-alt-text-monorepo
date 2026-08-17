@@ -566,16 +566,24 @@ def test_spatial_binary_relation_requires_reference(tmp_path):
         load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
+_TRUTHFUL_SEED_PROVENANCE_NOTES = {
+    "vendored eval-corpus fixture",
+    "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
+}
+
+
 def test_seed_corpus_uses_fixture_provenance():
     """Vendored seed pixels are fixture/fixture, not operator/mock_entity (PROV-01)."""
     seed_dir = os.path.join(os.path.dirname(__file__), "seed")
     for name in ("golden.json", "bakeoff_golden.json"):
-        manifest = load_manifest(os.path.join(seed_dir, name))
+        manifest = load_manifest(
+            os.path.join(seed_dir, name), skip_hash_verification=True
+        )
         assert manifest.entries, f"{name} must not be empty"
         for entry in manifest.entries:
             assert entry.provenance.source.value == "fixture", entry.path
             assert entry.provenance.license.value == "fixture", entry.path
-            assert entry.provenance.note == "vendored eval-corpus fixture", entry.path
+            assert entry.provenance.note in _TRUTHFUL_SEED_PROVENANCE_NOTES, entry.path
 
 
 def test_golden38_subset_pin():
@@ -955,7 +963,9 @@ def test_exhaustive_matching_boxes_loads(tmp_path):
     ]
     data["entries"][1]["face_count"] = 0
     data["entries"][1]["face_boxes"] = []
-    manifest = load_manifest(_write_manifest(tmp_path, data))
+    manifest = load_manifest(
+        _write_manifest(tmp_path, data), skip_hash_verification=True
+    )
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
 

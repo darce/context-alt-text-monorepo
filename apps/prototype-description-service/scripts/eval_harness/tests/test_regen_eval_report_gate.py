@@ -53,7 +53,11 @@ def _roster_only_manifest() -> dict:
     return {
         "manifest_version": 3,
         "annotation_mode": "roster_only",
-        "roster": ["Alice Example"],
+        # 2nd roster member so easy_wrong can be non-empty — roster_only mode
+        # requires must_right/easy_wrong to be roster subsets, and an empty
+        # easy_wrong trips the branch-only empty-rubric gate
+        # (SCORE_GATE_PREFIX_EMPTY_RUBRIC, cli.py). VLM6-DELTA-14.
+        "roster": ["Alice Example", "Bob Distractor"],
         "entries": [
             {
                 "path": "mock_images/alice.jpg",
@@ -64,7 +68,7 @@ def _roster_only_manifest() -> dict:
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
                 "must_right": ["Alice Example"],
-                "easy_wrong": [],
+                "easy_wrong": ["Bob Distractor"],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
                 "face_boxes": [
@@ -101,7 +105,9 @@ def _overshoot_record() -> dict:
                     "alt_text_draft": "Alice Example by the pool.",
                     "visual_facts": {"objects": []},
                 },
-                "identities": ["Alice Example"],
+                # Dict identity rows (greenfield rejects bare strings —
+                # VLM6-PANEL6L-SR-01); shape mirrors fusion_runner.py::_identity_rows.
+                "identities": [{"name": "Alice Example", "unpositioned": True}],
                 "face_count": 3,
                 "error": None,
             }
@@ -139,6 +145,21 @@ def _write_json(path: Path, payload: dict) -> Path:
     return path
 
 
+def _real_manifest_sha(manifest_path: Path) -> str:
+    """Real sha256 of a manifest already on disk (VLM6-DELTA-15).
+
+    Placeholder provenance shas (``"m" * 64``) trip a branch-only
+    manifest-drift gate (cli.py: "manifest_matches_fetch=false") ahead of the
+    failed-items / refused-metrics gates these tests target. Mirrors the
+    working pattern in test_manifest_invariants.py.
+    """
+    from scripts.eval_harness.cli import _manifest_sha as _cli_manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    return _cli_manifest_sha(manifest)
+
+
 def _run_regen(
     args: list[str],
     *,
@@ -157,9 +178,20 @@ def _run_regen(
     )
 
 
-def _real_inputs(tmp_path: Path, record: dict) -> tuple[Path, Path, Path, Path]:
+def _real_inputs(tmp_path: Path, record: dict, *, manifest_doc: dict | None = None) -> tuple[Path, Path, Path, Path]:
+    manifest = _write_json(
+        tmp_path / "manifest.json",
+        manifest_doc if manifest_doc is not None else _roster_only_manifest(),
+    )
+    # VLM6-DELTA-15: stamp the record's provenance with the manifest's real
+    # sha256 before writing it — a stale placeholder trips the manifest-drift
+    # gate ahead of whichever gate each test actually targets.
+    record = dict(record)
+    record["provenance"] = {
+        **record["provenance"],
+        "manifest_sha256": _real_manifest_sha(manifest),
+    }
     run_record = _write_json(tmp_path / "run-record.json", record)
-    manifest = _write_json(tmp_path / "manifest.json", _roster_only_manifest())
     out_json = tmp_path / "dest-report.json"
     out_md = tmp_path / "dest-report.md"
     return run_record, manifest, out_json, out_md
@@ -184,8 +216,18 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
 
     The pre-fix script printed 'partial-corpus' and returned 0 after
     publishing. That swallow must stay red.
+
+    VLM6-DELTA-15: "both metrics refused" requires the unboxed manifest —
+    a boxed roster_only manifest leaves identification scored, so a
+    single-image corpus trips category-vacuity (undersized sample, exit 1)
+    ahead of raise_if_unconsented_refusals (exit 3). Unboxed makes
+    identification refuse too (identification_refuses_unboxed_identity_claims),
+    which is the documented category-vacuity bypass (VLM6-DELTA-03) and
+    matches this test's own "both metrics refused" premise.
     """
-    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+    )
     sentinel = '{"sentinel":"unpublished-refused"}'
     out_json.write_text(sentinel, encoding="utf-8")
     out_md.write_text(sentinel, encoding="utf-8")
@@ -212,8 +254,14 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
 def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
     tmp_path: Path,
 ) -> None:
-    """Consent publishes the refused report but must not greenwash to exit 0."""
-    run_record, manifest, out_json, out_md = _real_inputs(tmp_path, _overshoot_record())
+    """Consent publishes the refused report but must not greenwash to exit 0.
+
+    VLM6-DELTA-15: unboxed manifest — see the sibling exits-3 test's
+    docstring for why "both metrics refused" needs the unboxed fixture.
+    """
+    run_record, manifest, out_json, out_md = _real_inputs(
+        tmp_path, _overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+    )
     proc = _run_regen(
         [
             "--run-record",
@@ -532,8 +580,15 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
     tmp_path: Path,
 ) -> None:
     """Publisher stdout must show the scored→refused identification change."""
-    run_record = _write_json(tmp_path / "run-record.json", _overshoot_record())
     manifest = _write_json(tmp_path / "manifest.json", _unboxed_roster_only_manifest())
+    # VLM6-DELTA-15: same manifest-drift stamping as _real_inputs — this test
+    # builds its own record inline instead of going through that helper.
+    record = _overshoot_record()
+    record["provenance"] = {
+        **record["provenance"],
+        "manifest_sha256": _real_manifest_sha(manifest),
+    }
+    run_record = _write_json(tmp_path / "run-record.json", record)
     out_json = tmp_path / "dest-report.json"
     out_md = tmp_path / "dest-report.md"
     leftover = {

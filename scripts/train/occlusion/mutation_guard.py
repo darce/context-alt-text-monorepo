@@ -102,7 +102,7 @@ MAX_LIVE_EXTRAS_TOLERANCE = 0
 # Editing both baseline copies in one commit must also edit this constant —
 # a Python source diff a reviewer cannot miss (FIR-7-RV-05). Updated by
 # --record-baseline to match the newly recorded set size.
-ABSOLUTE_NODEID_FLOOR = 2443  # synced by --record-baseline; growth requires re-record
+ABSOLUTE_NODEID_FLOOR = 2446  # synced by --record-baseline; growth requires re-record
 # Second, independent copy of the recorded node-id set for the embedded-baseline
 # cross-check: an agent that edits the on-disk fixture alone is caught
 # because this embedded set must still be a subset of the fixture.
@@ -2454,6 +2454,9 @@ _EMBEDDED_NODEID_BASELINE: frozenset[str] = frozenset({
     'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_extra]',
     'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_s_free]',
     'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_z]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_z_onnx]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_z_tiny]',
+    'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_prefixed_sep_unknown_rem_denies[xyolox_z_v8]',
     'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_xyolox_z_denies_with_either_peel_flag_off[_MID_EXCEPTION_MULTI_SEGMENT_REM_OWNER_ENABLED]',
     'test_license_policy.py::TestRv301SepAlignedMidExceptionFailClosed::test_xyolox_z_denies_with_either_peel_flag_off[_MID_EXCEPTION_SEPARATE_REM_OWNER_ENABLED]',
     'test_license_policy.py::TestRv302SuperGradientsSeedsDeciNcFloor::test_framework_identity_is_nc_floor_hit[deci-ai/super-gradients]',

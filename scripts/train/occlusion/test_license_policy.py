@@ -15119,6 +15119,16 @@ class TestRv301SepAlignedMidExceptionFailClosed:
         "xyolox_s_free",
         "ayolox_z",
         "myxyolox_z",
+        # FIR-7-PANEL7L-rvC-01: multi-segment sep_rem where the LAST
+        # segment alone is a legitimate tag (compact size / shield tag)
+        # but the full sep_rem is not. M30
+        # (``_m30_sep_rem_last_segment_only``) classifies only
+        # ``sep_rem.rsplit("_", 1)[-1]`` and survives against the prior
+        # single-segment-only DENY set; these pins require the full
+        # value to be checked.
+        "xyolox_z_v8",
+        "xyolox_z_onnx",
+        "xyolox_z_tiny",
     )
 
     ADMIT: tuple[str, ...] = (

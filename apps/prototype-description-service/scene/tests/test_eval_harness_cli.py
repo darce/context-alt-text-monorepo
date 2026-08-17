@@ -1094,6 +1094,9 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
             "must_right": ["Alice Example"],
             "easy_wrong": ["Bob Builder"],
             "policy": {"recognition_enabled": True},
+            # Boxed GT for the claimed identity (FIR-11: identification scoring
+            # refuses unboxed present_identities — require_boxed_identification_gt).
+            "face_boxes": [{"name": "Alice Example", "x": 0.4, "y": 0.4, "w": 0.2, "h": 0.3, "source": "iptc"}],
         },
         {
             "path": "mock_images/bob.jpg",
@@ -1106,6 +1109,7 @@ def _wrong_name_everywhere_manifest_and_record(tmp_path):
             "must_right": ["Bob Builder"],
             "easy_wrong": ["Alice Example"],
             "policy": {"recognition_enabled": True},
+            "face_boxes": [{"name": "Bob Builder", "x": 0.4, "y": 0.4, "w": 0.2, "h": 0.3, "source": "iptc"}],
         },
     ]
     manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])

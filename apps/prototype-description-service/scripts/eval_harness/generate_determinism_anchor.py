@@ -53,6 +53,7 @@ from scripts.eval_harness.manifest import (
     GoldenEntry,
     GoldenManifest,
     compute_corpus_coverage_gaps,
+    legacy_import_lineage,
     load_manifest,
     metric_backing_refusals,
 )
@@ -107,6 +108,10 @@ _GT_BOX_Y_PRESENT = {
     "h": 0.2,
     "source": "iptc",
     "name": _NAME_Y_PRESENT,
+    # FIR-11: lineage is required on every v3 box (manifest.py
+    # _lineage_required_on_boxes) — this is a synthetic trap fixture, not a
+    # real labeling pass, so the documented legacy-import default applies.
+    "lineage": legacy_import_lineage(name=_NAME_Y_PRESENT),
 }
 _GT_BOX_Y_MISSING = {
     "x": 0.5,
@@ -114,6 +119,7 @@ _GT_BOX_Y_MISSING = {
     "h": 0.2,
     "source": "iptc",
     "name": _NAME_Y_MISSING,
+    "lineage": legacy_import_lineage(name=_NAME_Y_MISSING),
 }  # no y key
 
 # VLM6-R2-G-02: centre-x-tie positional trap. Two named boxes share centre x
@@ -133,6 +139,7 @@ _GT_BOX_POS_TOP = {
     "h": 0.2,
     "source": "iptc",
     "name": _NAME_POS_TOP,
+    "lineage": legacy_import_lineage(name=_NAME_POS_TOP),
 }
 _GT_BOX_POS_BOTTOM = {
     "x": 0.5,
@@ -141,6 +148,7 @@ _GT_BOX_POS_BOTTOM = {
     "h": 0.2,
     "source": "iptc",
     "name": _NAME_POS_BOTTOM,
+    "lineage": legacy_import_lineage(name=_NAME_POS_BOTTOM),
 }
 
 # Corpus-level trap inventory (EVAL-03 / VLM6-R2-C-02; wF4 precedent).
@@ -194,6 +202,10 @@ def build_caption_anchor_manifest(base: GoldenManifest) -> dict[str, Any]:
     """
     raw: dict[str, Any] = {
         "manifest_version": int(base.manifest_version),
+        # FIR-11: annotation_mode is a required document-level field
+        # (manifest.py load_manifest); carry the base seed's mode forward or
+        # the anchor manifest fails to load with "annotation_mode is required".
+        "annotation_mode": base.annotation_mode,
         "roster": list(base.roster),
         "entries": [e.model_dump(mode="json") for e in base.entries],
     }
@@ -560,7 +572,16 @@ def write_anchor(
             )
         manifest_sha = record["provenance"]["manifest_sha256"]
 
-        entries = [e.model_dump() for e in manifest.entries]
+        # VLM6-DELTA-06: GoldenEntry forbids a per-entry annotation_mode field,
+        # so model_dump() always omits it; without this fill, scoring refuses
+        # detection with DETECTION_REQUIRES_ANNOTATION_MODE regardless of the
+        # manifest's real document-level mode (missing stamp, not roster_only).
+        entries = []
+        for e in manifest.entries:
+            row = e.model_dump()
+            if row.get("annotation_mode") is None:
+                row["annotation_mode"] = manifest.annotation_mode
+            entries.append(row)
         roster = sorted(set(getattr(manifest, "roster", []) or []))
         # Seeded stub is model-free: operator must declare rubric-gate skip (cli:1067).
         scored = score_run_record(

@@ -487,7 +487,12 @@ def _write_report(
 def main(argv: list[str] | None = None) -> int:
     from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
     from scripts.eval_harness.face_pass import SeededTenantError, assert_scratch_tenant
-    from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+    from scripts.eval_harness.manifest import (
+        SUPPORTED_MANIFEST_VERSION,
+        AnnotationMode,
+        GoldenEntry,
+        GoldenManifest,
+    )
 
     env = os.environ
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -612,7 +617,15 @@ def main(argv: list[str] | None = None) -> int:
                         policy={"recognition_enabled": True},
                     )
                 )
-            manifest = GoldenManifest(manifest_version=2, roster=[], entries=entries)
+            # describe_baseline dispatches images only -- it never scores, so no
+            # face_boxes exist; roster_only is the neutral no-coverage-claim mode
+            # (FIR-11: annotation_mode is a required document-level field).
+            manifest = GoldenManifest(
+                manifest_version=SUPPORTED_MANIFEST_VERSION,
+                annotation_mode=AnnotationMode.ROSTER_ONLY,
+                roster=[],
+                entries=entries,
+            )
             partial = False
             try:
                 rec = fetch_run_record(

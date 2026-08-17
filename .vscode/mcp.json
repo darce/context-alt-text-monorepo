@@ -24,12 +24,7 @@
         "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"",
         "sh",
         "workbay-orchestrator-mcp"
-      ],
-      "env": {
-        "WORKBAY_REMOTE_GATE_HOST": "gate@acx-backend.tail1a44b8.ts.net",
-        "WORKBAY_GROK_MODEL": "grok-4.5",
-        "WORKBAY_HANDOFF_DEFAULT_AGENT": "workbay-orchestrator-mcp"
-      }
+      ]
     },
     "codebase-graph-mcp": {
       "type": "stdio",

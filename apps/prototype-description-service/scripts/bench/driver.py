@@ -334,14 +334,16 @@ def run_pair(
     preflight_transports: dict[str, Any] | None = None,
 ) -> Path:
     # Load without images_dir first so floor/superset fail before any media I/O.
-    manifest = load_bench_manifest(manifest_path, None)
+    # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
+    # entry counts and media_id sets are read here, never image bytes.
+    manifest = load_bench_manifest(manifest_path, None, skip_hash_verification=True)
     assert_floor_fits_corpus(pair.accepted_set_floor, len(manifest.entries))
     if pair.manifest_sha256:
         digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
         if digest != pair.manifest_sha256:
             raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
     if pair.baseline_manifest_path:
-        baseline = load_bench_manifest(pair.baseline_manifest_path, None)
+        baseline = load_bench_manifest(pair.baseline_manifest_path, None, skip_hash_verification=True)
         assert_baseline_superset(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},

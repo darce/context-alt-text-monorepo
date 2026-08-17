@@ -132,7 +132,7 @@ def test_unboxed_claim_loads_as_roster_only(tmp_path: Path) -> None:
     }
     path = tmp_path / "unboxed.json"
     path.write_text(json.dumps(doc), encoding="utf-8")
-    manifest = load_manifest(str(path))
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert manifest.entries[0].present_identities == ["Alice Example"]
     assert manifest.entries[0].face_boxes == []

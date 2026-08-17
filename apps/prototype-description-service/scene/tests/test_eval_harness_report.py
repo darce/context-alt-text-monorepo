@@ -891,11 +891,14 @@ def test_build_reports_scored_detection_local_and_public() -> None:
     Arithmetic tests only call score_run_record. PUBLIC rendering of a
     scored (not refused) detection block lives here.
     """
+    # VLM6-DELTA-10: PUBLIC scores the same full corpus as LOCAL then redacts
+    # post-score (docstring VLM6-R3-03 "parity with LOCAL") — detection is
+    # never re-scored on a filtered population, so both audiences see tp=2.
     record, entries = _exhaustive_audience_fixtures()
     local_json, local_md = build_reports(record, entries, audience=Audience.LOCAL)
     public_json, public_md = build_reports(record, entries, audience=Audience.PUBLIC)
     _assert_scored_detection(json.loads(local_json)["faces"]["detection"], tp=2)
-    _assert_scored_detection(json.loads(public_json)["faces"]["detection"], tp=1)
+    _assert_scored_detection(json.loads(public_json)["faces"]["detection"], tp=2)
     local_det = local_md.split("## Face detection")[1].split("## Face identification")[0]
     public_det = public_md.split("## Face detection")[1].split("## Face identification")[0]
     assert "precision:" in local_det and "recall:" in local_det
@@ -903,7 +906,7 @@ def test_build_reports_scored_detection_local_and_public() -> None:
     assert "REFUSED" not in local_det
     assert "REFUSED" not in public_det
     assert "(tp=2" in local_det
-    assert "(tp=1" in public_det
+    assert "(tp=2" in public_det
 
 
 def test_build_reports_scored_detection_is_deterministic() -> None:
@@ -912,7 +915,8 @@ def test_build_reports_scored_detection_is_deterministic() -> None:
     b_json, b_md = build_reports(record, entries, audience=Audience.PUBLIC)
     assert a_json == b_json
     assert a_md == b_md
-    _assert_scored_detection(json.loads(a_json)["faces"]["detection"], tp=1)
+    # VLM6-DELTA-10: full-corpus detection parity with LOCAL (see above).
+    _assert_scored_detection(json.loads(a_json)["faces"]["detection"], tp=2)
 
 
 def test_build_reports_scored_detection_public_redaction() -> None:
@@ -920,11 +924,25 @@ def test_build_reports_scored_detection_public_redaction() -> None:
     record, entries = _exhaustive_audience_fixtures()
     json_doc, md = build_reports(record, entries, audience=Audience.PUBLIC)
     scored = json.loads(json_doc)
-    _assert_scored_detection(scored["faces"]["detection"], tp=1)
+    # VLM6-DELTA-10: detection is full-corpus (tp=2), not re-scored on the
+    # publishable-only population — only identification/per_image are redacted.
+    _assert_scored_detection(scored["faces"]["detection"], tp=2)
+    # VLM6-DELTA-10: redaction block gained mode/unknown_media_items/
+    # withheld_manifest_entries/total_manifest_entries/note fields
+    # (report.py::_redact_caption_report_for_public, ~line 1026).
     assert scored["redaction"] == {
         "audience": "public",
+        "mode": "post_score_redact_caption_report",
         "withheld_items": 1,
+        "unknown_media_items": 0,
+        "withheld_manifest_entries": 1,
         "total_items": 2,
+        "total_manifest_entries": 2,
+        "note": (
+            "Aggregates scored on the full corpus (roster/rubric intact); "
+            "identity-bearing detail lists and non-publishable per_image rows "
+            "stripped. unknown_media_items are corpus-integrity failures, not privacy."
+        ),
     }
     assert _LOCAL_PATH not in json_doc
     assert _LOCAL_NAME not in json_doc
@@ -2201,6 +2219,11 @@ def test_score_run_record_identity_metrics_with_dict_shape():  # TEST-15
     face_metrics then does set(predicted) and dies with unhashable dict.
     """
     record, entries = _identity_scoring_pair()
+    # identification_pr refuses (unboxed) without a named box witness for every
+    # present_identities claim (VLM6-DELTA-11 / EVAL-03); local-only boxing so
+    # sibling tests that rely on this fixture's unboxed shape stay unaffected.
+    entries[0] = {**entries[0], "face_boxes": [{"name": "Alice Example", "x": 0.1, "y": 0.4}]}
+    entries[1] = {**entries[1], "face_boxes": [{"name": "Bob Builder", "x": 0.8, "y": 0.4}]}
     scored = score_run_record(record, entries)
     ident = scored["faces"]["identification"]
     assert ident["wrong_names"] == [["mock_images/bob-beach.jpg", "Alice Example"]]
@@ -2701,7 +2724,11 @@ def test_positional_unknown_order_does_not_use_alphabetical_labeled():  # VLM6-R
     labeled_order_known were ever ignored. GREEN: excluded + empty comparison.
     S2-07: exclusions surface as order_unknown_excluded, not degraded_images.
     """
-    record, entries = _run_record(), _manifest_entries()
+    record = _run_record()
+    # _manifest_entries() now carries face_boxes (boxed-GT identification
+    # requirement, VLM6-DELTA-11); this test targets the legacy no-box
+    # positional-exclusion path, so strip them locally (VLM6-DELTA-11).
+    entries = [{k: v for k, v in e.items() if k != "face_boxes"} for e in _manifest_entries()]
     assert all(not e.get("face_boxes") for e in entries)
     scored = score_run_record(record, entries)
     pos = scored["faces"]["identification"]["positional"]
@@ -2875,6 +2902,11 @@ def test_public_per_image_allow_list_strips_identity_name_fields():  # VLM6-A-01
     ]
     entries[0]["present_identities"] = [public, private]
     entries[0]["must_right"] = [private]
+    # face_count must cover both claims (present_identities_fit_face_count) and
+    # every claim needs a named box witness (identification boxed-GT refusal
+    # otherwise) — VLM6-DELTA-11.
+    entries[0]["face_count"] = 2
+    entries[0]["face_boxes"] = [*entries[0]["face_boxes"], {"name": private, "x": 0.6, "y": 0.4}]
     roster = [public, private]
 
     local = json.loads(build_reports(record, entries, audience=Audience.LOCAL, manifest_roster=roster)[0])
@@ -3121,6 +3153,10 @@ def _two_image_measurable_pass_pair() -> tuple[dict, list[dict]]:
                 "path": path,
                 "media_id": idx,
                 "face_count": 2,
+                # score_run_record resolves annotation_mode per-entry (raw-dict
+                # fixture); exhaustive is exact here (2 boxes == face_count=2).
+                # VLM6-DELTA-11 (FIR-11 v3).
+                "annotation_mode": "exhaustive",
                 "present_identities": [left, right],
                 "must_right": [left],
                 "easy_wrong": [right],
@@ -3526,6 +3562,9 @@ def test_wrong_name_rate_is_per_image_not_assertion_pairs():  # VLM6-S2A-B-09
     record["items"][0]["face_count"] = 2
     entries = [entries[1]]
     entries[0]["face_count"] = 1
+    # identification_pr refuses (unboxed) without a named box witness for the
+    # present_identities claim (VLM6-DELTA-11 / EVAL-03).
+    entries[0] = {**entries[0], "face_boxes": [{"name": "Bob Builder", "x": 0.8, "y": 0.4}]}
     scored = score_run_record(record, entries)
     rate = scored["verdict"]["wrong_name_rate"]
     assert rate <= 1.0
@@ -3812,7 +3851,11 @@ def test_single_image_measurable_corpus_is_not_ready():  # VLM6-S2-05
 
 def test_order_unknown_excluded_not_folded_into_degraded_images():  # VLM6-S2-07
     """Positional exclusions must not invent degraded_images contract metadata."""
-    record, entries = _run_record(), _manifest_entries()
+    record = _run_record()
+    # See test_positional_unknown_order_does_not_use_alphabetical_labeled:
+    # _manifest_entries() now carries face_boxes; strip for the no-box path
+    # this test targets (VLM6-DELTA-11).
+    entries = [{k: v for k, v in e.items() if k != "face_boxes"} for e in _manifest_entries()]
     assert all(not e.get("face_boxes") for e in entries)
     scored = score_run_record(record, entries)
     ordering = scored["faces"]["identity_ordering"]
@@ -4213,6 +4256,10 @@ def _face_y_missing_fixture() -> tuple[dict, dict]:
         ],
     }
     manifest = {
+        # score_face_run_record resolves mode via _annotation_mode_of; these
+        # face-fixture manifests are raw mappings so it is document-level here
+        # (VLM6-DELTA-10, FIR-11 v3).
+        "annotation_mode": "exhaustive",
         "roster": ["Alice Example", "Bob Example"],
         "roster_cohorts": {"Alice Example": "cohort_a", "Bob Example": "cohort_b"},
         "entries": [
@@ -4224,6 +4271,7 @@ def _face_y_missing_fixture() -> tuple[dict, dict]:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "annotation_mode": "exhaustive",
                 # Mixed: Bob has y, Alice missing y, same x → order_degraded.
                 "face_boxes": [
                     {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "name": "Bob Example"},
@@ -4239,6 +4287,7 @@ def _face_y_missing_fixture() -> tuple[dict, dict]:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "annotation_mode": "exhaustive",
                 "face_boxes": [
                     _gt_box(0.25, 0.35, 0.3, 0.3, "Alice Example"),
                     _gt_box(0.65, 0.35, 0.3, 0.3, "Bob Example"),
@@ -4433,6 +4482,10 @@ def _face_geometry_incomplete_fixture() -> tuple[dict, dict]:
         ],
     }
     manifest = {
+        # score_face_run_record resolves mode via _annotation_mode_of; these
+        # face-fixture manifests are raw mappings so it is document-level here
+        # (VLM6-DELTA-10, FIR-11 v3).
+        "annotation_mode": "exhaustive",
         "roster": ["Alice Example", "Bob Example"],
         "roster_cohorts": {"Alice Example": "cohort_a", "Bob Example": "cohort_b"},
         "entries": [
@@ -4444,6 +4497,7 @@ def _face_geometry_incomplete_fixture() -> tuple[dict, dict]:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "annotation_mode": "exhaustive",
                 "face_boxes": [
                     {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.2, "name": "Bob Example"},
                     {"x": 0.5, "w": 0.2, "h": 0.2, "name": "Alice Example"},  # no y
@@ -4458,6 +4512,7 @@ def _face_geometry_incomplete_fixture() -> tuple[dict, dict]:
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
+                "annotation_mode": "exhaustive",
                 "face_boxes": [
                     _gt_box(0.25, 0.35, 0.3, 0.3, "Alice Example"),
                     _gt_box(0.65, 0.35, 0.3, 0.3, "Bob Example"),

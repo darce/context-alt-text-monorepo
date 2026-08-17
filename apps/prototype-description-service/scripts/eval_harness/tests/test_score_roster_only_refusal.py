@@ -117,7 +117,12 @@ def _manifest_doc(mode: str) -> dict:
     return {
         "manifest_version": 3,
         "annotation_mode": mode,
-        "roster": ["Alice Example"],
+        # VLM6-DELTA-17: 2 roster members so easy_wrong can name a real
+        # (non-must_right) roster identity — an empty easy_wrong trips the
+        # CLI's branch-only empty-rubric gate (SCORE_GATE_PREFIX_EMPTY_RUBRIC,
+        # cli.py) ahead of the refusal-consent exit these tests target. Mirrors
+        # the pattern in test_r6d4_cli_score_omits_annotation_mode.py.
+        "roster": ["Alice Example", "Bob Distractor"],
         "entries": [
             {
                 "path": "mock_images/alice.jpg",
@@ -128,7 +133,7 @@ def _manifest_doc(mode: str) -> dict:
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
                 "must_right": ["Alice Example"],
-                "easy_wrong": [],
+                "easy_wrong": ["Bob Distractor"],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
                 "face_boxes": [
@@ -150,6 +155,23 @@ def _manifest_doc(mode: str) -> dict:
 def _write_manifest(tmp_path: Path, mode: str) -> Path:
     path = tmp_path / f"{mode}.json"
     path.write_text(json.dumps(_manifest_doc(mode)), encoding="utf-8")
+    return path
+
+
+def _write_unboxed_manifest(tmp_path: Path, mode: str) -> Path:
+    """Same fixture minus face_boxes — identification must also refuse.
+
+    VLM6-DELTA-17: with identification also refused, the CLI's category-vacuity
+    gate (cli.py ~1916: fires only when ``not ident_block.get("refused")``) does
+    not intercept ahead of the exit-3 refusal-consent path these CLI tests
+    target. Mirrors the unboxed-manifest category-vacuity-bypass pattern in
+    test_regen_eval_report_gate.py (VLM6-DELTA-15) and
+    test_identification_boxed_gt.py (VLM6-DELTA-16).
+    """
+    doc = _manifest_doc(mode)
+    doc["entries"][0]["face_boxes"] = []
+    path = tmp_path / f"{mode}-unboxed.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
     return path
 
 
@@ -309,10 +331,17 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
 
     S2R3-16: refused detection is exit 3 by default. A CI job that checks
     only process status must not treat a missing detection score as clean.
+
+    VLM6-DELTA-17: this branch's category-vacuity gate (cli.py ~1916) fires
+    ahead of the int-3 refusal-consent exit whenever identification is scored
+    (not refused) on an undersized single-image corpus. Use an unboxed
+    manifest so identification also refuses and the gate's
+    ``not ident_block.get("refused")`` guard stays false — same bypass
+    mechanism as VLM6-DELTA-15/16.
     """
     import scripts.eval_harness.cli as cli_mod
 
-    man_path = _write_manifest(tmp_path, "roster_only")
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
     record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
@@ -339,10 +368,14 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
 def test_cli_score_allow_refused_exits_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """S2R3-16: --allow-refused is the explicit opt-in for a refused score."""
+    """S2R3-16: --allow-refused is the explicit opt-in for a refused score.
+
+    VLM6-DELTA-17: unboxed manifest for the same category-vacuity-bypass
+    reason as test_cli_score_refuses_roster_only_detection above.
+    """
     import scripts.eval_harness.cli as cli_mod
 
-    man_path = _write_manifest(tmp_path, "roster_only")
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only")
     record_path = tmp_path / "run.json"
     record_path.write_text(json.dumps(_overshoot_record_for(man_path)), encoding="utf-8")
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")

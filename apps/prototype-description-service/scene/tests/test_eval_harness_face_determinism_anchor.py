@@ -42,8 +42,19 @@ from scripts.eval_harness.generate_face_determinism_anchor import (
     validate_coverage_gaps,
     write_face_anchor,
 )
-from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.manifest import AnnotationMode, legacy_import_lineage, load_manifest
 from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record
+
+# VLM6-DELTA-08: exhaustive manifests refuse legacy_import_lineage's unknown-
+# occasion sentinel (S2R6-01); this test builds an ad-hoc exhaustive manifest,
+# so its boxes need a real (if synthetic) capture_session_id.
+_TEST_SESSION_ID = "synthetic-session-old-single-identity-corpus"
+
+
+def _test_lineage(*, name: str | None) -> dict[str, object]:
+    lineage = legacy_import_lineage(name=name)
+    lineage["capture_session_id"] = _TEST_SESSION_ID
+    return lineage
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
@@ -85,10 +96,13 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-face-report.md"
 # the stale "1 of 4" denominator. Manifest digest unchanged (corpus body
 # identical); run/report/md moved. Digests from sha256sum of generator output.
 _FROZEN_DIGESTS = {
-    _MANIFEST.name: "32eff309b37822deb4474ca05dac4b0343e7a2378e4d25ab013020b5c565b5bd",
-    _RUN.name: "99c108a74064df76bca7101bb066b9a1a36ea50c7c85d99fddf4f86d24fbd202",
-    _REPORT_JSON.name: "9755611fdf8002e11c0e642775919a75257ea8bdf57c8e70ab29f135afca9016",
-    _REPORT_MD.name: "851039608dccb4c18302c89b0b4284decd2464ae2a6e26e10aea3af0f4d9489e",
+    # VLM6-DELTA-08: regenerated for FIR-11 v3 (annotation_mode=exhaustive,
+    # real capture_session_id on every box — the exhaustive gate refuses the
+    # legacy_import_lineage unknown-occasion sentinel, S2R6-01).
+    _MANIFEST.name: "4877a9124972471ab186896a56a66ca0b7a292645aa69c54b65bb91d0a1b7087",
+    _RUN.name: "fc999079cd523f2d84736a55de6dc1c4161ec310e04b6f735acab7f5d1f5306e",
+    _REPORT_JSON.name: "594a62a6437eb48d9a53667dce9582bed62a85d8b627cf71dafce69f91dc6609",
+    _REPORT_MD.name: "c5da764bb619839617630b62e3a1a54ba4f1843fe92dab3a1bdb43b71668d1e1",
 }
 
 
@@ -187,7 +201,7 @@ def test_face_generator_regenerates_byte_identical_committed_anchor(tmp_path: Pa
     assert manifest_sha == expected_sha
     # Prefix of generation-time sha over the wF4 extended corpus (HARM-05 + G-01 trap).
     # Not a digest pin — full digest lives in _FROZEN_DIGESTS[_MANIFEST.name].
-    assert manifest_sha.startswith("02003e25")
+    assert manifest_sha.startswith("3c5223fc")
     assert man_path.read_bytes() == _MANIFEST.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     # wI2 regenerated report freezes from the generator; man+run remain wF4 pins.
@@ -433,7 +447,9 @@ def test_fixture_local_detection_caveat_present_and_disappears_without_affects()
     assert "fn=5 includes misses from 2 deliberate trap media" in md
     # Defect pin: N is trap MEDIA. "{n} of fn=" reads as an FN share (rg-015).
     assert "2 of fn=" not in md
-    assert "the FN share attributable to them is not derivable from this table" in md
+    # VLM6-DELTA-08: each trap now declares its own fn_count (VLM6-PANEL6L-rvE-01),
+    # so the caveat states the derivable trap_fn share instead of disclaiming it.
+    assert "trap_fn=3 of fn=5 is attributable to them" in md
     assert "synthetic determinism anchor (11 images)" in md
 
     record = json.loads(_RUN.read_text())
@@ -454,7 +470,7 @@ def test_fixture_local_detection_caveat_present_and_disappears_without_affects()
     )
     assert "fn=5 includes misses from 2 deliberate trap media" in live_md
     assert "2 of fn=" not in live_md
-    assert "the FN share attributable to them is not derivable from this table" in live_md
+    assert "trap_fn=3 of fn=5 is attributable to them" in live_md
 
     for trap in traps:
         trap.pop("affects", None)
@@ -985,7 +1001,8 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
         )
 
     man = {
-        "manifest_version": 2,
+        "manifest_version": 3,
+        "annotation_mode": AnnotationMode.EXHAUSTIVE.value,
         "roster": ["Alice Example"],
         "roster_cohorts": {"Alice Example": "cohort_a"},
         "entries": [
@@ -999,7 +1016,17 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}],
+                "face_boxes": [
+                    {
+                        "x": 0.4,
+                        "y": 0.4,
+                        "w": 0.4,
+                        "h": 0.4,
+                        "source": "iptc",
+                        "name": "Alice Example",
+                        "lineage": _test_lineage(name="Alice Example"),
+                    }
+                ],
                 "provenance": {
                     "source": "celeb",
                     "license": "public_domain",
@@ -1017,7 +1044,17 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": "Alice Example"}],
+                "face_boxes": [
+                    {
+                        "x": 0.4,
+                        "y": 0.4,
+                        "w": 0.4,
+                        "h": 0.4,
+                        "source": "iptc",
+                        "name": "Alice Example",
+                        "lineage": _test_lineage(name="Alice Example"),
+                    }
+                ],
                 "provenance": {
                     "source": "celeb",
                     "license": "public_domain",
@@ -1035,7 +1072,17 @@ def test_old_single_identity_corpus_cannot_detect_clustering_or_fp_bugs() -> Non
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "source": "iptc", "name": None}],
+                "face_boxes": [
+                    {
+                        "x": 0.4,
+                        "y": 0.4,
+                        "w": 0.4,
+                        "h": 0.4,
+                        "source": "iptc",
+                        "name": None,
+                        "lineage": _test_lineage(name=None),
+                    }
+                ],
                 "provenance": {
                     "source": "localwp",
                     "license": "consented",

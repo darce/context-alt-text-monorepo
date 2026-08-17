@@ -52,7 +52,12 @@ from scripts.eval_harness.face_run_record import (
     build_face_run_record,
     validate_face_run_record,
 )
-from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.manifest import (
+    SUPPORTED_MANIFEST_VERSION,
+    AnnotationMode,
+    legacy_import_lineage,
+    load_manifest,
+)
 from scripts.eval_harness.promote_atomic import (
     FACE_PROMOTE,
     atomic_promote,
@@ -160,6 +165,21 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
 ]
 
 
+# Fixed synthetic occasion key (byte-stability sentinel, not a real capture
+# session — VLM6-F-04). Exhaustive manifests refuse the legacy_import_lineage
+# default LEGACY_IMPORT_CAPTURE_SESSION_ID sentinel (S2R6-01); this corpus is
+# exhaustive (score_face_run_record requires it), so every box needs a real
+# occasion-key string.
+_SYNTHETIC_CAPTURE_SESSION_ID = "synthetic-session-S2A-face-determinism-anchor-20260811"
+
+
+def _exhaustive_lineage(*, name: str | None) -> dict[str, object]:
+    """``legacy_import_lineage`` with a real occasion key (exhaustive-safe)."""
+    lineage = legacy_import_lineage(name=name)
+    lineage["capture_session_id"] = _SYNTHETIC_CAPTURE_SESSION_ID
+    return lineage
+
+
 def _unit(values: list[float]) -> list[float]:
     """L2-normalise a synthetic vector (no numpy — pure construction)."""
     norm = math.sqrt(sum(v * v for v in values)) or 1.0
@@ -197,18 +217,36 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
         "synthetic face determinism anchor — no real images; "
         "GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)"
     )
-    alice_box = {**_GT_BOX, "name": _ALICE}
-    bob_box = {**_GT_BOX, "name": _BOB}
-    stranger_box = {**_GT_BOX, "name": None}
-    fn_box = {**_GT_BOX_FN, "name": _ALICE}
+    # FIR-11 v3: every box carries a lineage; legacy_import_lineage is the
+    # documented default for hand-constructed/synthetic boxes (manifest.py).
+    alice_box = {**_GT_BOX, "name": _ALICE, "lineage": _exhaustive_lineage(name=_ALICE)}
+    bob_box = {**_GT_BOX, "name": _BOB, "lineage": _exhaustive_lineage(name=_BOB)}
+    stranger_box = {**_GT_BOX, "name": None, "lineage": _exhaustive_lineage(name=None)}
+    fn_box = {**_GT_BOX_FN, "name": _ALICE, "lineage": _exhaustive_lineage(name=_ALICE)}
     # HARM-05: unmatched anonymous GT (stranger miss) — population HARM-01 fn counts.
-    stranger_fn_box = {**_GT_BOX_STRANGER_FN, "name": None}
-    stranger_fn_box_b = {**_GT_BOX_STRANGER_FN_B, "name": None}
+    stranger_fn_box = {
+        **_GT_BOX_STRANGER_FN,
+        "name": None,
+        "lineage": _exhaustive_lineage(name=None),
+    }
+    stranger_fn_box_b = {
+        **_GT_BOX_STRANGER_FN_B,
+        "name": None,
+        "lineage": _exhaustive_lineage(name=None),
+    }
     # VLM6-R2-G-01: Bob has real y; Alice omits y — mixed shape, not all-missing.
-    y_present_box = {**_GT_BOX_Y_PRESENT, "name": _BOB}
-    y_missing_box = {**_GT_BOX_Y_MISSING, "name": _ALICE}
+    y_present_box = {**_GT_BOX_Y_PRESENT, "name": _BOB, "lineage": _exhaustive_lineage(name=_BOB)}
+    y_missing_box = {
+        **_GT_BOX_Y_MISSING,
+        "name": _ALICE,
+        "lineage": _exhaustive_lineage(name=_ALICE),
+    }
     return {
-        "manifest_version": 2,
+        "manifest_version": SUPPORTED_MANIFEST_VERSION,
+        # score_face_run_record refuses anything but exhaustive (report.py
+        # DETECTION_REQUIRES_ANNOTATION_MODE / DETECTION_REFUSES_ROSTER_ONLY):
+        # this corpus exercises detection FP/FN, which roster_only cannot score.
+        "annotation_mode": AnnotationMode.EXHAUSTIVE.value,
         "roster": [_ALICE, _BOB],
         "roster_cohorts": {_ALICE: _COHORT_A, _BOB: _COHORT_B},
         "entries": [

@@ -444,9 +444,10 @@
         "affects": [
           "detection_fn"
         ],
+        "fn_count": 1,
         "kind": "HARM-05_pure_stranger_miss",
         "media_id": 9,
-        "note": "anonymous GT, zero detections; contributes exactly 1 detection FN (no corpus-total denominator here — it goes stale whenever another trap is added). Without this entry pre- and post-HARM-01 fn agree (blind freeze).",
+        "note": "anonymous GT, zero detections; contributes exactly 1 detection FN. Without this entry pre- and post-HARM-01 fn agree (blind freeze).",
         "path": "localwp/uploads/stranger-fn-miss.jpg",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)"
       },
@@ -454,9 +455,10 @@
         "affects": [
           "detection_fn"
         ],
+        "fn_count": 2,
         "kind": "HARM-05_mixed_named_anonymous_miss",
         "media_id": 10,
-        "note": "named Alice GT + anonymous GT, zero detections; contributes named FN plus stranger FN. Discriminates identity-agnostic vs named-only recall.",
+        "note": "named Alice GT + anonymous GT, zero detections; contributes named FN plus stranger FN (2 total). Discriminates identity-agnostic vs named-only recall.",
         "path": "localwp/uploads/mixed-fn-miss.jpg",
         "trips": "pre-HARM-01 named-only detection FN formula (HARM-01 / EVAL-13)"
       },
@@ -481,7 +483,7 @@
     "generator": "scripts.eval_harness.generate_face_determinism_anchor",
     "head_sha": null,
     "leg": "candidate",
-    "manifest_sha256": "02003e2529ba1bc0641cb2443845cf83107e47011c4b3f223ab192024e3e767c",
+    "manifest_sha256": "3c5223fce7f2e85e6fa4c5295f74f8fb372aa12b4996a585078b2dff8abb60db",
     "model_id": "synthetic-face-anchor",
     "note": "synthetic dim=8 unit vectors; no real image/embedding (PROV-01); fixture_revision/canonical_timestamp are byte-stability sentinels (not git/wall-clock provenance); F7 multi-regime corpus (2 identities, FP/FN, wrong-name, occlusion twin, 2 cohorts; HARM-05 unmatched stranger GT + mixed named/anonymous miss; VLM6-R2-G-01 mixed-y order_degraded trap (media 11); failures[] declared gap — score-face hard-exits on counts.failed>0); see provenance.corpus_traps",
     "started_at": null

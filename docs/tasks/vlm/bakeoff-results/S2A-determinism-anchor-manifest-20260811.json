@@ -1,4 +1,5 @@
 {
+  "annotation_mode": "roster_only",
   "entries": [
     {
       "base_caption": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
@@ -1534,6 +1535,19 @@
       "face_boxes": [
         {
           "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "capture_session_id": "legacy-import-unknown-session",
+            "confidence": "low",
+            "decision": "named",
+            "label_source": "legacy_import",
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "labeler_id": "legacy-import",
+            "pass_index": 0,
+            "saw_machine_proposals": true,
+            "tool_version": "legacy-import"
+          },
           "name": "Caitlin Weaver",
           "source": "iptc",
           "w": 0.2,
@@ -1542,6 +1556,19 @@
         },
         {
           "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "capture_session_id": "legacy-import-unknown-session",
+            "confidence": "low",
+            "decision": "named",
+            "label_source": "legacy_import",
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "labeler_id": "legacy-import",
+            "pass_index": 0,
+            "saw_machine_proposals": true,
+            "tool_version": "legacy-import"
+          },
           "name": "Bea Burke",
           "source": "iptc",
           "w": 0.2,
@@ -1580,6 +1607,19 @@
       "face_boxes": [
         {
           "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "capture_session_id": "legacy-import-unknown-session",
+            "confidence": "low",
+            "decision": "named",
+            "label_source": "legacy_import",
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "labeler_id": "legacy-import",
+            "pass_index": 0,
+            "saw_machine_proposals": true,
+            "tool_version": "legacy-import"
+          },
           "name": "Maria Correonero",
           "source": "iptc",
           "w": 0.2,
@@ -1588,6 +1628,19 @@
         },
         {
           "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "capture_session_id": "legacy-import-unknown-session",
+            "confidence": "low",
+            "decision": "named",
+            "label_source": "legacy_import",
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "labeler_id": "legacy-import",
+            "pass_index": 0,
+            "saw_machine_proposals": true,
+            "tool_version": "legacy-import"
+          },
           "name": "Caitlin Weaver",
           "source": "iptc",
           "w": 0.2,
@@ -1615,7 +1668,7 @@
       "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
     }
   ],
-  "manifest_version": 2,
+  "manifest_version": 3,
   "roster": [
     "Bea Burke",
     "Caitlin Weaver",

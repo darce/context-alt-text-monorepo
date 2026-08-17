@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,11 +34,13 @@ from scripts.eval_harness.generate_determinism_anchor import (
     write_anchor,
 )
 from scripts.eval_harness.manifest import (
+    AnnotationMode,
     FaceBox,
     GoldenManifest,
     METRIC_BACKING_SLICE_THRESHOLD,
     SHIPPED_CORPUS_COVERAGE_GAPS,
     compute_corpus_coverage_gaps,
+    legacy_import_lineage,
     load_manifest,
 )
 from scripts.eval_harness.report import score_run_record
@@ -60,11 +63,13 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # labeled_y_missing_images is freeze-observable (was structural 0 on golden).
 # G-02: media 40 centre-x-tie trap so positional_images is freeze-observable
 # (was structural 0). Digests rewritten with the G-02 regen.
+# VLM6-DELTA-09: regenerated for FIR-11 v3 (annotation_mode required, per-box
+# lineage — build_caption_anchor_manifest fix, VLM6-DELTA-04).
 _FROZEN_DIGESTS = {
-    _MAN.name: "7cd318537e2a371b4545b7c974b4d7c04573c09a1e0c40d8077c976e2f937570",
-    _RUN.name: "82e7b47b334ce506ffdc5f8a842a3581ff1ede563d3b29fa61d54ef9fc9e280d",
-    _REPORT_JSON.name: "6bda0f8d5d3f27ab7033143cd77371c8560b34fe220c3249b0b6df819a63b8e4",
-    _REPORT_MD.name: "157d7e8891826c1e4c683f2d9a94a5a4d9a1eac3532597ba0ae5cb557ea75451",
+    _MAN.name: "14e5e2e1a017c45acc7c615b3069b31880f011db9c14098e85f9a789a8f4a7a7",
+    _RUN.name: "bca65e319c6e942d3cdaac333a9b8bbf0a1f58ef1687c6ec81bbd9d27002c3a4",
+    _REPORT_JSON.name: "1d5c35bf9ace9de3b74e4846699905d84be7e22c2a72c4e86f57084bcc4a5f40",
+    _REPORT_MD.name: "5131d552f1bc38e6ae3441d8346a35ca560a2412d802008f2e924aeff1ab339c",
 }
 
 
@@ -98,6 +103,64 @@ def _oracle_predicted_identity_names(
     if present_identities and seed_index % 9 == 0 and seed_index % 5 != 0:
         names = names + [f"Fixture-Wrong-{seed_index}"]
     return names
+
+
+_BOXED_CAPTURE_SESSION_ID = "synthetic-session-determinism-anchor-oracle-golden"
+
+
+def _boxed_lineage(*, name: str | None):
+    """``legacy_import_lineage`` with a real occasion key (exhaustive-safe)."""
+    lineage = legacy_import_lineage(name=name)
+    lineage["capture_session_id"] = _BOXED_CAPTURE_SESSION_ID
+    return lineage
+
+
+def _boxed_exhaustive_manifest(manifest: GoldenManifest) -> GoldenManifest:
+    """Boxed+exhaustive variant of ``manifest`` for detection-scoring tests.
+
+    ``golden.json`` is roster_only with zero face_boxes, so ``detection_pr``
+    structurally refuses it (VLM6-DELTA-09). ``detection_pr`` is pure
+    count-based math over ``face_count`` (face_metrics.py:568-605) — it never
+    inspects box geometry — so padding every entry's ``face_boxes`` to exactly
+    ``face_count`` (named boxes first from ``present_identities``, then
+    anonymous fill) satisfies ``require_exhaustive_box_coverage`` without
+    changing any detection or identification arithmetic versus the oracle.
+    """
+    data = manifest.model_dump(mode="json")
+    data["annotation_mode"] = AnnotationMode.EXHAUSTIVE.value
+    for entry in data["entries"]:
+        face_count = int(entry["face_count"])
+        names = list(entry["present_identities"])
+        boxes = []
+        for index in range(face_count):
+            name = names[index] if index < len(names) else None
+            boxes.append(
+                {
+                    "x": 0.1 + 0.05 * index,
+                    "y": 0.1,
+                    "w": 0.05,
+                    "h": 0.05,
+                    "name": name,
+                    "source": "mwg",
+                    "lineage": _boxed_lineage(name=name),
+                }
+            )
+        entry["face_boxes"] = boxes
+    return GoldenManifest.model_validate(data)
+
+
+def _stamp_filled_entries(manifest: GoldenManifest) -> list[dict[str, Any]]:
+    """``score_run_record`` resolves mode from per-entry stamps, not the
+    document-level ``GoldenManifest.annotation_mode`` (FIR-11-S2-01 /
+    S2R2-10). Mirrors the fill-only-when-absent pattern in
+    ``cli.py::_cmd_score`` (never clobbers a real per-entry stamp)."""
+    rows = []
+    for entry in manifest.entries:
+        row = entry.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        rows.append(row)
+    return rows
 
 
 def _seeded_deviation_oracle(manifest: GoldenManifest) -> dict[str, int | float]:
@@ -204,7 +267,7 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
     expected_sha = _manifest_sha(load_manifest(str(_MAN), skip_hash_verification=True))
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("4c674451")  # G-02 39-image freeze
+    assert manifest_sha.startswith("51e9456b")  # VLM6-DELTA-09 v3 regen
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
@@ -425,7 +488,7 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
     corpus — never from freeze digests, never from generator private helpers
     (RV3-01 / TEST-15).
     """
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    manifest = _boxed_exhaustive_manifest(load_manifest(str(_GOLDEN), skip_hash_verification=True))
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -480,7 +543,7 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
     assert float(oracle["det_precision"]) < 1.0
     assert float(oracle["det_recall"]) < 1.0
 
-    entries = [e.model_dump() for e in manifest.entries]
+    entries = _stamp_filled_entries(manifest)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
     scored = score_run_record(
         record,
@@ -501,7 +564,7 @@ def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3
     wrong_names=4}. Real scorer on that input yields det≈{tp:11,fp:0,fn:46}
     with many wrong_names — the control that proves independence.
     """
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    manifest = _boxed_exhaustive_manifest(load_manifest(str(_GOLDEN), skip_hash_verification=True))
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -517,7 +580,7 @@ def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3
         item["identities"] = rows
 
     oracle = _seeded_deviation_oracle(manifest)
-    entries = [e.model_dump() for e in manifest.entries]
+    entries = _stamp_filled_entries(manifest)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
     scored = score_run_record(
         record,

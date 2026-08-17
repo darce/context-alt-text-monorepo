@@ -3,6 +3,10 @@
 # caption) with curated identities, via the tailscale jump. ~62 min GPU.
 #   Usage: bash a10-interleave-646.sh <A10_PRIVATE_IP>
 set -uo pipefail
+_CONTRACT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_exit_contract.env"
+# shellcheck disable=SC1090
+[ -f "$_CONTRACT" ] && . "$_CONTRACT"
+EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 
 PRIV_IP="${1:?usage: a10-interleave-646.sh <A10_PRIVATE_IP>}"
 PORT=8000
@@ -40,9 +44,28 @@ RR="out/run-altq-646-interleave-v3.json"
     --out "$RR" ) || { echo "fetch FAILED"; exit 1; }
 
 echo "== score =="
-( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score --run-record "$RR" --manifest "$MANIFEST" ) || echo "score warning (rubric partial on 646)"
+# Do not treat exit 3 as "rubric partial" and do not discard nonzero.
+# 646 manifest is roster_only; refused detection/identification is exit 3.
+# --allow-refused is not added here: auto-consent would greenwash a no-score
+# report. Copy the run-record always; park refused reports under refused/.
+( cd "$SVC" && "$PY" -m scripts.eval_harness.cli score --run-record "$RR" --manifest "$MANIFEST" )
+score_ec=$?
 cp "$SVC/$RR" "$RESULTS/" 2>/dev/null
-cp "$SVC/${RR%.json}"*report* "$RESULTS/" 2>/dev/null
+if [ "$score_ec" -eq "$EVAL_EXIT_REFUSED" ]; then
+  echo "score REFUSED (exit 3): this is not rubric-partial. Report is refused evidence, not a clean score."
+  _refusal_helper="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_refusal_message.py"
+  _report_json="$SVC/${RR%.json}-report.json"
+  if [ -f "$_refusal_helper" ]; then
+    python3 "$_refusal_helper" --report "$_report_json"
+  fi
+  mkdir -p "$RESULTS/refused"
+  cp "$SVC/${RR%.json}"*report* "$RESULTS/refused/" 2>/dev/null || true
+elif [ "$score_ec" -ne 0 ]; then
+  echo "score FAILED (exit $score_ec): partial corpus, determinism failure, ManifestError/ReportError, or env — not a refusal."
+else
+  cp "$SVC/${RR%.json}"*report* "$RESULTS/" 2>/dev/null
+fi
 
 echo "Done. Results -> $RESULTS"
 echo "TEARDOWN (owed): oci compute instance terminate --instance-id <IID from launch output> --force"
+exit "$score_ec"

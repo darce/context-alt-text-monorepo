@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
   "roster": [
     "Bea Burke",
     "Caitlin Weaver",
@@ -36,7 +37,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her."
+      "base_caption": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/bea-nye.jpg",
@@ -61,7 +67,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Bea Burke, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom."
+      "base_caption": "Bea Burke, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-antartica.jpg",
@@ -86,7 +97,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her."
+      "base_caption": "Caitlin Weaver stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-bar.jpg",
@@ -111,7 +127,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her."
+      "base_caption": "Caitlin Weaver leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-erika.jpg",
@@ -138,7 +159,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver and Erika Hansen Miller pose together at a warmly lit bar table, with other patrons visible in the background near a mirror."
+      "base_caption": "Caitlin Weaver and Erika Hansen Miller pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-flowers.jpg",
@@ -163,7 +189,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera."
+      "base_caption": "Caitlin Weaver peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-hair.jpg",
@@ -188,7 +219,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face."
+      "base_caption": "Caitlin Weaver stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-occlusion-2.jpg",
@@ -213,7 +249,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck."
+      "base_caption": "Caitlin Weaver holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-occlusion.jpg",
@@ -238,7 +279,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame."
+      "base_caption": "Caitlin Weaver raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-purple.jpg",
@@ -263,7 +309,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder."
+      "base_caption": "Caitlin Weaver looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-running-2.jpg",
@@ -288,7 +339,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades."
+      "base_caption": "Caitlin Weaver runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-running.jpg",
@@ -313,7 +369,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her."
+      "base_caption": "Caitlin Weaver runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-sunglasses-flowers.jpg",
@@ -338,7 +399,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky."
+      "base_caption": "Caitlin Weaver smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-sunglasses.jpg",
@@ -363,7 +429,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her."
+      "base_caption": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw-underexposed.jpg",
@@ -388,7 +459,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street."
+      "base_caption": "Caitlin Weaver walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ccqw.blurry.jpg",
@@ -413,7 +489,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Caitlin Weaver's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light."
+      "base_caption": "Caitlin Weaver's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/cristina-1.jpg",
@@ -438,7 +519,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, red drinks in hand."
+      "base_caption": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, red drinks in hand.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/example-ellynheald-goldleaf.jpeg",
@@ -463,7 +549,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Ellyn Heald stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings."
+      "base_caption": "Ellyn Heald stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/k.mcc-1.jpg",
@@ -488,7 +579,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Kirstie Mccarrel celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look."
+      "base_caption": "Kirstie Mccarrel celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/kirstie-1.jpeg",
@@ -513,7 +609,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Kirstie Mccarrel kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd."
+      "base_caption": "Kirstie Mccarrel kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/kirstie-boat.jpg",
@@ -538,7 +639,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Kirstie Mccarrel sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water."
+      "base_caption": "Kirstie Mccarrel sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/kirstie-daniel-sunglasses.jpg",
@@ -565,7 +671,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Kirstie Mccarrel in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie."
+      "base_caption": "Kirstie Mccarrel in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/kirstie-pool.jpg",
@@ -590,7 +701,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface."
+      "base_caption": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/liam-maloney-2.jpg",
@@ -614,7 +730,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Liam Maloney, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow."
+      "base_caption": "Liam Maloney, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/liam-maloney-home.jpg",
@@ -638,7 +759,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Liam Maloney takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him."
+      "base_caption": "Liam Maloney takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/liam-maloney-painting.jpg",
@@ -659,7 +785,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "A framed expressionist portrait painting of a dark-haired man rendered in muted greys hangs on a white wall in an ornate gold frame."
+      "base_caption": "A framed expressionist portrait painting of a dark-haired man rendered in muted greys hangs on a white wall in an ornate gold frame.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/maria-cocktail.jpg",
@@ -684,7 +815,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes."
+      "base_caption": "Maria Correonero, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/maria-party.jpg",
@@ -709,7 +845,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background."
+      "base_caption": "Maria Correonero bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/maria-pool.jpg",
@@ -734,7 +875,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water."
+      "base_caption": "Maria Correonero lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/mcm-eye-blocked.jpg",
@@ -759,7 +905,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye."
+      "base_caption": "Maria Correonero, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/mcm-icecave.jpg",
@@ -784,7 +935,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee."
+      "base_caption": "Maria Correonero crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/mcm-planecrash.jpg",
@@ -809,7 +965,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Maria Correonero climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her."
+      "base_caption": "Maria Correonero climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/nina-machiavelli.jpeg",
@@ -830,7 +991,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "A black dog on a leash sits in the middle of a garage-lined laneway at dusk, watching an orange sunset glow behind townhouses and trees."
+      "base_caption": "A black dog on a leash sits in the middle of a garage-lined laneway at dusk, watching an orange sunset glow behind townhouses and trees.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/rrw-mirror.jpg",
@@ -851,7 +1017,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "A dark-haired woman in a pale blue dress and white knee-high boots crouches on a bathroom counter, kissing her reflection in an ornate mirror amid green wallpaper and a gold-framed shower."
+      "base_caption": "A dark-haired woman in a pale blue dress and white knee-high boots crouches on a bathroom counter, kissing her reflection in an ornate mirror amid green wallpaper and a gold-framed shower.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ryann-bar.jpg",
@@ -876,7 +1047,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Ryann Wiseman stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror."
+      "base_caption": "Ryann Wiseman stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ryann-group-party.jpg",
@@ -901,7 +1077,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Ryann Wiseman celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon."
+      "base_caption": "Ryann Wiseman celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     },
     {
       "path": "mock_images/ryann-party.jpg",
@@ -926,7 +1107,12 @@
       "policy": {
         "recognition_enabled": true
       },
-      "base_caption": "Ryann Wiseman, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them."
+      "base_caption": "Ryann Wiseman, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      }
     }
   ]
 }

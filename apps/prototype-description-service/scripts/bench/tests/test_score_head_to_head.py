@@ -33,8 +33,19 @@ def _pred(media_id: int, *, label: str = "Alice Q", miss: bool = False) -> dict:
     }
 
 
-def _write_manifest(path: Path, entries: list[dict], roster: list[str] | None = None) -> Path:
-    body = {"manifest_version": 2, "roster": roster or ["Alice Q"], "entries": entries}
+def _write_manifest(
+    path: Path,
+    entries: list[dict],
+    roster: list[str] | None = None,
+    *,
+    annotation_mode: str = "exhaustive",
+) -> Path:
+    body = {
+        "manifest_version": 3,
+        "annotation_mode": annotation_mode,
+        "roster": roster or ["Alice Q"],
+        "entries": entries,
+    }
     path.write_text(json.dumps(body, indent=2), encoding="utf-8")
     return path
 
@@ -72,8 +83,17 @@ def _write_leg(run_dir: Path, stack_id: str, identities: list[dict], media_ids: 
     write_stub_preflight(run_dir, stack_id)
 
 
-def _init(tmp_path: Path, media_ids: list[int], entries: list[dict], *, floor: float = 0.5) -> Path:
-    manifest = _write_manifest(tmp_path / "manifest.json", entries)
+def _init(
+    tmp_path: Path,
+    media_ids: list[int],
+    entries: list[dict],
+    *,
+    floor: float = 0.5,
+    annotation_mode: str = "exhaustive",
+) -> Path:
+    manifest = _write_manifest(
+        tmp_path / "manifest.json", entries, annotation_mode=annotation_mode
+    )
     pair = load_stack_pair(write_pair(tmp_path / "pair.yaml", valid_pair_dict(accepted_set_floor=floor)))
     run_dir = tmp_path / "run"
     init_run_dir(run_dir, pair, manifest)
@@ -535,8 +555,10 @@ def test_score_refuses_unparseable_preflight_json(tmp_path: Path) -> None:
 
 
 def test_identification_boxless_corpus_is_directional(tmp_path: Path) -> None:
+    # roster_only: face_count=1 with zero boxes is a valid coverage hole.
+    # exhaustive would fail load (boxes_cover_face_count).
     entries = [golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[]) for i in (1, 2)]
-    run_dir = _init(tmp_path, [1, 2], entries)
+    run_dir = _init(tmp_path, [1, 2], entries, annotation_mode="roster_only")
     ids = [_pred(1), _pred(2)]
     _write_leg(run_dir, A_STACK, ids, [1, 2])
     _write_leg(run_dir, B_STACK, ids, [1, 2])
@@ -546,3 +568,69 @@ def test_identification_boxless_corpus_is_directional(tmp_path: Path) -> None:
     for cell in id_recall:
         assert cell["tier"] == "DIRECTIONAL"
         assert cell["reason"] == "detection_exhaustiveness_unasserted"
+
+
+def test_roster_only_surfaces_detection_refusal_not_silent_skip(tmp_path: Path) -> None:
+    """Boxed roster_only images must refuse detection P/R in frames.json.
+
+    TEST-15: silent skip (no detection cell) or invented P/R would pass a
+    weaker contract. Identification still scores.
+    """
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries, annotation_mode="roster_only")
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    score_head_to_head(run_dir)
+    frames = json.loads((run_dir / "score" / "frames.json").read_text())
+    detection_cells = [
+        cell
+        for cell in frames["cells"]
+        if str(cell.get("cell", "")).startswith("detection_")
+        or str(cell.get("metric", "")).startswith("detection")
+    ]
+    assert detection_cells, "roster_only detection must surface a refusal, not disappear"
+    for cell in detection_cells:
+        assert cell.get("refused") is True
+        assert cell.get("invariant") == "detection_refuses_roster_only"
+        assert cell.get("value") is None
+        assert cell.get("precision") is None
+        assert cell.get("recall") is None
+        assert cell.get("true_positives") is None
+    primary = _cells(run_dir, PRIMARY)
+    assert primary
+    for cell in primary:
+        assert cell.get("refused") is True
+        assert cell.get("invariant") == "detection_refuses_roster_only"
+    id_recall = _cells(run_dir, "identification_recall@frame_e2e/label_map_primary")
+    assert id_recall
+    for cell in id_recall:
+        assert cell.get("refused") is not True
+        assert cell.get("true_positives") is not None
+
+
+def test_roster_only_accepted_set_has_empty_detection_scoring_set(tmp_path: Path) -> None:
+    """Document-level roster_only must empty detection_scoring_set.
+
+    TEST-15: entry-level is_detection_exhaustive (face_count == len(boxes))
+    would populate the set even though every detection cell is refused.
+    """
+    from scripts.bench.score_report import compute_accepted_set
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[_box()]) for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries, annotation_mode="roster_only")
+    ids = [_pred(1), _pred(2)]
+    _write_leg(run_dir, A_STACK, ids, [1, 2])
+    _write_leg(run_dir, B_STACK, ids, [1, 2])
+    score_head_to_head(run_dir)
+    accepted = compute_accepted_set(run_dir)
+    assert accepted.detection_scoring_set == []
+    assert accepted.detection_scoring_set_size == 0
+    frames = json.loads((run_dir / "score" / "frames.json").read_text())
+    assert frames["detection_scoring_set_size"] == 0
+    written = json.loads((run_dir / "score" / "accepted_set.json").read_text())
+    assert written["detection_scoring_set_size"] == 0

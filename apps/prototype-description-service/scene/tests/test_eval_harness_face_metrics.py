@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_assignment import FaceDecision
+from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
     UNLABELED_COHORT_KEY,
@@ -36,7 +37,7 @@ def test_detection_micro_counts():
         ImageDetection(image="b.jpg", pred_faces=3, labeled_faces=2),  # 1 FP
         ImageDetection(image="c.jpg", pred_faces=1, labeled_faces=2),  # 1 FN
     ]
-    result = detection_pr(items)
+    result = detection_pr(items, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.true_positives == 5
     assert result.false_positives == 1
     assert result.false_negatives == 1
@@ -46,49 +47,113 @@ def test_detection_micro_counts():
 
 def test_detection_zero_face_corpus_has_null_precision():
     items = [ImageDetection(image="glacier.jpg", pred_faces=0, labeled_faces=0)]
-    result = detection_pr(items)
+    result = detection_pr(items, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.precision is None  # undefined, never 1.0
     assert result.recall is None
 
 
 def test_detection_spurious_faces_on_empty_image():
     items = [ImageDetection(image="glacier.jpg", pred_faces=2, labeled_faces=0)]
-    result = detection_pr(items)
+    result = detection_pr(items, annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.precision == 0.0
 
 
-def test_matched_faces_is_optional_last_field():
-    import dataclasses
+def test_detection_pr_raises_against_roster_only():
+    """Negative: detection scoring against a roster_only manifest raises."""
+    items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=1)]
+    with pytest.raises(ManifestError, match="detection_pr refuses roster_only") as exc_info:
+        detection_pr(items, annotation_mode="roster_only")
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+    assert "false positives" in str(exc_info.value)
 
-    fields = [f.name for f in dataclasses.fields(ImageDetection)]
-    assert fields[-1] == "matched_faces"
-    row = ImageDetection(image="a.jpg", pred_faces=3, labeled_faces=2)
-    assert row.matched_faces is None
+
+def test_detection_pr_exhaustive_still_counts():
+    """Positive pair: exhaustive mode still computes detection P/R."""
+    items = [ImageDetection(image="a.jpg", pred_faces=2, labeled_faces=2)]
+    result = detection_pr(items, annotation_mode=AnnotationMode.EXHAUSTIVE)
+    assert result.true_positives == 2
+    assert result.false_positives == 0
 
 
 @pytest.mark.parametrize(
-    ("matched", "ok", "fp", "fn"),
+    ("kwargs", "invariant"),
     [
-        (0, True, 3, 2),
-        (2, True, 1, 0),
-        (3, False, None, None),
-        (-1, False, None, None),
-        (None, True, 1, 0),
+        ({}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": None}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": ""}, ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE),
+        ({"annotation_mode": "foo"}, ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE),
+        ({"annotation_mode": "EXHAUSTIVE"}, ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE),
     ],
+    ids=["omit", "None", "empty-str", "unrecognised-foo", "EXHAUSTIVE-upper"],
 )
-def test_matched_faces_bounds_table(matched, ok, fp, fn):
-    if matched is None:
-        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
-    else:
-        item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
-    if not ok:
-        with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
-            detection_pr([item])
-        return
-    result = detection_pr([item])
-    assert result.false_positives == fp
-    assert result.false_negatives == fn
-    assert result.recall is None
+def test_detection_pr_refuses_unless_exhaustive_enum(kwargs, invariant):
+    """S2R2-02: omit / None / empty / unknown / wrong-case all refuse. No default."""
+    items = [ImageDetection(image="a.jpg", pred_faces=3, labeled_faces=1)]
+    with pytest.raises(ManifestError) as exc_info:
+        detection_pr(items, **kwargs)
+    assert exc_info.value.invariant == invariant
+
+
+def test_score_face_run_record_refuses_omitted_mode():
+    """S2R2-04: mapping without annotation_mode refuses (not fail-open)."""
+    from scripts.eval_harness.report import score_face_run_record
+
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {"manifest_sha256": "m" * 64, "head_sha": "0" * 40, "started_at": "t", "leg": "candidate"},
+        "items": [],
+    }
+    manifest = {
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "x.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Example"}],
+            }
+        ],
+    }
+    with pytest.raises(ManifestError, match="requires annotation_mode") as exc_info:
+        score_face_run_record(record, manifest)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE
+
+
+def test_score_face_run_record_raises_against_roster_only():
+    """Negative: face-bakeoff scoring refuses a roster_only manifest."""
+    from scripts.eval_harness.report import score_face_run_record
+
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "face_run_record",
+        "provenance": {"manifest_sha256": "m" * 64, "head_sha": "0" * 40, "started_at": "t", "leg": "candidate"},
+        "items": [],
+    }
+    manifest = {
+        "annotation_mode": "roster_only",
+        "roster": ["Alice Example"],
+        "entries": [
+            {
+                "path": "x.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": ["Alice Example"],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [{"x": 0.4, "y": 0.4, "w": 0.4, "h": 0.4, "name": "Alice Example"}],
+            }
+        ],
+    }
+    with pytest.raises(ManifestError, match="score_face_run_record refuses roster_only") as exc_info:
+        score_face_run_record(record, manifest)
+    assert exc_info.value.invariant == ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY
+    assert "false positives" in str(exc_info.value)
 
 
 # --- identification level (named assertions vs labeled identities) ---
@@ -743,15 +808,20 @@ def test_matched_faces_is_optional_last_field():
     ],
 )
 def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
+    """FIR-8 matched_faces bounds, including count-only (matched=None).
+
+    Count-only uses exhaustive because the arithmetic is identity-agnostic
+    TP=min(pred, labeled). Omission is not exhaustive.
+    """
     if matched is None:
         item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2)
     else:
         item = ImageDetection(image="x.jpg", pred_faces=3, labeled_faces=2, matched_faces=matched)
     if not expect_ok:
         with pytest.raises(ValueError, match="matched_faces_out_of_bounds"):
-            detection_pr([item])
+            detection_pr([item], annotation_mode=AnnotationMode.EXHAUSTIVE)
         return
-    result = detection_pr([item])
+    result = detection_pr([item], annotation_mode=AnnotationMode.EXHAUSTIVE)
     assert result.false_positives == fp
     assert result.false_negatives == fn
     assert result.false_positives >= 0

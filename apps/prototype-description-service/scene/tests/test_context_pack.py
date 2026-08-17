@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 import uuid
 
 from fastapi import FastAPI
@@ -119,21 +120,67 @@ def test_service_reports_context_used_from_adapter():
     asyncio.run(body())
 
 
-def test_route_passes_normalized_context_pack_to_adapter():
-    adapter = CapturingAdapter()
+class DescribeClientDidNotFinish(TimeoutError):
+    """Named hang: in-process ASGI portal/handler, not an HTTP socket timeout."""
+
+
+def _scene_describe_app(adapter):
     app = FastAPI()
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth()
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = lambda: None
     app.dependency_overrides[get_description_adapter] = lambda: adapter
+    return app
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/scene/describe/multipart",
-            data={"request": json.dumps({"tenant_id": TENANT_ID, "media_id": 7, "context_pack": _context_pack()})},
-            files={"image_7": ("x.jpg", IMG, "image/jpeg")},
+
+def _post_describe_bounded(app, *, timeout_s: float = 8.0):
+    """Drive /scene/describe/multipart through TestClient, fail named on stall.
+
+    Starlette TestClient is in-process ASGI (``_TestClientTransport``). It does
+    not bind a port or open an HTTP socket; ``client.post(..., timeout=)`` is
+    ignored (starlette#1108). ``with TestClient`` does call
+    ``socket.socketpair()`` to build the asyncio self-pipe — a sandbox that
+    blocks that call hangs in ``TestClient.__enter__`` until the job timeout.
+    """
+    payload = {
+        "request": json.dumps(
+            {"tenant_id": TENANT_ID, "media_id": 7, "context_pack": _context_pack()}
         )
+    }
+    files = {"image_7": ("x.jpg", IMG, "image/jpeg")}
+    box: dict = {}
+
+    def _run() -> None:
+        try:
+            with TestClient(app) as client:
+                box["response"] = client.post(
+                    "/scene/describe/multipart",
+                    data=payload,
+                    files=files,
+                )
+        except Exception as exc:  # noqa: BLE001 — re-raised on the caller thread
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, name="r6e3-testclient-describe", daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        raise DescribeClientDidNotFinish(
+            f"TestClient /scene/describe/multipart did not finish in {timeout_s}s. "
+            "This client is in-process ASGI (_TestClientTransport); it does not "
+            "bind a port or open an HTTP socket. timeout= on client.post is "
+            "ignored (starlette#1108). Hang is TestClient.__enter__ (anyio "
+            "portal → asyncio socketpair) or an ASGI handler that never returns."
+        )
+    if "error" in box:
+        raise box["error"]
+    return box["response"]
+
+
+def test_route_passes_normalized_context_pack_to_adapter():
+    adapter = CapturingAdapter()
+    response = _post_describe_bounded(_scene_describe_app(adapter))
 
     assert response.status_code == 200, response.text
     assert adapter.context == _context_pack()

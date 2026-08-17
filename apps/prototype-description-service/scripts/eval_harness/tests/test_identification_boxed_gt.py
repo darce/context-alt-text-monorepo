@@ -470,11 +470,19 @@ def _audience_mixed_boxing() -> tuple[dict, list[dict]]:
 
 
 def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
-    """S2R4-02 / S2R5-03: LOCAL refuses the unfiltered corpus.
+    """S2R4-02: LOCAL refuses the unfiltered corpus, and PUBLIC must too.
 
-    PUBLIC is a different estimand. The publishable boxed sibling is scored
-    on that population, and the artifact declares it. S2R4-02's unfiltered
-    overlay used to over-refuse a metric the public subset supports honestly.
+    VLM6-DELTA-16 (superseding S2R5-03 on this test): build_reports now
+    scores the full corpus once and only post-score redacts for PUBLIC
+    (report.py::build_reports docstring, VLM6-R3-03 — "NEVER reuse
+    Audience.PUBLIC / _filter_for_public_audience [for faces], that zeros
+    the unknown-rejection gate"). A private/unboxed sibling entry does not
+    silently make identification "computable" for PUBLIC by re-scoring on a
+    filtered population — that re-score-per-audience design was exactly
+    what VLM6-R3-03 reverted. PUBLIC inherits LOCAL's refusal; only
+    identity-bearing detail and non-publishable per_image rows are redacted
+    for display (see also VLM6-DELTA-11 parity fix in
+    test_eval_harness_report.py).
     """
     record, entries = _audience_mixed_boxing()
     local_json, _local_md = build_reports(record, entries, audience=Audience.LOCAL)
@@ -484,31 +492,39 @@ def test_public_filter_does_not_make_unboxed_sibling_computable() -> None:
     public_ident = public_doc["faces"]["identification"]
     assert local_ident["refused"] is True
     assert local_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
-    assert public_ident.get("refused") is not True
-    assert public_ident["precision"] == 1.0
-    assert public_ident["recall"] == 1.0
+    assert public_ident["refused"] is True
+    assert public_ident["invariant"] == ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS
+    assert public_ident["precision"] is None
+    assert public_ident["recall"] is None
     redaction = public_doc["redaction"]
     assert redaction["audience"] == "public"
     assert redaction["total_items"] == 2
     assert redaction["withheld_items"] == 1
     estimand = public_doc["estimand"]
     assert estimand["population"] == "publishable_items"
-    assert estimand["resolved_on"] == "publishable_items"
-    assert estimand["n_items"] == 1
-    assert estimand["n_entries"] == 1
+    assert estimand["resolved_on"] == "full_corpus"
+    assert estimand["n_items"] == 2
+    assert estimand["n_entries"] == 2
     assert estimand["withheld_items"] == 1
     assert estimand["total_items"] == 2
     assert "estimand" in public_md
     assert "publishable_items" in public_md
-    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS not in public_md
+    # The refusal is not silently dropped by redaction — it stays visible.
+    assert ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS in public_md
 
 
 def test_public_detection_resolves_coverage_on_publishable_population() -> None:
-    """S2R5-03: private uncovered evidence must not silently change public detection.
+    """Private uncovered evidence must not silently change public detection.
 
-    LOCAL refuses uncovered face_count. PUBLIC scores the covered publishable
-    sibling and declares that the estimand is the publishable subset — the
-    opposite of resolving coverage on a different population than the check.
+    VLM6-DELTA-16 (superseding S2R5-03 on this test): LOCAL refuses
+    uncovered face_count; PUBLIC must inherit that refusal too — the full
+    corpus is scored once and only post-score redacted for PUBLIC
+    (report.py::build_reports docstring, VLM6-R3-03). A re-score restricted
+    to the publishable-only sibling would make a real detection-coverage
+    problem look resolved for public consumers just because the failing
+    (private) item was withheld from the redacted VIEW — exactly the
+    "resolving coverage on a different population than the check" failure
+    mode this test's name warns against.
     """
     public = _boxed_alice()
     public["path"] = "celebs01/alice.jpg"
@@ -552,10 +568,12 @@ def test_public_detection_resolves_coverage_on_publishable_population() -> None:
     public_det = public_doc["faces"]["detection"]
     assert local_det["refused"] is True
     assert local_det["invariant"] == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
-    assert public_det.get("refused") is not True
-    assert public_det["precision"] == 1.0
-    assert public_det["recall"] == 1.0
+    assert public_det["refused"] is True
+    assert public_det["invariant"] == ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT
+    assert public_det["precision"] is None
+    assert public_det["recall"] is None
     assert public_doc["estimand"]["population"] == "publishable_items"
-    assert public_doc["estimand"]["resolved_on"] == "publishable_items"
+    assert public_doc["estimand"]["resolved_on"] == "full_corpus"
     assert "estimand" in public_md
-    assert ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT not in public_md
+    # The refusal is not silently dropped by redaction — it stays visible.
+    assert ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT in public_md

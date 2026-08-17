@@ -38,7 +38,7 @@ from scripts.eval_harness.face_run_record import (
     validate_face_run_item,
 )
 from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
-from scripts.eval_harness.manifest import GoldenManifest
+from scripts.eval_harness.manifest import AnnotationMode, GoldenManifest, legacy_import_lineage
 from scripts.eval_harness.schema import SCHEMA, DocKind
 
 EMB_DET_TAU = 0.9999
@@ -751,7 +751,8 @@ def test_twin_pass_skips_whitespace_and_cf_only_names_as_anonymous(tmp_path: Pat
         _BoomDetector.calls = 0
         manifest = GoldenManifest.model_validate(
             {
-                "manifest_version": 2,
+                "manifest_version": 3,
+                "annotation_mode": AnnotationMode.ROSTER_ONLY.value,
                 "roster": [],
                 "entries": [
                     {
@@ -772,6 +773,11 @@ def test_twin_pass_skips_whitespace_and_cf_only_names_as_anonymous(tmp_path: Pat
                                 "h": 0.2,
                                 "name": raw_name,
                                 "source": "iptc",
+                                # VLM6-DELTA-08: FIR-11 v3 requires lineage on every
+                                # box. Predicate under test (named_box_name) reads
+                                # only .name; roster_only avoids the exhaustive
+                                # capture_session_id sentinel refusal (S2R6-01).
+                                "lineage": legacy_import_lineage(name=raw_name),
                             }
                         ],
                         "provenance": {

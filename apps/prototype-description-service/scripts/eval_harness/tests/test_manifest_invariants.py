@@ -321,6 +321,11 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
 
     man_path = tmp_path / "golden.json"
     man_path.write_text(PROVENANCED.read_text(encoding="utf-8"), encoding="utf-8")
+    # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
+    # load, mirrors cli.py::_manifest_sha).
+    from scripts.eval_harness.cli import _manifest_sha as _cli_manifest_sha
+
+    manifest_sha = _cli_manifest_sha(load_manifest(str(man_path), skip_hash_verification=True))
     record_path = tmp_path / "run.json"
     record_path.write_text(
         json.dumps(
@@ -328,7 +333,7 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                 "schema": "acx-eval/v1",
                 "kind": "run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    "manifest_sha256": manifest_sha,
                     "base_url": "x",
                     "head_sha": "0" * 40,
                     "started_at": "t",
@@ -338,7 +343,10 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                         "media_id": 101,
                         "path": "fixtures/ada_example_101.jpg",
                         "describe": {"alt_text_draft": "Ada Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Ada Example"],
+                        # Dict identity rows (greenfield rejects bare strings —
+                        # VLM6-PANEL6L-SR-01); shape mirrors
+                        # fusion_runner.py::_identity_rows.
+                        "identities": [{"name": "Ada Example", "unpositioned": True}],
                         "face_count": 1,
                         "error": None,
                     },
@@ -346,7 +354,7 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                         "media_id": 102,
                         "path": "fixtures/bea_example_102.jpg",
                         "describe": {"alt_text_draft": "Bea Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Bea Example"],
+                        "identities": [{"name": "Bea Example", "unpositioned": True}],
                         "face_count": 1,
                         "error": None,
                     },

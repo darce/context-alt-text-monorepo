@@ -16,7 +16,7 @@ from scripts.eval_harness.cli import (
     prune_out_dir,
 )
 from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
+from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
 
 _TEST_LINEAGE_NAMED = {
@@ -112,7 +112,6 @@ def test_fetch_persists_image_dimensions_from_pixels(tmp_path):
     from PIL import Image
 
     from scripts.eval_harness.cli import fetch_run_record
-    from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest
 
     images = tmp_path / "mock_images"
     images.mkdir()
@@ -120,7 +119,8 @@ def test_fetch_persists_image_dimensions_from_pixels(tmp_path):
     Image.new("RGB", (64, 48), color=(10, 20, 30)).save(buf, format="PNG")
     (images / "img-1.jpg").write_bytes(buf.getvalue())
     manifest = GoldenManifest(
-        manifest_version=2,
+        manifest_version=3,
+        annotation_mode=AnnotationMode.ROSTER_ONLY,
         roster=["Alice Example"],
         entries=[
             GoldenEntry(
@@ -694,7 +694,7 @@ _W1_PUBLIC_NAME = "Barack Obama"
 _W1_INTERNAL_BASE_URL = "https://acx-backend.internal.example.ts.net"
 
 
-def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
+def _write_score_manifest(tmp_path, entries, roster, name="golden.json", *, annotation_mode="roster_only"):
     """Write a v3 golden manifest and return (path, real score-time sha256).
 
     Fills the v3-only requirements (``annotation_mode``, per-entry
@@ -702,6 +702,15 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     defaults when a caller's fixture omits them, so existing call sites do
     not each have to be hand-migrated (VLM6-PANEL6L-rvM-01: ``load_manifest``
     is v3-only, ``manifest_version`` 2 is no longer accepted here).
+
+    ``annotation_mode="exhaustive"`` (VLM6-DELTA-05) is required for a caller
+    that wants face_detection.precision/recall to be measurable: roster_only
+    structurally refuses detection (report.py), which score_vacuous_category_
+    labels correctly still counts as a non-observed category — a "clean pass"
+    fixture must therefore declare exhaustive coverage (box count ==
+    face_count per entry) rather than relying on the roster_only default.
+    ``_TEST_LINEAGE_NAMED``'s capture_session_id already satisfies the
+    exhaustive-only capture-session invariant.
     """
     from scripts.eval_harness.cli import _manifest_sha
     from scripts.eval_harness.manifest import load_manifest
@@ -726,10 +735,10 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
     ]
     payload: dict = {
         "manifest_version": 3,
+        "annotation_mode": annotation_mode,
         "roster": roster,
         "entries": normalized_entries,
     }
-    payload.setdefault("annotation_mode", "roster_only")
     manifest_path.write_text(json.dumps(payload))
     # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
@@ -894,7 +903,14 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
         }
     )
     assert len(entries) >= SCORE_PASS_MIN_SCORED_IMAGES
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    # VLM6-DELTA-05: every entry here is face_count=1 with exactly one named
+    # face_box (_single_name_measurable_fields), so exhaustive coverage holds.
+    # roster_only would structurally refuse detection and leave
+    # face_detection.precision/recall permanently None -> category-vacuity
+    # (not_ready), contradicting the "clean successful score" contract above.
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, roster, annotation_mode="exhaustive"
+    )
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -1272,7 +1288,12 @@ def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
             }
         )
     assert len(entries) >= SCORE_PASS_MIN_SCORED_IMAGES
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    # VLM6-DELTA-05: every entry here is face_count=1 with exactly one named
+    # face_box (_single_name_measurable_fields), so exhaustive coverage holds.
+    # roster_only would structurally refuse detection and leave
+    # face_detection.precision/recall permanently None -> category-vacuity
+    # (not_ready), contradicting this helper's "clean pass" contract.
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, annotation_mode="exhaustive")
     record_path = tmp_path / f"{stem}.json"
     record_path.write_text(
         json.dumps(
@@ -1734,7 +1755,17 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports for determinism baseline; never opens image bytes.
     manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
-    entries = [e.model_dump() for e in manifest.entries]
+    # VLM6-DELTA-06: mirror _check_score_determinism_cross_process's stamp-fill
+    # (S2R6E-04) so this locally-built base_json matches what the real parent
+    # baseline now produces — otherwise a missing per-entry annotation_mode
+    # stamp here would desync from the fixture's stamped exhaustive mode and
+    # falsely fail this banner-contamination guard for an unrelated reason.
+    entries = []
+    for e in manifest.entries:
+        row = e.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
     ignore_list = cli_mod._load_ignore_list(record_path.parent)
     base_json, base_md = build_reports(
         record,
@@ -2498,6 +2529,11 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     entries[-1]["must_right"] = []
     entries[-1]["present_identities"] = []
     entries[-1]["face_boxes"] = []  # no named GT on the empty entry
+    # VLM6-DELTA-05: exhaustive coverage requires n_boxes == face_count per
+    # entry; the empty entry has no named GT, so it must also declare zero
+    # faces present (not the corpus default of 1) to stay a valid exhaustive
+    # manifest rather than an under-boxed one.
+    entries[-1]["face_count"] = 0
     entries[-1]["spatial_facts"] = [
         {
             "subject": "a human",
@@ -2506,7 +2542,11 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
         }
     ]
     assert entries[-1]["easy_wrong"]  # independent vacuity still non-empty
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    # VLM6-DELTA-05: face_detection.precision/recall must be measurable for an
+    # honest pass_ungated verdict (roster_only structurally refuses detection).
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, roster, annotation_mode="exhaustive"
+    )
     record = _score_run_record(
         entries,
         # Avoid the token "person" — synthetic easy_wrong names are "Person N"
@@ -2554,7 +2594,11 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
 def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     """F1b-2: report + verdict stamp --rubric-gate so skip is never a silent pass."""
     roster, entries = _corpus_entries(6, with_rubric=True)
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster)
+    # VLM6-DELTA-05: exhaustive so face_detection.precision/recall are
+    # measurable (honest PASS, not category-vacuity not_ready).
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path, entries, roster, annotation_mode="exhaustive"
+    )
     record = _score_run_record(
         entries,
         # Assert placement phrase so placement is measurable (honest pass).
@@ -2969,23 +3013,69 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
     return _GOLDEN_SEED, record, ignore_pairs
 
 
+def _boxed_golden_manifest(tmp_path, *, name: str = "golden-boxed.json") -> tuple[Path, str]:
+    """Boxed roster_only variant of _GOLDEN_SEED (VLM6-DELTA-07).
+
+    The checked-in golden.json is intentionally unboxed (0/37 face_boxes,
+    README-documented) so identification is structurally refused
+    (identification_refuses_unboxed_identity_claims) — under FIR-11 a refused
+    identification block always stamps wrong_names=None, which makes
+    face_wrong_name_rate() read 0.0 regardless of what the run-record claims,
+    so the wrong-name floor gate can never fire against the real unboxed
+    fixture. Tests that need the floor gate itself to be measurable require a
+    manifest with a named face_box per present_identities entry so
+    require_boxed_identification_gt() is satisfied. This helper builds that
+    variant into tmp_path without touching the checked-in seed file or the
+    shared _real_golden_good_record/_real_golden_wrong_name_record helpers
+    (used unboxed by 15+ other, unrelated passing tests). roster_only is kept
+    (not exhaustive) — these tests exit at the wrong-name-floor gate, which
+    fires before category-vacuity/detection-refusal is ever consulted, so
+    detection staying refused under roster_only is immaterial here.
+    """
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    raw = json.loads(_GOLDEN_SEED.read_text())
+    boxed = copy.deepcopy(raw)
+    for entry in boxed["entries"]:
+        names = list(entry.get("present_identities") or [])
+        lineage = dict(_TEST_LINEAGE_NAMED)
+        lineage["decision"] = "named"
+        entry["face_boxes"] = [
+            {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": n, "source": "iptc", "lineage": lineage}
+            for n in names
+        ]
+    manifest_path = tmp_path / name
+    manifest_path.write_text(json.dumps(boxed))
+    return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
+
+
 def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch):
     """F1-5 (a): ignore-list covering 100% wrong names must still fail floor.
 
     Pre-fix: ignore-list moved every pair into ignored_wrong_names → rate=0,
     verdict=pass, exit 0. Gate must count live + ignored; presentation split
     remains (ignored_wrong_names populated, live wrong_names empty).
+
+    VLM6-DELTA-07: the real golden.json is unboxed, so identification is
+    structurally refused there and wrong_names is stamped None (never
+    measurable) — a boxed manifest variant is required to make this floor
+    gate itself reachable; see _boxed_golden_manifest.
     """
     from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
 
-    golden, record, ignore_pairs = _real_golden_wrong_name_record()
+    _golden, record, ignore_pairs = _real_golden_wrong_name_record()
     assert len(ignore_pairs) == 37
+    boxed_manifest, boxed_sha = _boxed_golden_manifest(tmp_path)
+    record = {**record, "provenance": {**record["provenance"], "manifest_sha256": boxed_sha}}
     record_path = tmp_path / "run-ignore-defeat.json"
     record_path.write_text(json.dumps(record))
     (tmp_path / "ignore-list.json").write_text(json.dumps({"wrong_names": ignore_pairs}))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
-        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+        main(["score", "--manifest", str(boxed_manifest), "--run-record", str(record_path)])
     msg = str(excinfo.value)
     assert excinfo.value.code != 0
     assert "wrong-name floor" in msg.lower()
@@ -3123,15 +3213,27 @@ def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch)
     on 0/37, so the honest artifact is not_ready (not pass). OBS-04: process
     exit is non-zero to match the artifact. A genuine pass control lives on
     measurable synthetic fixtures (e.g. test_cmd_score_exits_zero_...).
+
+    VLM6-DELTA-06 (FIR-11 canonical gate ordering): the real golden fixture is
+    roster_only + 0/37 boxed, so BOTH detection and identification are
+    structurally refused, not merely vacuous. Per S2R5-05 (see
+    test_cli_exit_gates.py), an unconsented refusal reaches
+    raise_if_unconsented_refusals ahead of the category-vacuity gate
+    whenever identification is refused — the exit is the per-metric refused-
+    metric(s) message (exit 3), not a category-vacuity restatement. The
+    persisted artifact is unaffected (report.py writes the scored document
+    before any exit gate runs), so verdict/positional-vacuity assertions
+    below still hold against the same on-disk not_ready report.
     """
+    from scripts.eval_harness.cli import REFUSED_METRIC_EXIT_CODE
+
     golden, record = _real_golden_good_record()
     record_path = tmp_path / "run-control-not-ready.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
-    assert excinfo.value.code != 0
-    assert "category-vacuity" in str(excinfo.value).lower() or "not_ready" in str(excinfo.value).lower()
+    assert excinfo.value.code == REFUSED_METRIC_EXIT_CODE
     report = json.loads(record_path.with_name("run-control-not-ready-report.json").read_text())
     assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
@@ -3317,13 +3419,20 @@ def test_score_persisted_verdict_fail_must_right_real_golden(tmp_path, monkeypat
 
 
 def test_score_persisted_verdict_fail_wrong_name_floor_real_golden(tmp_path, monkeypatch):
-    """F1d-1: 100% wrong names → on-disk fail + wrong_name_rate reason."""
-    golden, record, _ignore = _real_golden_wrong_name_record()
+    """F1d-1: 100% wrong names → on-disk fail + wrong_name_rate reason.
+
+    VLM6-DELTA-07: boxed manifest variant — see _boxed_golden_manifest;
+    the unboxed real golden refuses identification, which would leave
+    wrong_name_rate stamped 0.0 and never reach this gate.
+    """
+    _golden, record, _ignore = _real_golden_wrong_name_record()
+    boxed_manifest, boxed_sha = _boxed_golden_manifest(tmp_path)
+    record = {**record, "provenance": {**record["provenance"], "manifest_sha256": boxed_sha}}
     record_path = tmp_path / "run-wn-floor.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
-        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+        main(["score", "--manifest", str(boxed_manifest), "--run-record", str(record_path)])
     assert excinfo.value.code != 0
     assert "wrong-name floor" in str(excinfo.value).lower()
     report = json.loads(record_path.with_name("run-wn-floor-report.json").read_text())
@@ -3429,12 +3538,17 @@ def test_score_one_wrong_name_real_golden_exits_nonzero(tmp_path, monkeypatch):
 
     1/37 ≈ 0.0270 does not round to 0.0 — this is the non-scaled real-corpus case
     that must still fail. Discrimination control remains the clean 37-item pass.
+
+    VLM6-DELTA-07: boxed manifest variant — see _boxed_golden_manifest; the
+    unboxed real golden refuses identification, which would leave
+    wrong_name_rate stamped 0.0 and never reach this gate.
     """
     import copy
 
     from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
 
-    golden, record = _real_golden_good_record()
+    _golden, record = _real_golden_good_record()
+    boxed_manifest, boxed_sha = _boxed_golden_manifest(tmp_path)
     record = copy.deepcopy(record)
     # Corrupt one identity only; captions stay Must-Right-clean.
     target = record["items"][0]
@@ -3458,11 +3572,12 @@ def test_score_one_wrong_name_real_golden_exits_nonzero(tmp_path, monkeypatch):
                 "unpositioned": False,
             }
         ]
+    record["provenance"] = {**record["provenance"], "manifest_sha256": boxed_sha}
     record_path = tmp_path / "run-one-wrong.json"
     record_path.write_text(json.dumps(record))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
-        main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
+        main(["score", "--manifest", str(boxed_manifest), "--run-record", str(record_path)])
     msg = str(excinfo.value)
     assert excinfo.value.code != 0
     assert "wrong-name floor" in msg.lower()
@@ -3485,6 +3600,10 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
     SYNTHETIC SCALED FIXTURE — 20001 real images do not exist in golden.json.
     Pre-fix gated on round(rate, 4) so 1/20001 → 0.0 and 0.0 > 0.0 was false
     (exit 0). Post-fix gates on wrong-name count when floor is 0.0 (TEST-15).
+
+    VLM6-DELTA-07: each entry needs a named face_box for its present_identities
+    name or identification is structurally refused (unboxed identity claims),
+    which stamps wrong_names=None and never reaches this gate.
     """
     from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
     from scripts.eval_harness.schema import SCHEMA, DocKind
@@ -3509,6 +3628,9 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
                 "must_right": [name],
                 "easy_wrong": [other],
                 "policy": {"recognition_enabled": True},
+                "face_boxes": [
+                    {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": name, "source": "iptc"}
+                ],
             }
         )
         # Exactly one wrong name on image 0; the rest are correct.
@@ -3966,7 +4088,8 @@ def test_face_bakeoff_passes_images_dir_not_skip(tmp_path, monkeypatch):
     man_path.write_text(
         json.dumps(
             {
-                "manifest_version": 2,
+                "manifest_version": 3,
+                "annotation_mode": "roster_only",
                 "roster": ["Alice Q"],
                 "entries": [
                     {
@@ -5062,7 +5185,19 @@ def _certified_caption_expect(
 
     record = json.loads(Path(record_path).read_text(encoding="utf-8"))
     manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
-    entries = [e.model_dump() for e in manifest.entries]
+    # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04) so this
+    # "certified expect" is built from the same entries the cross-process
+    # determinism guard now produces (cli.py _cmd_score /
+    # _check_score_determinism_cross_process) — otherwise a missing
+    # per-entry annotation_mode stamp here vs. a filled one there is a
+    # spurious ANCHOR_MISMATCH that masks the actual integrity gate under
+    # test (aborted-record / zero-scored / truncation / manifest-mismatch).
+    entries = []
+    for e in manifest.entries:
+        row = e.model_dump()
+        if row.get("annotation_mode") is None:
+            row["annotation_mode"] = manifest.annotation_mode
+        entries.append(row)
     json_doc, _md = build_reports(
         record,
         entries,

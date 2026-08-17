@@ -165,6 +165,39 @@ SCORE_GATE_PREFIXES: frozenset[str] = frozenset(
 # Back-compat alias (schema hard-key token without trailing colon was historical).
 _SCORE_SCHEMA_ERROR_TOKEN = SCORE_GATE_PREFIX_SCHEMA_ERROR.rstrip(":")
 
+# VLM6-GATE-INT-01: category-vacuity reason prefixes (see
+# report.py::build_score_vacuity_reasons) that are pure restatements of a
+# refused identification block — raise_if_unconsented_refusals already reports
+# these per-metric, so the category-vacuity gate must not re-hard-fail on them
+# when identification refused. Never used to suppress an unrelated category.
+_IDENTIFICATION_DERIVED_VACUITY_PREFIXES = (
+    "category-vacuity: positional",
+    "category-vacuity: identity_ordering",
+    "category-vacuity: face_identification.precision",
+    "category-vacuity: face_identification.recall",
+)
+# Detection-derived: a restatement of the refusal only when detection *also*
+# refused (S2R5-13 case B keeps a detection-only refusal surgical).
+_DETECTION_DERIVED_VACUITY_PREFIXES = (
+    "category-vacuity: face_detection.precision",
+    "category-vacuity: face_detection.recall",
+)
+
+
+def _is_identification_restatement_reason(reason: str, *, detection_refused: bool) -> bool:
+    """True when ``reason`` only restates a refused identification/detection.
+
+    Every other category-vacuity or sample-size reason (placement,
+    fabricated_fact, caption categories, ...) is independent of face refusal
+    state and must survive unconditionally (VLM6-GATE-INT-01).
+    """
+    text = str(reason)
+    if text.startswith(_IDENTIFICATION_DERIVED_VACUITY_PREFIXES):
+        return True
+    if detection_refused and text.startswith(_DETECTION_DERIVED_VACUITY_PREFIXES):
+        return True
+    return False
+
 
 class ScoreGateError(RuntimeError):
     """A score integrity/quality gate failed after reports were written (B-10).
@@ -1899,28 +1932,47 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"{SCORE_GATE_PREFIX_QUALITY_FLOOR} {reason_hint} "
             f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {json_path})"
         )
-    # VLM6-DELTA-03 (category-vacuity / identification-refused interaction):
-    # a refused identification block (boxed GT missing / unboxed roster) drags
-    # several categories (positional, identity_ordering, wrong-name floor) into
-    # not_ready simultaneously — the category-vacuity message would be a noisy
+    # VLM6-DELTA-03 / VLM6-GATE-INT-01 (category-vacuity / identification-refused
+    # interaction): a refused identification block (boxed GT missing / unboxed
+    # roster) drags identification-derived categories (positional,
+    # identity_ordering, face_identification.*) into not_ready — the
+    # category-vacuity message for *those* categories would be a noisy
     # restatement of the same refusal already reported, per-metric, by
-    # raise_if_unconsented_refusals below. Detection-only refusal (roster_only
-    # mode, identification still boxed/measurable) stays surgical, so
-    # category-vacuity keeps firing there (S2R5-13 case B, verified live: exit
-    # code is the category-vacuity string). Skipping here for the
-    # identification-refused case is required so --allow-refused stays
-    # per-metric (S2R5-05): naming only one of two refused metrics must still
-    # reach raise_if_unconsented_refusals's per-metric message/exit 3, and
-    # naming both must reach its clean-return exit 0 — a category-vacuity
-    # gate blind to consent state would hard-fail both cases identically.
-    if verdict_value == ScoreVerdict.NOT_READY.value and not ident_block.get("refused"):
+    # raise_if_unconsented_refusals below. A structurally refused detection
+    # (roster_only) does the same for face_detection.* — but only when
+    # detection *also* refused; detection-only refusal (roster_only mode,
+    # identification still boxed/measurable) stays surgical, so
+    # face_detection.* keeps firing there (S2R5-13 case B). Narrowing the
+    # exemption to identification/detection-derived reasons — instead of
+    # skipping the whole gate whenever identification refuses — is required so
+    # an UNRELATED vacuous category (sample-size, placement, fabricated_fact,
+    # caption categories) still hard-fails even when identification is
+    # structurally refused (VLM6-GATE-INT-01: skipping the entire gate let a
+    # not_ready artifact with e.g. sample-size/placement vacuity exit 0).
+    # --allow-refused must also stay per-metric (S2R5-05): naming only one of
+    # two refused metrics must still reach raise_if_unconsented_refusals's
+    # per-metric message/exit 3, and naming both must reach its clean-return
+    # exit 0 — a category-vacuity gate blind to consent state would hard-fail
+    # both cases identically.
+    if verdict_value == ScoreVerdict.NOT_READY.value:
         reasons = list((scored.get("verdict") or {}).get("reasons") or [])
-        reason_hint = "; ".join(reasons[:3]) if reasons else "category claim units π=0"
-        _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_CATEGORY_VACUITY} "
-            f"verdict={ScoreVerdict.NOT_READY.value} "
-            f"({reason_hint}; not adoption-eligible; see {json_path})"
-        )
+        if ident_block.get("refused"):
+            detection_block = (scored.get("faces") or {}).get("detection") or {}
+            detection_refused = bool(detection_block.get("refused"))
+            reasons = [
+                r
+                for r in reasons
+                if not _is_identification_restatement_reason(
+                    r, detection_refused=detection_refused
+                )
+            ]
+        if reasons:
+            reason_hint = "; ".join(reasons[:3])
+            _score_gate_fail(
+                f"{SCORE_GATE_PREFIX_CATEGORY_VACUITY} "
+                f"verdict={ScoreVerdict.NOT_READY.value} "
+                f"({reason_hint}; not adoption-eligible; see {json_path})"
+            )
     raise_if_unconsented_refusals(
         scored, getattr(args, "allow_refused", None), command="score"
     )

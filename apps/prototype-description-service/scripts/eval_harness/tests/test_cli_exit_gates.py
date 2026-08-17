@@ -261,7 +261,11 @@ def test_allow_refused_detection_does_not_consent_to_identification(
     import scripts.eval_harness.cli as cli_mod
     from scripts.eval_harness.manifest import ScoreInvariant
 
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    # VLM6-GATE-INT-01: n=5 clears SCORE_PASS_MIN_SCORED_IMAGES so the narrowed
+    # category-vacuity gate (which now suppresses only identification/detection
+    # restatement reasons) does not also hard-fail on sample_size ahead of the
+    # refusal-consent path these tests target.
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(
@@ -287,7 +291,11 @@ def test_allow_refused_identification_does_not_consent_to_detection(
     import scripts.eval_harness.cli as cli_mod
     from scripts.eval_harness.manifest import ScoreInvariant
 
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    # VLM6-GATE-INT-01: n=5 clears SCORE_PASS_MIN_SCORED_IMAGES so the narrowed
+    # category-vacuity gate (which now suppresses only identification/detection
+    # restatement reasons) does not also hard-fail on sample_size ahead of the
+    # refusal-consent path these tests target.
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(
@@ -312,7 +320,11 @@ def test_allow_refused_both_metrics_exits_zero(
 ) -> None:
     import scripts.eval_harness.cli as cli_mod
 
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    # VLM6-GATE-INT-01: n=5 clears SCORE_PASS_MIN_SCORED_IMAGES so the narrowed
+    # category-vacuity gate (which now suppresses only identification/detection
+    # restatement reasons) does not also hard-fail on sample_size ahead of the
+    # refusal-consent path these tests target.
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(
         [
@@ -333,7 +345,11 @@ def test_bare_allow_refused_is_equivalent_to_naming_every_metric(
     """Bare --allow-refused must stay working and name every metric in help."""
     import scripts.eval_harness.cli as cli_mod
 
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False)
+    # VLM6-GATE-INT-01: n=5 clears SCORE_PASS_MIN_SCORED_IMAGES so the narrowed
+    # category-vacuity gate (which now suppresses only identification/detection
+    # restatement reasons) does not also hard-fail on sample_size ahead of the
+    # refusal-consent path these tests target.
+    man_path, rec_path = _write_score_inputs(tmp_path, mode="roster_only", boxed=False, n=5)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(
         [

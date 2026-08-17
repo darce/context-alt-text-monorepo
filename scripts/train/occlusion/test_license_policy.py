@@ -15157,6 +15157,18 @@ class TestRv301SepAlignedMidExceptionFailClosed:
         # extra-word glue is the same class, not a real yolox tag
         # (_EXCEPTION_FAMILY_COMPACT_TAGS["yolox"] is only s/m/l/x).
         ("xyoloxextra_v8", "yolox_unknown_residual"),
+        # FIR-7-PANEL7L-rv2D-01: branch 1 used a GLOBAL
+        # _HONEST_YOLO_COMPACT_REMS set (any exception family's honest
+        # tag letter) instead of scoping to the matched seed family's
+        # own _EXCEPTION_FAMILY_COMPACT_TAGS entry. yolox's legit
+        # compact tags are only s/m/l/x; yolos's are none. These used
+        # to blanket-admit via that unscoped disjunct.
+        ("xyoloxn_v8", "yolox_unknown_residual"),
+        ("xyoloxv7_v8", "yolox_unknown_residual"),
+        ("xyoloxcls_v8", "yolox_unknown_residual"),
+        ("xyoloxobb_v8", "yolox_unknown_residual"),
+        ("xyolosn_v8", "yolos_unknown_residual"),
+        ("xyolosv8_v8", "yolos_unknown_residual"),
     )
 
     @pytest.mark.parametrize("token", DENY)

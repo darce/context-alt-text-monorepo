@@ -5051,8 +5051,12 @@ def _mid_exception_r22_sep_rem_fence(
     legitimate known tag, not arbitrary alnum debris (FIR-7-PANEL7L-rvA-01:
     ``xyoloxz_v8`` / ``xyoloxevil_v8`` / ``xyolosz_v8`` / ``xppyoloz_v8``
     are junk glue and must fail-closed, not blanket-admit on
-    ``nxt.isalnum()``). ``xyoloxs_v8`` is also a single honest-yolo rem
-    after a compact-tag spelling (``yoloxs`` + ``v8``). Separator-aligned
+    ``nxt.isalnum()``). "Legitimate known tag" is scoped to the matched
+    seed family's own compact-tag set (FIR-7-PANEL7L-rv2D-01: the global,
+    unscoped ``_HONEST_YOLO_COMPACT_REMS`` set previously let any family
+    admit any other family's tag letters — ``xyoloxn_v8`` /
+    ``xyoloxcls_v8`` / ``xyolosn_v8`` admitted even though ``n`` / ``cls``
+    are not legitimate yolox/yolos compact tags). Separator-aligned
     multi-segment rem (``xyolox_z_v8``) is never fenced — last-segment
     honesty is not a skip (FIR-7-PANEL7D-rv3-01 / SECD-05 / CARD-26).
     """
@@ -5076,7 +5080,6 @@ def _mid_exception_r22_sep_rem_fence(
                     glued in _EXCEPTION_FAMILY_COMPACT_TAGS.get(
                         seed_c, frozenset()
                     )
-                    or glued in _HONEST_YOLO_COMPACT_REMS
                     or _is_legitimate_exception_compact_spelling(
                         spelling + glued
                     )

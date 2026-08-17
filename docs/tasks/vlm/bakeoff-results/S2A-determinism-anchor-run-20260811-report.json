@@ -25,118 +25,22 @@
   "eval_mode": "standard",
   "faces": {
     "detection": {
-      "fn": 6,
-      "fp": 3,
-      "precision": 0.9482758620689655,
-      "recall": 0.9016393442622951,
-      "tp": 55
+      "fn": null,
+      "fp": null,
+      "invariant": "detection_refuses_roster_only",
+      "precision": null,
+      "recall": null,
+      "refused": true,
+      "tp": null
     },
     "identification": {
-      "evaluated_images": 39,
-      "excluded_images": [],
-      "ignored_wrong_names": [],
-      "macro_precision": 0.7142857142857143,
-      "macro_recall": 0.9029166666666667,
-      "per_identity": {
-        "Bea Burke": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 2
-        },
-        "Caitlin Weaver": {
-          "fn": 3,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 0.8125,
-          "tp": 13
-        },
-        "Cristina Quintana": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Daniel Arce": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Ellyn Heald": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Erika Hansen Miller": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 1
-        },
-        "Fixture-Wrong-18": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
-        },
-        "Fixture-Wrong-27": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
-        },
-        "Fixture-Wrong-36": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
-        },
-        "Fixture-Wrong-9": {
-          "fn": 0,
-          "fp": 1,
-          "precision": 0.0,
-          "recall": null,
-          "tp": 0
-        },
-        "Kirstie Mccarrel": {
-          "fn": 1,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 0.8,
-          "tp": 4
-        },
-        "Liam Maloney": {
-          "fn": 0,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 1.0,
-          "tp": 2
-        },
-        "Maria Correonero": {
-          "fn": 2,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 0.75,
-          "tp": 6
-        },
-        "Ryann Wiseman": {
-          "fn": 1,
-          "fp": 0,
-          "precision": 1.0,
-          "recall": 0.6666666666666666,
-          "tp": 2
-        }
-      },
+      "evaluated_images": null,
+      "excluded_images": null,
+      "ignored_wrong_names": null,
+      "invariant": "identification_refuses_unboxed_identity_claims",
+      "macro_precision": null,
+      "macro_recall": null,
+      "per_identity": {},
       "positional": {
         "compared_images": 1,
         "evaluable": true,
@@ -190,27 +94,11 @@
         "swap_images": 1,
         "vacuity_signal": null
       },
-      "precision": 0.8918918918918919,
-      "recall": 0.825,
-      "true_rejections": 7,
-      "wrong_names": [
-        [
-          "mock_images/ccqw-purple.jpg",
-          "Fixture-Wrong-9"
-        ],
-        [
-          "mock_images/k.mcc-1.jpg",
-          "Fixture-Wrong-18"
-        ],
-        [
-          "mock_images/maria-party.jpg",
-          "Fixture-Wrong-27"
-        ],
-        [
-          "mock_images/ryann-party.jpg",
-          "Fixture-Wrong-36"
-        ]
-      ]
+      "precision": null,
+      "recall": null,
+      "refused": true,
+      "true_rejections": null,
+      "wrong_names": null
     },
     "identity_ordering": {
       "degraded_images": 0,
@@ -1859,7 +1747,7 @@
     "generator": "scripts.eval_harness.generate_determinism_anchor",
     "head_sha": null,
     "manifest_matches_fetch": true,
-    "manifest_sha256": "4c67445152a933ecdc60914e45c75b7c580cf11ba3936e6ef46ebee996684bde",
+    "manifest_sha256": "51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7",
     "metric_backing_refusals": {
       "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
       "reference_facts": "cannot certify metric backed by 'reference_facts': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
@@ -1879,7 +1767,7 @@
     "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. Freeze corpus is golden.json + media 39 mixed-y order_degraded trap (VLM6-R2-G-01 / wG3) so labeled_y_missing_images is freeze-observable; see provenance.corpus_traps. Media 40 centre-x-tie trap (VLM6-R2-G-02) so positional_images is freeze-observable; see provenance.corpus_traps. See eval_harness/README.md § Corpus coverage boundary.",
     "predictions_source": "ground_truth_derived_fixture",
     "quality_floor_caveat": "position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate",
-    "score_manifest_sha256": "4c67445152a933ecdc60914e45c75b7c580cf11ba3936e6ef46ebee996684bde",
+    "score_manifest_sha256": "51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7",
     "started_at": null
   },
   "quality": {
@@ -2038,16 +1926,19 @@
     "mean_gated_score": 0.0,
     "must_right_failed_images": 34,
     "reasons": [
-      "wrong_name_rate=0.1026 exceeds floor=0.0 (wrong_names=4, wrong_name_images=4, assertions=4, ignored=0, scored=39)",
       "quality-floor: position_accuracy=0.0 <= floor=0.5 (critical scored slice total failure; EVAL-04 / S2-02)",
       "category-vacuity: placement — claim unit=asserted spatial_fact; claims=0 accuracy=None abstained=0 images_scored=39 (π=0 on spatial_facts; AUDIT-07)",
-      "category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)"
+      "category-vacuity: fabricated_fact — claim unit=image with reference_facts trap; fabricated_fact_rate=None images_with_traps=0 (not measurable; AUDIT-07 / S2-01)",
+      "category-vacuity: face_detection.precision (None — category not observed; S2-06)",
+      "category-vacuity: face_detection.recall (None — category not observed; S2-06)",
+      "category-vacuity: face_identification.precision (None — category not observed; S2-06)",
+      "category-vacuity: face_identification.recall (None — category not observed; S2-06)"
     ],
     "rubric_gate": "skip",
     "verdict": "fail",
-    "wrong_name_assertions": 4,
-    "wrong_name_images": 4,
-    "wrong_name_rate": 0.1026,
+    "wrong_name_assertions": 0,
+    "wrong_name_images": 0,
+    "wrong_name_rate": 0.0,
     "wrong_name_rate_floor": 0.0
   }
 }

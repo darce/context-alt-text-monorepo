@@ -5883,8 +5883,18 @@ class TestB501StructuralFamilyBoundary:
         "numba",
         # head-segment creep guards: head rem >3 / non-prefix / non-seed
         "yolodummy-seg",
-        "myyolo-seg",
         "numba-seg",
+        # FIR-7-PANEL7L-rvA-01: "myyolo-seg" moved to DENY. It folds to
+        # "myyolo_seg" (compact "myyoloseg"), which contains the *mid-
+        # token* exception spelling "yolos" (idx=2) with sep_rem "eg".
+        # "yolos"+"eg" -> "yoloseg" -> "yolo"+"seg" is the documented
+        # honest reconstitution (_residual_progressive_reconst_deny /
+        # _is_fabricated_exception_yolo_hit: "yolos"+"eg" example is
+        # explicitly "honest", not fabricated) and already denies for
+        # the idx==0 case ("yolos-eg" / "yolo-seg"). The old blanket
+        # ``nxt.isalnum()`` fence masked this reconstitution for the
+        # idx>0 (prefixed) case only; the rvA-01 fence fix un-masks it.
+        # See TestB501StructuralFamilyBoundary.test_prefixed_mid_exception_reconst_denies_myyolo_seg.
     )
 
     # yolo_nas moved to DENY (NC-weights axis, FIR-7-A6-03). Admit-side pins
@@ -5991,6 +6001,25 @@ class TestB501StructuralFamilyBoundary:
             assert result.reason is not policy.RejectionReason.DENYLISTED_PACKAGE, (
                 f"{token!r} incorrectly denylisted: {result.detail}"
             )
+
+    def test_prefixed_mid_exception_reconst_denies_myyolo_seg(self) -> None:
+        """FIR-7-PANEL7L-rvA-01: mid-token honest reconst still denies.
+
+        ``myyolo-seg`` folds to ``myyolo_seg``; the mid-token exception
+        match ``yolos`` (idx=2) leaves ``sep_rem="eg"``, and
+        ``"yolos"+"eg" -> "yoloseg" -> "yolo"+"seg"`` is the documented
+        honest reconstitution (``_residual_progressive_reconst_deny`` /
+        ``_is_fabricated_exception_yolo_hit``'s own worked example). The
+        idx==0 twin (``yolos-eg``) already denies the same way — the old
+        blanket compact-glue fence only masked the idx>0 case.
+        """
+        hit = policy._package_denylist_hit("myyolo-seg")
+        assert hit is not None, "'myyolo-seg' must hit package denylist"
+        assert hit.package_id == "yolo", (
+            f"expected 'yolo', got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model("myyolo-seg")
+        assert result.ok is False, "'myyolo-seg' door must DENY"
 
     @pytest.mark.parametrize("token", EXCEPTION_ALLOWLIST)
     def test_exception_family_admits(self, token: str) -> None:
@@ -13960,7 +13989,12 @@ class TestF20ComposedRemBoundsFailClosed:
         "ppyolo_v2",
         "yolof_r50",
         "yolos_base",
-        "xyoloxextra_v8",
+        # FIR-7-PANEL7L-rvA-01: "xyoloxextra_v8" was a mistaken
+        # over-generalization — "extra" is not a real yolox family
+        # tag (_EXCEPTION_FAMILY_COMPACT_TAGS["yolox"] is only
+        # {s, m, l, x}), so it is structurally the same junk-glue
+        # shape as "xyoloxevil_v8" and now correctly DENYs; see
+        # TestRv301SepAlignedMidExceptionFailClosed.DENY.
         "ayoloxs_tiny",
     )
 
@@ -15095,6 +15129,26 @@ class TestRv301SepAlignedMidExceptionFailClosed:
         "xyolox_s_trt",
     )
 
+    # FIR-7-PANEL7L-rvA-01: compact-glued junk (no separator between the
+    # exception seed and the debris) used to blanket-admit whenever the
+    # char right after the seed was merely alnum
+    # (``_mid_exception_r22_sep_rem_fence`` branch 1). ``(token,
+    # expected_package_id)`` — family varies per seed so the residual
+    # reason differs (yolox_/yolos_/yolof_/ppyolo_unknown_residual).
+    JUNK_GLUE_DENY: tuple[tuple[str, str], ...] = (
+        ("xyoloxz_v8", "yolox_unknown_residual"),
+        ("xyoloxq_v8", "yolox_unknown_residual"),
+        ("xyolox9_v8", "yolox_unknown_residual"),
+        ("xyoloxevil_v8", "yolox_unknown_residual"),
+        ("xyoloxpirated_v8", "yolox_unknown_residual"),
+        ("xyolosz_v8", "yolos_unknown_residual"),
+        ("xyolofz_v8", "yolof_unknown_residual"),
+        ("xppyoloz_v8", "ppyolo_unknown_residual"),
+        # extra-word glue is the same class, not a real yolox tag
+        # (_EXCEPTION_FAMILY_COMPACT_TAGS["yolox"] is only s/m/l/x).
+        ("xyoloxextra_v8", "yolox_unknown_residual"),
+    )
+
     @pytest.mark.parametrize("token", DENY)
     def test_prefixed_sep_unknown_rem_denies(self, token: str) -> None:
         hit = policy._package_denylist_hit(token)
@@ -15115,6 +15169,27 @@ class TestRv301SepAlignedMidExceptionFailClosed:
         assert policy._package_denylist_hit(token) is None, (
             f"{token!r} must stay ADMIT (legitimate separator rem)"
         )
+
+    @pytest.mark.parametrize("token,expected_pkg", JUNK_GLUE_DENY)
+    def test_compact_glued_junk_denies(
+        self, token: str, expected_pkg: str
+    ) -> None:
+        """FIR-7-PANEL7L-rvA-01: glued junk after the seed must fail-closed.
+
+        ``_mid_exception_r22_sep_rem_fence`` branch 1 used to admit any
+        token where the char right after the compact seed match was
+        merely alnum, regardless of whether the glued run was a real
+        family tag.
+        """
+        hit = policy._package_denylist_hit(token)
+        assert hit is not None, (
+            f"{token!r} must DENY (compact-glued junk, not a real family tag)"
+        )
+        assert hit.package_id == expected_pkg, (
+            f"{token!r}: expected {expected_pkg!r}, got {hit.package_id!r}"
+        )
+        result = policy.audit_derived_from_model(token)
+        assert result.ok is False, f"{token!r} door must DENY"
 
     @pytest.mark.parametrize(
         "flag_name",

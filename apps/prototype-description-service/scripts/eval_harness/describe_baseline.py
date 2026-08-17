@@ -37,12 +37,21 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
-# Durable, git-committed results dir (NOT scratchpad — the face-pass was lost once
-# by living only in /tmp). JSONL stays in out/ as the progressive/resumable log.
-RESULTS = HERE.parents[3] / "docs" / "tasks" / "vlm" / "bakeoff-results"
+# Durable but NOT git-tracked. Both the attachment map and the generated captions
+# carry real curated names, so they live behind the /benchmarks/ ignore fence
+# rather than under docs/ (VLM6-GATE-PRIV-02/04; MLDATA-13 body-derived
+# identifiers). Override the root with ACX_CORPUS_PRIVATE_DIR.
+PRIVATE = Path(
+    os.environ.get("ACX_CORPUS_PRIVATE_DIR")
+    or HERE.parents[3] / "benchmarks" / "private"
+)
+RESULTS = PRIVATE
 # No hardcoded operator-laptop uploads path (VLM6-RH-01). Resolve via --uploads
 # or BASELINE_UPLOADS only.
-ATTACH_TSV = HERE / "vlm-corpus-attachments-20260716.tsv"
+ATTACH_TSV = Path(
+    os.environ.get("ACX_CORPUS_ATTACH_TSV")
+    or PRIVATE / "vlm-corpus-attachments-20260716.tsv"
+)
 JSONL = SCRATCH / "vlm-baseline-descriptions-20260716.jsonl"
 REPORT_JSON = RESULTS / "vlm-baseline-descriptions-20260716.json"
 REPORT_MD = RESULTS / "vlm-baseline-descriptions-20260716.md"
@@ -523,6 +532,13 @@ def main(argv: list[str] | None = None) -> int:
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
+    if not ATTACH_TSV.is_file():
+        raise SystemExit(
+            f"attachment map not found: {ATTACH_TSV}\n"
+            "It is name-bearing and therefore untracked (benchmarks/private/). "
+            "Restore it there, or point ACX_CORPUS_ATTACH_TSV / "
+            "ACX_CORPUS_PRIVATE_DIR at its location."
+        )
     rows: list[tuple[int, Path]] = []
     for line in ATTACH_TSV.read_text().splitlines():
         if "\t" in line:

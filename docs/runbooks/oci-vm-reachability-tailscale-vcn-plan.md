@@ -255,7 +255,7 @@ in the handoff log.
 
 Corpus source (both the rsync source and the Qwen driver depend on it): the originals root is
 `/Volumes/Butter/WP/vlm/app/public/wp-content/uploads/` per the tracked inventory
-`apps/prototype-description-service/scripts/eval_harness/vlm-corpus-attachments-20260716.tsv`
+`benchmarks/private/vlm-corpus-attachments-20260716.tsv` (untracked: name-bearing)
 (646 rows, no size column — measure with `du -sh` before transfer). **Pre-run mount check:**
 `test -d /Volumes/Butter/WP/vlm/app/public/wp-content/uploads || echo "MOUNT BUTTER FIRST"` —
 an unmounted volume means silent empty rsyncs and mid-run driver crashes.

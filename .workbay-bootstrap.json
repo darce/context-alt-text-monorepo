@@ -216,11 +216,11 @@
     }
   ],
   "mcp_servers": [
-    "codebase-graph-mcp",
     "workbay-handoff-mcp",
     "workbay-orchestrator-mcp"
   ],
   "plugin_overrides_path": "workbay-overrides/workbay-system",
+  "execution_mode": "remote_only",
   "embeddings_mode": "verified",
   "install_steps": [
     {

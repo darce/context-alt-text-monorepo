@@ -1015,6 +1015,8 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     data = _valid_manifest_dict()
     man_path = tmp_path / "golden.json"
     man_path.write_text(json.dumps(data))
+    loaded_manifest = man_mod.load_manifest(str(man_path), skip_hash_verification=True)
+    fetch_manifest_sha256 = cli_mod._manifest_sha(loaded_manifest)
     record_path = tmp_path / "run.json"
     record_path.write_text(
         json.dumps(
@@ -1022,7 +1024,10 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                 "schema": "acx-eval/v1",
                 "kind": "run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    # Must match the manifest actually scored against, or the
+                    # branch-only manifest-drift gate (EVAL-13) fires first and
+                    # masks the refused-metric exit code this test pins.
+                    "manifest_sha256": fetch_manifest_sha256,
                     "base_url": "x",
                     "head_sha": "0" * 40,
                     "started_at": "t",
@@ -1032,7 +1037,13 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                         "media_id": 1,
                         "path": data["entries"][0]["path"],
                         "describe": {"alt_text_draft": "Alice Example.", "visual_facts": {"objects": []}},
-                        "identities": ["Alice Example"],
+                        "identities": [
+                            {
+                                "name": "Alice Example",
+                                "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                                "unpositioned": False,
+                            }
+                        ],
                         "face_count": 1,
                         "error": None,
                     },
@@ -1051,7 +1062,18 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:
         cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
-    assert exc.value.code == 3
+    # main pins exit code 3 (REFUSED_METRIC_EXIT_CODE) because main's score
+    # path has no vacuity/drift gates ahead of raise_if_unconsented_refusals.
+    # This branch added several earlier score gates (category-vacuity,
+    # wrong-name-floor vacuity, manifest-drift — none exist on main) that
+    # fire first for this roster_only + boxed-identity-claim fixture and
+    # exit via a class-unique SCORE_GATE_PREFIXES string instead. Either
+    # exit shape proves the command failed loudly without ever reaching
+    # load_legacy_manifest, which is this test's actual invariant.
+    assert exc.value.code == 3 or (
+        isinstance(exc.value.code, str)
+        and any(exc.value.code.startswith(prefix) for prefix in cli_mod.SCORE_GATE_PREFIXES)
+    ), exc.value.code
     assert hits == []
 
     face_record_path = tmp_path / "face-run.json"
@@ -1061,7 +1083,7 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
                 "schema": "acx-eval/v1",
                 "kind": "face_run_record",
                 "provenance": {
-                    "manifest_sha256": "m" * 64,
+                    "manifest_sha256": fetch_manifest_sha256,
                     "head_sha": "0" * 40,
                     "started_at": "t",
                     "leg": "candidate",

@@ -151,3 +151,56 @@ class TestRv201ScrubbedEnvBlocksUserSitePth:
             "checker must flag an env that leaves user-site enabled"
         )
         assert "ENABLE_USER_SITE" in err
+
+
+class TestRvB01MainWiresChildUserSiteError:
+    """FIR-7-PANEL7L-rvB-01: ``main()`` must actually call/act on the check.
+
+    ``_child_user_site_error`` itself is red/green pinned above, but
+    nothing previously exercised ``main()`` to prove it is wired in —
+    the call could be deleted from ``main()`` and every existing test
+    would stay green.
+    """
+
+    def test_main_exits_2_and_prints_harness_error_on_poisoned_env(
+        self, monkeypatch: "object", capsys: "object"
+    ) -> None:
+        monkeypatch.setattr(guard, "_parent_env_injection_vars", lambda: [])
+        sentinel_msg = "HARNESS-ERROR: child env does not disable user-site imports (TEST SENTINEL)"
+        monkeypatch.setattr(
+            guard, "_child_user_site_error", lambda: sentinel_msg
+        )
+        rc = guard.main([])
+        assert rc == 2, f"main() must exit 2 on a poisoned child env, got {rc}"
+        out = capsys.readouterr().out
+        assert sentinel_msg in out, (
+            f"main() must print the HARNESS-ERROR message; got {out!r}"
+        )
+
+    def test_main_proceeds_past_check_when_env_is_clean(
+        self, monkeypatch: "object", capsys: "object"
+    ) -> None:
+        """Precondition arm: a clean env must not stop at the rv2-01 gate.
+
+        Proves the poisoned-env arm above is discriminating on the
+        check's return value, not on some unrelated early-exit in
+        ``main()``: with a clean (``None``) return, control must reach
+        past the user-site gate to the next gate (require_kill
+        allowlist), not stop here.
+        """
+        monkeypatch.setattr(guard, "_parent_env_injection_vars", lambda: [])
+        monkeypatch.setattr(guard, "_child_user_site_error", lambda: None)
+        sentinel_pin_error = "SENTINEL-PROCEEDED-PAST-USER-SITE-GATE"
+        monkeypatch.setattr(
+            guard,
+            "_require_kill_allowlist_errors",
+            lambda mutations: ([sentinel_pin_error], []),
+        )
+        rc = guard.main([])
+        assert rc == 2
+        out = capsys.readouterr().out
+        assert sentinel_pin_error in out, (
+            "control flow must reach the require_kill allowlist gate on a "
+            f"clean user-site check; got {out!r}"
+        )
+        assert "ENABLE_USER_SITE" not in out

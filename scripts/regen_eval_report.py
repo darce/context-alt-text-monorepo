@@ -218,7 +218,12 @@ def attach_disclosure_notes(json_path: Path, md_path: Path, notes: list[str]) ->
     md_path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
-def _md_section_first_bullet(path: Path | None, heading: str) -> str | None:
+def _md_section_first_bullet(
+    path: Path | None,
+    heading: str,
+    *,
+    skip_prefixes: tuple[str, ...] = (),
+) -> str | None:
     if path is None or not path.is_file():
         return None
     in_section = False
@@ -227,6 +232,8 @@ def _md_section_first_bullet(path: Path | None, heading: str) -> str | None:
             in_section = True
             continue
         if in_section and line.startswith("- "):
+            if any(line.startswith(prefix) for prefix in skip_prefixes):
+                continue
             return line
         if in_section and line.startswith("## "):
             break
@@ -238,7 +245,17 @@ def md_detection_line(path: Path | None) -> str | None:
 
 
 def md_identification_line(path: Path | None) -> str | None:
-    return _md_section_first_bullet(path, "## Face identification")
+    """Status bullet: REFUSED, or the scored micro-precision line.
+
+    VLM6-DELTA-15: this branch's identity-ordering positional block
+    (report.py VLM6-B-10) unconditionally renders diagnostic bullets
+    ("- positional accuracy ...", "- positional vacuity ...",
+    "- ⚠ ..." ordering-degraded notes) ahead of the REFUSED/scored status
+    bullet. Naively taking the section's first bullet silently reports a
+    diagnostic line instead of the identification status the audit trail
+    exists to surface. Skip those known diagnostic prefixes.
+    """
+    return _md_section_first_bullet(path, "## Face identification", skip_prefixes=("- positional", "- ⚠"))
 
 
 def main(argv: list[str] | None = None) -> int:

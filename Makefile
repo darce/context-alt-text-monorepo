@@ -659,7 +659,7 @@ bakeoff-face-score:
 .PHONY: eval-anchor-check
 eval-anchor-check:
 	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score \
-		--manifest scene/tests/seed/golden.json \
+		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-manifest-20260811.json \
 		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
 		--check-determinism \
 		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \

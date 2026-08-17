@@ -42,10 +42,10 @@ uv run python -m scripts.eval_harness.cli score \
   --run-record scripts/eval_harness/out/run-<stamp>.json
 
 # operator surface for the committed freeze (byte-stability certification):
-# monorepo-root `make eval-anchor-check` is the intended one-shot target, but
-# until that recipe's caption --manifest is updated to the freeze man below
-# (wG3 residual / wH2 cross-lane), run this CLI explicitly — do not invent
-# sibling paths and do NOT pass scene/tests/seed/golden.json for the freeze.
+# monorepo-root `make eval-anchor-check` is the intended one-shot target and
+# runs both legs (caption + face) against the committed freeze manifests
+# below. The CLI invocation shown here is what that target runs for the
+# caption leg; use it directly only when iterating outside `make`.
 #
 # Caption freeze corpus (wG3): bakeoff-results man = golden seed + media 39 trap.
 # golden.json stays the 37-entry shared seed (0/37 face_boxes); score-time man
@@ -327,8 +327,9 @@ and children all read the same file), and it does **not** catch a schema or
 manifest edit that still re-scores consistently. Use **`--expect-report`** for
 the third outcome against the committed freeze (F5 / B-06) — opt-in path, no
 sibling filename inference. Preferred one-shot is monorepo-root
-`make eval-anchor-check` once its caption leg uses the freeze man (cross-lane);
-until then use the explicit CLI below.
+`make eval-anchor-check`, which runs both legs (caption + face) against the
+committed freeze manifests. The explicit CLI below is the caption leg it runs
+— use it directly only when iterating outside `make`.
 
 ```text
 $ cd apps/prototype-description-service
@@ -494,8 +495,9 @@ three remedies — do not treat them as synonyms:
   ship-ready floors (UNDER-FLOOR/DIRECTIONAL is expected). Still-vacuous cells
   are listed in `provenance.coverage_gaps` (AUDIT-07). Regenerate via
   `python -m scripts.eval_harness.generate_face_determinism_anchor`. Offline both
-  freezes: explicit CLI above + face block below (or monorepo-root
-  `make eval-anchor-check` once the caption leg points at the freeze man).
+  freezes in one shot via monorepo-root `make eval-anchor-check` (runs the
+  caption block above and the face block below); or run the explicit CLI
+  invocations directly when iterating outside `make`.
 
 ```text
 $ cd apps/prototype-description-service

@@ -222,11 +222,16 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
     single-image corpus trips category-vacuity (undersized sample, exit 1)
     ahead of raise_if_unconsented_refusals (exit 3). Unboxed makes
     identification refuse too (identification_refuses_unboxed_identity_claims),
-    which is the documented category-vacuity bypass (VLM6-DELTA-03) and
-    matches this test's own "both metrics refused" premise.
+    matching this test's own "both metrics refused" premise.
+
+    VLM6-GATE-INT-01: the category-vacuity gate only suppresses reasons that
+    restate a refused identification/detection now, so
+    ``_unboxed_roster_only_manifest``/``_unboxed_overshoot_record`` also make
+    sample_size/placement/fabricated_fact genuinely non-vacuous — exit 3 is
+    reached on its own merits, not via a blanket per-refusal skip.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
     )
     sentinel = '{"sentinel":"unpublished-refused"}'
     out_json.write_text(sentinel, encoding="utf-8")
@@ -258,9 +263,10 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
 
     VLM6-DELTA-15: unboxed manifest — see the sibling exits-3 test's
     docstring for why "both metrics refused" needs the unboxed fixture.
+    VLM6-GATE-INT-01: same non-vacuous 5-entry fixture as that sibling.
     """
     run_record, manifest, out_json, out_md = _real_inputs(
-        tmp_path, _overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
+        tmp_path, _unboxed_overshoot_record(), manifest_doc=_unboxed_roster_only_manifest()
     )
     proc = _run_regen(
         [
@@ -569,11 +575,79 @@ def test_md_identification_line_reads_face_identification_section(
     )
 
 
-def _unboxed_roster_only_manifest() -> dict:
-    """Same as the boxed fixture minus face_boxes — identification must refuse."""
+def _unboxed_roster_only_manifest(n: int = 5) -> dict:
+    """``n``-entry boxless corpus — identification (and roster_only detection)
+    still refuse, but sample_size/placement/fabricated_fact are genuinely
+    non-vacuous (VLM6-GATE-INT-01).
+
+    The CLI's category-vacuity gate (cli.py) now suppresses only the reasons
+    that are pure restatements of a refused identification/detection — every
+    other category-vacuity reason still hard-fails. The old single-entry,
+    no-facts fixture relied on the previous, over-broad gate
+    (``not ident_block.get("refused")``) skipping the whole check whenever
+    identification refused, which silently hid an undersized sample and
+    vacuous placement/fabricated_fact axes. This fixture clears those for
+    real: ``n=5`` entries clear ``SCORE_PASS_MIN_SCORED_IMAGES``; every entry
+    carries a ``spatial_facts`` "foreground" fact whose phrase the paired
+    ``_unboxed_overshoot_record`` caption states, giving
+    ``placement.claims > 0``; every entry carries a ``reference_facts``
+    FALSE-polarity trap the caption never states, giving ``fabricated_fact``
+    a real (untripped) rate instead of ``None``. Only used by the
+    "both metrics refused" tests below — the boxed ``_roster_only_manifest``
+    stays a single entry for the tests that target the partial-corpus /
+    failed-item paths instead.
+    """
+    import copy
+
+    template = _roster_only_manifest()["entries"][0]
+    entries = []
+    for i in range(1, n + 1):
+        entry = copy.deepcopy(template)
+        entry["media_id"] = i
+        entry["path"] = f"mock_images/alice{i}.jpg"
+        entry["sha256"] = f"{i:064x}"
+        entry["face_boxes"] = []
+        entry["spatial_facts"] = [
+            {
+                "subject": "Alice Example",
+                "relation": "foreground",
+                "phrases": ["in the foreground"],
+            }
+        ]
+        entry["reference_facts"] = [
+            {
+                "text": "wearing a red hat",
+                "kind": "attribute",
+                "polarity": "false",
+                "phrases": ["red hat"],
+            }
+        ]
+        entries.append(entry)
     payload = _roster_only_manifest()
-    payload["entries"][0]["face_boxes"] = []
+    payload["entries"] = entries
     return payload
+
+
+def _unboxed_overshoot_record(n: int = 5) -> dict:
+    """``n``-item record pairing ``_unboxed_roster_only_manifest`` (VLM6-GATE-INT-01).
+
+    Mirrors ``_overshoot_record`` per item but states "in the foreground" —
+    the phrase every unboxed manifest entry's ``spatial_facts`` carries — so
+    ``placement.claims > 0`` for real.
+    """
+    import copy
+
+    template = _overshoot_record()["items"][0]
+    items = []
+    for i in range(1, n + 1):
+        item = copy.deepcopy(template)
+        item["media_id"] = i
+        item["path"] = f"mock_images/alice{i}.jpg"
+        item["describe"]["alt_text_draft"] = "Alice Example in the foreground by the pool."
+        items.append(item)
+    record = _overshoot_record()
+    record["items"] = items
+    return record
 
 
 def test_real_cli_allow_refused_prints_identification_audit_trail(
@@ -583,7 +657,10 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
     manifest = _write_json(tmp_path / "manifest.json", _unboxed_roster_only_manifest())
     # VLM6-DELTA-15: same manifest-drift stamping as _real_inputs — this test
     # builds its own record inline instead of going through that helper.
-    record = _overshoot_record()
+    # VLM6-GATE-INT-01: unboxed manifest is now 5 entries with real
+    # spatial_facts/reference_facts (see _unboxed_roster_only_manifest), so
+    # the paired record must be the matching multi-item one.
+    record = _unboxed_overshoot_record()
     record["provenance"] = {
         **record["provenance"],
         "manifest_sha256": _real_manifest_sha(manifest),

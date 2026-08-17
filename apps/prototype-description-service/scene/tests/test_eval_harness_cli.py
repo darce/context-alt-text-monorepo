@@ -3214,18 +3214,26 @@ def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch)
     exit is non-zero to match the artifact. A genuine pass control lives on
     measurable synthetic fixtures (e.g. test_cmd_score_exits_zero_...).
 
-    VLM6-DELTA-06 (FIR-11 canonical gate ordering): the real golden fixture is
-    roster_only + 0/37 boxed, so BOTH detection and identification are
-    structurally refused, not merely vacuous. Per S2R5-05 (see
-    test_cli_exit_gates.py), an unconsented refusal reaches
-    raise_if_unconsented_refusals ahead of the category-vacuity gate
-    whenever identification is refused — the exit is the per-metric refused-
-    metric(s) message (exit 3), not a category-vacuity restatement. The
-    persisted artifact is unaffected (report.py writes the scored document
-    before any exit gate runs), so verdict/positional-vacuity assertions
-    below still hold against the same on-disk not_ready report.
+    VLM6-GATE-INT-01 (supersedes VLM6-DELTA-06's gate-ordering claim on this
+    test): the real golden fixture is roster_only + 0/37 boxed, so BOTH
+    detection and identification are structurally refused — but the real
+    golden corpus also has 0/37 spatial_facts, making ``placement``
+    genuinely vacuous independent of that refusal. The category-vacuity
+    gate now suppresses only the reasons that are pure restatements of a
+    refused identification/detection (``positional``, ``identity_ordering``,
+    ``face_identification.*``, and — since detection also refuses here —
+    ``face_detection.*``); ``placement`` is not identification-derived, so
+    it survives and the category-vacuity gate fires ahead of
+    ``raise_if_unconsented_refusals`` (a category-vacuity exit string, not
+    ``REFUSED_METRIC_EXIT_CODE``). VLM6-DELTA-06's "unconsented refusal
+    always wins the race" premise only held under the pre-fix, over-broad
+    gate that skipped category-vacuity entirely whenever identification
+    refused — the same bug VLM6-GATE-INT-01 fixes. The persisted artifact is
+    unaffected (report.py writes the scored document before any exit gate
+    runs), so the verdict/positional-vacuity assertions below still hold
+    against the same on-disk not_ready report.
     """
-    from scripts.eval_harness.cli import REFUSED_METRIC_EXIT_CODE
+    from scripts.eval_harness.cli import SCORE_GATE_PREFIX_CATEGORY_VACUITY
 
     golden, record = _real_golden_good_record()
     record_path = tmp_path / "run-control-not-ready.json"
@@ -3233,7 +3241,9 @@ def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
         main(["score", "--manifest", str(golden), "--run-record", str(record_path)])
-    assert excinfo.value.code == REFUSED_METRIC_EXIT_CODE
+    assert isinstance(excinfo.value.code, str)
+    assert excinfo.value.code.startswith(SCORE_GATE_PREFIX_CATEGORY_VACUITY)
+    assert "placement" in excinfo.value.code
     report = json.loads(record_path.with_name("run-control-not-ready-report.json").read_text())
     assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()

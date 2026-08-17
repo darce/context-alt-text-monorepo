@@ -91,22 +91,41 @@ _OVERSHOOT_RECORD = {
 }
 
 
-def _overshoot_record_for(manifest_path: Path) -> dict:
-    """Deep-copy _OVERSHOOT_RECORD stamped with the real score-time manifest sha.
+def _overshoot_record_for(manifest_path: Path, *, n: int = 5) -> dict:
+    """``n``-item run record stamped with the real score-time manifest sha.
 
     The CLI ``score`` path folds fetch/score manifest drift into the verdict
     (VLM6-F-03 / EVAL-13) and hard-fails on both a mismatched and a missing
     fetch-time ``manifest_sha256``. A fixed placeholder can never match a
     tmp_path-scoped manifest, so compute the real sha the same way cli.py does.
+
+    VLM6-GATE-INT-01: ``n`` items (default 5, matching
+    ``_write_unboxed_manifest``'s corpus size) clear
+    ``SCORE_PASS_MIN_SCORED_IMAGES`` so ``sample_size`` is a genuine non-issue
+    rather than a category-vacuity reason the gate has to suppress. Each
+    item's caption states "in the foreground" — the phrase
+    ``_write_unboxed_manifest`` puts on every entry's ``spatial_facts`` — so
+    ``placement.claims > 0`` for real (score_placement / contains_phrase),
+    not because the gate looked away.
     """
     import copy
 
     from scripts.eval_harness.cli import _manifest_sha
     from scripts.eval_harness.manifest import load_manifest as _load_manifest
 
-    record = copy.deepcopy(_OVERSHOOT_RECORD)
     manifest = _load_manifest(str(manifest_path), skip_hash_verification=True)
-    record["provenance"]["manifest_sha256"] = _manifest_sha(manifest)
+    manifest_sha = _manifest_sha(manifest)
+    template = _OVERSHOOT_RECORD["items"][0]
+    items = []
+    for i in range(1, n + 1):
+        item = copy.deepcopy(template)
+        item["media_id"] = i
+        item["path"] = f"mock_images/alice{i}.jpg"
+        item["describe"]["alt_text_draft"] = "Alice Example in the foreground by the pool."
+        items.append(item)
+    record = copy.deepcopy(_OVERSHOOT_RECORD)
+    record["items"] = items
+    record["provenance"]["manifest_sha256"] = manifest_sha
     return record
 
 
@@ -158,18 +177,65 @@ def _write_manifest(tmp_path: Path, mode: str) -> Path:
     return path
 
 
-def _write_unboxed_manifest(tmp_path: Path, mode: str) -> Path:
-    """Same fixture minus face_boxes — identification must also refuse.
+def _write_unboxed_manifest(tmp_path: Path, mode: str, *, n: int = 5) -> Path:
+    """``n``-entry, boxless corpus — identification (and roster_only detection)
+    still refuse, but sample_size/placement/fabricated_fact are genuinely
+    non-vacuous.
 
-    VLM6-DELTA-17: with identification also refused, the CLI's category-vacuity
-    gate (cli.py ~1916: fires only when ``not ident_block.get("refused")``) does
-    not intercept ahead of the exit-3 refusal-consent path these CLI tests
-    target. Mirrors the unboxed-manifest category-vacuity-bypass pattern in
-    test_regen_eval_report_gate.py (VLM6-DELTA-15) and
-    test_identification_boxed_gt.py (VLM6-DELTA-16).
+    VLM6-GATE-INT-01: the CLI's category-vacuity gate (cli.py) now suppresses
+    only the reasons that are pure restatements of a refused
+    identification/detection (``positional``, ``identity_ordering``,
+    ``face_identification.*``, and ``face_detection.*`` when detection also
+    refuses) — every other category-vacuity reason survives and hard-fails.
+    A single boxless image used to reach the exit-3 refusal-consent path
+    (``raise_if_unconsented_refusals``) only because the old, over-broad gate
+    (``not ident_block.get("refused")``) skipped the whole check whenever
+    identification refused; that let ``sample_size`` (1 < 5),
+    ``placement`` (no ``spatial_facts``), and ``fabricated_fact`` (no
+    ``reference_facts`` trap) go unnoticed even though they were genuinely
+    vacuous. This fixture now clears all three for real instead of relying on
+    the gate looking away: ``n=5`` entries clear
+    ``SCORE_PASS_MIN_SCORED_IMAGES``; every entry carries a ``spatial_facts``
+    "foreground" fact whose phrase the paired run-record caption states
+    (``_overshoot_record_for``), giving ``placement.claims > 0``; every entry
+    carries a ``reference_facts`` FALSE-polarity trap the caption never
+    states, giving ``fabricated_fact`` a real (untripped, 0.0) rate instead of
+    ``None``. ``face_boxes`` stays empty on every entry so identification
+    still refuses (and roster_only mode still refuses detection
+    independently), exercising the real refusal-consent contract these CLI
+    tests target — not a category-vacuity bypass. Mirrors the same
+    boxless-corpus pattern in test_regen_eval_report_gate.py (VLM6-DELTA-15)
+    and test_identification_boxed_gt.py (VLM6-DELTA-16); see those files if
+    the gate narrowing also broke their fixtures.
     """
+    import copy
+
     doc = _manifest_doc(mode)
-    doc["entries"][0]["face_boxes"] = []
+    template = doc["entries"][0]
+    entries = []
+    for i in range(1, n + 1):
+        entry = copy.deepcopy(template)
+        entry["media_id"] = i
+        entry["path"] = f"mock_images/alice{i}.jpg"
+        entry["sha256"] = f"{i:064x}"
+        entry["face_boxes"] = []
+        entry["spatial_facts"] = [
+            {
+                "subject": "Alice Example",
+                "relation": "foreground",
+                "phrases": ["in the foreground"],
+            }
+        ]
+        entry["reference_facts"] = [
+            {
+                "text": "wearing a red hat",
+                "kind": "attribute",
+                "polarity": "false",
+                "phrases": ["red hat"],
+            }
+        ]
+        entries.append(entry)
+    doc["entries"] = entries
     path = tmp_path / f"{mode}-unboxed.json"
     path.write_text(json.dumps(doc), encoding="utf-8")
     return path
@@ -332,12 +398,12 @@ def test_cli_score_refuses_roster_only_detection(tmp_path: Path, monkeypatch: py
     S2R3-16: refused detection is exit 3 by default. A CI job that checks
     only process status must not treat a missing detection score as clean.
 
-    VLM6-DELTA-17: this branch's category-vacuity gate (cli.py ~1916) fires
-    ahead of the int-3 refusal-consent exit whenever identification is scored
-    (not refused) on an undersized single-image corpus. Use an unboxed
-    manifest so identification also refuses and the gate's
-    ``not ident_block.get("refused")`` guard stays false — same bypass
-    mechanism as VLM6-DELTA-15/16.
+    VLM6-GATE-INT-01: the category-vacuity gate (cli.py) only suppresses
+    reasons that restate a refused identification/detection; an unboxed,
+    5-image corpus with real spatial_facts/reference_facts (see
+    ``_write_unboxed_manifest``) clears every unrelated vacuity axis for
+    real, so the gate lets this refusal-consent path (exit 3) through on its
+    own merits rather than via a blanket skip.
     """
     import scripts.eval_harness.cli as cli_mod
 
@@ -370,8 +436,10 @@ def test_cli_score_allow_refused_exits_zero(
 ) -> None:
     """S2R3-16: --allow-refused is the explicit opt-in for a refused score.
 
-    VLM6-DELTA-17: unboxed manifest for the same category-vacuity-bypass
-    reason as test_cli_score_refuses_roster_only_detection above.
+    VLM6-GATE-INT-01: same non-vacuous unboxed manifest as
+    test_cli_score_refuses_roster_only_detection above — naming both refused
+    metrics must still reach a clean exit 0 once every unrelated
+    category-vacuity axis is genuinely satisfied, not skipped.
     """
     import scripts.eval_harness.cli as cli_mod
 
@@ -392,6 +460,44 @@ def test_cli_score_allow_refused_exits_zero(
     captured = capsys.readouterr()
     assert f"detection=REFUSED({ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY})" in captured.out
     assert captured.err == ""
+
+
+def test_cli_score_category_vacuity_survives_identification_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VLM6-GATE-INT-01: a refused identification must not blanket-skip
+    category-vacuity for reasons unrelated to that refusal.
+
+    Regression for the bug this branch fixes: the pre-fix gate
+    (``if verdict_value == NOT_READY and not ident_block.get("refused")``)
+    exempted the ENTIRE category-vacuity check whenever identification
+    refused — including independent, unrelated vacuous categories like
+    sample_size, which have nothing to do with a face refusal. ``n=1``
+    reuses ``_write_unboxed_manifest``'s per-entry spatial_facts/
+    reference_facts (so placement/fabricated_fact are non-vacuous) but
+    stays a single image, below ``SCORE_PASS_MIN_SCORED_IMAGES`` — so
+    sample_size is the one genuinely unrelated vacuity reason left. It must
+    survive the narrowed gate and hard-fail even with no ``--allow-refused``
+    consent requested at all (the pre-fix bug exited 0 here).
+    """
+    import scripts.eval_harness.cli as cli_mod
+
+    man_path = _write_unboxed_manifest(tmp_path, "roster_only", n=1)
+    record_path = tmp_path / "run.json"
+    record_path.write_text(json.dumps(_overshoot_record_for(man_path, n=1)), encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    with pytest.raises(SystemExit) as exc:
+        cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert isinstance(exc.value.code, str)
+    assert exc.value.code.startswith(cli_mod.SCORE_GATE_PREFIX_CATEGORY_VACUITY)
+    # The surviving reason must be the unrelated category ...
+    assert "sample-size" in exc.value.code
+    # ... never a restatement of the identification/detection refusal, which
+    # must stay suppressed (that suppression is the narrowed gate's job).
+    assert "positional" not in exc.value.code
+    assert "identity_ordering" not in exc.value.code
+    assert "face_identification" not in exc.value.code
+    assert "face_detection" not in exc.value.code
 
 
 def test_cli_score_help_documents_allow_refused_exit_contract(

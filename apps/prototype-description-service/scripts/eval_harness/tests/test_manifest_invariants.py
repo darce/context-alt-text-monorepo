@@ -65,7 +65,8 @@ def _write_manifest(tmp_path: Path, doc: dict, name: str = "manifest.json") -> P
 
 def test_provenanced_fixture_loads() -> None:
     """Positive pair: a fully-provenanced fixture still loads."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert len(manifest.entries) == 2
     assert all(entry.provenance is not None for entry in manifest.entries)
     assert {entry.media_id for entry in manifest.entries} == {101, 102}
@@ -146,7 +147,8 @@ def test_aggregate_missing_provenance_names_every_path(tmp_path: Path) -> None:
 
 def test_valid_sha256_loads() -> None:
     """Positive pair: 64 lowercase hex sha256 is accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert manifest.entries[0].sha256 == "a" * 64
 
 
@@ -161,7 +163,8 @@ def test_invalid_sha256_form_raises(tmp_path: Path) -> None:
 
 def test_unique_media_id_and_path_load() -> None:
     """Positive pair: distinct media_id and path are accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     ids = [entry.media_id for entry in manifest.entries]
     paths = [entry.path for entry in manifest.entries]
     assert len(ids) == len(set(ids))
@@ -189,7 +192,8 @@ def test_duplicate_path_raises(tmp_path: Path) -> None:
 
 def test_roster_member_loads() -> None:
     """Positive pair: identities on the roster are accepted."""
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     roster = set(manifest.roster)
     for entry in manifest.entries:
         assert set(entry.present_identities) <= roster
@@ -287,7 +291,8 @@ def test_load_legacy_manifest_rejects_v3() -> None:
 
 
 def test_provenanced_fixture_is_v3_roster_only() -> None:
-    manifest = load_manifest(str(PROVENANCED))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(PROVENANCED), skip_hash_verification=True)
     assert manifest.manifest_version == 3
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert all(box.lineage is not None for e in manifest.entries for box in e.face_boxes)
@@ -390,7 +395,8 @@ def test_corpus646_retag_loads_as_roster_only() -> None:
     """Regression: retagged corpus646 loads clean under the v3 gate loader."""
     path = Path(__file__).resolve().parents[1] / "corpus646-interleave-manifest-20260716.json"
     assert path.is_file()
-    manifest = load_manifest(str(path))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    manifest = load_manifest(str(path), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.ROSTER_ONLY
     assert manifest.manifest_version == 3
     assert len(manifest.entries) == 646

@@ -695,12 +695,42 @@ _W1_INTERNAL_BASE_URL = "https://acx-backend.internal.example.ts.net"
 
 
 def _write_score_manifest(tmp_path, entries, roster, name="golden.json"):
-    """Write a v2 golden manifest and return (path, real score-time sha256)."""
+    """Write a v3 golden manifest and return (path, real score-time sha256).
+
+    Fills the v3-only requirements (``annotation_mode``, per-entry
+    ``base_caption``/``provenance``, per-box ``lineage``) with neutral
+    defaults when a caller's fixture omits them, so existing call sites do
+    not each have to be hand-migrated (VLM6-PANEL6L-rvM-01: ``load_manifest``
+    is v3-only, ``manifest_version`` 2 is no longer accepted here).
+    """
     from scripts.eval_harness.cli import _manifest_sha
     from scripts.eval_harness.manifest import load_manifest
 
     manifest_path = tmp_path / name
-    manifest_path.write_text(json.dumps({"manifest_version": 2, "roster": roster, "entries": entries}))
+
+    def _normalize_box(box: dict) -> dict:
+        if "lineage" in box:
+            return box
+        lineage = dict(_TEST_LINEAGE_NAMED)
+        lineage["decision"] = "named" if box.get("name") else "stranger"
+        return {**box, "lineage": lineage}
+
+    normalized_entries = [
+        {
+            "base_caption": "",
+            "provenance": {"source": "fixture", "license": "fixture"},
+            **entry,
+            "face_boxes": [_normalize_box(box) for box in entry.get("face_boxes", [])],
+        }
+        for entry in entries
+    ]
+    payload: dict = {
+        "manifest_version": 3,
+        "roster": roster,
+        "entries": normalized_entries,
+    }
+    payload.setdefault("annotation_mode", "roster_only")
+    manifest_path.write_text(json.dumps(payload))
     # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
     return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
 

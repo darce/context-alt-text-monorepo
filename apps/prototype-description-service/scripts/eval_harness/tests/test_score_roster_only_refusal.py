@@ -126,7 +126,7 @@ def _write_manifest(tmp_path: Path, mode: str) -> Path:
 
 
 def test_fusion_flatten_stamps_annotation_mode(tmp_path: Path) -> None:
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     assert entries[0]["annotation_mode"] == "roster_only"
 
@@ -198,7 +198,7 @@ def test_fusion_flatten_projects_scorer_contract_keys_only(tmp_path: Path) -> No
     """
     from scripts.eval_harness.fusion_runner import SCORER_ENTRY_KEYS
 
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     leaked = {"sha256", "expected_attachments", "difficulty", "reference_facts", "base_caption"}
     assert leaked.isdisjoint(entries[0])
@@ -212,7 +212,7 @@ def test_fusion_flatten_preserves_face_boxes(tmp_path: Path) -> None:
     Dropping face_boxes made require_boxed_identification_gt refuse honest,
     fully-boxed ground truth. The CLI flatten keeps boxes via model_dump.
     """
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     assert "face_boxes" in entries[0]
     dumped = manifest.entries[0].model_dump()["face_boxes"]
@@ -231,7 +231,7 @@ def test_fusion_runner_build_reports_refuses_roster_only_detection(tmp_path: Pat
 
     Goes red if the refusal is removed or if flatten drops annotation_mode.
     """
-    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "roster_only")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
     det = json.loads(json_doc)["faces"]["detection"]
@@ -264,7 +264,7 @@ def test_score_run_record_without_mode_or_stamp_refuses() -> None:
 
 def test_exhaustive_fusion_flatten_detection_unchanged(tmp_path: Path) -> None:
     """Exhaustive P/R through the same flatten path matches the pre-fix pin."""
-    manifest = load_manifest(str(_write_manifest(tmp_path, "exhaustive")))
+    manifest = load_manifest(str(_write_manifest(tmp_path, "exhaustive")), skip_hash_verification=True)
     entries = manifest_entries_as_dicts(manifest)
     json_doc, _md = build_reports(_OVERSHOOT_RECORD, entries)
     det = json.loads(json_doc)["faces"]["detection"]

@@ -182,7 +182,8 @@ def test_r6e1_typed_manifest_flatten_stamps_document_mode(tmp_path: Path) -> Non
     }
     path = tmp_path / "exhaustive.json"
     path.write_text(json.dumps(doc), encoding="utf-8")
-    typed = load_manifest(str(path))
+    # Metadata-only fixture load; never opens image bytes (VLM6-PANEL6L-rvM-01).
+    typed = load_manifest(str(path), skip_hash_verification=True)
     assert "annotation_mode" not in typed.entries[0].model_dump()
     entries, _, _ = _entries_as_dicts(typed)
     assert entries[0]["annotation_mode"] == AnnotationMode.EXHAUSTIVE.value
@@ -315,20 +316,25 @@ def test_cmd_score_fill_only_preserves_per_entry_stamp(
 
     real_load = cli_mod.load_manifest
 
-    def fake_load(path: str) -> _CliScoreManifest:
-        typed = real_load(path)
+    def fake_load(path: str, **kwargs: object) -> _CliScoreManifest:
+        # _cmd_score now calls load_manifest(path, skip_hash_verification=True)
+        # (VLM6-PANEL6L-rvM-01); forward whatever the real call site passes.
+        typed = real_load(path, **kwargs)
         stamped = {**typed.entries[0].model_dump(), "annotation_mode": "roster_only"}
         return _CliScoreManifest(typed, [_DumpEntry(stamped), typed.entries[1]])
 
     captured: list[list] = []
-    real_build = cli_mod.build_reports
+    # LOCAL/no-determinism scoring now calls score_run_record directly rather
+    # than routing through build_reports (VLM6-PANEL6L-rvM-01 call-site drift);
+    # wrap the actual entry point so this test observes the same entries.
+    real_score = cli_mod.score_run_record
 
-    def wrap(record: dict, entries: list, **kwargs: object) -> tuple[str, str]:
+    def wrap(record: dict, entries: list, **kwargs: object) -> dict:
         captured.append(entries)
-        return real_build(record, entries, **kwargs)
+        return real_score(record, entries, **kwargs)
 
     monkeypatch.setattr(cli_mod, "load_manifest", fake_load)
-    monkeypatch.setattr(cli_mod, "build_reports", wrap)
+    monkeypatch.setattr(cli_mod, "score_run_record", wrap)
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
 
     with pytest.raises(SystemExit) as exc_info:
@@ -336,7 +342,7 @@ def test_cmd_score_fill_only_preserves_per_entry_stamp(
             ["score", "--manifest", str(man_path), "--run-record", str(rec_path)]
         )
 
-    assert captured, "build_reports was never called"
+    assert captured, "score_run_record was never called"
     rows = captured[0]
     assert rows[0]["annotation_mode"] == "roster_only"
     filled = rows[1]["annotation_mode"]

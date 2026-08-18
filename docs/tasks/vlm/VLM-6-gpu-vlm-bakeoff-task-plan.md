@@ -294,10 +294,10 @@ Proof:
 
 ### Checklist for Slice 2: Bench harness + registry
 
-- [ ] Registry complete: 14 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers
-- [ ] Runner dry-run green against stub server; VRAM/timing capture verified
+- [x] Registry complete: 14 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers (`scripts/eval_harness/bakeoff_candidates.yaml`, sealed counts enforced by `bakeoff_candidates.py`)
+- [x] Runner dry-run green against stub server; VRAM/timing capture verified (`make bakeoff-dry-run`, `scene/tests/test_eval_harness_stub_dryrun.py`, `scripts/eval_harness/bench_capture.py`)
 - [ ] Per-stack smoke gate passed (llama.cpp, vLLM, HF Transformers each ran one real inference)
-- [ ] Weight pre-pull script ready; grunt work offloaded via `/offload` (`scripts/eval_harness/prepull_weights.py`)
+- [x] Weight pre-pull script ready; grunt work offloaded via `/offload` (`scripts/eval_harness/prepull_weights.py`, `scene/tests/test_eval_harness_prepull_weights.py`)
 
 ### Checklist for Slice 3: GPU bake-off window
 

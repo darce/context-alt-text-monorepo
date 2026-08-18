@@ -4,13 +4,13 @@
  * UXW2-3: single-gesture naming via NameFaceControl — inline text input with
  * roster typeahead; Enter or "Save name" commits. Exact roster match binds
  * (rosterEntryId); a novel name creates the person (newEntryName) — creation
- * is the default outcome. Success: generic "View in roster →" (#/roster).
+ * is the default outcome. Success: "View in roster →" deep-links the person.
  * Failure: persistent role=alert + retry.
  */
 
 import React from 'react';
 import { __ } from '@wordpress/i18n';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
@@ -25,9 +25,9 @@ import {
   PERSON_COMMIT_PLACEHOLDER,
   PERSON_COMMIT_SUCCESS_COPY,
   VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
+  viewInRosterHref,
 } from './personCommitCopy';
-import { isReservedLabel, RESERVED_LABEL_MESSAGE } from './reservedLabel';
+import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import {
   PERSON_COMMIT_PHASE,
   type PersonCommitPhase,
@@ -46,6 +46,8 @@ export interface PersonCommitControlProps {
   onRetry: () => void;
   /** Optional prefilled create name (e.g. NAME suggestion). */
   suggestedCreateName?: string | null;
+  /** Person uuid after a successful commit — drives the roster deep-link. */
+  committedPersonUuid?: string | null;
   /**
    * §7 single accent primary: when this control is the card's primary (NAME/CLUSTER),
    * the commit button carries the `data-acx-accent-primary` marker + accent chrome
@@ -64,12 +66,14 @@ export const PersonCommitControl = ({
   onCommit,
   onRetry,
   suggestedCreateName = null,
+  committedPersonUuid = null,
   accentPrimary = false,
 }: PersonCommitControlProps): React.JSX.Element => {
   const [draft, setDraft] = React.useState('');
   /** BR-59: reserved create-name rejection (inline, same role=alert pattern as commit failure). */
   const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === PERSON_COMMIT_PHASE.COMMITTING || disabled;
+  const queryClient = useQueryClient();
 
   const rosterQuery = useQuery({
     queryKey: queryKeys.roster.entries(),
@@ -77,17 +81,31 @@ export const PersonCommitControl = ({
     staleTime: 30_000,
   });
 
-  // Roster typeahead: prefix-filter against the typed draft (COG-02 recognition).
-  const options = React.useMemo(() => {
-    const filter = draft.trim().toLowerCase();
-    return (rosterQuery.data ?? [])
-      .filter((entry) => !filter || entry.name.toLowerCase().startsWith(filter))
-      .map((entry) => ({
+  React.useEffect(() => {
+    if (phase !== PERSON_COMMIT_PHASE.SUCCEEDED) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+  }, [phase, queryClient]);
+
+  // Full roster for create-vs-bind (R1-07). Overlay budgets the display slice.
+  const options = React.useMemo(
+    () =>
+      (rosterQuery.data ?? []).map((entry) => ({
         value: namingOptionValue('person', entry.id),
         label: entry.name,
         source: 'person' as const,
-      }));
-  }, [rosterQuery.data, draft]);
+      })),
+    [rosterQuery.data],
+  );
+
+  const boundPersonUuid = React.useMemo(() => {
+    if (committedPersonUuid) {
+      return committedPersonUuid;
+    }
+    const bound = (rosterQuery.data ?? []).find((entry) => entry.name === draft);
+    return bound?.person_uuid ?? null;
+  }, [committedPersonUuid, draft, rosterQuery.data]);
 
   // Prefill create path from a suggested name once per cluster (FORM-04).
   React.useEffect(() => {
@@ -101,7 +119,10 @@ export const PersonCommitControl = ({
   };
 
   const handleCommitResolution = (resolution: NameFaceResolution): void => {
-    if (isBusy) {
+    if (isBusy || rosterQuery.isLoading || rosterQuery.isError) {
+      return;
+    }
+    if (resolution.kind === 'ambiguous') {
       return;
     }
     if (resolution.kind === 'roster') {
@@ -109,9 +130,8 @@ export const PersonCommitControl = ({
       onCommit({ clusterId, rosterEntryId: resolution.rosterEntryId });
       return;
     }
-    // BR-59: reject reserved machine-shaped create names before POST.
     if (isReservedLabel(resolution.name)) {
-      setReservedError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
+      setReservedError(getReservedLabelMessage());
       return;
     }
     setReservedError(null);
@@ -128,7 +148,7 @@ export const PersonCommitControl = ({
         <p className="acx-person-commit__success-message" role="status">
           {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
         </p>
-        <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
+        <a className="acx-person-commit__roster-link" href={viewInRosterHref(boundPersonUuid)}>
           {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
         </a>
       </div>
@@ -143,30 +163,51 @@ export const PersonCommitControl = ({
     >
       <p className="acx-person-commit__disclosure">{__(MODEL_OUTPUT_DISCLOSURE, 'alt-context')}</p>
 
-      <NameFaceControl
-        options={options}
-        value={draft}
-        onValueChange={handleValueChange}
-        onCommit={handleCommitResolution}
-        isPending={phase === PERSON_COMMIT_PHASE.COMMITTING}
-        disabled={disabled}
-        commitLabel={__(PERSON_COMMIT_CONFIRM_COPY, 'alt-context')}
-        pendingLabel={__(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')}
-        placeholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
-        ariaLabel={__(PERSON_COMMIT_COMBOBOX_ARIA, 'alt-context')}
-        inputId={`acx-person-commit-${clusterId}`}
-        autoFocus={false}
-        accentPrimary={isPrimary && accentPrimary}
-        commitButtonClassName={
-          isPrimary
-            ? accentPrimary
-              ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
-              : 'button button-primary acx-person-commit__confirm'
-            : 'button acx-person-commit__confirm'
-        }
-        className="acx-person-commit__controls"
-        classPrefix="acx-person-commit"
-      />
+      {rosterQuery.isError ? (
+        <div className="acx-person-commit__failure" role="alert">
+          <p className="acx-person-commit__failure-message">
+            {__('Unable to load people. Retry before naming someone new.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="button acx-person-commit__retry"
+            onClick={() => {
+              void rosterQuery.refetch();
+            }}
+            disabled={isBusy}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      ) : (
+        <NameFaceControl
+          options={options}
+          value={draft}
+          onValueChange={handleValueChange}
+          onCommit={handleCommitResolution}
+          isPending={phase === PERSON_COMMIT_PHASE.COMMITTING}
+          isLoading={rosterQuery.isLoading}
+          disabled={disabled || rosterQuery.isError}
+          commitLabel={__(PERSON_COMMIT_CONFIRM_COPY, 'alt-context')}
+          pendingLabel={__(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')}
+          placeholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
+          searchPlaceholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
+          ariaLabel={__(PERSON_COMMIT_COMBOBOX_ARIA, 'alt-context')}
+          inputId={`acx-person-commit-${clusterId}`}
+          autoFocus={false}
+          accentPrimary={isPrimary && accentPrimary}
+          suggestionsHeader={__('People', 'alt-context')}
+          commitButtonClassName={
+            isPrimary
+              ? accentPrimary
+                ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
+                : 'button button-primary acx-person-commit__confirm'
+              : 'button acx-person-commit__confirm'
+          }
+          className="acx-person-commit__controls"
+          classPrefix="acx-person-commit"
+        />
+      )}
 
       {reservedError ? (
         <p className="acx-person-commit__failure-message" role="alert">

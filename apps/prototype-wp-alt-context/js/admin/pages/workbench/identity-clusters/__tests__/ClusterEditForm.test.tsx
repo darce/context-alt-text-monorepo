@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
 import { selectClusterSuggestions } from '../useClusterSuggestions';
@@ -33,13 +33,29 @@ describe('ClusterEditForm', () => {
     expect(onLabelChange).toHaveBeenCalledWith('New Label');
   });
 
-  it('calls onSave when Enter is pressed', () => {
+  it('calls onSave when Enter is pressed on a changed name', () => {
     const onSave = vi.fn();
-    render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
-    const input = screen.getByDisplayValue('Test Cluster');
+    const { rerender } = render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
+    rerender(<ClusterEditForm {...defaultProps} labelInput="New Name" onSave={onSave} />);
+    fireEvent.keyDown(screen.getByDisplayValue('New Name'), { key: 'Enter', code: 'Enter' });
+    expect(onSave).toHaveBeenCalledWith('New Name');
+  });
 
-    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
-    expect(onSave).toHaveBeenCalled();
+  it('no-ops Enter when the resolved name matches the prefill (UXW2-3-R1-13)', () => {
+    const onSave = vi.fn();
+    const onPersonSelect = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Pat Roster"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+        onSave={onSave}
+        onPersonSelect={onPersonSelect}
+      />,
+    );
+    fireEvent.keyDown(screen.getByDisplayValue('Pat Roster'), { key: 'Enter', code: 'Enter' });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onPersonSelect).not.toHaveBeenCalled();
   });
 
   it('calls onCancel when Escape is pressed', () => {
@@ -54,7 +70,7 @@ describe('ClusterEditForm', () => {
   it('shows suggestions overlay when typing a partial match', () => {
     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
 
-    expect(screen.getByText('Person A')).toBeInTheDocument();
+    expect(document.querySelector('.acx-identity-cluster__suggestion-row')).not.toBeNull();
     expect(screen.getByText(/95%/)).toBeInTheDocument();
   });
 
@@ -93,7 +109,7 @@ describe('ClusterEditForm', () => {
     );
 
     // Clicking the suggestion item only changes label
-    const suggestion = screen.getByText('Person B');
+    const suggestion = screen.getByRole('button', { name: /Person B \(Group\)/ });
     fireEvent.click(suggestion);
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
     expect(onSave).not.toHaveBeenCalled();
@@ -157,13 +173,13 @@ describe('ClusterEditForm', () => {
     ];
     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
 
-    expect(screen.getByText('Alice Person')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Alice Person \(Person\)/ })).toBeInTheDocument();
     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested 4')).not.toBeInTheDocument();
   });
 
   it('announces option count in a polite live region (A11Y-21 / FIX-7)', () => {
-    // Predicted first failure: no role=status live region
+    vi.useFakeTimers();
     render(
       <ClusterEditForm
         {...defaultProps}
@@ -175,9 +191,13 @@ describe('ClusterEditForm', () => {
       />,
     );
 
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
     const status = screen.getByRole('status');
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toHaveTextContent(/2 naming options/);
+    vi.useRealTimers();
   });
 
   it('includes source in Suggested cluster accessible names (A11Y-04 / FIX-7)', () => {
@@ -190,7 +210,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /Person A \(Cluster\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Person A \(Group\)/i })).toBeInTheDocument();
   });
 
   it('unwraps cluster: namespaced values on confirm', async () => {
@@ -338,7 +358,7 @@ describe('ClusterEditForm', () => {
 
     const renderedOptionRows = screen.getAllByRole('button', { name: /confirm match/i });
     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
     );
   });
@@ -373,10 +393,10 @@ describe('ClusterEditForm', () => {
     const hintB = formB.getByText('Showing 2 of 40 labels — type to search for more');
 
     expect(hintA.id).not.toBe(hintB.id);
-    expect(formA.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(formA.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       'Showing 2 of 80 labels — type to search for more',
     );
-    expect(formB.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(formB.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       'Showing 2 of 40 labels — type to search for more',
     );
   });

@@ -7,16 +7,17 @@
  * "Just label — don't add to roster" tertiary path is retired (INT-06).
  */
 
-import { toRoster } from '../../../navigation/appLinks';
+import { toRoster, toRosterPerson } from '../../../navigation/appLinks';
 
 /** HAI-05 model-output disclosure — plain copy, never dresses a guess as fact. */
 export const MODEL_OUTPUT_DISCLOSURE =
   'Suggested by face matching based on similarity — confirm before treating it as fact.';
 
-/** Success confirm affordance — generic roster root (person deep-link via toRosterPerson). */
+/** Success confirm affordance — person deep-link when a uuid is known. */
 export const VIEW_IN_ROSTER_COPY = 'View in roster →';
 
-export const VIEW_IN_ROSTER_HREF = toRoster();
+export const viewInRosterHref = (personUuid?: string | null): string =>
+  personUuid ? toRosterPerson(personUuid) : toRoster();
 
 export const PERSON_COMMIT_CONFIRM_COPY = 'Save name';
 

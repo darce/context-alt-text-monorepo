@@ -1,0 +1,143 @@
+/* Shared NameFaceControl overlay/row/score chrome (UXW2-3-R1-03).
+ * Applied to every classPrefix: acx-name-face, acx-identity-cluster,
+ * acx-cluster-labeling-panel, acx-person-commit. Tokens only (sr-004). */
+
+@mixin acx-name-face-surface {
+  &__input-wrapper {
+    position: relative;
+    flex: 1;
+  }
+
+  &__suggestions-overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + var(--acx-space-6));
+    background: var(--acx-color-surface-alt);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    box-shadow: var(--acx-shadow-2);
+    padding: var(--acx-space-6);
+    z-index: 15;
+  }
+
+  &__suggestions-header {
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--acx-color-text-muted);
+    padding: var(--acx-space-4) var(--acx-space-6);
+  }
+
+  &__suggestion-row {
+    display: flex;
+    align-items: stretch;
+    border-radius: var(--acx-radius-md);
+
+    &:hover,
+    &--active {
+      background-color: var(--acx-gray-50);
+    }
+  }
+
+  &__suggestion-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--acx-space-2);
+    flex: 1;
+    padding: var(--acx-space-6) var(--acx-space-8);
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--acx-radius-md) 0 0 var(--acx-radius-md);
+  }
+
+  &__suggestion-actions {
+    display: flex;
+    align-items: stretch;
+    gap: var(--acx-space-2);
+    padding: var(--acx-space-2) var(--acx-space-4) var(--acx-space-2) 0;
+  }
+
+  &__suggestion-confirm {
+    background-color: var(--acx-color-success-bg);
+    border: 1px solid var(--acx-color-success-border);
+    color: var(--acx-color-success);
+    padding: 0 var(--acx-space-10);
+    font-size: var(--acx-text-2xs);
+    border-radius: var(--acx-radius-sm);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover {
+      text-decoration: underline;
+      border-color: var(--acx-color-success);
+    }
+  }
+
+  &__suggestion-reject {
+    background: none;
+    border: none;
+    padding: 0 var(--acx-space-12);
+    font-size: var(--acx-text-2xs);
+    color: var(--acx-color-text-muted);
+    cursor: pointer;
+    border-radius: var(--acx-radius-sm);
+    opacity: 0;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover {
+      opacity: 1;
+      color: var(--acx-color-danger);
+      background-color: var(--acx-color-danger-soft);
+    }
+  }
+
+  &__suggestion-label {
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-text);
+  }
+
+  &__match-highlight {
+    background-color: var(--acx-color-accent-soft, var(--acx-gray-100));
+    color: inherit;
+    font-weight: var(--acx-font-weight-semibold);
+    padding: 0;
+  }
+
+  &__match-score {
+    font-weight: var(--acx-font-weight-medium);
+
+    &--high {
+      color: var(--acx-color-success);
+    }
+
+    &--medium {
+      color: var(--acx-color-warning-pill-text);
+    }
+  }
+
+  &__match-score-band {
+    white-space: nowrap;
+  }
+}
+
+.acx-name-face {
+  @include acx-name-face-surface;
+}
+
+.acx-cluster-labeling-panel {
+  @include acx-name-face-surface;
+}
+
+.acx-person-commit {
+  @include acx-name-face-surface;
+}

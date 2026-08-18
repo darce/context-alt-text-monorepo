@@ -34,7 +34,7 @@ import {
   PERSON_COMMIT_COMBOBOX_ARIA,
   PERSON_COMMIT_CONFIRM_COPY,
   VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
+  viewInRosterHref,
 } from '../personCommitCopy';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
@@ -1667,7 +1667,7 @@ describe('ReviewQueue', () => {
     await screen.findByTestId('acx-review-card');
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
-    expect(card).toHaveAccessibleName(/Cluster review 1 of 2/);
+    expect(card).toHaveAccessibleName(/Face group review 1 of 2/);
   });
 
   // BR-41: NAME invalid/no-ordinal fallbacks (inline CurrentCard root uses ReviewCardGroupShell).
@@ -1863,7 +1863,7 @@ describe('ReviewQueue', () => {
     await typePersonName(user, 'Alex');
 
     const link = await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
-    expect(link).toHaveAttribute('href', VIEW_IN_ROSTER_HREF);
+    expect(link).toHaveAttribute('href', viewInRosterHref('person-uuid-7'));
   });
 
   it('person-commit failure shows persistent role=alert with retry', async () => {
@@ -2166,7 +2166,7 @@ describe('ReviewQueue', () => {
 
     const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
     expect(error).toHaveAttribute('role', 'alert');
-    expect(error).toHaveTextContent('Unable to load unlabeled clusters.');
+    expect(error).toHaveTextContent('Unable to load unlabeled faces.');
     expect(within(error).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
     expect(screen.queryByText('These faces are no longer available.')).not.toBeInTheDocument();
@@ -2247,7 +2247,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       const statuses = screen.getAllByRole('status');
       expect(
-        statuses.some((node) => within(node).queryByText('Unable to load unlabeled clusters.')),
+        statuses.some((node) => within(node).queryByText('Unable to load unlabeled faces.')),
       ).toBe(true);
     });
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
@@ -2333,7 +2333,7 @@ describe('ReviewQueue', () => {
     // The live region must announce the outage AND the filtered-empty hint.
     await waitFor(() => {
       const live = document.querySelector('.acx-review-queue__live');
-      expect(live).toHaveTextContent('Unable to load unlabeled clusters.');
+      expect(live).toHaveTextContent('Unable to load unlabeled faces.');
       expect(live).toHaveTextContent('No items match the current filters.');
     });
 

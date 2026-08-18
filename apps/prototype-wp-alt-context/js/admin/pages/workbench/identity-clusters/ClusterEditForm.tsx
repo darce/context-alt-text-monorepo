@@ -12,6 +12,7 @@ import { parseNamingOptionValue, unwrapClusterOptionId } from './buildNamingOpti
 import {
   budgetOverlayOptions as budgetRows,
   NameFaceControl,
+  normalizeNameFaceLabel,
   type NameFaceResolution,
 } from './NameFaceControl';
 
@@ -74,8 +75,7 @@ export const ClusterEditForm = ({
   atRestTruncated = false,
   isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
-  void isLoading;
-
+  const prefillRef = React.useRef(labelInput);
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
   const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
@@ -86,6 +86,12 @@ export const ClusterEditForm = ({
   // never merge); anything else saves the typed label (PR-16 / FIX-1).
   const handleCommit = React.useCallback(
     (resolution: NameFaceResolution) => {
+      if (resolution.kind === 'ambiguous') {
+        return;
+      }
+      if (normalizeNameFaceLabel(resolution.name) === normalizeNameFaceLabel(prefillRef.current)) {
+        return;
+      }
       if (resolution.kind === 'roster') {
         if (onPersonSelect) {
           onPersonSelect(resolution.name);
@@ -137,10 +143,12 @@ export const ClusterEditForm = ({
       onRejectSuggestion={onRejectSuggestion}
       onCancel={onCancel}
       isPending={isPending}
+      isLoading={isLoading}
+      searchPlaceholder={__('Enter a name…', 'alt-context')}
       commitLabel={saveButtonLabel}
       pendingLabel={saveButtonLabel}
       placeholder={__('Enter a name…', 'alt-context')}
-      ariaLabel={__('Cluster label', 'alt-context')}
+      ariaLabel={__('Person name', 'alt-context')}
       className="acx-identity-cluster__edit"
       classPrefix="acx-identity-cluster"
       hintId={showAtRestTruncationHint ? atRestHintId : undefined}

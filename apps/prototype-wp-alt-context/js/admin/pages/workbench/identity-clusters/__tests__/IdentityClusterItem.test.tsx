@@ -199,7 +199,7 @@ describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
 
     const hint = screen.getByText(/Showing \d+ of 80 labels/);
     expect(hint).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       hint.textContent ?? '',
     );
   });

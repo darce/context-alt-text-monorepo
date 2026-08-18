@@ -451,8 +451,44 @@ vi.mock('../pages/workbench/DeadLetterPanel', () => ({
 }));
 
 // UXW2-3: one-member fixture so the review panel paints its real member-row copy.
+vi.mock('../hooks/useRosterHooks', async () => {
+  const actual = await vi.importActual<typeof import('../hooks/useRosterHooks')>('../hooks/useRosterHooks');
+  return {
+    ...actual,
+    useRosterEntries: () =>
+      createMockQuery({
+        data: [],
+        isLoading: false,
+        isError: false,
+        isSuccess: true,
+        refetch: vi.fn(),
+      }),
+  };
+});
+
+vi.mock('../api/rosterApi', async () => {
+  const actual = await vi.importActual<typeof import('../api/rosterApi')>('../api/rosterApi');
+  return {
+    ...actual,
+    listRosterEntries: vi.fn().mockResolvedValue([]),
+    commitClusterToRosterEntry: vi.fn(),
+  };
+});
+
+vi.mock('../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../api/recognition')>('../api/recognition');
+  return {
+    ...actual,
+    fetchClusterMembers: vi.fn().mockResolvedValue({ members: [], limit: 1, total: 0, truncated: false }),
+    listRecognitionClusters: vi.fn().mockResolvedValue({ clusters: [], limit: 10, total: 0, truncated: false }),
+    updateClusterLabel: vi.fn(),
+    mergeCluster: vi.fn(),
+    revertMergeCluster: vi.fn(),
+  };
+});
+
 vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => ({
-  useShowAllClusterMembers: () => ({
+  useShowAllClusterMembers: vi.fn(() => ({
     members: [
       {
         identity_id: 'identity-1',
@@ -474,7 +510,7 @@ vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => (
     expandError: null,
     showAll: vi.fn(),
     refetch: vi.fn(),
-  }),
+  })),
 }));
 
 import { DashboardPage } from '../pages/DashboardPage';
@@ -511,6 +547,25 @@ const wrap = (node: React.JSX.Element) => {
 };
 
 const collectVisibleText = (container: HTMLElement): string => container.textContent ?? '';
+
+const ACCESSIBLE_ATTRS = ['aria-label', 'title', 'alt', 'placeholder', 'aria-description'] as const;
+
+const collectReviewSurfaceText = (root: HTMLElement = document.body): string => {
+  const chunks = [root.textContent ?? ''];
+  for (const attr of ACCESSIBLE_ATTRS) {
+    root.querySelectorAll(`[${attr}]`).forEach((node) => {
+      chunks.push(node.getAttribute(attr) ?? '');
+    });
+  }
+  return chunks.join(' ');
+};
+
+const assertNoBannedReviewWords = (root: HTMLElement = document.body): void => {
+  const text = collectReviewSurfaceText(root);
+  for (const pattern of BANNED_REVIEW_SURFACE_WORDS) {
+    expect(text).not.toMatch(pattern);
+  }
+};
 
 describe('banned vocabulary across js/admin pages', () => {
   beforeEach(() => {
@@ -560,8 +615,8 @@ describe('banned vocabulary across js/admin pages', () => {
     const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
 
     const personCommitStrings = Object.values(personCommitCopy).filter(
-      (value): value is string => typeof value === 'string',
-    );
+      (value) => typeof value === 'string',
+    ) as string[];
     const surface = [
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT],
       NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE],
@@ -635,16 +690,132 @@ describe('banned vocabulary across js/admin pages', () => {
    */
   it('workbench review panel renders without engineering vocabulary', async () => {
     const { ClusterReviewPanel } = await import('../pages/workbench/identity-clusters/ClusterReviewPanel');
-    const { container } = render(
-      wrap(<ClusterReviewPanel clusterId="cluster-1" onClose={() => undefined} />),
-    );
-    const text = collectVisibleText(container);
+    render(wrap(<ClusterReviewPanel clusterId="cluster-1" onClose={() => undefined} />));
+    assertNoBannedReviewWords(document.body);
+    expect(collectReviewSurfaceText(document.body)).toContain('Review these faces');
+    expect(collectReviewSurfaceText(document.body)).not.toMatch(UUID_REGEX);
+  });
 
-    for (const pattern of BANNED_REVIEW_SURFACE_WORDS) {
-      expect(text).not.toMatch(pattern);
+  it('collects aria-label/title/alt/placeholder so a banned attribute fails the sweep (UXW2-3-R1-06)', () => {
+    render(wrap(<button type="button" aria-label="Open cluster" title="cluster details" />));
+    const text = collectReviewSurfaceText(document.body);
+    expect(text).toMatch(/\bcluster\b/i);
+  });
+
+  it.each([
+    ['ClusterLabelingPanel default', 'default'],
+    ['ClusterLabelingPanel error', 'error'],
+    ['NameFaceControl suggestions-open', 'suggestions-open'],
+    ['ClusterEditForm default', 'edit-default'],
+    ['PersonCommitControl loading', 'commit-loading'],
+    ['PersonCommitControl error', 'commit-error'],
+    ['SuggestionCards default', 'suggestion-default'],
+    ['TopClusterCard default', 'top-default'],
+  ] as const)('%s has no banned review vocabulary', async (_label, state) => {
+    const naming = await import('../pages/workbench/identity-clusters/NameFaceControl');
+    const edit = await import('../pages/workbench/identity-clusters/ClusterEditForm');
+    const labeling = await import('../pages/workbench/identity-clusters/ClusterLabelingPanel');
+    const commit = await import('../pages/workbench/identity-clusters/PersonCommitControl');
+    const cards = await import('../pages/workbench/identity-clusters/SuggestionCards');
+    const top = await import('../pages/workbench/identity-clusters/TopClusterCard');
+    const showAll = await import('../pages/workbench/identity-clusters/useShowAllClusterMembers');
+
+    if (state === 'error') {
+      vi.mocked(showAll.useShowAllClusterMembers).mockReturnValueOnce({
+        members: [],
+        isLoading: false,
+        isError: true,
+        truncated: false,
+        total: 0,
+        isFullyLoaded: true,
+        isExpanding: false,
+        expandError: null,
+        showAll: vi.fn(),
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof showAll.useShowAllClusterMembers>);
     }
-    expect(text).toContain('Review these faces');
-    expect(text).not.toMatch(UUID_REGEX);
+
+    const option = { value: 'person:1', label: 'Ada', source: 'person' as const, group: 'All Labels' };
+
+    const node =
+      state === 'default' ? (
+        <labeling.ClusterLabelingPanel clusterId="c1" onClose={() => undefined} onLabel={() => undefined} />
+      ) : state === 'error' ? (
+        <labeling.ClusterLabelingPanel clusterId="c1" onClose={() => undefined} onLabel={() => undefined} />
+      ) : state === 'suggestions-open' ? (
+        <naming.NameFaceControl
+          options={[option, { ...option, value: 'person:2', label: 'Grace' }]}
+          value="a"
+          onValueChange={() => undefined}
+          onCommit={() => undefined}
+          commitLabel="Save name"
+          ariaLabel="Name this person"
+        />
+      ) : state === 'edit-default' ? (
+        <edit.ClusterEditForm
+          labelInput="Ada"
+          onLabelChange={() => undefined}
+          options={[option]}
+          isLoading={false}
+          isPending={false}
+          onSave={() => undefined}
+          onCancel={() => undefined}
+        />
+      ) : state === 'commit-loading' ? (
+        <commit.PersonCommitControl
+          clusterId="c1"
+          phase="idle"
+          errorMessage={null}
+          onCommit={() => undefined}
+          onRetry={() => undefined}
+        />
+      ) : state === 'commit-error' ? (
+        <commit.PersonCommitControl
+          clusterId="c1"
+          phase="failed"
+          errorMessage="Could not save the name. Retry to try again."
+          onCommit={() => undefined}
+          onRetry={() => undefined}
+        />
+      ) : state === 'suggestion-default' ? (
+        <cards.SuggestionCard
+          suggestion={{
+            suggestionId: 's1',
+            identityId: 'i1',
+            clusterId: 'c1',
+            label: 'Ada',
+            similarity: 0.9,
+            identityCount: 3,
+          }}
+          onAccept={() => undefined}
+          onReject={() => undefined}
+          onReview={() => undefined}
+          isPending={false}
+          lowConfidenceThreshold={0.5}
+        />
+      ) : (
+        <top.TopClusterCard
+          cluster={{
+            id: 'c1',
+            tenant_id: 't1',
+            label: null,
+            is_labeled: false,
+            is_auto_label: false,
+            identity_count: 3,
+            user_confirmed: false,
+            suggested_label: null,
+            suggested_label_source: null,
+            suggested_label_confidence: null,
+            suggested_target_cluster_id: null,
+            representatives: [],
+          }}
+          onLabel={() => undefined}
+          onDismiss={() => undefined}
+        />
+      );
+
+    render(wrap(node));
+    assertNoBannedReviewWords(document.body);
   });
 
   /**

@@ -96,6 +96,7 @@ export interface PersonCommitState {
   phase: PersonCommitPhase;
   clusterId: string | null;
   errorMessage: string | null;
+  personUuid: string | null;
 }
 
 export interface PersonCommitRequest {
@@ -184,6 +185,7 @@ export const useSuggestionReviewMutations = ({
     phase: 'idle',
     clusterId: null,
     errorMessage: null,
+    personUuid: null,
   });
 
   const mountedRef = React.useRef(true);
@@ -751,10 +753,11 @@ export const useSuggestionReviewMutations = ({
         phase: 'committing',
         clusterId: request.clusterId,
         errorMessage: null,
+        personUuid: null,
       });
 
       try {
-        await commitClusterToRosterEntry({
+        const committed = await commitClusterToRosterEntry({
           clusterId: request.clusterId,
           rosterEntryId: request.rosterEntryId,
           newEntryName: request.newEntryName,
@@ -777,6 +780,7 @@ export const useSuggestionReviewMutations = ({
           phase: 'succeeded',
           clusterId: request.clusterId,
           errorMessage: null,
+          personUuid: committed.person_uuid,
         });
         return { outcome: 'committed', clusterId: request.clusterId };
       } catch {
@@ -784,6 +788,7 @@ export const useSuggestionReviewMutations = ({
           phase: 'failed',
           clusterId: request.clusterId,
           errorMessage: PERSON_COMMIT_FAILURE_COPY,
+          personUuid: null,
         });
         return { outcome: 'failed', clusterId: request.clusterId };
       } finally {
@@ -902,7 +907,7 @@ export const useSuggestionReviewMutations = ({
 
   const clearPersonCommitSuccess = React.useCallback((): void => {
     if (personCommit.phase === 'succeeded' || personCommit.phase === 'failed') {
-      setPersonCommitSafe({ phase: 'idle', clusterId: null, errorMessage: null });
+      setPersonCommitSafe({ phase: 'idle', clusterId: null, errorMessage: null, personUuid: null });
     }
   }, [personCommit.phase, setPersonCommitSafe]);
 

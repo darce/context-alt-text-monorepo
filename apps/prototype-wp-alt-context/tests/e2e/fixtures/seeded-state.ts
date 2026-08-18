@@ -41,18 +41,6 @@ export const skipUnlessPopulatedWorkbench = async (page: Page): Promise<void> =>
 export const skipUnlessPopulatedRoster = async (page: Page): Promise<void> => {
   await page.waitForLoadState('networkidle');
 
-  await page.getByRole('tab', { name: /Clusters/i }).click();
-
-  const clusterCard = page.locator('.acx-cluster-card').first();
-  const noClusters = page.getByRole('heading', { name: /No clusters yet/i });
-  await waitForEither([clusterCard, noClusters], 15_000);
-
-  if (await isVisible(clusterCard)) {
-    return;
-  }
-
-  await page.getByRole('tab', { name: /Entries/i }).click();
-
   const entryRow = page.locator('.acx-roster-entries__table tbody tr').first();
   const noPeople = page.getByText(/No people yet\. Add one manually or assign a face group\./i);
   await waitForEither([entryRow, noPeople], 10_000);
@@ -61,5 +49,5 @@ export const skipUnlessPopulatedRoster = async (page: Page): Promise<void> => {
     return;
   }
 
-  test.skip(true, 'LocalWP roster has no clusters or managed identities — seeded axe requires populated roster data.');
+  test.skip(true, 'LocalWP roster has no people — seeded axe requires populated roster data.');
 };

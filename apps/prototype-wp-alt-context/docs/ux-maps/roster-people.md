@@ -10,7 +10,7 @@
 ## Jobs
 - `job-assign-faces` — Assign unassigned faces to people
 - `job-manage-person` — Open person workspace / manage entry
-- `job-cluster-review` — Review recognition cluster in drawer
+- `job-cluster-review` — Review face-group deep-link (shim)
 
 ## Vocabulary (say / don't say)
 
@@ -30,7 +30,7 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 | --- | --- | --- | --- |
 | `roster-shell` | screen | `#/roster` | Roster (People) |
 | `roster-person-workspace` | screen | `#/roster?person=` | Person workspace |
-| `roster-cluster-drawer` | overlay | `#/roster?cluster=` | Cluster drawer |
+| `roster-cluster-drawer` | overlay | `#/roster?cluster=` | Face-group drawer (shim) |
 | `roster-face-lightbox` | overlay | `#/roster?person= (in-panel dialog; no dedicated route)` | Face evidence lightbox |
 | `exit-workbench` | exit | `#/workbench` | Workbench |
 
@@ -48,7 +48,7 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 |     the Workbench, Roster links out with server count)     |
 |   - Projection status gate notices (status) states=[defau… |
 |   - Person workspace host (other) states=[default,empty]   |
-|   - Cluster drawer host (other) states=[default,empty]     |
+|   - Face-group drawer host (other) states=[default,empty]  |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Filter unassigned -> personFilter=unassigned   |
@@ -81,19 +81,20 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 +------------------------------------------------------------+
 ```
 
-### Cluster drawer (`roster-cluster-drawer`)
+### Face-group drawer (`roster-cluster-drawer`)
 
 ```
 +------------------------------------------------------------+
-| Cluster drawer  [overlay]  #/roster?cluster=               |
-| Person-first cluster sample identities drawer (clusters t… |
+| Face-group drawer  [overlay]  #/roster?cluster=            |
+| Person-first face-group sample drawer (clusters tab        |
+| retired; cluster= is an E21-10 deep-link shim)             |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Sample identities (forced_choice) states=[default,loa… |
+|   - Sample faces (forced_choice) states=[default,loadin…   |
 |   - Assign / dismiss drawer (form) states=[default]        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Assign cluster identity -> person (costly,pre… |
+|   [PRIMARY] Assign face group to person (costly,preview)   |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -168,8 +169,8 @@ flowchart TD
 
 ## Open questions
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
-- ~~Should needs-assignment be its own screen_id or remain a zone on roster-shell?~~ Resolved (UXW2-4): rail retired; needs-assignment lives only in the Workbench review queue (`#/workbench?tab=scan&rq=assignment.all.0`), Roster keeps a CTA card.
-- Cluster drawer max_candidates=8 — confirm product top-k policy
+- ~~Should needs-assignment be its own screen_id or remain a zone on roster-shell?~~ Resolved (UXW2-4): rail retired; unnamed faces live only in the Workbench review queue (`#/workbench?tab=scan&rq=all.all.0`), Roster keeps a CTA card.
+- Face-group drawer max_candidates=8 — confirm product top-k policy
 
 ## Not doing
 - Resurrect Clusters tab surface (retired; cluster= drawer only)

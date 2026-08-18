@@ -147,22 +147,25 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
 
     expect(screen.getByTestId('route-probe').textContent).toContain('panel=review');
     expect(screen.getByTestId('route-probe').textContent).toContain('cluster=cluster-42');
-    expect(screen.getByRole('heading', { level: 2, name: 'Review Cluster' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Review this face group' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '← Back to Review Suggestions' })).toBeInTheDocument();
-    expect(screen.getByText('Reviewing faces — press Back to return to suggestions')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Reviewing faces — press Back to return to suggestions',
+    );
     expect(screen.queryByTestId('review-queue')).not.toBeInTheDocument();
+    expect(screen.getByTestId('route-probe').textContent).toContain('tab=scan');
   });
 
   it('mounting at panel=review&cluster=<id> restores the review panel', () => {
     renderScanTab('/workbench?tab=scan&panel=review&cluster=cluster-42');
 
-    expect(screen.getByRole('heading', { level: 2, name: 'Review Cluster' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Review this face group' })).toBeInTheDocument();
     expect(screen.queryByTestId('review-queue')).not.toBeInTheDocument();
   });
 
   it('Back returns to the queue and clears both params in one write', async () => {
     const user = userEvent.setup();
-    renderScanTab('/workbench?tab=scan&panel=review&cluster=cluster-42');
+    renderScanTab('/workbench?tab=scan&rq=all.all.0&panel=review&cluster=cluster-42');
 
     await user.click(screen.getByRole('button', { name: '← Back to Review Suggestions' }));
 
@@ -170,5 +173,29 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     expect(screen.getByTestId('route-probe').textContent).not.toContain('panel=');
     expect(screen.getByTestId('route-probe').textContent).not.toContain('cluster=');
     expect(screen.getByTestId('route-probe').textContent).toContain('tab=scan');
+    expect(screen.getByTestId('route-probe').textContent).toContain('rq=all.all.0');
+    expect(screen.getByRole('status')).toHaveTextContent('Returned to review suggestions');
+  });
+
+  it('cluster= without panel=review stays on the queue', () => {
+    renderScanTab('/workbench?tab=scan&cluster=cluster-42');
+
+    expect(screen.getByTestId('review-queue')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
+  });
+
+  it('panel=conflicts is not treated as review and survives', () => {
+    renderScanTab('/workbench?tab=scan&panel=conflicts&cluster=x');
+
+    expect(screen.getByTestId('review-queue')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('route-probe').textContent).toContain('panel=conflicts');
+  });
+
+  it('panel=review without cluster stays on the queue', () => {
+    renderScanTab('/workbench?tab=scan&panel=review');
+
+    expect(screen.getByTestId('review-queue')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
   });
 });

@@ -52,6 +52,9 @@ describe('appLinks builders', () => {
     expect(toWorkbench({ tab: 'scan', panel: 'conflicts' })).toBe(
       '#/workbench?tab=scan&panel=conflicts',
     );
+    expect(toWorkbench({ tab: 'scan', panel: 'review', cluster: 'cluster-42' })).toBe(
+      '#/workbench?tab=scan&panel=review&cluster=cluster-42',
+    );
   });
 
   it('toWorkbench round-trips option objects through hash query params', () => {

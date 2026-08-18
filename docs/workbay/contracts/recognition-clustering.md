@@ -265,6 +265,48 @@ ClusterResponse fields (abridged):
 - `suggested_label_source` (`identity` | `roster` | `similar_cluster` | `none` | null)
 - `suggested_label_confidence` (nullable float)
 
+### GET /recognition/clusters/{cluster_id}/roster-candidates
+
+Query params:
+
+- `tenant_id` (header or query; same tenant scoping as sibling cluster reads)
+- `top_k` (default 10, max 50; rejected with 400 when out of range — never clamped)
+
+Ranks labelled, user-confirmed clusters (the python-side stand-in for roster persons) against the probe cluster's representatives. Comparison is max-cosine over same-`embedding_model` representative sets only (FIR23-01 / EMB-01). Python has no person table: each candidate is keyed by labelled `cluster_id` + `name` (cluster label). The WordPress passthrough maps `cluster_id` → local `roster_entry_id` via `acx_clusters.person_id`.
+
+Response schema: `packages/shared-contracts/schemas/roster-candidates-response.schema.json`.
+
+```json
+{
+  "model_id": "opencv-sface+cv5@128d/l2/cosine",
+  "embedding_model": "opencv-sface+cv5@128d/l2/cosine",
+  "computed_at": "2026-08-18T12:00:00+00:00",
+  "reference_face_count": 3,
+  "thresholds": {
+    "suggestion_floor": 0.35,
+    "suggestion_ceiling": 0.55,
+    "similarity_threshold": 0.55
+  },
+  "candidates": [
+    {
+      "cluster_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "name": "Ada",
+      "similarity": 0.81,
+      "band": "strong",
+      "quality_flag": "ok"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `band` is computed server-side from the active profile's live `suggestion_floor` / `suggestion_ceiling` (`strong` ≥ ceiling, `possible` ∈ [floor, ceiling), `none` < floor). Clients must not invent bands (DRIFT-03).
+- `similarity` is a ranking cosine, not a calibrated probability (CAL-03 / HAI-08 / MEAS-05). New UI surfaces should show `band`, not a raw percent.
+- Empty labelled roster returns `{ candidates: [] }` (200), not an error (CAL-02). Missing cluster is 404.
+- `quality_flag` is `low_quality` when a probe representative's `landmark_quality` / `quality_score` is below `fatal_quality_floor` (or `det_score` below `fatal_confidence_floor`). `occluded` is reserved and is never fabricated.
+- Order is server rank (similarity descending). Do not re-sort client-side.
+
 ### GET /recognition/clusters/top-unlabeled
 
 Query params:

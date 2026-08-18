@@ -59,15 +59,27 @@ would have rewritten 10,662 occurrences of one ordinary 4-letter word across 689
 files, `Makefile` and `pyproject.toml` among them. `plan` records the list's
 path, sha256 and word count in the alias map, and `apply` and `verify` both
 refuse to run against a list whose digest has moved since. Both print the
-measurement on every run.
+measurement on every run. A map with no `wordlist` block at all is the same
+hard failure, not a warning. The fix is `plan --pin-wordlist`: it adds only
+that block and does not re-mint. `--force` is not the fix — it re-mints every
+alias and orphans applied rewrites.
+
+The alias map also needs a `free_text_deny` list block. An absent block is a
+hard failure (add the block; an empty list is valid).
 
 ## The key
 
-Aliases are minted deterministically as `HMAC-SHA256(secret_key, name)` →
-`adjective_noun` → Title-Cased display alias. The key is 32 random bytes written
+Aliases are minted deterministically as `HMAC-SHA256(secret_key, f"{name}#{attempt}")`
+→ `adjective_noun` → Title-Cased display alias (`attempt` starts at 0; a
+collision re-hashes with the next integer rather than hashing `name` alone).
+The key is 32 random bytes written
 once to `$ACX_CORPUS_PRIVATE_DIR/priv1-mint-key` (mode 600) and never committed.
-The alias map records only a `key_fingerprint`, and `plan` refuses to run
-against a map minted under a different key.
+The alias map records only a `key_fingerprint`. `apply` and `verify` refuse a
+map minted under a different key (`load_map` → `_validate_map`). `plan` does
+not: if a map already exists it says so and asks for `--force`, and `--force`
+re-mints every alias, orphaning any rewrite already applied. A key mismatch is
+not a reason to pass `--force` — restore the matching key, or move both the map
+and the key aside and re-run `plan` from a clean tree.
 
 A *committed* salt would make every pseudonym a confirmable guess: anyone who
 suspects a name can hash it and check. That is not de-identification, so the key
@@ -76,7 +88,9 @@ is the one artifact that must stay out of the repo (MLDATA-17).
 **Consequence: CI cannot gate `verify`.** Without the key and the map, the
 residue scan has nothing to scan for. `verify` is an operator-run check on a
 machine that holds the private store, not a pipeline step. Do not add it to
-`make check-all` — a green run there would only mean "the key is missing."
+`make check-all` — CI has no store, so the command can only ever be red
+(`mint key not found`, exit 1). Do not wrap that exit as a skip: the same
+code covers every other hard failure.
 
 ## Measured residue (2026-08-18, after `apply`)
 
@@ -107,14 +121,20 @@ counted and printed by `apply` and `verify` rather than dropped.
 
 ```
 $ python scripts/privacy/priv1_pseudonymize.py verify
-  bare tokens left alone (also carried by a non-personal identity): ['liam']
+  bare tokens left alone (also carried by a non-personal identity): ['<given-name-token>']
   concat exclusions: 4 dropped (4× single-token name; no concatenation exists)
   adjacent exclusions: 6 dropped (4× no positional alias token; 2× pair maps to >1 identity)
+  ambiguous family exclusions: <N> dropped
+  wordlist: <N> words (sha256 ..)
   ambiguous media stems: 0 left unresolved (token maps to >1 identity)
-in-scope residue: 0 files / 0 occ; paths: 0; free-text: 0;
-unscannable in-scope: 0 (+1 declared); out-of-scope (reported only): 35 files
+  digest pins: <N> published; <S> stale; <M> missing
+in-scope residue: 0 files / 0 occ; paths: 0; free-text: 0; unscannable in-scope: 0 (+1 declared); out-of-scope (reported only): 35 files
 exit 0
 ```
+
+The `bare tokens left alone …` line echoes leftover tokens. It belongs on
+the operator's terminal only — never paste a live token list into a tracked
+document.
 
 **`verify` currently exits 0.** The three media stems that used to keep it
 at 1 were shared tokens that also happen to be ordinary English. The
@@ -129,7 +149,10 @@ residue, not those three.
 `verify` also prints `digest pins: N published; S stale; M missing` on
 every run, including the zero case. That count is live and is not pinned
 here. A missing record is not a zero on that line — it is the hard
-failure above.
+failure above. `apply` now exits non-zero when its own pin check reports
+stale or missing pins — the same finding `verify` already failed on. A
+dry run does not check pins and prints `digest pins: not checked (dry run …)`
+rather than a measured `0 published; 0 stale; 0 missing`.
 
 Independent oracle (`str.find` over needles built from the alias map, sharing no
 code with the script) across 2,994 tracked files:
@@ -197,7 +220,10 @@ would rot. They never print the token.
   changes that file's own digest (3 second-order pins measured). Non-convergence
   raises rather than passing quietly.
 - `rewrite()` and `residue()` share one `_Passes` object, so `verify` provably
-  exercises the same eight passes as `apply` (CARD-08). Sharing the object is
+  exercises the same seven passes as `apply` (CARD-08) — `name`, `single`,
+  `slug`, `media`, `given`, `concat`, `adjacent`. The family backstop
+  (`_ambiguous_family_words`) is a map the media pass consults; it is not an
+  eighth counts key. Sharing the object is
   necessary but not sufficient: both are built from the same builders, so a
   builder that drops an entry blinds the checker and the rewriter together.
   That has now happened three times — the concatenated form as a whole; four
@@ -279,6 +305,11 @@ would rot. They never print the token.
 - An entry that cannot be rewritten raises instead of being skipped. A `continue`
   in a builder is indistinguishable, at the output, from a name that was never
   there.
+- A map with no `wordlist` block used to warn and continue. `apply` and
+  `verify` now refuse. `plan --pin-wordlist` is the non-destructive repair
+  (it adds only that block); `--force` re-mints and is not the fix.
+- An alias map without a `free_text_deny` list block is refused. Add the
+  block; an empty list is valid.
 - A tracked symlink is read as its own target string, not followed. Following it
   makes coverage depend on whether an overlay happens to be materialized in the
   current worktree — seven git-hook links read as `FileNotFoundError` and looked
@@ -300,7 +331,8 @@ would rot. They never print the token.
   against post-rewrite digests, so a digest that moves out-of-band — a
   hand edit, a rebase, a re-serialization by another tool — is invisible
   to the rewriter. `verify` now re-hashes every path in the pin record
-  and exits 1 on stale or missing (PRIV-1-BR-11, PRIV-1-BR-32). Repair of
-  an out-of-band move is still a manual old→new sweep iterated to a
-  fixpoint; the next `apply` will not do it.
+  and exits 1 on stale or missing (PRIV-1-BR-11, PRIV-1-BR-32). `apply`
+  now also exits non-zero when its own pin check reports those findings.
+  Repair of an out-of-band move is still a manual old→new sweep iterated
+  to a fixpoint; the next `apply` will not do it.
 - **CI cannot gate any of this** (see *The key*). `verify` is an operator check.

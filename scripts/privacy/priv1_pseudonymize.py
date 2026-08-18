@@ -1171,7 +1171,7 @@ def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -
 
 
 # Optional middle initial between a real-name token and an alias token of
-# the same identity: `Rose K. quarry`, `Rose K quarry`, or `Rose quarry`.
+# the same identity: `Qorvist K. quarry`, `Qorvist K quarry`, or `Qorvist quarry`.
 # Letter-only anchors — the same narrowing the short concat tier uses —
 # so a digit/`@`/`/` neighbour still matches and an in-word collision
 # does not. Built from the alias map, never the wordlist (BR-27).
@@ -1191,7 +1191,7 @@ def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple
 
     The given-name pass excludes dictionary words on purpose — rewriting
     them would corrupt unrelated English. That exclusion is correct in
-    isolation. What it ignores is the neighbour: `Rose quarry`, where
+    isolation. What it ignores is the neighbour: `Qorvist quarry`, where
     `quarry` is a surname this scrub itself minted, is not ordinary
     English. The adjacency is an identity match, not a heuristic.
 
@@ -1203,7 +1203,7 @@ def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple
     A pair is emitted only when the leading token is a real-name token
     of identity X with a positional alias, and the adjacent token is a
     *different-index* alias token of the same X. Same-index pairing
-    would turn `Rose cobalt` into `Cobalt cobalt`. A pair that two
+    would turn `Qorvist cobalt` into `Cobalt cobalt`. A pair that two
     identities resolve to different replacements is refused, not
     guessed. One-letter leading tokens are refused and counted: letter
     anchors cannot separate `a quarry` from the English article.

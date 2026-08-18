@@ -53,7 +53,7 @@ def _test_wordlist(tmp_path, monkeypatch):
     # the fail-fast, and a full host list would make residue a property of the
     # machine. Invented fixture names are not in this list.
     path = tmp_path / "priv1-unit-wordlist"
-    path.write_text("the\na\nof\nrose\nfaith\nivy\nself\nbrook\n", encoding="utf-8")
+    path.write_text("the\na\nof\nqorvist\nfaith\nivy\nself\nbrook\n", encoding="utf-8")
     monkeypatch.setenv("PRIV1_WORDLIST", str(path))
     _reset_wordlist()
     yield path
@@ -65,18 +65,18 @@ def mapping() -> dict:
     return {
         "entries": [
             {
-                "real_name": "Ryanne Wistmoor",
+                "real_name": "Nylphra Veldrith",
                 "alias": "Amber Falcon",
                 "alias_slug": "amber_falcon",
-                "original_slug": "ryanne-wistmoor",
+                "original_slug": "nylphra-veldrith",
                 "slug_was_name_derived": True,
                 "tokens": 2,
             },
             {
-                "real_name": "Calderre Vensk",
+                "real_name": "Veldrun Zyllnex",
                 "alias": "Cobalt Harbor",
                 "alias_slug": "cobalt_harbor",
-                "original_slug": "calderre-vensk",
+                "original_slug": "veldrun-zyllnex",
                 "slug_was_name_derived": True,
                 "tokens": 2,
             },
@@ -96,10 +96,10 @@ def shared_token_mapping() -> dict:
     return {
         "entries": [
             {
-                "real_name": "Calderre Vensk",
+                "real_name": "Veldrun Zyllnex",
                 "alias": "Cobalt Harbor",
                 "alias_slug": "cobalt_harbor",
-                "original_slug": "calderre-vensk",
+                "original_slug": "veldrun-zyllnex",
                 "slug_was_name_derived": True,
                 "tokens": 2,
             }
@@ -111,10 +111,10 @@ _CELEB = [
     {
         "bucket": "celebs",
         "naming": "real_name",
-        "name": "Marlow Vensk",
-        "slug": "marlow_vensk",
-        "primary_of": ["celebs/marlow_vensk_25.webp"],
-        "appears_in": ["celebs/marlow_vensk_25.webp"],
+        "name": "Qorvith Zyllnex",
+        "slug": "qorvith_zyllnex",
+        "primary_of": ["celebs/qorvith_zyllnex_25.webp"],
+        "appears_in": ["celebs/qorvith_zyllnex_25.webp"],
     }
 ]
 
@@ -126,7 +126,7 @@ _UNIT_NONPERSONAL: list[dict] = []
 
 def test_celebrity_record_survives_a_shared_surname(shared_token_mapping):
     passes = pz._Passes(shared_token_mapping, identities=_CELEB)
-    record = '{"name": "Marlow Vensk", "slug": "marlow_vensk", "primary_of": ["celebs/marlow_vensk_25.webp"]}'
+    record = '{"name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex", "primary_of": ["celebs/qorvith_zyllnex_25.webp"]}'
     out, _counts, _unresolved = passes.rewrite(record, ".json")
     assert out == record, "a non-personal identity's own name, slug and media path must come back byte-identical"
     assert passes.residue(record, ".json") == {}, "and must not be counted as residue either"
@@ -137,9 +137,9 @@ def test_the_personal_subject_sharing_that_surname_is_still_scrubbed(shared_toke
     # shared token would make this pass -- and leak the subject the scrub exists
     # for -- so both directions have to be asserted together.
     passes = pz._Passes(shared_token_mapping, identities=_CELEB)
-    text = '{"name": "Calderre Vensk", "path": "personal/calderre-vensk-04.jpg"}'
+    text = '{"name": "Veldrun Zyllnex", "path": "personal/veldrun-zyllnex-04.jpg"}'
     out, _counts, _unresolved = passes.rewrite(text, ".json")
-    assert "Calderre" not in out and "calderre" not in out
+    assert "Veldrun" not in out and "veldrun" not in out
     assert "Cobalt Harbor" in out and "cobalt_harbor" in out
     assert passes.residue(text, ".json"), "and the checker must see the same thing the rewriter did"
 
@@ -148,7 +148,7 @@ def test_masking_is_load_bearing(shared_token_mapping):
     # Prove the guard can go red: with no protected identities the same input
     # is corrupted, which is exactly what shipped.
     passes = pz._Passes(shared_token_mapping, identities=[])
-    record = '{"name": "Marlow Vensk", "slug": "marlow_vensk"}'
+    record = '{"name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex"}'
     out, _counts, _unresolved = passes.rewrite(record, ".json")
     assert out != record
 
@@ -201,9 +201,9 @@ def test_hex_run_guard_ignores_non_hex_matches():
 
 def test_concatenated_name_is_rewritten(mapping):
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    text = "2026/07/ryannewistmoor-1721_9988776655.jpg"
+    text = "2026/07/nylphraveldrith-1721_9988776655.jpg"
     out, counts, _unresolved = passes.rewrite(text, ".json")
-    assert "ryannewistmoor" not in out.lower()
+    assert "nylphraveldrith" not in out.lower()
     assert "amberfalcon" in out.lower()
     assert counts["concat"] == 1
 
@@ -212,12 +212,12 @@ def test_concatenated_name_is_reported_as_residue(mapping):
     # verify and apply must agree: a class the rewriter fixes but the checker
     # cannot see is how "0 residue" was reported over 379 live occurrences.
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    assert passes.residue("2026/07/ryannewistmoor-1721_9988.jpg", ".json").get("concat") == 1
+    assert passes.residue("2026/07/nylphraveldrith-1721_9988.jpg", ".json").get("concat") == 1
 
 
 def test_concatenated_pass_preserves_case_shape(mapping):
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    out, _counts, _u = passes.rewrite("RYANNEWISTMOOR and Ryannewistmoor", ".md")
+    out, _counts, _u = passes.rewrite("NYLPHRAVELDRITH and Nylphraveldrith", ".md")
     assert "AMBERFALCON" in out
     assert "AmberFalcon" in out, "mixed case must fall back to the alias's own casing"
 
@@ -231,9 +231,9 @@ def test_concatenated_pass_reaches_embedded_alnum_runs(mapping):
     # fixture; `_inside_hex_run` is now the sha256 protection, proven
     # separately.
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    out, counts, _u = passes.rewrite("xryannewistmoorx and ryannewistmoor9", ".json")
+    out, counts, _u = passes.rewrite("xnylphraveldrithx and nylphraveldrith9", ".json")
     assert counts["concat"] == 2
-    assert "ryannewistmoor" not in out.lower()
+    assert "nylphraveldrith" not in out.lower()
     assert "amberfalcon" in out.lower()
 
 
@@ -242,29 +242,29 @@ def test_concatenated_form_is_built_when_the_alias_has_fewer_tokens():
     # dropped four such identities from the pattern, and an independent oracle
     # then found 8 live occurrences of them that `verify` reported as zero.
     rx, forms, _dropped = pz._concatenated_regex(
-        {"entries": [{"real_name": "Ryanne Della Wistmoor", "alias": "Amber Falcon", "tokens": 3}]}
+        {"entries": [{"real_name": "Nylphra Zylx Veldrith", "alias": "Amber Falcon", "tokens": 3}]}
     )
-    assert forms == {"ryannedellawistmoor": "AmberFalcon"}
-    assert rx.search("ryannedellawistmoor-1721.jpg")
+    assert forms == {"nylphrazylxveldrith": "AmberFalcon"}
+    assert rx.search("nylphrazylxveldrith-1721.jpg")
 
 
 def test_concatenated_builder_refuses_an_entry_with_no_alias():
     # Skipping it would make the checker blind to exactly that name (CARD-07).
     with pytest.raises(SystemExit, match="no alias tokens"):
-        pz._concatenated_regex({"entries": [{"real_name": "Ryanne Wistmoor", "alias": "", "tokens": 2}]})
+        pz._concatenated_regex({"entries": [{"real_name": "Nylphra Veldrith", "alias": "", "tokens": 2}]})
 
 
 def test_every_eligible_entry_yields_a_concatenated_form():
     entries = [
-        {"real_name": "Ryanne Wistmoor", "alias": "Amber Falcon", "tokens": 2},
-        {"real_name": "Ryanne Della Wistmoor", "alias": "Cobalt Harbor", "tokens": 3},
-        {"real_name": "Al Bo", "alias": "Pewter Zyrelle", "tokens": 2},  # <8: letter-anchored, not dropped
-        {"real_name": "Solo", "alias": "Brisk Ember", "tokens": 1},  # single token — still excluded
+        {"real_name": "Nylphra Veldrith", "alias": "Amber Falcon", "tokens": 2},
+        {"real_name": "Nylphra Zylx Veldrith", "alias": "Cobalt Harbor", "tokens": 3},
+        {"real_name": "Xy Qo", "alias": "Pewter Qorvith", "tokens": 2},  # <8: letter-anchored, not dropped
+        {"real_name": "Veldrix", "alias": "Brisk Ember", "tokens": 1},  # single token — still excluded
     ]
     _rx, forms, _dropped = pz._concatenated_regex({"entries": entries})
     # BR-25: eligibility is "2+ tokens", not "2+ tokens AND joined >= 8".
     # The length floor is now a tier (letter-anchor), not a drop. Widening
-    # this predicate strengthens the assertion: albo must be present.
+    # this predicate strengthens the assertion: xyqo must be present.
     eligible = {
         "".join(e["real_name"].split()).lower()
         for e in entries
@@ -277,17 +277,17 @@ def test_short_concat_is_letter_anchored_not_dropped():
     # BR-25 inverted this test. The previous assertions pinned
     # `rx is None and forms == {}` for any join under 8 letters — which
     # is the bug. A 4-letter two-token join is now admitted under a
-    # letter-only anchor so `@albo ` and `albo09` rewrite, while an
-    # in-word collision stays refused. An unanchored compile of `albo`
-    # matches `xalbox`; that is the mutant this must still fail.
+    # letter-only anchor so `@xyqo ` and `xyqo09` rewrite, while an
+    # in-word collision stays refused. An unanchored compile of `xyqo`
+    # matches `xxyqox`; that is the mutant this must still fail.
     rx, forms, _dropped = pz._concatenated_regex(
-        {"entries": [{"real_name": "Al Bo", "alias": "Amber Falcon", "tokens": 2}]}
+        {"entries": [{"real_name": "Xy Qo", "alias": "Amber Falcon", "tokens": 2}]}
     )
-    assert forms == {"albo": "AmberFalcon"}
+    assert forms == {"xyqo": "AmberFalcon"}
     assert rx is not None
-    assert rx.search("albo09_1.jpg")
-    assert rx.search("@albo ")
-    assert rx.search("xalbox") is None
+    assert rx.search("xyqo09_1.jpg")
+    assert rx.search("@xyqo ")
+    assert rx.search("xxyqox") is None
 
 
 # --- embedded concatenated forms, PRIV-1-BR-22 -----------------------------
@@ -297,10 +297,10 @@ def test_embedded_concatenated_handle_is_rewritten(mapping):
     # Social-media exports glue firstnamelastname inside a longer handle.
     # NBL/NBR make that occurrence structurally unreachable.
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    joined = "ryannewistmoor"
+    joined = "nylphraveldrith"
     text = f"theprefix{joined}_25.webp"
     out, counts, _u = passes.rewrite(text, ".json")
-    assert "ryannewistmoor" not in out.lower()
+    assert "nylphraveldrith" not in out.lower()
     assert "amberfalcon" in out.lower()
     assert counts["concat"] == 1
     assert passes.residue(text, ".json").get("concat") == 1
@@ -313,7 +313,7 @@ def test_anchored_concat_pattern_misses_an_embedded_handle(mapping):
     # under the old anchors. Compile the same joined form with NBL/NBR
     # restored -- that is the pre-BR-22 builder -- and the handle must not
     # match.
-    joined = "ryannewistmoor"
+    joined = "nylphraveldrith"
     fixture = f"theprefix{joined}_25.webp"
     anchored = re.compile(
         r"(?<![A-Za-z0-9])(?:" + re.escape(joined) + r")(?![A-Za-z0-9])",
@@ -330,7 +330,7 @@ def test_standalone_concatenated_form_is_still_rewritten(mapping):
     # firstnamelastname sitting on a real boundary is the original BR-08
     # case and still has to move.
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    text = "ryannewistmoor-1721.jpg"
+    text = "nylphraveldrith-1721.jpg"
     out, counts, _u = passes.rewrite(text, ".json")
     assert counts["concat"] == 1
     assert "amberfalcon" in out.lower()
@@ -339,22 +339,22 @@ def test_standalone_concatenated_form_is_still_rewritten(mapping):
 def test_concatenated_form_inside_a_hex_run_is_left_intact():
     # Unanchoring would otherwise rewrite a sha256 pin whose hex happens
     # to spell a joined name. `_inside_hex_run` is the only remaining
-    # guard; prove it fires. "Cade Facade" is constructed so the join is
+    # guard; prove it fires. "Cefa Dabeca" is constructed so the join is
     # hex-valid, not because anyone is named that.
     mapping = {
         "entries": [
             {
-                "real_name": "Cade Facade",
+                "real_name": "Cefa Dabeca",
                 "alias": "Amber Falcon",
                 "alias_slug": "amber_falcon",
-                "original_slug": "cade-facade",
+                "original_slug": "cefa-dabeca",
                 "slug_was_name_derived": True,
                 "tokens": 2,
             }
         ]
     }
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    joined = "cadefacade"
+    joined = "cefadabeca"
     assert all(c in pz._HEX for c in joined)
     text = "aa" + joined + "ffff"
     assert len(text) >= pz._HEX_RUN_MIN
@@ -368,7 +368,7 @@ def test_concatenated_form_inside_a_hex_run_is_left_intact():
 
 
 # Surname is three letters so the given-name pass cannot rewrite it on
-# its own. With the shared two-token fixture, "Wistmoor" moves and the
+# its own. With the shared two-token fixture, "Veldrith" moves and the
 # escape test goes green on a surname substitution -- residue is then
 # non-empty for the wrong pass, which is not the finding.
 _ESCAPE_MAPPING = {
@@ -423,10 +423,10 @@ def test_rewrite_is_idempotent(mapping):
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     text = json.dumps(
         {
-            "name": "Ryanne Wistmoor",
-            "slug": "ryanne-wistmoor",
-            "file": "2026/07/ryannewistmoor-11_22.jpg",
-            "other": "Calderre Vensk",
+            "name": "Nylphra Veldrith",
+            "slug": "nylphra-veldrith",
+            "file": "2026/07/nylphraveldrith-11_22.jpg",
+            "other": "Veldrun Zyllnex",
         }
     )
     once, _c1, _u1 = passes.rewrite(text, ".json")
@@ -474,7 +474,7 @@ def test_symlink_is_read_as_its_own_target_not_followed(tmp_path):
 
 def test_symlink_target_is_scanned_for_residue(mapping):
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    assert passes.residue("../shared/ryannewistmoor/hook", ".sh").get("concat") == 1
+    assert passes.residue("../shared/nylphraveldrith/hook", ".sh").get("concat") == 1
 
 
 def _waive(tmp_path, monkeypatch, rel: str, body: bytes, *, pin: str | None = None):
@@ -652,9 +652,9 @@ def test_vocab_disjointness_separates_collisions_from_accepted_names():
     # passes against a body that always raises; only the pair discriminates.
     stolen = pz._ADJ[0].capitalize()
     with pytest.raises(SystemExit, match="alias vocabulary collides"):
-        pz._assert_vocab_disjoint_from_roster([{"name": f"{stolen} Vensk", "bucket": "personal"}])
+        pz._assert_vocab_disjoint_from_roster([{"name": f"{stolen} Zyllnex", "bucket": "personal"}])
 
-    pz._assert_vocab_disjoint_from_roster([{"name": "Ryanne Wistmoor", "bucket": "personal"}])
+    pz._assert_vocab_disjoint_from_roster([{"name": "Nylphra Veldrith", "bucket": "personal"}])
 
     # A wholly alias-shaped name is a previous run's output; `_looks_pseudonymized`
     # owns that case and reports it with the right remedy.
@@ -669,14 +669,14 @@ def test_vocab_disjointness_separates_collisions_from_accepted_names():
 # inside the joined run (the 4-letter surname sits after a letter), so
 # concat is the only pass that can see these fixtures. Invented name;
 # not a real person.
-_SHORT_JOINED = "wynkett"
+_SHORT_JOINED = "nylqorv"
 _SHORT_CONCAT_MAPPING = {
     "entries": [
         {
-            "real_name": "Wyn Kett",
+            "real_name": "Nyl Qorv",
             "alias": "Amber Falcon",
             "alias_slug": "amber_falcon",
-            "original_slug": "wyn-kett",
+            "original_slug": "nyl-qorv",
             "slug_was_name_derived": True,
             "tokens": 2,
         }
@@ -741,7 +741,7 @@ def test_unanchored_seven_char_form_hits_an_in_word_collision():
 
 
 def test_seven_char_concat_inside_a_hex_run_is_left_intact():
-    # "Abe Deca" is constructed so the 7-char join is hex-valid, not
+    # "Cef Dabe" is constructed so the 7-char join is hex-valid, not
     # because anyone is named that. Neighbours are *digits*: letter
     # hex padding (`aa`/`ffff`) is itself a letter, so the new
     # letter-only anchor would refuse before `_inside_hex_run` ran
@@ -749,17 +749,17 @@ def test_seven_char_concat_inside_a_hex_run_is_left_intact():
     mapping = {
         "entries": [
             {
-                "real_name": "Abe Deca",
+                "real_name": "Cef Dabe",
                 "alias": "Amber Falcon",
                 "alias_slug": "amber_falcon",
-                "original_slug": "abe-deca",
+                "original_slug": "cef-dabe",
                 "slug_was_name_derived": True,
                 "tokens": 2,
             }
         ]
     }
     passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
-    joined = "abedeca"
+    joined = "cefdabe"
     assert len(joined) == 7
     assert all(c in pz._HEX for c in joined)
     text = "0" + joined + "0" * 8
@@ -782,12 +782,12 @@ def test_seven_char_concat_is_visible_to_residue():
 
 def test_concat_exclusions_are_single_token_only():
     entries = [
-        {"real_name": "Ryanne Wistmoor", "alias": "Amber Falcon", "tokens": 2},
-        {"real_name": "Wyn Kett", "alias": "Cobalt Harbor", "tokens": 2},
-        {"real_name": "Solo", "alias": "Brisk Ember", "tokens": 1},
+        {"real_name": "Nylphra Veldrith", "alias": "Amber Falcon", "tokens": 2},
+        {"real_name": "Nyl Qorv", "alias": "Cobalt Harbor", "tokens": 2},
+        {"real_name": "Veldrix", "alias": "Brisk Ember", "tokens": 1},
     ]
     _rx, forms, dropped = pz._concatenated_regex({"entries": entries})
-    assert set(forms) == {"ryannewistmoor", "wynkett"}
+    assert set(forms) == {"nylphraveldrith", "nylqorv"}
     assert len(dropped) == 1
     assert dropped[0]["reason"] == "single-token name; no concatenation exists"
     assert dropped[0]["tokens"] == 1
@@ -823,20 +823,20 @@ def _map(*pairs):
 
 
 def test_map_vocab_guard_fires_when_an_alias_word_is_also_a_real_name_word():
-    # "Zyrelle" is the operator's real given name for one subject and the
-    # adjective half of another subject's minted alias. Neither the re-run
+    # "Nylphra" is a real-name token of one map entry and the adjective
+    # half of another entry's minted alias. Neither the re-run
     # guard nor the residue scan can tell the two apart, so every downstream
     # check reports clean over a live ambiguity.
     with pytest.raises(SystemExit) as excinfo:
         pz._assert_map_vocab_disjoint(
-            _map(("Zyrelle Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Zyrelle Ridgeway"))
+            _map(("Nylphra Velmoth", "Marbled Quarry"), ("Nyl Qorv", "Nylphra Ridgeway"))
         )
-    assert "zyrelle (1 alias, 1 real name)" in str(excinfo.value)
+    assert "nylphra (1 alias, 1 real name)" in str(excinfo.value)
 
 
 def test_map_vocab_guard_is_silent_on_a_disjoint_map():
     pz._assert_map_vocab_disjoint(
-        _map(("Zyrelle Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Burnished Ridgeway"))
+        _map(("Nylphra Velmoth", "Marbled Quarry"), ("Nyl Qorv", "Burnished Ridgeway"))
     )
 
 
@@ -847,14 +847,14 @@ def test_map_vocab_guard_counts_every_colliding_entry():
     with pytest.raises(SystemExit) as excinfo:
         pz._assert_map_vocab_disjoint(
             _map(
-                ("Zyrelle Ashgrove", "Marbled Quarry"),
-                ("Wyn Kett", "Zyrelle Ridgeway"),
-                ("Ryanne Wistmoor", "Zyrelle Hollow"),
+                ("Nylphra Velmoth", "Marbled Quarry"),
+                ("Nyl Qorv", "Nylphra Ridgeway"),
+                ("Veldrun Zyllnex", "Nylphra Hollow"),
             )
         )
     # Two aliases carry the word but only one real name does. The guard must
     # not collapse them: the repair is two re-mints, not one.
-    assert "zyrelle (2 aliases, 1 real name)" in str(excinfo.value)
+    assert "nylphra (2 aliases, 1 real name)" in str(excinfo.value)
 
 
 def test_map_vocab_guard_does_not_read_the_alias_vocabulary(monkeypatch):
@@ -869,14 +869,14 @@ def test_map_vocab_guard_does_not_read_the_alias_vocabulary(monkeypatch):
     monkeypatch.setattr(pz, "_ADJ", ())
     monkeypatch.setattr(pz, "_NOUN", ())
     with pytest.raises(SystemExit) as excinfo:
-        pz._assert_map_vocab_disjoint(_map(("Wyn Kett", "Zyrelle Ridgeway"), ("Zyrelle Ashgrove", "Marbled Quarry")))
-    assert "zyrelle (1 alias, 1 real name)" in str(excinfo.value)
+        pz._assert_map_vocab_disjoint(_map(("Nyl Qorv", "Nylphra Ridgeway"), ("Nylphra Velmoth", "Marbled Quarry")))
+    assert "nylphra (1 alias, 1 real name)" in str(excinfo.value)
 
 
 def test_map_vocab_guard_matches_whole_tokens_not_substrings():
-    # "Coralline" is not "Zyrelle". A substring test would raise on ordinary
+    # "Qorvith" is not "Nylphra". A substring test would raise on ordinary
     # words and train the operator to bypass the guard.
-    pz._assert_map_vocab_disjoint(_map(("Coralline Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Zyrelle Ridgeway")))
+    pz._assert_map_vocab_disjoint(_map(("Qorvith Velmoth", "Marbled Quarry"), ("Nyl Qorv", "Nylphra Ridgeway")))
 
 
 def test_apply_and_verify_both_recheck_the_shipped_map_vocabulary():
@@ -916,12 +916,12 @@ def test_empty_wordlist_raises(mapping, monkeypatch, tmp_path, body):
 
 def test_priv1_wordlist_env_is_honoured_and_count_is_printed(mapping, monkeypatch, tmp_path):
     wl = tmp_path / "custom-words"
-    wl.write_text("ryanne\ncalderre\n", encoding="utf-8")
+    wl.write_text("nylphra\nveldrun\n", encoding="utf-8")
     monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
     _reset_wordlist()
     _rx, resolved, _deferred = pz._given_name_regex(mapping)
-    assert "ryanne" not in resolved
-    assert "calderre" not in resolved
+    assert "nylphra" not in resolved
+    assert "veldrun" not in resolved
     words, digest, path = pz._load_wordlist()
     assert Path(path) == wl
     assert len(words) == 2
@@ -990,7 +990,7 @@ def test_build_map_records_wordlist_block(tmp_path, monkeypatch):
             {
                 "identities": [
                     {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
-                    {"bucket": "celebs", "name": "Marlow Vensk", "slug": "marlow_vensk"},
+                    {"bucket": "celebs", "name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex"},
                 ]
             }
         ),
@@ -1041,10 +1041,10 @@ _AMBIGUOUS_STEM_MAPPING = {
             "tokens": 2,
         },
         {
-            "real_name": "Calderre Brook",
+            "real_name": "Veldrun Brook",
             "alias": "Cobalt Harbor",
             "alias_slug": "cobalt_harbor",
-            "original_slug": "calderre-brook",
+            "original_slug": "veldrun-brook",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
@@ -1101,24 +1101,24 @@ def _family_word_for_brook() -> str:
 # Two identities, three-token winner so the leftover token is not a
 # full-name match. `nyl` is three letters (given-name floor is 4) and
 # belongs to only one identity, so the family builder will not mint
-# for it. Media-stem votes Zyllora (2) over Calderre (1) and then has
+# for it. Media-stem votes Zyllora (2) over Veldrun (1) and then has
 # no replacement for `nyl`. That is a genuine unresolved — not the
 # dictionary-word leak BR-29 closes.
 _UNRESOLVED_STEM_MAPPING = {
     "entries": [
         {
-            "real_name": "Zyllora Wistmoor Extra",
+            "real_name": "Zyllora Veldrith Extra",
             "alias": "Amber Falcon Lantern",
             "alias_slug": "amber_falcon_lantern",
-            "original_slug": "zyllora-wistmoor-extra",
+            "original_slug": "zyllora-veldrith-extra",
             "slug_was_name_derived": True,
             "tokens": 3,
         },
         {
-            "real_name": "Calderre Nyl",
+            "real_name": "Veldrun Nyl",
             "alias": "Cobalt Harbor",
             "alias_slug": "cobalt_harbor",
-            "original_slug": "calderre-nyl",
+            "original_slug": "veldrun-nyl",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
@@ -1140,10 +1140,10 @@ _ONE_ALIAS_STEM_MAPPING = {
             "tokens": 2,
         },
         {
-            "real_name": "Calderre Brook",
+            "real_name": "Veldrun Brook",
             "alias": "Cobalt Harbor",
             "alias_slug": "cobalt_harbor",
-            "original_slug": "calderre-brook",
+            "original_slug": "veldrun-brook",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
@@ -1156,18 +1156,18 @@ _ONE_ALIAS_STEM_MAPPING = {
 _RARE_SHARED_MAPPING = {
     "entries": [
         {
-            "real_name": "Zyllora Kettwood",
+            "real_name": "Zyllora Velmoth",
             "alias": "Amber Falcon",
             "alias_slug": "amber_falcon",
-            "original_slug": "zyllora-kettwood",
+            "original_slug": "zyllora-velmoth",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
         {
-            "real_name": "Calderre Kettwood",
+            "real_name": "Veldrun Velmoth",
             "alias": "Cobalt Harbor",
             "alias_slug": "cobalt_harbor",
-            "original_slug": "calderre-kettwood",
+            "original_slug": "veldrun-velmoth",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
@@ -1272,7 +1272,7 @@ def test_unresolved_keeps_its_meaning_when_no_family_word():
     # belongs to a non-winner and is not a shared family token still
     # has no replacement; residue must still name that class (BR-15).
     passes = pz._Passes(_UNRESOLVED_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "photos/zyllora-wistmoor-nyl.jpg"
+    text = "photos/zyllora-veldrith-nyl.jpg"
     out, _counts, unresolved = passes.rewrite(text, ".md")
     assert "nyl" in unresolved
     assert "nyl" in out.lower()
@@ -1306,9 +1306,9 @@ def test_rare_shared_surname_gets_the_same_word_in_both_builders():
     )
     index = pz._token_index(_RARE_SHARED_MAPPING)
     family, _dropped = pz._ambiguous_family_words(index)
-    assert "kettwood" in resolved
-    assert family["kettwood"] == resolved["kettwood"]
-    assert family["kettwood"] == pz._family_words({"kettwood": {"Falcon", "Harbor"}})["kettwood"]
+    assert "velmoth" in resolved
+    assert family["velmoth"] == resolved["velmoth"]
+    assert family["velmoth"] == pz._family_words({"velmoth": {"Falcon", "Harbor"}})["velmoth"]
 
 
 def test_ambiguous_family_builder_does_not_read_the_wordlist(monkeypatch):
@@ -1345,7 +1345,7 @@ def test_family_exclusion_line_never_names_the_token():
         )
     )
     assert "brook" not in line.lower()
-    assert "kettwood" not in line.lower()
+    assert "velmoth" not in line.lower()
     assert "ambiguous family exclusions:" in line
 
 
@@ -1384,18 +1384,18 @@ def test_same_stem_gets_the_same_replacement_in_json_and_html():
 
 
 # First token is two letters so the given-name pass cannot rewrite it
-# on its own. With the shared Ryanne fixture, `ryanne%20wistmoor` is
-# rewritten to `amber%20wistmoor` by the bare-token pass — the URL
+# on its own. With the shared Nylphra fixture, `nylphra%20veldrith` is
+# rewritten to `amber%20veldrith` by the bare-token pass — the URL
 # separator never fired and the test would go green on the wrong pass.
 # `%20` sits against a digit on the surname's left, so NBL also refuses
-# `wistmoor` as a bare token. Only the multi-token pass can see this.
+# `veldrith` as a bare token. Only the multi-token pass can see this.
 _URL_MAPPING = {
     "entries": [
         {
-            "real_name": "Al Wistmoor",
+            "real_name": "Xy Veldrith",
             "alias": "Amber Falcon",
             "alias_slug": "amber_falcon",
-            "original_slug": "al-wistmoor",
+            "original_slug": "xy-veldrith",
             "slug_was_name_derived": True,
             "tokens": 2,
         }
@@ -1405,9 +1405,9 @@ _URL_MAPPING = {
 
 def test_percent_encoded_space_in_url_is_rewritten():
     passes = pz._Passes(_URL_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "https://example.test/gallery/al%20wistmoor"
+    text = "https://example.test/gallery/xy%20veldrith"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "wistmoor" not in out.lower()
+    assert "veldrith" not in out.lower()
     assert "amber%20falcon" in out.lower()
     assert counts["name"] == 1
     assert passes.residue(text, ".md").get("name") == 1
@@ -1417,7 +1417,7 @@ def test_percent_encoded_space_in_url_is_rewritten():
 def test_double_encoded_percent_20_is_left_alone():
     # `%2520` is a different encoding, not a case of `%20`. Out of scope.
     passes = pz._Passes(_URL_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "https://example.test/gallery/al%2520wistmoor"
+    text = "https://example.test/gallery/xy%2520veldrith"
     out, counts, _u = passes.rewrite(text, ".md")
     assert out == text
     assert counts["name"] == 0
@@ -1430,10 +1430,10 @@ def test_double_encoded_percent_20_is_left_alone():
 _REDOS_MAPPING = {
     "entries": [
         {
-            "real_name": "Ryanne Wistmoor",
+            "real_name": "Nylphra Veldrith",
             "alias": "Marbled Quarry",
             "alias_slug": "marbled_quarry",
-            "original_slug": "ryanne_wistmoor",
+            "original_slug": "nylphra_veldrith",
             "slug_was_name_derived": True,
             "tokens": 2,
         }
@@ -1444,28 +1444,28 @@ _REDOS_MAPPING = {
 
 # --- dictionary given name beside a minted surname, PRIV-1-BR-27 ----------
 #
-# `Rose` is in the autouse wordlist, so the given-name pass refuses it on
+# `Qorvist` is in the autouse wordlist, so the given-name pass refuses it on
 # purpose. `quarry` is this identity's minted surname, not a real-name
 # token. The pair is therefore unreachable to every existing pass: the
-# full-name alternation wants `Rose Kettwood`, and a bare `Rose` is an
+# full-name alternation wants `Qorvist Velmoth`, and a bare `Qorvist` is an
 # ordinary English word. Invented name; not a real person.
 
 
 _ADJACENT_MAPPING = {
     "entries": [
         {
-            "real_name": "Rose Kettwood",
+            "real_name": "Qorvist Velmoth",
             "alias": "Cobalt Quarry",
             "alias_slug": "cobalt_quarry",
-            "original_slug": "rose-kettwood",
+            "original_slug": "qorvist-velmoth",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
         {
-            "real_name": "Wyn Vensley",
+            "real_name": "Qyx Veldrix",
             "alias": "Amber Harbor",
             "alias_slug": "amber_harbor",
-            "original_slug": "wyn-vensley",
+            "original_slug": "qyx-veldrix",
             "slug_was_name_derived": True,
             "tokens": 2,
         },
@@ -1476,10 +1476,10 @@ _ADJACENT_MAPPING = {
 _SHORT_ADJACENT_MAPPING = {
     "entries": [
         {
-            "real_name": "Al Vensley",
+            "real_name": "Xy Veldrix",
             "alias": "Cobalt Quarry",
             "alias_slug": "cobalt_quarry",
-            "original_slug": "al-vensley",
+            "original_slug": "xy-veldrix",
             "slug_was_name_derived": True,
             "tokens": 2,
         }
@@ -1527,7 +1527,7 @@ def test_multi_token_separator_terminates_on_a_hostile_separator_run():
         f"spec=importlib.util.spec_from_file_location('pz', {str(_SCRIPT)!r})\n"
         "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
         f"r,_=m._multi_token_regex(json.loads({json.dumps(json.dumps(_REDOS_MAPPING))}))\n"
-        "sys.exit(0 if r.search('Ryanne' + ' '*64 + '!') is None else 3)\n"
+        "sys.exit(0 if r.search('Nylphra' + ' '*64 + '!') is None else 3)\n"
     )
     done = subprocess.run([sys.executable, "-c", probe], timeout=60, capture_output=True)
     assert done.returncode == 0, done.stderr.decode()
@@ -1536,18 +1536,18 @@ def test_multi_token_separator_terminates_on_a_hostile_separator_run():
 def test_percent_encoded_separator_still_matches_after_the_redos_fix():
     # The de-nesting must not cost the behaviour BR-21 added.
     regex, _by_key = pz._multi_token_regex(_REDOS_MAPPING)
-    for form in ("Ryanne%20Wistmoor", "Ryanne Wistmoor", "Ryanne_Wistmoor", "Ryanne%20 Wistmoor"):
+    for form in ("Nylphra%20Veldrith", "Nylphra Veldrith", "Nylphra_Veldrith", "Nylphra%20 Veldrith"):
         assert regex.search(form) is not None, form
 
 def test_dictionary_given_name_next_to_minted_surname_is_rewritten():
-    # The finding. `Rose` stays in the wordlist so the given-name pass
+    # The finding. `Qorvist` stays in the wordlist so the given-name pass
     # cannot steal this; `quarry` is the minted surname so the full-name
     # pass cannot steal it either. Only an identity-match against the
     # alias map can see the pair.
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "Rose K. quarry sat down"
+    text = "Qorvist K. quarry sat down"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "Rose" not in out
+    assert "Qorvist" not in out
     assert "Cobalt K. quarry" in out
     assert counts["adjacent"] == 1
     assert passes.residue(text, ".md").get("adjacent") == 1
@@ -1556,18 +1556,18 @@ def test_dictionary_given_name_next_to_minted_surname_is_rewritten():
 
 def test_dictionary_given_name_next_to_minted_surname_without_period_is_rewritten():
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "Rose K quarry sat down"
+    text = "Qorvist K quarry sat down"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "Rose" not in out
+    assert "Qorvist" not in out
     assert "Cobalt K quarry" in out
     assert counts["adjacent"] == 1
 
 
 def test_dictionary_given_name_directly_beside_minted_surname_is_rewritten():
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "Rose quarry sat down"
+    text = "Qorvist quarry sat down"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "Rose" not in out
+    assert "Qorvist" not in out
     assert "Cobalt quarry" in out
     assert counts["adjacent"] == 1
     assert passes.residue(text, ".md").get("adjacent") == 1
@@ -1576,8 +1576,8 @@ def test_dictionary_given_name_directly_beside_minted_surname_is_rewritten():
 
 def test_adjacent_pass_preserves_case_shape():
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    upper, c_u, _u = passes.rewrite("ROSE quarry", ".md")
-    lower, c_l, _u = passes.rewrite("rose quarry", ".md")
+    upper, c_u, _u = passes.rewrite("QORVIST quarry", ".md")
+    lower, c_l, _u = passes.rewrite("qorvist quarry", ".md")
     assert upper == "COBALT quarry"
     assert lower == "cobalt quarry"
     assert c_u["adjacent"] == 1 and c_l["adjacent"] == 1
@@ -1585,14 +1585,14 @@ def test_adjacent_pass_preserves_case_shape():
 
 def test_one_rewrite_closes_dictionary_given_then_adjacent():
     # Fresh text still has the real surname. given-name rewrites
-    # `Kettwood` (unique, not a dictionary word); the new pass must
-    # then see `Rose` sitting next to the just-minted surname in the
+    # `Velmoth` (unique, not a dictionary word); the new pass must
+    # then see `Qorvist` sitting next to the just-minted surname in the
     # same rewrite() call. If adjacent ran first it would miss.
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "Rose K. Kettwood sat down"
+    text = "Qorvist K. Velmoth sat down"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "Rose" not in out
-    assert "Kettwood" not in out
+    assert "Qorvist" not in out
+    assert "Velmoth" not in out
     assert "Cobalt K. Quarry" in out
     assert counts["given"] == 1
     assert counts["adjacent"] == 1
@@ -1604,20 +1604,20 @@ def test_middle_initial_survives_the_adjacent_rewrite():
     # the alias map and has no replacement, so stripping it would be a
     # mutation the map cannot justify.
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    dotted, _c, _u = passes.rewrite("Rose K. quarry", ".md")
-    bare, _c, _u = passes.rewrite("Rose K quarry", ".md")
+    dotted, _c, _u = passes.rewrite("Qorvist K. quarry", ".md")
+    bare, _c, _u = passes.rewrite("Qorvist K quarry", ".md")
     assert dotted == "Cobalt K. quarry"
     assert bare == "Cobalt K quarry"
 
 
 def test_ordinary_english_with_a_non_alias_neighbour_is_left_alone():
     # Not a heuristic: `bush` is not an alias token of the identity
-    # that carries `Rose`. The unfixed tree also leaves this alone;
+    # that carries `Qorvist`. The unfixed tree also leaves this alone;
     # a mutant that pairs any real token with any alias-vocab word
     # is what this must still fail.
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "the rose bush sat by the quarry face"
-    # `rose bush` must not fire. The trailing `quarry` is a noun in
+    text = "the qorvist bush sat by the quarry face"
+    # `qorvist bush` must not fire. The trailing `quarry` is a noun in
     # isolation, not adjacent to the given name.
     out, counts, _u = passes.rewrite(text, ".md")
     assert out == text
@@ -1626,10 +1626,10 @@ def test_ordinary_english_with_a_non_alias_neighbour_is_left_alone():
 
 
 def test_wrong_identity_alias_does_not_fire():
-    # Rose's minted surname is quarry; Wyn's is harbor. Crossing them
+    # Qorvist's minted surname is quarry; Qyx's is harbor. Crossing them
     # is not an identity match.
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    crossed = "Rose harbor and Wyn quarry"
+    crossed = "Qorvist harbor and Qyx quarry"
     out, counts, _u = passes.rewrite(crossed, ".md")
     assert out == crossed
     assert counts.get("adjacent", 0) == 0
@@ -1640,7 +1640,7 @@ def test_bare_dictionary_given_name_is_still_left_alone():
     # The given-name exclusion is still correct in isolation. Adjacent
     # must not become "rewrite every dictionary given name".
     passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "the rose sat there"
+    text = "the qorvist sat there"
     out, counts, _u = passes.rewrite(text, ".md")
     assert out == text
     assert counts["given"] == 0
@@ -1648,14 +1648,14 @@ def test_bare_dictionary_given_name_is_still_left_alone():
 
 
 def test_short_real_token_beside_minted_surname_is_rewritten():
-    # No length floor via continue. `Al` is two letters, so the
+    # No length floor via continue. `Xy` is two letters, so the
     # given-name pass cannot steal this (its own floor is 4). An
-    # adjacent builder that `continue`s on short tokens leaves `Al`
+    # adjacent builder that `continue`s on short tokens leaves `Xy`
     # in the clear next to a surname the scrub minted.
     passes = pz._Passes(_SHORT_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-    text = "Al quarry sat down"
+    text = "Xy quarry sat down"
     out, counts, _u = passes.rewrite(text, ".md")
-    assert "Al " not in out
+    assert "Xy " not in out
     assert "Cobalt quarry" in out
     assert counts["adjacent"] == 1
     assert passes.residue(text, ".md").get("adjacent") == 1
@@ -1665,8 +1665,8 @@ def test_short_adjacent_pair_is_letter_anchored_not_unanchored():
     # Mutant guard: an unanchored compile of the pair hits the in-word
     # fixture the live pass must refuse. If this search is None, the
     # fixture is not a collision and the negative half cannot go red.
-    fixture = "superAl quarryx"
-    unanchored = re.compile(r"Al[ \t]+quarry", re.IGNORECASE)
+    fixture = "superXy quarryx"
+    unanchored = re.compile(r"Xy[ \t]+quarry", re.IGNORECASE)
     assert unanchored.search(fixture) is not None
     passes = pz._Passes(_SHORT_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
     out, counts, _u = passes.rewrite(fixture, ".md")
@@ -1677,16 +1677,16 @@ def test_short_adjacent_pair_is_letter_anchored_not_unanchored():
 
 def test_adjacent_pairs_are_built_from_the_map_not_the_wordlist(monkeypatch, tmp_path):
     # CARD-08 / BR-19 shape: if the override listed only tokens the
-    # wordlist currently excludes, editing `rose` out of the list
-    # would drop the pair while `Rose quarry` stayed on disk. Both
+    # wordlist currently excludes, editing `qorvist` out of the list
+    # would drop the pair while `Qorvist quarry` stayed on disk. Both
     # wordlists are non-empty so the given-name builder still loads.
-    for body in ("the\na\nof\nrose\nfaith\n", "the\na\nof\nfaith\n"):
+    for body in ("the\na\nof\nqorvist\nfaith\n", "the\na\nof\nfaith\n"):
         wl = tmp_path / "adj-words"
         wl.write_text(body, encoding="utf-8")
         monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
         _reset_wordlist()
         passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
-        assert ("rose", "quarry") in passes.adjacent
+        assert ("qorvist", "quarry") in passes.adjacent
 
 
 def test_adjacent_builder_does_not_read_the_wordlist(monkeypatch):
@@ -1696,13 +1696,13 @@ def test_adjacent_builder_does_not_read_the_wordlist(monkeypatch):
     monkeypatch.setattr(pz, "_load_wordlist", _boom)
     rx, pairs, _dropped = pz._adjacent_alias_regex(_ADJACENT_MAPPING)
     assert rx is not None
-    assert ("rose", "quarry") in pairs
+    assert ("qorvist", "quarry") in pairs
 
 
 def test_adjacent_builder_refuses_an_entry_with_no_alias():
     with pytest.raises(SystemExit, match="no alias"):
         pz._adjacent_alias_regex(
-            {"entries": [{"real_name": "Rose Kettwood", "alias": "", "tokens": 2}]}
+            {"entries": [{"real_name": "Qorvist Velmoth", "alias": "", "tokens": 2}]}
         )
 
 
@@ -1711,19 +1711,19 @@ def test_no_positional_alias_is_counted_not_silenced():
         {
             "entries": [
                 {
-                    "real_name": "Rose Della Kettwood",
+                    "real_name": "Qorvist Zylx Velmoth",
                     "alias": "Cobalt Quarry",
                     "tokens": 3,
                 }
             ]
         }
     )
-    assert ("rose", "quarry") in pairs
+    assert ("qorvist", "quarry") in pairs
     assert any(d["reason"] == "no positional alias token" for d in dropped)
     # Della has a positional alias (Quarry) so it may pair with Cobalt;
-    # Kettwood is the one with nothing to emit.
-    assert ("kettwood", "quarry") not in pairs
-    assert ("kettwood", "cobalt") not in pairs
+    # Velmoth is the one with nothing to emit.
+    assert ("velmoth", "quarry") not in pairs
+    assert ("velmoth", "cobalt") not in pairs
 
 
 def test_single_letter_token_is_counted_not_emitted():
@@ -1734,7 +1734,7 @@ def test_single_letter_token_is_counted_not_emitted():
         {
             "entries": [
                 {
-                    "real_name": "Rose A Kettwood",
+                    "real_name": "Qorvist A Velmoth",
                     "alias": "Cobalt Quarry",
                     "tokens": 3,
                 }
@@ -1744,7 +1744,7 @@ def test_single_letter_token_is_counted_not_emitted():
     assert ("a", "quarry") not in pairs
     assert ("a", "cobalt") not in pairs
     assert any(d["reason"].startswith("single-letter token") for d in dropped)
-    assert ("rose", "quarry") in pairs
+    assert ("qorvist", "quarry") in pairs
 
 
 def test_ambiguous_adjacent_pair_is_left_alone_and_counted():
@@ -1753,35 +1753,35 @@ def test_ambiguous_adjacent_pair_is_left_alone_and_counted():
     _rx, pairs, dropped = pz._adjacent_alias_regex(
         {
             "entries": [
-                {"real_name": "Rose Kettwood", "alias": "Cobalt Quarry", "tokens": 2},
-                {"real_name": "Rose Vensley", "alias": "Amber Quarry", "tokens": 2},
+                {"real_name": "Qorvist Velmoth", "alias": "Cobalt Quarry", "tokens": 2},
+                {"real_name": "Qorvist Veldrix", "alias": "Amber Quarry", "tokens": 2},
             ]
         }
     )
-    assert ("rose", "quarry") not in pairs
+    assert ("qorvist", "quarry") not in pairs
     assert any(d["reason"] == "pair maps to >1 identity" for d in dropped)
     passes = pz._Passes(
         {
             "entries": [
                 {
-                    "real_name": "Rose Kettwood",
+                    "real_name": "Qorvist Velmoth",
                     "alias": "Cobalt Quarry",
                     "alias_slug": "cobalt_quarry",
-                    "original_slug": "rose-kettwood",
+                    "original_slug": "qorvist-velmoth",
                     "tokens": 2,
                 },
                 {
-                    "real_name": "Rose Vensley",
+                    "real_name": "Qorvist Veldrix",
                     "alias": "Amber Quarry",
                     "alias_slug": "amber_quarry",
-                    "original_slug": "rose-vensley",
+                    "original_slug": "qorvist-veldrix",
                     "tokens": 2,
                 },
             ]
         },
         identities=_UNIT_NONPERSONAL,
     )
-    text = "Rose quarry sat down"
+    text = "Qorvist quarry sat down"
     out, counts, _u = passes.rewrite(text, ".md")
     assert out == text
     assert counts.get("adjacent", 0) == 0
@@ -1794,8 +1794,8 @@ def test_adjacent_exclusion_line_reports_zero_as_a_measurement():
         ({"reason": "no positional alias token", "tokens": 3},)
     )
     assert one == "adjacent exclusions: 1 dropped (1× no positional alias token)"
-    assert "rose" not in one.lower()
-    assert "kettwood" not in one.lower()
+    assert "qorvist" not in one.lower()
+    assert "velmoth" not in one.lower()
 
 
 def test_adjacent_exclusion_line_never_names_the_token():
@@ -1805,7 +1805,7 @@ def test_adjacent_exclusion_line_never_names_the_token():
             {"reason": "pair maps to >1 identity", "tokens": 2},
         )
     )
-    assert "rose" not in line.lower()
+    assert "qorvist" not in line.lower()
     assert "quarry" not in line.lower()
     assert "adjacent exclusions:" in line
 
@@ -1841,8 +1841,8 @@ def test_adjacent_parse_shares_the_match_pattern_flags():
 @pytest.mark.parametrize(
     "text",
     [
-        "Roſe quarry sat down",       # long s inside the leading token
-        "Rose K. quarry sat down",    # Kelvin sign as the middle initial
+        "Qorviſt quarry sat down",       # long s inside the leading token
+        "Qorvist K. quarry sat down",    # Kelvin sign as the middle initial
     ],
 )
 def test_case_folding_letters_do_not_split_rewrite_from_residue(text):
@@ -1864,19 +1864,19 @@ def test_unparseable_adjacent_span_raises_instead_of_passing_through(monkeypatch
     passes = pz._Passes(_ADJACENT_MAPPING, identities=())
     monkeypatch.setattr(pz, "_ADJACENT_PARSE", re.compile(r"^(?!x)x$"))
     with pytest.raises(SystemExit) as excinfo:
-        passes.rewrite("Rose K. quarry sat down", ".md")
+        passes.rewrite("Qorvist K. quarry sat down", ".md")
     message = str(excinfo.value)
     assert "drifted" in message
     # The message must never echo what it refused (one roster token is a
     # media stem; a diagnostic that quotes it publishes what the scrub removed).
-    assert "Rose" not in message and "quarry" not in message
+    assert "Qorvist" not in message and "quarry" not in message
 
 
 def test_unparseable_adjacent_span_reports_non_ascii_codepoints(monkeypatch):
     passes = pz._Passes(_ADJACENT_MAPPING, identities=())
     monkeypatch.setattr(pz, "_ADJACENT_PARSE", re.compile(r"^(?!x)x$"))
     with pytest.raises(SystemExit) as excinfo:
-        passes.rewrite("Roſe quarry sat down", ".md")
+        passes.rewrite("Qorviſt quarry sat down", ".md")
     assert "U+017F" in str(excinfo.value)
 
 
@@ -1921,7 +1921,7 @@ def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record:
             {
                 "identities": [
                     {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
-                    {"bucket": "celebs", "name": "Marlow Vensk", "slug": "marlow_vensk"},
+                    {"bucket": "celebs", "name": "Qorvith Zyllnex", "slug": "qorvith_zyllnex"},
                 ]
             }
         ),

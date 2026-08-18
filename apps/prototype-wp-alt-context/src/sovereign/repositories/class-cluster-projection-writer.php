@@ -5,16 +5,24 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/class-cluster-curation-writer.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
+
+use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
 use function is_int;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function max;
 use function method_exists;
 use function trim;
 
 class ClusterProjectionWriter {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 
 	private string $table_name;
@@ -56,7 +64,28 @@ class ClusterProjectionWriter {
 			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
 		);
 
-		return is_int( $inserted ) ? $inserted : 0;
+		if ( ! is_int( $inserted ) || $inserted <= 0 ) {
+			return is_int( $inserted ) ? $inserted : 0;
+		}
+
+		if ( ! $this->is_reserved_label_shape( $normalized_label ) ) {
+			$resolver = new PersonResolutionService();
+			$resolved = $resolver->resolve_or_create(
+				$normalized_label,
+				static function (): bool {
+					return true;
+				}
+			);
+			if ( ! is_wp_error( $resolved ) ) {
+				( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
+					$normalized_cluster_uuid,
+					(int) $resolved['person_id'],
+					false
+				);
+			}
+		}
+
+		return $inserted;
 	}
 
 	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int {

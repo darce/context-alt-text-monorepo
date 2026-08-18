@@ -33,7 +33,6 @@ class ClusterProjectionWriterTest extends TestCase
         );
 
         $this->assertSame(1, $result);
-        $this->assertCount(1, $wpdb->queries);
         $this->assertStringContainsString('INSERT INTO wp_acx_clusters', $wpdb->queries[0]);
 
         // Assert the curation-marker value pairing, not just column presence:

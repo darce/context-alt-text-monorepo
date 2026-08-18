@@ -69,6 +69,61 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame('local_projection', $data['data_source'] ?? null);
     }
 
+    public function testMediaIdentitiesMapsUnboundHumanAutoAndBoundLabels(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array
+            {
+                return [
+                    [
+                        'identity_uuid' => 'unbound',
+                        'attachment_id' => 22,
+                        'cluster_label' => null,
+                        'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                    ],
+                    [
+                        'identity_uuid' => 'auto',
+                        'attachment_id' => 22,
+                        'cluster_label' => 'cluster-abcdef01',
+                        'is_user_confirmed' => 0,
+                        'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                    ],
+                    [
+                        'identity_uuid' => 'bound',
+                        'attachment_id' => 22,
+                        'cluster_label' => 'Ada Lovelace',
+                        'person_name' => 'Ada Lovelace',
+                        'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                    ],
+                ];
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-02-14 00:00:00';
+            }
+        };
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $faces = $response->get_data()['identities_by_media']['22'];
+        $this->assertNull($faces[0]['cluster_label']);
+        $this->assertSame('cluster-abcdef01', $faces[1]['cluster_label']);
+        $this->assertSame('Ada Lovelace', $faces[2]['cluster_label']);
+    }
+
     public function testMediaIdentitiesReturnsEmptyPayloadWhenProxyUnavailable(): void
     {
         $membersRepo = new class() extends NullIdentityMembersRepository {

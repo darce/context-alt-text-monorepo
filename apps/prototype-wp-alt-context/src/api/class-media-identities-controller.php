@@ -7,8 +7,10 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/../sovereign/class-projection-query-exception.php';
+require_once __DIR__ . '/../support/trait-detects-system-defined-labels.php';
 
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Support\DetectsSystemDefinedLabels;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
@@ -23,6 +25,8 @@ use function absint;
 use function array_keys;
 use function count;
 use function is_array;
+use function is_string;
+use function trim;
 use function range;
 use function rest_sanitize_boolean;
 use function time;
@@ -30,6 +34,7 @@ use function wp_next_scheduled;
 use function wp_schedule_single_event;
 
 class MediaIdentitiesController extends AbstractRecognitionProxyController {
+	use DetectsSystemDefinedLabels;
 	private const DATA_SOURCE_LOCAL_PROJECTION = RecognitionDataSource::LOCAL_PROJECTION;
 	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
 	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
@@ -159,7 +164,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 			return new WP_REST_Response(
 				array(
-					'identities_by_media' => $this->as_identities_map( $data['identities_by_media'] ),
+					'identities_by_media' => $this->as_identities_map( $this->apply_label_authority_to_identities_map( $data['identities_by_media'] ) ),
 					'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
 				),
 				200
@@ -197,7 +202,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			if ( ! isset( $grouped[ $media_key ] ) ) {
 				$grouped[ $media_key ] = array();
 			}
-			$grouped[ $media_key ][] = $identity;
+			$grouped[ $media_key ][] = $this->apply_label_authority_to_identity( $identity );
 		}
 
 		return new WP_REST_Response(
@@ -287,5 +292,50 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		}
 
 		return array_keys( $data ) === range( 0, count( $data ) - 1 );
+	}
+
+	/**
+	 * @param array<array-key,mixed> $identities_by_media
+	 * @return array<array-key,mixed>
+	 */
+	private function apply_label_authority_to_identities_map( array $identities_by_media ): array {
+		$normalized = array();
+		foreach ( $identities_by_media as $media_key => $identities ) {
+			if ( ! is_array( $identities ) ) {
+				$normalized[ $media_key ] = $identities;
+				continue;
+			}
+			$mapped = array();
+			foreach ( $identities as $identity ) {
+				$mapped[] = is_array( $identity ) ? $this->apply_label_authority_to_identity( $identity ) : $identity;
+			}
+			$normalized[ $media_key ] = $mapped;
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * @param array<string,mixed> $identity
+	 * @return array<string,mixed>
+	 */
+	private function apply_label_authority_to_identity( array $identity ): array {
+		$person = trim( (string) ( $identity['person_name'] ?? '' ) );
+		if ( '' !== $person ) {
+			$identity['cluster_label'] = $person;
+			return $identity;
+		}
+
+		$label = $identity['cluster_label'] ?? null;
+		if ( ! is_string( $label ) ) {
+			return $identity;
+		}
+
+		$trimmed = trim( $label );
+		if ( '' !== $trimmed && ! $this->is_reserved_label_shape( $trimmed ) ) {
+			$identity['cluster_label'] = null;
+		}
+
+		return $identity;
 	}
 }

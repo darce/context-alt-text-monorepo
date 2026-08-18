@@ -289,9 +289,9 @@ class ClusterResponseMapper {
 					if ( 0 === $observed_count ) {
 						return 0;
 					}
-					// Non-truncated shortfall: observed < preview cap (or no cap)
-					// and observed < projected. Return the honest count (REF-09).
-					if ( $observed_count < $projected_count ) {
+					// Non-truncated drift in either direction: members are SoR
+					// (REF-09). Cap-hit truncation is handled above.
+					if ( $observed_count !== $projected_count ) {
 						if ( '' !== $cluster_id ) {
 							$this->requested_repair_cluster_ids[] = $cluster_id;
 						}

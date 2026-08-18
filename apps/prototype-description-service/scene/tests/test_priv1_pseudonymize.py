@@ -1052,24 +1052,28 @@ _AMBIGUOUS_STEM_MAPPING = {
 }
 
 
-def test_ambiguous_dictionary_stem_is_reported_as_residue(monkeypatch, tmp_path):
-    # One stem token, two identities, and the token is a dictionary word.
-    # Media-stem skips it (ambiguous); given-name skips it (wordlist);
-    # `_family_words` never sees it. The name stays in the stem and must
-    # show up in residue — that is the finding. Rewrite stays a no-op.
+def test_ambiguous_dictionary_stem_is_rewritten_with_a_family_word(monkeypatch, tmp_path):
+    # BR-15 measured this leak as residue and asserted rewrite is a no-op.
+    # Those assertions *are* the finding: there was no repair path. BR-29
+    # is the repair. The no-op / media_ambiguous assertions cannot survive
+    # it; the residue measurement moves to a stem that still has no
+    # replacement (test_unresolved_keeps_its_meaning_when_no_family_word).
+    # `brook` stays in the wordlist so given-name cannot steal this.
     wl = tmp_path / "words"
     wl.write_text("brook\n", encoding="utf-8")
     monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
     _reset_wordlist()
     passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
     text = "photos/brook-pool-04.jpg"
-    hits = passes.residue(text, ".md")
-    assert hits.get("media_ambiguous", 0) > 0
-    assert sum(hits.values()) > 0
+    expected = pz._family_words({"brook": {"Falcon", "Harbor"}})["brook"]
     out, counts, unresolved = passes.rewrite(text, ".md")
-    assert out == text, "rewrite must still refuse an ambiguous stem"
-    assert counts["media"] == 0
-    assert "brook" in unresolved
+    assert "brook" not in out.lower()
+    assert expected in out.lower()
+    assert counts["media"] == 1
+    assert "brook" not in unresolved
+    assert passes.residue(text, ".md").get("media") == 1
+    assert "media_ambiguous" not in passes.residue(text, ".md")
+    assert passes.residue(out, ".md") == {}
 
 
 def test_ambiguous_stem_line_is_count_and_reason_never_the_token():
@@ -1081,6 +1085,299 @@ def test_ambiguous_stem_line_is_count_and_reason_never_the_token():
     one = pz._ambiguous_stem_line(1)
     assert one == "ambiguous media stems: 1 left unresolved (token maps to >1 identity)"
     assert "brook" not in one
+
+
+# --- family-word backstop for ambiguous stems, PRIV-1-BR-29 --------------
+#
+# Invented names only. `brook` is in the autouse wordlist so the given-name
+# pass cannot steal a stem fixture. The family word is whatever
+# `_family_words` mints for that token under the pinned test key.
+
+
+def _family_word_for_brook() -> str:
+    return pz._family_words({"brook": {"Falcon", "Harbor"}})["brook"]
+
+
+# Two identities, three-token winner so the leftover token is not a
+# full-name match. `nyl` is three letters (given-name floor is 4) and
+# belongs to only one identity, so the family builder will not mint
+# for it. Media-stem votes Zyllora (2) over Calderre (1) and then has
+# no replacement for `nyl`. That is a genuine unresolved — not the
+# dictionary-word leak BR-29 closes.
+_UNRESOLVED_STEM_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Zyllora Wistmoor Extra",
+            "alias": "Amber Falcon Lantern",
+            "alias_slug": "amber_falcon_lantern",
+            "original_slug": "zyllora-wistmoor-extra",
+            "slug_was_name_derived": True,
+            "tokens": 3,
+        },
+        {
+            "real_name": "Calderre Nyl",
+            "alias": "Cobalt Harbor",
+            "alias_slug": "cobalt_harbor",
+            "original_slug": "calderre-nyl",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+    ]
+}
+
+
+# Shared token, same positional alias word. Media-stem already has one
+# replacement; the family builder must not mint a second one, and must
+# count the refusal.
+_ONE_ALIAS_STEM_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Zyllora Brook",
+            "alias": "Amber Harbor",
+            "alias_slug": "amber_harbor",
+            "original_slug": "zyllora-brook",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+        {
+            "real_name": "Calderre Brook",
+            "alias": "Cobalt Harbor",
+            "alias_slug": "cobalt_harbor",
+            "original_slug": "calderre-brook",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+    ]
+}
+
+
+# Shared surname that is NOT a dictionary word. Both `_family_words`
+# (via given-name) and `_ambiguous_family_words` must mint the same noun.
+_RARE_SHARED_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Zyllora Kettwood",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "zyllora-kettwood",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+        {
+            "real_name": "Calderre Kettwood",
+            "alias": "Cobalt Harbor",
+            "alias_slug": "cobalt_harbor",
+            "original_slug": "calderre-kettwood",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+    ]
+}
+
+
+def test_ambiguous_stem_family_word_matches_family_words_mint():
+    # Same token, same mint (`family#` + token → `_NOUN`). Two different
+    # words for one token would be a new inconsistency.
+    index = pz._token_index(_AMBIGUOUS_STEM_MAPPING)
+    family, _dropped = pz._ambiguous_family_words(index)
+    assert family["brook"] == _family_word_for_brook()
+
+
+def test_ambiguous_family_words_is_built_on_passes():
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    assert passes.ambiguous_family["brook"] == _family_word_for_brook()
+    assert isinstance(passes.ambiguous_family_dropped, tuple)
+
+
+def test_rewrite_and_residue_share_the_passes_family_map():
+    # CARD-08: mutating the object both methods read must move both.
+    # A pass that re-derives the map inside `_media_stem_pass` would
+    # ignore this and the two could drift.
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    passes.ambiguous_family = {"brook": "thistle"}
+    text = "photos/brook-pool-04.jpg"
+    out, counts, unresolved = passes.rewrite(text, ".md")
+    assert "thistle" in out.lower()
+    assert "brook" not in out.lower()
+    assert counts["media"] == 1
+    assert "brook" not in unresolved
+    hits = passes.residue(text, ".md")
+    assert hits.get("media") == 1
+    assert "media_ambiguous" not in hits
+
+
+def test_ambiguous_stem_preserves_case_shape():
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    word = _family_word_for_brook()
+    upper, _c, _u = passes.rewrite("photos/BROOK-pool-04.jpg", ".md")
+    lower, _c, _u = passes.rewrite("photos/brook-pool-04.jpg", ".md")
+    mixed, _c, _u = passes.rewrite("photos/Brook-pool-04.jpg", ".md")
+    assert word.upper() in upper
+    assert word.lower() in lower
+    # `_family_words` stores the noun lowercase; mixed falls through
+    # to that stored form, matching `_media_stem_pass`'s existing else.
+    assert word in mixed
+    assert "BROOK" not in upper
+    assert "brook" not in lower
+    assert "Brook" not in mixed
+
+
+def test_family_backstop_does_not_touch_prose():
+    # The scoping is the finding. Feeding this token into given_rx
+    # would rewrite ordinary English. The family word may only fire
+    # inside a filename stem.
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    prose = "the brook by the mill is cold"
+    out, counts, _u = passes.rewrite(prose, ".md")
+    assert out == prose
+    assert counts["media"] == 0
+    assert counts["given"] == 0
+    mixed = "see photos/brook-pool-04.jpg by the brook"
+    out_m, counts_m, _u = passes.rewrite(mixed, ".md")
+    assert "photos/" + _family_word_for_brook() + "-pool-04.jpg" in out_m
+    assert out_m.endswith("by the brook")
+    assert counts_m["media"] == 1
+    assert counts_m["given"] == 0
+
+
+def test_given_name_still_leaves_dictionary_word_brook_alone():
+    # The wordlist exclusion in `_given_name_regex` is protecting prose
+    # and must not be widened. `brook` is in the unit wordlist.
+    _rx, resolved, _deferred = pz._given_name_regex(
+        _AMBIGUOUS_STEM_MAPPING, protected_tokens=set()
+    )
+    assert "brook" not in resolved
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    assert "brook" not in passes.given
+
+
+def test_unambiguous_stem_still_uses_identity_word_not_family():
+    # Voting can still pick a winner. The family word is only the
+    # backstop for `len(words) != 1`, not a replacement for the vote.
+    # Surname-first so the full-name pass cannot steal the fixture:
+    # `zyllora-brook` is a name-pass match; `brook-zyllora` is not.
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    family = _family_word_for_brook()
+    text = "photos/brook-zyllora-04.jpg"
+    out, counts, unresolved = passes.rewrite(text, ".md")
+    assert out.lower() == "photos/falcon-amber-04.jpg"
+    assert counts["media"] == 1
+    assert "brook" not in unresolved
+    if family != "falcon":
+        assert family not in out.lower()
+
+
+def test_unresolved_keeps_its_meaning_when_no_family_word():
+    # Do not empty `unresolved` by definition. A leftover token that
+    # belongs to a non-winner and is not a shared family token still
+    # has no replacement; residue must still name that class (BR-15).
+    passes = pz._Passes(_UNRESOLVED_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "photos/zyllora-wistmoor-nyl.jpg"
+    out, _counts, unresolved = passes.rewrite(text, ".md")
+    assert "nyl" in unresolved
+    assert "nyl" in out.lower()
+    assert passes.residue(text, ".md").get("media_ambiguous", 0) == 1
+
+
+def test_shared_token_with_one_alias_word_is_counted_not_minted():
+    # Two identities, one positional alias word: media-stem already
+    # has a unique replacement. Minting a second word would be a new
+    # inconsistency. The builder declines and counts the reason.
+    index = pz._token_index(_ONE_ALIAS_STEM_MAPPING)
+    family, dropped = pz._ambiguous_family_words(index)
+    assert "brook" not in family
+    assert any(d["reason"] == "shared token already has one alias word" for d in dropped)
+    assert all("brook" not in str(d).lower() for d in dropped), (
+        "a dropped record that names the token publishes what the scrub removes"
+    )
+    passes = pz._Passes(_ONE_ALIAS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    out, counts, unresolved = passes.rewrite("photos/brook-pool-04.jpg", ".md")
+    assert "brook" not in out.lower()
+    assert "harbor" in out.lower()
+    assert counts["media"] == 1
+    assert "brook" not in unresolved
+
+
+def test_rare_shared_surname_gets_the_same_word_in_both_builders():
+    # Non-dictionary shared token: given-name's `_family_words` *does*
+    # see it. The stem backstop must mint the same noun.
+    _rx, resolved, _deferred = pz._given_name_regex(
+        _RARE_SHARED_MAPPING, protected_tokens=set()
+    )
+    index = pz._token_index(_RARE_SHARED_MAPPING)
+    family, _dropped = pz._ambiguous_family_words(index)
+    assert "kettwood" in resolved
+    assert family["kettwood"] == resolved["kettwood"]
+    assert family["kettwood"] == pz._family_words({"kettwood": {"Falcon", "Harbor"}})["kettwood"]
+
+
+def test_ambiguous_family_builder_does_not_read_the_wordlist(monkeypatch):
+    # CARD-08 / BR-19: a builder that reads the exclusion list can be
+    # silenced by editing the exclusion list. The stem backstop exists
+    # *because* the wordlist dropped the token.
+    def _boom(*_a, **_k):
+        raise AssertionError("ambiguous family builder read the wordlist")
+
+    monkeypatch.setattr(pz, "_load_wordlist", _boom)
+    family, dropped = pz._ambiguous_family_words(pz._token_index(_AMBIGUOUS_STEM_MAPPING))
+    assert family["brook"] == _family_word_for_brook()
+    assert dropped == ()
+
+
+def test_family_exclusion_line_reports_zero_as_a_measurement():
+    empty = pz._ambiguous_family_exclusion_line(())
+    assert empty == "ambiguous family exclusions: 0 dropped"
+    one = pz._ambiguous_family_exclusion_line(
+        ({"reason": "shared token already has one alias word", "identities": 2},)
+    )
+    assert one == (
+        "ambiguous family exclusions: 1 dropped "
+        "(1× shared token already has one alias word)"
+    )
+    assert "brook" not in one.lower()
+
+
+def test_family_exclusion_line_never_names_the_token():
+    line = pz._ambiguous_family_exclusion_line(
+        (
+            {"reason": "shared token already has one alias word", "identities": 2},
+            {"reason": "shared token already has one alias word", "identities": 3},
+        )
+    )
+    assert "brook" not in line.lower()
+    assert "kettwood" not in line.lower()
+    assert "ambiguous family exclusions:" in line
+
+
+def test_apply_and_verify_both_emit_family_exclusions():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
+    assert "_ambiguous_family_exclusion_line" in apply_src
+    assert "_ambiguous_family_exclusion_line" in verify_src
+
+
+def test_same_stem_gets_the_same_replacement_in_json_and_html():
+    # A manifest, an HTML report and a filename all carry the same
+    # stem. One `_Passes` object, one family map, one apply. The
+    # replacement is a property of the token, not of the file.
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    word = _family_word_for_brook()
+    manifest = '{"path": "personal/brook-pool-04.jpg"}'
+    html = '<img src="reports/brook-pool-04.jpg">'
+    run = '{"file": "brook-pool-04.jpg"}'
+    out_j, _c, _u = passes.rewrite(manifest, ".json")
+    out_h, _c, _u = passes.rewrite(html, ".html")
+    out_r, _c, _u = passes.rewrite(run, ".json")
+    path = passes.rewrite_path("personal/brook-pool-04.jpg")
+    assert f"{word}-pool-04.jpg" in out_j
+    assert f"{word}-pool-04.jpg" in out_h
+    assert f"{word}-pool-04.jpg" in out_r
+    assert path.endswith(f"{word}-pool-04.jpg")
+    assert "brook" not in out_j.lower()
+    assert "brook" not in out_h.lower()
+    assert "brook" not in out_r.lower()
+    assert "brook" not in path.lower()
 
 
 # --- percent-encoded separators, PRIV-1-BR-21 -----------------------------

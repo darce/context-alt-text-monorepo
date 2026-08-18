@@ -89,11 +89,14 @@ class Api {
 		$this->splitTopologyCommandDrain->register();
 		// E15-37: wp-cron never fires rest_api_init, so the bootstrap-sync handler
 		// must be bound at plugin load or scheduled events dispatch to zero listeners.
-		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 1 );
+		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 2 );
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 
-	public function handle_bootstrap_sync( string $tenant_id ): void {
+	/**
+	 * @param list<string> $cluster_ids
+	 */
+	public function handle_bootstrap_sync( string $tenant_id, array $cluster_ids = array() ): void {
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
 			return;
@@ -101,6 +104,19 @@ class Api {
 
 		$sync_pull_job = $this->resolve_bootstrap_sync_pull_job();
 		if ( null === $sync_pull_job ) {
+			return;
+		}
+
+		$normalized_ids = array();
+		foreach ( $cluster_ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized_ids[] = $id;
+			}
+		}
+		$normalized_ids = array_values( array_unique( $normalized_ids ) );
+		if ( array() !== $normalized_ids && $sync_pull_job instanceof \AltContext\Sovereign\Sync\TargetedSyncPullJobInterface ) {
+			$sync_pull_job->perform_targeted_snapshot( $normalized_tenant_id, $normalized_ids );
 			return;
 		}
 

@@ -28,6 +28,7 @@ from scripts.eval_harness.bakeoff import (
     _sum_usage,
     build_parser,
 )
+from scripts.eval_harness.bakeoff import main as bakeoff_main
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
@@ -41,7 +42,12 @@ GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
 def manifest() -> GoldenManifest:
     # Metadata-only: context_pack/present_identities/must_right/policy/face_count/
     # rubrics/path pins — transport tests use fake image_bytes, never open fixtures.
-    return load_manifest(str(BAKEOFF_MANIFEST), skip_hash_verification=True)
+    return load_manifest(
+        str(BAKEOFF_MANIFEST),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="bakeoff fixture is metadata-only; transport tests use fake image_bytes",
+    )
 
 
 def test_pixel_path_load_manifest_requires_hash_verification(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,6 +63,54 @@ def test_pixel_path_load_manifest_requires_hash_verification(monkeypatch: pytest
     missing = "/nonexistent/golden-images-dir-vlm6-test15"
     with pytest.raises(ManifestError, match="images directory not found"):
         load_manifest(str(BAKEOFF_MANIFEST), images_dir=missing)
+
+
+def test_weave_bench_main_ignores_empty_golden_images_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """VLM6-RV3-Q4-01: --weave-bench is text-only; empty ambient dir must load.
+
+    Mutation: removing metadata_only=True from bakeoff.main weave-bench
+    load_manifest fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    monkeypatch.setenv("ACX_EVAL_LIVE", "1")
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "kind": "run_record",
+                "provenance": {"head_sha": "deadbeef"},
+                "items": [{"media_id": 1, "path": "x.jpg"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.json"
+
+    def _fake_weave(*_args: object, **_kwargs: object) -> dict:
+        return {"schema": "acx-eval/v1", "kind": "run_record", "provenance": {}, "items": []}
+
+    monkeypatch.setattr("scripts.eval_harness.bakeoff.weave_bench_run_record", _fake_weave)
+    bakeoff_main(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9",
+            "--model-id",
+            "m",
+            "--manifest",
+            str(BAKEOFF_MANIFEST),
+            "--weave-bench",
+            str(source),
+            "--out",
+            str(out),
+            "--warmup",
+            "0",
+            "--vram-sample-interval-s",
+            "0",
+        ]
+    )
+    assert out.is_file()
 
 
 def _context_text(entry: GoldenEntry) -> str:
@@ -122,7 +176,12 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
 def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
     # Metadata-only pin compare (sha256/media_id/face_count/present_identities fields);
     # does not open image bytes under GOLDEN_IMAGES_DIR.
-    golden = load_manifest(str(GOLDEN_MANIFEST), skip_hash_verification=True)
+    golden = load_manifest(
+        str(GOLDEN_MANIFEST),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="bakeoff pin-compare is metadata-only; image bytes never opened",
+    )
     golden_by_path = {e.path: e for e in golden.entries}
     for entry in manifest.entries:
         assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"

@@ -85,9 +85,20 @@ def load_bench_manifest(
     require_detection_exhaustiveness: bool = False,
     *,
     skip_hash_verification: bool = False,
+    metadata_only: bool = False,
+    hash_skip_reason: str | None = None,
 ) -> GoldenManifest:
     images = None if images_dir is None else str(images_dir)
-    manifest = load_manifest(str(path), images_dir=images, skip_hash_verification=skip_hash_verification)
+    # Do not infer metadata_only from skip + images_dir=None (rg-015).
+    # Callers that never open image bytes must pass metadata_only=True
+    # and a hash_skip_reason; pixel paths leave both at defaults.
+    manifest = load_manifest(
+        str(path),
+        images_dir=images,
+        skip_hash_verification=skip_hash_verification,
+        hash_skip_reason=hash_skip_reason,
+        metadata_only=metadata_only,
+    )
     non_exhaustive: list[int] = []
     for entry in manifest.entries:
         exhaustive = bool(entry.face_boxes) and entry.face_count == len(entry.face_boxes)

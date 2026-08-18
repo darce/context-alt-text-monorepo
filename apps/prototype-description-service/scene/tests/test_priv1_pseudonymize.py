@@ -2127,6 +2127,51 @@ def test_live_pin_targets_skips_out_of_scope_and_empty_published(tmp_path, monke
     assert pz._live_pin_targets({}, [(data, True)]) == {}
 
 
+def test_live_pin_targets_hashes_current_bytes_not_published_values(tmp_path, monkeypatch):
+    # `published` is the apply-time `pre_sha` map. Its values are pre-run
+    # digests unless `_repin_digests` has mutated them. Persist must still
+    # record the file's *current* digest when the pin literal already
+    # matches current bytes — otherwise the record is correct only as a
+    # side effect of that mutation.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    old = pz._sha_file(data)
+    data.write_text("payload-two-moved\n", encoding="utf-8")
+    new = pz._sha_file(data)
+    assert old != new
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(f"sha256: {new}\n", encoding="utf-8")
+    published = {_PIN_REL: old, _PIN_NOTE: pz._sha_file(note)}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    assert found == {_PIN_REL: new}
+    assert found[_PIN_REL] != old
+
+
+def test_live_pin_targets_does_not_record_a_stale_digest_literal(tmp_path, monkeypatch):
+    # Persist-before-repin: the text still carries the pre-run digest
+    # and `published` still holds it. Hashing current bytes means no
+    # literal matches a current digest, so the file is omitted rather
+    # than recorded under the stale value.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    old = pz._sha_file(data)
+    data.write_text("payload-two-moved\n", encoding="utf-8")
+    new = pz._sha_file(data)
+    assert old != new
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(f"sha256: {old}\n", encoding="utf-8")
+    published = {_PIN_REL: old, _PIN_NOTE: pz._sha_file(note)}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    assert found == {}
+    assert new not in found.values() and old not in found.values()
+
+
 def test_persist_published_pins_is_a_noop_on_dry_run(tmp_path, monkeypatch):
     private = tmp_path / "private"
     private.mkdir()
@@ -2289,3 +2334,31 @@ def test_apply_does_not_persist_under_the_dry_run_name():
     apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
     assert "_persist_published_pins(" in apply_src
     assert "args.dry_run" in apply_src[apply_src.index("_persist_published_pins(") :]
+
+
+def test_apply_records_the_post_apply_digest_of_a_moved_pin(tmp_path, monkeypatch):
+    # Integration lock for PRIV-1-BR-33. A pinned file's digest moves
+    # because apply rewrites it; `_repin_digests` then rewrites the pin
+    # literal. The on-disk record must hold the *post-apply* digest.
+    # Source inspection of the call order would lock the text, not the
+    # behaviour. Swapping the two calls in `cmd_apply` must turn this
+    # assertion red — verified by actually swapping, not by predicting.
+    body = "Zyllora Elm\n"
+    pre = _pin_digest(body)
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body, _PIN_NOTE: f"sha256: {pre}\n"},
+        record=None,
+    )
+    try:
+        rc = pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    assert rc == 0
+    post = pz._sha_file(repo / _PIN_REL)
+    assert post != pre
+    assert post in (repo / _PIN_NOTE).read_text(encoding="utf-8")
+    record = pz._load_pin_record()
+    by_path = {e["path"]: e["sha256"] for e in record["pins"]}
+    assert by_path[_PIN_REL] == post

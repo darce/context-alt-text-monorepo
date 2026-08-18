@@ -244,7 +244,7 @@ describe('ScanTabContent — E21-18 S1 control-pane reorder', () => {
     expect(screen.queryByTestId('review-queue')).toBeNull();
     const heading = queueSection?.querySelector('#acx-workbench-queue-heading');
     expect(heading).toBeTruthy();
-    expect(heading?.textContent).toBe('Review Cluster');
+    expect(heading?.textContent).toBe('Review these faces');
   });
 
   it('L3R-08: queue region heading exists when ClusterLabelingPanel replaces ReviewQueue', () => {

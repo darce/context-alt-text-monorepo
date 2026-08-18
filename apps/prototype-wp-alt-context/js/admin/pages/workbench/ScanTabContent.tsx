@@ -192,7 +192,7 @@ export const ScanTabContent = (): React.JSX.Element => {
             </h3>
           ) : reviewClusterId !== null ? (
             <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
-              {__('Review Cluster', 'alt-context')}
+              {__('Review these faces', 'alt-context')}
             </h3>
           ) : null}
           <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>

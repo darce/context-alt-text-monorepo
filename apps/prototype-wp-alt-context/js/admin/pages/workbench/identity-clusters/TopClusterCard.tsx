@@ -193,7 +193,7 @@ export const TopClusterCard = ({
           )}
         </p>
         <p className="acx-top-cluster-card__meta">
-          {sprintf(_n('%d face in cluster', '%d faces in cluster', faceCount, 'alt-context'), faceCount)}
+          {sprintf(_n('%d face', '%d faces', faceCount, 'alt-context'), faceCount)}
         </p>
       </div>
 
@@ -238,7 +238,7 @@ export const TopClusterCard = ({
             className="button button-link acx-top-cluster-card__skip-btn"
             onClick={() => onDismiss(cluster.id)}
             disabled={isBusy}
-            title={__('Skip this cluster for now', 'alt-context')}
+            title={__('Skip these faces for now', 'alt-context')}
           >
             {__('Skip', 'alt-context')}
           </button>

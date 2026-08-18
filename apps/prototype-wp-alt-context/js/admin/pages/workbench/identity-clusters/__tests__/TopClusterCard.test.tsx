@@ -167,7 +167,7 @@ describe('TopClusterCard', () => {
     expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
-  // The reported DOM showed "5 faces in cluster" next to a placeholder thumb —
+  // The reported DOM showed "5 faces" next to a placeholder thumb —
   // a count with no faces behind it. The count must be backed by rendered faces.
   it('renders one face per representative alongside a consistent face count', () => {
     const representatives = [
@@ -187,7 +187,7 @@ describe('TopClusterCard', () => {
       />,
     );
 
-    expect(screen.getByText('3 faces in cluster')).toBeInTheDocument();
+    expect(screen.getByText('3 faces')).toBeInTheDocument();
     const renderedFaces = screen.getAllByAltText(FACE_ALT);
     expect(renderedFaces).toHaveLength(representatives.length);
     for (const face of renderedFaces) {

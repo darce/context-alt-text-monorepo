@@ -1,17 +1,17 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
-import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
+import { useRecognitionCluster } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
 import { useClusterSelection } from '../hooks/useClusterSelection';
 import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
 import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
+import { useTopUnlabeledTotal } from './roster/hooks/useTopUnlabeledTotal';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
-import { NeedsAssignmentSection } from './roster/NeedsAssignmentSection';
 import {
   ROSTER_SURFACE,
   ROSTER_ROUTE_PARAM_KEYS,
@@ -21,6 +21,7 @@ import {
   hasCanonicalProjectionShape,
   aggregateProjectionStatus,
   selectDeterministicDefaultWorkspaceEntry,
+  workbenchReviewQueueUrl,
   PERSON_WORKSPACE_GATE_NOTICE,
   PROJECTION_REFRESHING_NOTICE,
   PROJECTION_STALE_NOTICE,
@@ -34,42 +35,32 @@ export const RosterPage = (): React.JSX.Element => {
 
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
-  const retainVisibleSelection = selection.retainVisible;
   const selectAllSelection = selection.selectAll;
 
-  const clustersQuery = useRecognitionClusters({ limit: 20 });
-  const clusterList = clustersQuery.data;
-  const clusters = React.useMemo(() => clusterList?.clusters ?? [], [clusterList]);
-  const clusterIds = React.useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
   const parsedRoute = React.useMemo(() => parseRosterRoute(searchParams), [searchParams]);
-
-  React.useEffect(() => {
-    if (clustersQuery.data === undefined) {
-      return;
-    }
-    retainVisibleSelection(clusterIds);
-  }, [clusterIds, clustersQuery.data, retainVisibleSelection]);
 
   React.useEffect(() => {
     setSelectedClusterId(parsedRoute.selectedClusterId);
   }, [parsedRoute.selectedClusterId]);
 
-  const selectedCluster = React.useMemo(
-    () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
-    [clusters, selectedClusterId],
-  );
+  // UXW2-4: the needs-assignment rail is retired (NAV-05 — the workbench queue is
+  // the single home for unnamed faces). The drawer survives only as a `?cluster=`
+  // deep-link shim (E21-10), fed by the detail query alone.
   const clusterDetailQuery = useRecognitionCluster(selectedClusterId, Boolean(selectedClusterId));
+  const drawerCluster = clusterDetailQuery.data ?? null;
   const drawerIdentities = React.useMemo(
-    () => clusterDetailQuery.data?.sample_identities ?? selectedCluster?.sample_identities ?? [],
-    [clusterDetailQuery.data, selectedCluster],
+    () => clusterDetailQuery.data?.sample_identities ?? [],
+    [clusterDetailQuery.data],
   );
   const drawerMediaIds = React.useMemo(
     () => Array.from(new Set(drawerIdentities.map((identity) => identity.media_id))),
     [drawerIdentities],
   );
-  const mediaMap = useClusterMediaMap(clusters, drawerMediaIds);
+  const drawerClusters = React.useMemo(() => (drawerCluster ? [drawerCluster] : []), [drawerCluster]);
+  const mediaMap = useClusterMediaMap(drawerClusters, drawerMediaIds);
   const entriesQuery = useRosterEntries();
   const rosterEntries = React.useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
+  const topUnlabeledTotal = useTopUnlabeledTotal();
   const personRouteUuid = React.useMemo(() => getRouteParam(searchParams, 'person'), [searchParams]);
   const projectionShapeAvailable = React.useMemo(() => hasCanonicalProjectionShape(rosterEntries), [rosterEntries]);
   const projectionStatus = React.useMemo(() => aggregateProjectionStatus(rosterEntries), [rosterEntries]);
@@ -148,17 +139,6 @@ export const RosterPage = (): React.JSX.Element => {
     actions.reassignMutation.mutate({ faceId: payload.faceId, targetClusterId });
   };
 
-  const reassignTargets = React.useMemo(
-    () =>
-      clusters
-        .filter((candidate) => candidate.id !== selectedClusterId)
-        .map((candidate) => ({
-          id: candidate.id,
-          label: candidate.label ?? '',
-        })),
-    [clusters, selectedClusterId],
-  );
-
   const handleReassignFace = React.useCallback(
     (faceId: string, targetClusterId: string): void => {
       actions.reassignMutation.mutate({ faceId, targetClusterId });
@@ -221,19 +201,6 @@ export const RosterPage = (): React.JSX.Element => {
     [actions, dragDrop, setSearchParams],
   );
 
-  const handleSelectCluster = (cluster: ClusterSummary): void => {
-    setSelectedClusterId(cluster.id);
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete('tab');
-        next.set('cluster', cluster.id);
-        return next;
-      },
-      { replace: true },
-    );
-  };
-
   return (
     <section className="acx-roster" aria-labelledby="acx-roster-title">
       <header className="acx-roster__hero">
@@ -256,21 +223,29 @@ export const RosterPage = (): React.JSX.Element => {
         )}
         <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
 
-        <NeedsAssignmentSection
-          clusters={clusters}
-          selection={selection}
-          actions={actions}
-          isLoading={clustersQuery.isLoading}
-          isError={clustersQuery.isError}
-          onRetry={() => void clustersQuery.refetch()}
-          onOpenCluster={handleSelectCluster}
-          truncated={clusterList?.truncated}
-          listTotal={clusterList?.total}
-        />
+        <section
+          className="acx-roster__review-cta"
+          aria-labelledby="acx-roster-review-cta-title"
+          data-testid="roster-review-cta"
+        >
+          <h2 id="acx-roster-review-cta-title">{__('Unnamed faces waiting', 'alt-context')}</h2>
+          <p>
+            {topUnlabeledTotal !== null
+              ? sprintf(
+                  // translators: %d: server-reported count of unnamed face groups
+                  __('%d face groups waiting', 'alt-context'),
+                  topUnlabeledTotal,
+                )
+              : __('Unnamed faces are reviewed in the Workbench.', 'alt-context')}
+          </p>
+          <a className="acx-button acx-button--secondary" href={workbenchReviewQueueUrl()}>
+            {__('Review in Workbench', 'alt-context')}
+          </a>
+        </section>
       </div>
 
       <ClusterDrawerPanel
-        cluster={selectedCluster === null ? null : (clusterDetailQuery.data ?? selectedCluster)}
+        cluster={selectedClusterId === null ? null : drawerCluster}
         identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={
@@ -295,7 +270,6 @@ export const RosterPage = (): React.JSX.Element => {
         dropTarget={dragDrop.dropTarget}
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
-        reassignTargets={reassignTargets}
         onReassignFace={handleReassignFace}
         isReassigning={actions.reassignMutation.isPending}
         reassignErrorMessage={actions.reassignMutation.error?.message ?? null}

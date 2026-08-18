@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterApi';
-import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
-import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
+import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
+import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
@@ -25,8 +25,11 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../hooks/useRecognitionHooks', () => ({
-  useRecognitionClusters: vi.fn(),
   useRecognitionCluster: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useTopUnlabeledTotal', () => ({
+  useTopUnlabeledTotal: vi.fn(() => null),
 }));
 
 vi.mock('../../hooks/useRosterHooks', () => ({
@@ -66,13 +69,6 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   projection_refreshed_at: '2026-05-07T12:00:00Z',
   ...overrides,
 });
-
-const baseClusters: ClusterListResponse = {
-  clusters: [],
-  limit: 20,
-  total: 0,
-  truncated: false,
-};
 
 const dragDropState = {
   dragPayload: null,
@@ -188,7 +184,6 @@ const renderWithProviders = (
 };
 
 describe('RosterPage projection-aware workspace shell', () => {
-  const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
@@ -202,9 +197,6 @@ describe('RosterPage projection-aware workspace shell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({ data: baseClusters, isLoading: false, isError: false, refetch: vi.fn() }),
-    );
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({ data: undefined, isLoading: false, isError: false }),
     );

@@ -3,9 +3,9 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
-import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
+import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
 import type { RosterClusterCommitResponse } from '../../api/rosterApi';
-import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
+import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
@@ -24,8 +24,11 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../hooks/useRecognitionHooks', () => ({
-  useRecognitionClusters: vi.fn(),
   useRecognitionCluster: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useTopUnlabeledTotal', () => ({
+  useTopUnlabeledTotal: vi.fn(() => null),
 }));
 
 vi.mock('../../hooks/useRosterHooks', () => ({
@@ -71,14 +74,6 @@ const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary =>
   ...overrides,
 });
 
-const makeClusterListResponse = (overrides: Partial<ClusterListResponse> = {}): ClusterListResponse => ({
-  clusters: [makeCluster()],
-  limit: 20,
-  total: 1,
-  truncated: false,
-  ...overrides,
-});
-
 const ClusterRouteReset = (): React.JSX.Element => {
   const [, setSearchParams] = useSearchParams();
 
@@ -95,7 +90,6 @@ const ClusterRouteReset = (): React.JSX.Element => {
 };
 
 describe('RosterPage route container (E21-9 single surface)', () => {
-  const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
@@ -174,15 +168,6 @@ describe('RosterPage route container (E21-9 single surface)', () => {
 
     const cluster = makeCluster();
 
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({ clusters: [cluster] }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
-
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({
         data: cluster,
@@ -234,7 +219,9 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /Face groups/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: 'People' }).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
+    // UXW2-4: rail retired; the workbench queue CTA is the single path to unnamed faces.
+    expect(screen.queryByTestId('needs-assignment-section')).not.toBeInTheDocument();
+    expect(screen.getByTestId('roster-review-cta')).toBeInTheDocument();
   });
 
   it('preserves personFilter=unassigned on the single surface', () => {
@@ -339,16 +326,14 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('button', { name: /^Close$/i })).not.toBeInTheDocument();
   });
 
-  it('opens and closes the cluster drawer from the needs-assignment rail', async () => {
+  it('opens and closes the cluster drawer from the cluster= deep link (E21-10 shim)', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
         <RosterPage />
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /Cluster cluster-/i }));
-
-    expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Close$/i })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /Commit to roster entry/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /^Close$/i }));
@@ -360,14 +345,6 @@ describe('RosterPage route container (E21-9 single surface)', () => {
 
   it('navigates from the cluster drawer into the assigned person workspace', async () => {
     const assignedCluster = makeCluster({ person_uuid: 'person-uuid-alex' });
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({ clusters: [assignedCluster] }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({
         data: assignedCluster,
@@ -417,17 +394,8 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
 
-  it('prefers cluster detail person_uuid over the list projection when they diverge', async () => {
-    const listCluster = makeCluster({ person_uuid: 'person-uuid-list', label: 'List Label' });
+  it('uses the cluster detail person_uuid for the person review link', async () => {
     const detailCluster = makeCluster({ person_uuid: 'person-uuid-detail', label: 'Detail Label' });
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({ clusters: [listCluster] }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({
         data: detailCluster,
@@ -438,19 +406,6 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
-          {
-            id: 7,
-            person_uuid: 'person-uuid-list',
-            name: 'List Person',
-            tags: [],
-            cluster_count: 1,
-            clusters: [],
-            queue_memberships: [],
-            updated_at: '2026-01-01T00:00:00Z',
-            source_version: 1,
-            projection_status: 'current',
-            projection_refreshed_at: '2026-01-01T00:00:00Z',
-          },
           {
             id: 8,
             person_uuid: 'person-uuid-detail',
@@ -495,123 +450,7 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
 
-  it('surfaces a partial-state notice when the cluster list is truncated', () => {
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({
-          clusters: [makeCluster()],
-          total: 12,
-          truncated: true,
-        }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
-
-    render(
-      <MemoryRouter initialEntries={['/?tab=clusters']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
-
-    expect(
-      screen.getByText('Showing 1 of 12 clusters. Refine the list to review the remaining matches.'),
-    ).toBeInTheDocument();
-  });
-
-  it('applies bulk merge action through confirm dialog on the needs-assignment rail', async () => {
-    mockedUseClusterSelection.mockReturnValue({
-      ...selectionState,
-      selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
-      count: 3,
-    });
-
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({
-          clusters: [
-            makeCluster(),
-            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
-            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
-          ],
-        }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
-
-    render(
-      <MemoryRouter>
-        <RosterPage />
-      </MemoryRouter>,
-    );
-
-    // Bar names count+object; dialog confirm stays exact "Merge" — no positional .at(-1) needed.
-    await userEvent.click(screen.getByRole('button', { name: 'Merge 3 clusters' }));
-    await userEvent.click(screen.getByRole('button', { name: /^Merge$/ }));
-    expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
-      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
-    });
-  });
-
-  it('applies bulk dismiss action through confirm dialog on the needs-assignment rail', async () => {
-    mockedUseClusterSelection.mockReturnValue({
-      ...selectionState,
-      selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
-      count: 3,
-    });
-
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({
-        data: makeClusterListResponse({
-          clusters: [
-            makeCluster(),
-            makeCluster({ id: 'cluster-2', member_ids: ['identity-3'] }),
-            makeCluster({ id: 'cluster-3', member_ids: ['identity-4'] }),
-          ],
-        }),
-        isLoading: false,
-        isError: false,
-        refetch: vi.fn(),
-      }),
-    );
-
-    render(
-      <MemoryRouter>
-        <RosterPage />
-      </MemoryRouter>,
-    );
-
-    // Bar names count+object; dialog confirm stays exact "Dismiss" — no positional .at(-1) needed.
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss 3 clusters' }));
-    await userEvent.click(screen.getByRole('button', { name: /^Dismiss$/ }));
-
-    expect(clusterActionState.bulkDismissMutation.mutateAsync).toHaveBeenCalledWith({
-      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
-    });
-  });
-
-  it('allows selecting all unlabeled clusters from the needs-assignment header', async () => {
-    render(
-      <MemoryRouter>
-        <RosterPage />
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all unlabeled clusters' }));
-
-    expect(selectionState.selectAll).toHaveBeenCalledWith(['cluster-1']);
-  });
-
-  it('retains only currently visible clusters on the single surface', () => {
-    render(
-      <MemoryRouter initialEntries={['/?tab=clusters']}>
-        <RosterPage />
-      </MemoryRouter>,
-    );
-
-    expect(selectionState.retainVisible).toHaveBeenCalledWith(['cluster-1']);
-  });
+  // UXW2-4: rail-era tests (bulk merge/dismiss, select-all, truncation notice,
+  // retainVisible) deleted with the rail — bulk merge/dismiss reachability moves
+  // to the workbench queue in a later task (E21-9 Q1).
 });

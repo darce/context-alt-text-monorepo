@@ -16,6 +16,7 @@ import {
   WorkbenchFindingsPanel,
   type ReviewQueueHandle,
 } from './identity-clusters';
+import { REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE } from './identity-clusters/ReviewQueue';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
 import { useJobPipeline } from './JobPipelineContext';
@@ -192,7 +193,7 @@ export const ScanTabContent = (): React.JSX.Element => {
             </h3>
           ) : reviewClusterId !== null ? (
             <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
-              {__('Review Cluster', 'alt-context')}
+              {__('Review these faces', 'alt-context')}
             </h3>
           ) : null}
           <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
@@ -203,6 +204,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
                   dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(__(REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE, 'alt-context'));
+                  focusQueueRoot();
                 }}
               />
             ) : reviewClusterId !== null ? (

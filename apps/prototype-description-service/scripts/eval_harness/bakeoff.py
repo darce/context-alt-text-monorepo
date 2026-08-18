@@ -36,9 +36,9 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
@@ -54,6 +54,7 @@ import httpx
 
 from .bench_capture import (
     CaptureStatus,
+    LoadLoop,
     VramSampler,
     collect_item_latencies,
     summarize_latencies,
@@ -359,8 +360,7 @@ def _assert_no_roster_norm_collisions(known_names: list[str]) -> dict[str, str]:
         prev = norm_to_roster.get(key)
         if prev is not None and prev != raw:
             raise ValueError(
-                "face_gate roster name collision after normalize: "
-                f"{prev!r} and {raw!r} both normalize to {key!r}"
+                f"face_gate roster name collision after normalize: {prev!r} and {raw!r} both normalize to {key!r}"
             )
         norm_to_roster[key] = raw
     return norm_to_roster
@@ -409,8 +409,7 @@ def _apply_face_gate(
             key = _face_gate_norm_key(roster_name)
             if key is None or key not in matched:
                 raise RuntimeError(
-                    f"face_gate invariant broken: eligible name {roster_name!r} "
-                    f"has no matched box (norm={key!r})"
+                    f"face_gate invariant broken: eligible name {roster_name!r} has no matched box (norm={key!r})"
                 )
             return matched[key]
 
@@ -418,9 +417,7 @@ def _apply_face_gate(
             eligible,
             key=lambda n: (float(_box_for(n).get("x", 0.5)), n),
         )
-        pack["people_present"] = "; ".join(
-            f"{n}, {_face_position(float(_box_for(n).get('x', 0.5)))}" for n in ordered
-        )
+        pack["people_present"] = "; ".join(f"{n}, {_face_position(float(_box_for(n).get('x', 0.5)))}" for n in ordered)
     return pack, {"eligible_names": sorted(eligible), "suppressed_names": sorted(suppressed)}
 
 
@@ -1078,6 +1075,13 @@ def _nonneg_float_arg(raw: str) -> float:
     return value
 
 
+def _nonneg_finite_float_arg(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative finite float")
+    return value
+
+
 def _gpu_sampling_disabled() -> dict[str, Any]:
     return {
         "source": "nvidia-smi",
@@ -1089,33 +1093,87 @@ def _gpu_sampling_disabled() -> dict[str, Any]:
     }
 
 
+def _timeout_s_of(client: BakeoffClient) -> float | None:
+    timeout = client._client.timeout
+    read = getattr(timeout, "read", None)
+    if read is None:
+        return None
+    return float(read)
+
+
+def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
+    """Throwaway client with the same endpoint/config; isolated breaker state."""
+    return BakeoffClient(
+        client.base_url,
+        model_id=client.model_id,
+        model_version=client.model_version,
+        no_think=client.no_think,
+        timeout_s=_timeout_s_of(client),
+        eval_mode=client.eval_mode,
+        entry_traits=client.entry_traits,
+        roster=client.roster,
+        prompt_variant=client.prompt_variant,
+        two_pass=client.two_pass,
+        dual_length=client.dual_length,
+        face_gate=client.face_gate,
+        face_fixtures=client.face_fixtures,
+    )
+
+
+def _empty_warmup() -> dict[str, Any]:
+    return {"requests": 0, "succeeded": 0, "failed": 0, "elapsed_s": 0.0}
+
+
 def _run_warmup(
     client: BakeoffClient,
     manifest: GoldenManifest,
     images_dir: str,
     requests: int,
 ) -> dict[str, Any]:
-    """Re-send the first manifest image's prompt ``requests`` times; discard results."""
+    """Re-send the first manifest image's prompt ``requests`` times; discard results.
+
+    Uses a throwaway BakeoffClient so warm-up failures cannot open the scoring
+    client's 3-strike breaker (rg-015).
+    """
     if requests <= 0 or not images_dir or not manifest.entries:
-        return {"requests": 0, "elapsed_s": 0.0}
+        return _empty_warmup()
     first = manifest.entries[0]
     image_path = _resolve_image(Path(images_dir), first.path)
     if image_path is None:
-        return {"requests": 0, "elapsed_s": 0.0}
+        return _empty_warmup()
     image_bytes = image_path.read_bytes()
     context_pack = first.context_pack.model_dump(exclude_none=True)
+    warmup_client = _clone_bakeoff_client(client)
     started = time.monotonic()
-    sent = 0
-    for _ in range(requests):
-        with contextlib.suppress(Exception):
-            client.describe(
-                image_bytes=image_bytes,
-                filename=image_path.name,
-                media_id=first.media_id,
-                context_pack=context_pack,
-            )
-        sent += 1
-    return {"requests": sent, "elapsed_s": round(time.monotonic() - started, 3)}
+    succeeded = 0
+    failed = 0
+    try:
+        for _ in range(requests):
+            try:
+                warmup_client.describe(
+                    image_bytes=image_bytes,
+                    filename=image_path.name,
+                    media_id=first.media_id,
+                    context_pack=context_pack,
+                )
+            except Exception:
+                failed += 1
+            else:
+                succeeded += 1
+    finally:
+        warmup_client.close()
+    return {
+        "requests": succeeded + failed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "elapsed_s": round(time.monotonic() - started, 3),
+    }
+
+
+def _item_error_count(items: object) -> int:
+    if not isinstance(items, list):
+        return 0
+    return sum(1 for item in items if isinstance(item, Mapping) and item.get("error"))
 
 
 def _stamp_timing_and_gpu(
@@ -1125,14 +1183,21 @@ def _stamp_timing_and_gpu(
     cold_load_s: float | None,
     gpu: Mapping[str, Any],
 ) -> None:
+    """Stamp closed-serial per-item timing (PERF-03) plus GPU high-water mark.
+
+    ``loop=closed_serial``: this harness measures per-request service latency
+    under concurrency 1, not open-loop arrival (coordinated omission applies).
+    """
     latencies = collect_item_latencies(record)
     items = record.get("items")
     n_items = len(items) if isinstance(items, list) else 0
+    items_with_error = _item_error_count(items)
     record["timing"] = {
-        "open_loop": True,
+        "loop": LoadLoop.CLOSED_SERIAL,
         "concurrency": 1,
         "per_item": summarize_latencies(latencies),
-        "items_without_latency": n_items - len(latencies),
+        "items_with_error": items_with_error,
+        "items_without_latency": n_items - len(latencies) - items_with_error,
         "warmup": dict(warmup),
         "cold_load_s": cold_load_s,
     }
@@ -1242,7 +1307,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--cold-load-s",
-        type=float,
+        type=_nonneg_finite_float_arg,
         default=None,
         help="serve-to-ready seconds measured by bakeoff_runner; omitted/null when not passed",
     )
@@ -1349,7 +1414,7 @@ def main(argv: list[str] | None = None) -> None:
         sampler = VramSampler(interval_s=args.vram_sample_interval_s)
         sampler.start()
 
-    warmup = {"requests": 0, "elapsed_s": 0.0}
+    warmup = _empty_warmup()
     record: dict[str, Any] | None = None
     try:
         warmup = _run_warmup(client, manifest, images_dir, args.warmup)

@@ -1,9 +1,9 @@
-"""VLM-6 S2B: open-loop timing summaries and peak-VRAM sampling.
+"""VLM-6 S2B: closed-serial timing summaries and peak-VRAM sampling.
 
 Percentiles use the nearest-rank method (PERF-01): for a sorted sample of
 length ``N`` and percentile ``P``, the rank is ``ceil(P/100 * N)`` (1-based).
 The mean is recorded as a secondary field only. Empty input never fabricates
-zeros (rg-015).
+zeros (rg-015). Fetch is closed-serial (PERF-03): wait-then-send, concurrency 1.
 """
 
 from __future__ import annotations
@@ -28,6 +28,17 @@ class CaptureStatus(StrEnum):
 
     MEASURED = "measured"
     UNAVAILABLE = "unavailable"
+
+
+class LoadLoop(StrEnum):
+    """How the harness issues load (PERF-03, sr-007).
+
+    ``CLOSED_SERIAL``: fetch_run_record waits for each response before sending
+    the next (concurrency 1). This is per-request service latency, not
+    open-loop arrival — coordinated omission applies (PERF-03).
+    """
+
+    CLOSED_SERIAL = "closed_serial"
 
 
 def _round3(value: float) -> float:
@@ -91,11 +102,12 @@ def _pass_latencies(item: Mapping[str, Any]) -> list[float]:
 def collect_item_latencies(record: Mapping[str, Any]) -> list[float]:
     """Per-item wall-clock from ``describe.passes[].latency_s`` (summed).
 
-    Items whose item-level ``latency_s`` is ``None`` and that carry no usable
-    pass latencies are omitted; callers count them as ``items_without_latency``.
-    When passes exist, their non-None ``latency_s`` values are summed (PERF-03
-    open-loop per-image). A single-pass item without a ``passes`` list falls
-    back to ``item["latency_s"]``.
+    Items with a truthy item-level ``error`` are omitted (timeouts at the
+    request ceiling, CircuitOpen at ~0, rg-015). Items whose item-level
+    ``latency_s`` is ``None`` and that carry no usable pass latencies are
+    omitted; callers count them as ``items_without_latency``. When passes
+    exist, their non-None ``latency_s`` values are summed. A single-pass
+    item without a ``passes`` list falls back to ``item["latency_s"]``.
     """
     items = record.get("items")
     if not isinstance(items, list):
@@ -103,6 +115,8 @@ def collect_item_latencies(record: Mapping[str, Any]) -> list[float]:
     collected: list[float] = []
     for item in items:
         if not isinstance(item, Mapping):
+            continue
+        if item.get("error"):
             continue
         pass_lats = _pass_latencies(item)
         if pass_lats:
@@ -134,6 +148,8 @@ class VramSampler:
         self._thread: threading.Thread | None = None
         self._peak_used: int | None = None
         self._total: int | None = None
+        self._gpu_count: int | None = None
+        self._per_gpu_peak: list[int] = []
         self._samples = 0
         self._reason: str | None = None
 
@@ -184,13 +200,22 @@ class VramSampler:
         if not used_vals:
             self._reason = "nvidia-smi produced no parseable GPU rows"
             return False
-        peak = max(used_vals)
-        total = max(total_vals)
+        sample_used = sum(used_vals)
+        sample_total = sum(total_vals)
         self._samples += 1
-        if self._peak_used is None or peak > self._peak_used:
-            self._peak_used = peak
-        if self._total is None or total > self._total:
-            self._total = total
+        if self._peak_used is None or sample_used > self._peak_used:
+            self._peak_used = sample_used
+            self._total = sample_total
+            self._gpu_count = len(used_vals)
+        if not self._per_gpu_peak:
+            self._per_gpu_peak = list(used_vals)
+        else:
+            for index, used in enumerate(used_vals):
+                if index < len(self._per_gpu_peak):
+                    if used > self._per_gpu_peak[index]:
+                        self._per_gpu_peak[index] = used
+                else:
+                    self._per_gpu_peak.append(used)
         return False
 
     def stop(self) -> dict[str, Any]:
@@ -205,6 +230,8 @@ class VramSampler:
                 "status": CaptureStatus.UNAVAILABLE,
                 "peak_used_mb": None,
                 "total_mb": None,
+                "gpu_count": None,
+                "per_gpu_peak_used_mb": None,
                 "samples": 0,
                 "reason": self._reason or "zero samples",
             }
@@ -213,6 +240,8 @@ class VramSampler:
             "status": CaptureStatus.MEASURED,
             "peak_used_mb": self._peak_used,
             "total_mb": self._total,
+            "gpu_count": self._gpu_count,
+            "per_gpu_peak_used_mb": list(self._per_gpu_peak),
             "samples": self._samples,
             "interval_s": self.interval_s,
         }

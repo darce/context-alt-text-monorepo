@@ -260,3 +260,24 @@ def test_roster_candidates_low_quality_flag_caps_strong_band_on_the_wire(
     assert body["candidates"]
     assert body["candidates"][0]["similarity"] >= 0.80
     assert all(row["band"] != "strong" for row in body["candidates"])
+
+
+def test_contract_roster_candidates_example_validates_against_schema() -> None:
+    """R2-07: exactly one roster-candidates heading; its JSON example matches the schema."""
+    contract_path = (
+        Path(__file__).resolve().parents[5]
+        / "docs"
+        / "workbay"
+        / "contracts"
+        / "recognition-clustering.md"
+    )
+    text = contract_path.read_text(encoding="utf-8")
+    heading = "### GET /recognition/clusters/{cluster_id}/roster-candidates"
+    assert text.count(heading) == 1
+    after = text.split(heading, 1)[1]
+    start = after.find("```json")
+    assert start != -1
+    start = after.find("\n", start) + 1
+    end = after.find("```", start)
+    example = json.loads(after[start:end])
+    jsonschema.validate(example, _schema())

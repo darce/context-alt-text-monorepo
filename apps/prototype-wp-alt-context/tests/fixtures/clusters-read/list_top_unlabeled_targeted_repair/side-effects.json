@@ -1,1 +1,1 @@
-{"branch":"targeted_repair","scheduled_event_count":1,"scheduled_events":[{"hook":"acx_bootstrap_sync","args":["33380427-1819-5ad2-922b-cdd246fac3a0"]}],"http_call_count":0,"do_action_log":[],"targeted_cluster_ids":[]}
+{"branch":"targeted_repair","scheduled_event_count":2,"scheduled_events":[{"hook":"acx_bootstrap_sync","args":["33380427-1819-5ad2-922b-cdd246fac3a0"]},{"hook":"acx_bootstrap_sync","args":["33380427-1819-5ad2-922b-cdd246fac3a0",["cluster-needs-members"]]}],"http_call_count":0,"do_action_log":[],"targeted_cluster_ids":[]}

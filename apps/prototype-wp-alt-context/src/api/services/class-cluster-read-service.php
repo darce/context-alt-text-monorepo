@@ -14,6 +14,9 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_merge;
+use function array_unique;
+use function array_values;
 use function count;
 use function is_array;
 use function is_bool;
@@ -80,6 +83,7 @@ class ClusterReadService {
 				$preview_limit      = self::PREVIEW_IDENTITIES_PER_CLUSTER;
 				$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_FETCH_LIMIT );
 				$clusters           = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, $preview_limit );
+				$this->schedule_repair_from_mapper( $tenant_id );
 
 				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 			} catch ( ProjectionQueryException $exception ) {
@@ -164,14 +168,6 @@ class ClusterReadService {
 			// Query errors throw before empty-member repair — repair only heals
 			// true projection gaps, not MySQL 1054 / read failures (RLSE-05).
 			$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-			$cluster_ids_to_repair = $this->dependencies->projection_sync_service->find_clusters_missing_projected_members(
-				$sovereign_data['clusters'],
-				$sovereign_data['members'],
-				self::PREVIEW_IDENTITIES_PER_CLUSTER
-			);
-			if ( ! empty( $cluster_ids_to_repair ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $cluster_ids_to_repair ) ) {
-				$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-			}
 
 			$has_clusters     = $this->dependencies->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
 			$preview_limit    = self::PREVIEW_IDENTITIES_PER_CLUSTER;
@@ -180,6 +176,10 @@ class ClusterReadService {
 				$sovereign_data['members'],
 				$tenant_id,
 				$preview_limit
+			);
+			$this->schedule_repair_from_mapper(
+				$tenant_id,
+				$this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id )
 			);
 			$total = count( $unlabeled_items );
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
@@ -256,7 +256,8 @@ class ClusterReadService {
 						0,
 						$tenant_id
 					);
-					$payload      = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
+					$payload = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
+					$this->schedule_repair_from_mapper( $tenant_id );
 					return new WP_REST_Response( $payload, 200 );
 				}
 
@@ -393,6 +394,29 @@ class ClusterReadService {
 		}
 
 		return $this->dependencies->members_repository->list_for_cluster_uuids( $cluster_uuids, $limit );
+	}
+
+	/**
+	 * @param list<string> $extra_ids
+	 */
+	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array() ): void {
+		$ids = array_merge(
+			$this->dependencies->cluster_mapper->requested_repair_cluster_ids(),
+			$extra_ids
+		);
+		$normalized = array();
+		foreach ( $ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized[] = $id;
+			}
+		}
+		$normalized = array_values( array_unique( $normalized ) );
+		if ( array() === $normalized ) {
+			return;
+		}
+
+		$this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $normalized );
 	}
 
 	/**

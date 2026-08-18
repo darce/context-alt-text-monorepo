@@ -39,6 +39,10 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return 0;
 	}
 
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array {
+		return array();
+	}
+
 	public function find_by_uuid( string $cluster_uuid ): ?array {
 		return null;
 	}

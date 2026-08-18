@@ -136,6 +136,19 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertStringNotContainsString('custom_identity_members', $sql);
     }
 
+    public function testListUnlabeledIdentityCountDriftUsesMemberCountNotProjectedColumn(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_unlabeled_identity_count_drift(self::currentTenantId(), 50);
+
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString('c.identity_count <>', $sql);
+        $this->assertStringNotContainsString('c.identity_count >= 2', $sql);
+    }
+
     public function testListTopUnlabeledIncludesPersonUuid(): void
     {
         global $wpdb;
@@ -284,6 +297,24 @@ class ClustersReadRepositoryTest extends TestCase
 
         $this->assertSame([], $queued);
         $this->assertSame(1, $singletons);
+    }
+
+    /**
+     * R1-07: pre-filter drift scan compares identity_count to member COUNT.
+     */
+    public function testListUnlabeledIdentityCountDriftSelectsMismatchedRows(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $ids = $this->repository->list_unlabeled_identity_count_drift(self::currentTenantId(), 25);
+
+        $this->assertSame([], $ids);
+        $sql = preg_replace('/\s+/', ' ', $wpdb->queries[0] ?? '');
+        $this->assertIsString($sql);
+        $this->assertStringContainsString('c.identity_count <> ( SELECT COUNT(*) FROM `wp_acx_identity_members` m WHERE m.cluster_uuid = c.cluster_uuid )', $sql);
+        $this->assertStringNotContainsString('identity_count >= 2', $sql);
+        $this->assertStringContainsString('LIMIT 25', $sql);
     }
 
     /**

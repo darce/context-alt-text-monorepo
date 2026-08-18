@@ -31,43 +31,30 @@ class ClusterProjectionSyncServiceTest extends TestCase
         $this->assertTrue($service->cluster_row_should_have_members(['identity_count' => 2]));
     }
 
-    public function testFindClustersMissingProjectedMembersIncludesNonTruncatedShortfall(): void
+    public function testRepairTargetedProjectionSchedulesClusterIdsAndDoesNotPullInline(): void
     {
+        $GLOBALS['__ac_scheduled'] = [];
+        $syncJob = new SpySyncPullJob();
+        $service = $this->makeService(sync_pull_job: $syncJob);
+
+        $this->assertFalse(
+            $service->repair_targeted_projection('tenant-1', ['cluster-a', '', 'cluster-a', 'cluster-b'])
+        );
+        $this->assertSame([], $syncJob->performCalls);
+        $this->assertSame([], $syncJob->bypassCalls);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
+        $this->assertSame(['tenant-1', ['cluster-a', 'cluster-b']], $scheduled['args']);
+    }
+
+    public function testRepairTargetedProjectionNoopsOnEmptyIds(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
         $service = $this->makeService();
 
-        $ids = $service->find_clusters_missing_projected_members(
-            [
-                [
-                    'cluster_uuid' => 'cluster-drift-3-2',
-                    'identity_count' => 3,
-                ],
-                [
-                    'cluster_uuid' => 'cluster-truncated-9-4',
-                    'identity_count' => 9,
-                ],
-                [
-                    'cluster_uuid' => 'cluster-empty',
-                    'identity_count' => 3,
-                ],
-            ],
-            [
-                'cluster-drift-3-2' => [
-                    ['identity_uuid' => 'id-1'],
-                    ['identity_uuid' => 'id-2'],
-                ],
-                'cluster-truncated-9-4' => [
-                    ['identity_uuid' => 'id-1'],
-                    ['identity_uuid' => 'id-2'],
-                    ['identity_uuid' => 'id-3'],
-                    ['identity_uuid' => 'id-4'],
-                ],
-            ],
-            4
-        );
-
-        $this->assertContains('cluster-drift-3-2', $ids);
-        $this->assertContains('cluster-empty', $ids);
-        $this->assertNotContains('cluster-truncated-9-4', $ids);
+        $this->assertFalse($service->repair_targeted_projection('tenant-1', []));
+        $this->assertFalse($service->repair_targeted_projection('tenant-1', ['', ' ']));
+        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
     }
 
     public function testMaybeBootstrapAfterProxyReadSchedulesCronWhenInlineSyncFails(): void

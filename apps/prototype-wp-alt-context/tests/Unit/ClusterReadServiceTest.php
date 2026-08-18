@@ -31,6 +31,92 @@ class ClusterReadServiceTest extends TestCase
 {
     private const BOOTSTRAP_HOOK = 'acx_bootstrap_sync_test';
 
+    public function testListTopUnlabeledSchedulesRepairFromMapperRequestedIds(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+
+        $host = new class() implements ClustersHostInterface {
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                return new WP_Error('unexpected', 'must stay local');
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return true;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return false;
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-upward',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-upward' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                        ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ],
+                ];
+            }
+        };
+
+        $syncJob = new SpySyncPullJob();
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            sync_pull_job: $syncJob,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(4, $response->get_data()['clusters'][0]['identity_count']);
+        $this->assertSame([], $syncJob->performCalls);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
+        $this->assertSame(['tenant-1', ['cluster-upward']], $scheduled['args']);
+    }
+
     public function testListTopUnlabeledProxyBootstrappingFallbackEnvelope(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
@@ -156,11 +242,16 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame([], $host->proxy_calls, 'Sync-state wipe with surviving rows must serve local, never proxy.');
         $this->assertSame([], $syncJob->performCalls, 'Newly-qualifying read must not run an inline pull.');
         $this->assertSame([], $syncJob->bypassCalls);
-        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
-        $scheduled_key = array_key_first($GLOBALS['__ac_scheduled']);
-        $this->assertIsString($scheduled_key);
-        $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $scheduled_key);
-        $this->assertSame(['tenant-1'], $GLOBALS['__ac_scheduled'][$scheduled_key]['args']);
+        $this->assertNotEmpty($GLOBALS['__ac_scheduled']);
+        $tenant_only = false;
+        foreach ($GLOBALS['__ac_scheduled'] as $key => $event) {
+            $this->assertIsString($key);
+            $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $key);
+            if (($event['args'] ?? []) === ['tenant-1']) {
+                $tenant_only = true;
+            }
+        }
+        $this->assertTrue($tenant_only, 'Newly-qualifying path must still schedule the tenant bootstrap.');
     }
 
     public function testListClusterLabelsLocalProjectionUsesEnvelopeService(): void
@@ -224,7 +315,8 @@ class ClusterReadServiceTest extends TestCase
         ClustersHostInterface $host,
         bool $use_local_projection,
         ?NullClustersRepository $clusters_repository = null,
-        ?SyncPullJobInterface $sync_pull_job = null
+        ?SyncPullJobInterface $sync_pull_job = null,
+        ?NullIdentityMembersRepository $members_repository = null
     ): ClusterReadService {
         $syncHost = new class($use_local_projection) implements ClustersHostInterface {
             public function __construct(private bool $use_local_projection) {}
@@ -262,7 +354,7 @@ class ClusterReadServiceTest extends TestCase
         $syncJob = $sync_pull_job ?? new SpySyncPullJob();
 
         $clustersRepo = $clusters_repository ?? new NullClustersRepository();
-        $membersRepo = new NullIdentityMembersRepository();
+        $membersRepo = $members_repository ?? new NullIdentityMembersRepository();
 
         $projectionSync = new ClusterProjectionSyncService(
             $syncHost,

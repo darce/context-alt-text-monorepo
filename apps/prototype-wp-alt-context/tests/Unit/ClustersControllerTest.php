@@ -290,10 +290,16 @@ class ClustersControllerTest extends TestCase
         // Memberless rows are dropped at the mapper boundary (R1-03).
         $this->assertSame([], $data['clusters']);
 
-        // Exactly one deduped async heal event is scheduled for this tenant instead.
+        // The drifted cluster is named on a scheduled event (R1-07). A
+        // tenant-wide bootstrap may also be scheduled when the gate is stale.
         $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events);
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+        $this->assertNotEmpty($events);
+        $targeted = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => ($event['args'][1] ?? null) === ['cluster-needs-members']
+        ));
+        $this->assertCount(1, $targeted);
+        $this->assertSame(self::currentTenantId(), $targeted[0]['args'][0]);
     }
 
     public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void
@@ -1226,10 +1232,16 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(0, $data['total']);
         $this->assertFalse($data['truncated']);
 
-        // Exactly one deduped async heal event is scheduled for this tenant instead.
+        // The drifted cluster is named on a scheduled event (R1-07). A
+        // tenant-wide bootstrap may also be scheduled when the gate is stale.
         $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events);
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+        $this->assertNotEmpty($events);
+        $targeted = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => ($event['args'][1] ?? null) === ['cluster-needs-members']
+        ));
+        $this->assertCount(1, $targeted);
+        $this->assertSame(self::currentTenantId(), $targeted[0]['args'][0]);
     }
 
     public function testGetClusterMembersUsesRepositoryTotalMetadataBeforeFallbackCount(): void

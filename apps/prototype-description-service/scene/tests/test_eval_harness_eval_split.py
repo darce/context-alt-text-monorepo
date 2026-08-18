@@ -1348,3 +1348,154 @@ def test_verify_resealed_provisional_with_none_reason_is_named():
     assert any(SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES.value in message for message in violations), (
         violations
     )
+
+
+_MALFORMED_SHA256 = (
+    "g" * 64,
+    "A" * 64,
+    "a" * 63,
+    "a" * 65,
+)
+
+
+@pytest.mark.parametrize("bad_sha", _MALFORMED_SHA256, ids=["g_star_64", "A_star_64", "63_hex", "65_hex"])
+def test_verify_resealed_source_sha_not_lowercase_hex_is_named(bad_sha):
+    # VLM6-RV7-Q1-01: format is 64 lowercase hex, not len==64. Matching pin
+    # must still name the recorded field. MUT[len_only_sha_check]: revert
+    # _is_sha256_hex to isinstance+len==64 and g*64 / A*64 verify [].
+    artifact = _draw_golden()
+    artifact["source_manifest"]["sha256"] = bad_sha
+    _reseal(artifact)
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        **_fixture_expected(source_manifest_sha256=bad_sha),
+    )
+    assert any("missing or not 64 hex chars" in message for message in violations), violations
+    assert any("uppercase rejected" in message for message in violations), violations
+
+
+@pytest.mark.parametrize("bad_sha", _MALFORMED_SHA256, ids=["g_star_64", "A_star_64", "63_hex", "65_hex"])
+def test_verify_expected_source_sha_not_lowercase_hex_is_named(bad_sha):
+    # VLM6-RV7-Q1-01: expected pin uses the same helper. MUT[len_only_sha_check]
+    # lets expected g*64 / A*64 fall through to mismatch instead of format.
+    violations = verify_eval_split(
+        _draw_golden(),
+        _load_golden(),
+        **_fixture_expected(source_manifest_sha256=bad_sha),
+    )
+    assert any("missing or not 64 hex chars" in message for message in violations), violations
+    assert any("uppercase rejected" in message for message in violations), violations
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [["note", ""], ["  note "], ["note", "  "]],
+    ids=["blank_tail", "padded", "ws_tail"],
+)
+def test_verify_resealed_noncanonical_recorded_exposure_is_named(recorded):
+    # VLM6-RV7-L-01: recorded must already be canonical. MUT[recorded_side_normalize]
+    # (normalize recorded instead of requiring equality) makes these verify [].
+    artifact = _draw_golden(pre_split_exposure=["note"])
+    artifact["pre_split_exposure"] = recorded
+    _reseal(artifact)
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        **_fixture_expected(expected_pre_split_exposure=["note"]),
+    )
+    assert any("pre_split_exposure not canonical" in message for message in violations), violations
+    assert any(f"recorded={recorded!r}" in message for message in violations), violations
+
+
+def test_verify_canonical_recorded_padded_expected_is_clean():
+    # VLM6-RV7-L-01 / RV6-Q4-01: expected side stays normalized.
+    artifact = _draw_golden(pre_split_exposure=["note"])
+    assert (
+        verify_eval_split(
+            artifact,
+            _load_golden(),
+            **_fixture_expected(expected_pre_split_exposure=["  note "]),
+        )
+        == []
+    )
+
+
+def _pad_first_exposure(artifact):
+    notes = list(artifact["pre_split_exposure"])
+    notes[0] = f"  {notes[0]} "
+    artifact["pre_split_exposure"] = notes
+
+
+def _append_blank_exposure(artifact):
+    artifact["pre_split_exposure"] = list(artifact["pre_split_exposure"]) + [""]
+
+
+def _append_ws_exposure(artifact):
+    artifact["pre_split_exposure"] = list(artifact["pre_split_exposure"]) + ["  "]
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [_pad_first_exposure, _append_blank_exposure, _append_ws_exposure],
+    ids=["padded", "blank_tail", "ws_tail"],
+)
+def test_cli_check_noncanonical_recorded_exposure_exits_1(tmp_path, capsys, mutator):
+    # VLM6-RV7-L-01: --check must fail closed on resealed non-canonical recorded.
+    out = _cli_resealed(tmp_path, mutator)
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "pre_split_exposure not canonical" in captured.err
+
+
+def _draw_with_exposure_file(tmp_path, exposure_path):
+    out = tmp_path / "split.json"
+    argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(out),
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-file",
+        str(exposure_path),
+        "--force",
+    ]
+    return out, argv
+
+
+def test_cli_draw_missing_exposure_file_exits_2(tmp_path, capsys):
+    # VLM6-RV7-Q4-01: missing --exposure-file must be SystemExit 2, not traceback.
+    # MUT[unguarded_read]: delete the OSError guard -> FileNotFoundError / exit 1.
+    missing = tmp_path / "no-such-notes.txt"
+    out, argv = _draw_with_exposure_file(tmp_path, missing)
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: exposure file not found/unreadable:" in captured.err
+    assert str(missing) in captured.err
+    assert not out.exists()
+
+
+def test_cli_draw_directory_exposure_file_exits_2(tmp_path, capsys):
+    # VLM6-RV7-Q4-01: directory path is OSError (IsADirectoryError).
+    directory = tmp_path / "notes-dir"
+    directory.mkdir()
+    out, argv = _draw_with_exposure_file(tmp_path, directory)
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: exposure file not found/unreadable:" in captured.err
+    assert str(directory) in captured.err
+    assert not out.exists()

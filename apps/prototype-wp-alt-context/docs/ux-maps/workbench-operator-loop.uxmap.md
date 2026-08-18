@@ -45,6 +45,14 @@ Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
 | job progress: idle | running | error                         |
 |--------------------------------------------------------------|
 | AI findings preview (evidence-linked)                        |
+|--------------------------------------------------------------|
+| REVIEW SUGGESTIONS HEADER  N left to review on this page     |
+| position: 1 of N on this page | kind chips | band chips      |
+| states: default | loading | empty | error | filtered         |
+|--------------------------------------------------------------|
+| TOP GROUP CARD  N faces | N of M faces shown                 |
+| Name this person | Review | (thumbs, missing hidden at 39px) |
+| states: default | loading | empty | error | filtered         |
 +--------------------------------------------------------------+
 states: default | loading | empty | error | first_time | edge_input
 ```

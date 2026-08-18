@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import time
 from typing import Any
 
 import pytest
@@ -20,8 +22,8 @@ from scripts.eval_harness.bakeoff_candidates import (
     load_bakeoff_candidates,
 )
 from scripts.eval_harness.bakeoff_runner import (
-    READY_ATTEMPTS,
     READY_SLEEP_S,
+    READY_TIMEOUT_S,
     SKIP_REASON_NOT_COMPETING,
     SKIP_REASON_STACK,
     SKIP_REASON_VRAM,
@@ -38,6 +40,7 @@ from scripts.eval_harness.bakeoff_runner import (
     emit_shell,
     main,
 )
+from scripts.eval_harness.prepull_weights import SkipReason
 
 _SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 _PLAN_KW = {
@@ -237,10 +240,11 @@ def test_emit_shell_is_bash_n_clean_and_mentions_incumbents(tmp_path) -> None:
         assert plan.out_path in script
     assert "/records/florence-anchor.json" in script
     assert "/records/qwen-anchor.json" in script
-    assert f"seq 1 {READY_ATTEMPTS}" in script
-    assert READY_ATTEMPTS == 600
+    assert f"READY_TIMEOUT_S={READY_TIMEOUT_S}" in script
+    assert READY_TIMEOUT_S == 600
     assert READY_SLEEP_S == 1
     assert f"sleep {READY_SLEEP_S}" in script
+    assert "seq 1 " not in script
     assert "--max-time" in script
     assert "trap" in script
     assert 'kill "${_serve_pid}" 2>/dev/null || true' in script
@@ -515,6 +519,13 @@ def test_sealed_llama_cpp_mmproj_gb_from_notes() -> None:
 _PREFLIGHT_CAPTURE = "_build=$(llama-server --version 2>&1 | grep -oE 'b[0-9]+' | head -1)"
 
 
+def _ready_poll_block(script: str) -> str:
+    lines = script.splitlines()
+    start = next(idx for idx, line in enumerate(lines) if line.strip() == "_ready=0")
+    end = next(idx for idx, line in enumerate(lines) if idx > start and line.strip() == "done")
+    return "\n".join(lines[start : end + 1])
+
+
 def _assert_runtime_build_preflight(
     script: str,
     *,
@@ -530,7 +541,9 @@ def _assert_runtime_build_preflight(
         next_serve = script.find("llama-server --host", block_at)
         assert next_serve != -1, cid
         assert block_at < next_serve
-        assert "exit 1" in script[block_at:next_serve]
+        assert "exit 1" not in script[block_at:next_serve]
+        assert "continue" in script[block_at:next_serve]
+        assert "_fail=$((_fail + 1))" in script[block_at:next_serve]
         assert "cannot parse llama-server runtime build" in script[block_at:next_serve]
         assert '"${_obs}" -lt "${_req}"' in script[block_at:next_serve]
     for cid in lower_bound_ids:
@@ -627,7 +640,7 @@ def test_emit_shell_echoes_nvidia_smi_sanity_after_run() -> None:
     smi_at = script.find("nvidia-smi --query-gpu=memory.used")
     kill_at = script.find('kill "${_serve_pid}"', smi_at)
     assert run_at != -1 and smi_at != -1 and kill_at != -1
-    assert smi_at < kill_at
+    assert run_at < smi_at < kill_at
 
 
 def test_emit_shell_polls_every_second_and_stamps_cold_inside_ready_branch() -> None:
@@ -635,8 +648,9 @@ def test_emit_shell_polls_every_second_and_stamps_cold_inside_ready_branch() -> 
     script = emit_shell(build_plans(_registry([_entry("alpha")]), **_PLAN_KW), incumbent_runs={})
     assert f"sleep {READY_SLEEP_S}" in script
     assert READY_SLEEP_S == 1
-    assert f"seq 1 {READY_ATTEMPTS}" in script
-    assert READY_ATTEMPTS == 600
+    assert f"READY_TIMEOUT_S={READY_TIMEOUT_S}" in script
+    assert READY_TIMEOUT_S == 600
+    assert "seq 1 " not in script
     ready_at = script.find("_ready=1")
     cold_at = script.find("_cold=$(python3 -c")
     break_at = script.find("break", ready_at)
@@ -660,16 +674,12 @@ def test_emit_shell_cold_stamp_uses_python3_and_survives_without_python(tmp_path
     syntax = subprocess.run(["bash", "-n", str(path)], check=False, capture_output=True, text=True)
     assert syntax.returncode == 0, syntax.stderr
 
-    lines = script.splitlines()
-    start = next(idx for idx, line in enumerate(lines) if line.startswith("for _i in"))
-    end = next(idx for idx, line in enumerate(lines) if idx > start and line == "done")
-    poll = "\n".join(lines[start : end + 1])
+    poll = _ready_poll_block(script)
     snippet = "\n".join(
         [
             "set -euo pipefail",
             "_t0=$(date +%s.%N)",
             "_serve_pid=$$",
-            '_cold=""',
             poll,
             'if [ -n "${_cold}" ]; then echo "COLD=${_cold}"; else echo COLD_EMPTY; fi',
         ]
@@ -679,6 +689,9 @@ def test_emit_shell_cold_stamp_uses_python3_and_survives_without_python(tmp_path
     curl = stub_bin / "curl"
     curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     curl.chmod(0o755)
+    python3 = stub_bin / "python3"
+    python3.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    python3.chmod(0o755)
     ran = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", snippet],
         check=False,
@@ -687,9 +700,7 @@ def test_emit_shell_cold_stamp_uses_python3_and_survives_without_python(tmp_path
         env={"PATH": f"{stub_bin}:/usr/bin:/bin"},
     )
     assert ran.returncode == 0, ran.stderr + ran.stdout
-    assert ran.stdout.startswith("COLD=")
-    stamped = ran.stdout.strip().removeprefix("COLD=")
-    assert re.fullmatch(r"\d+\.\d", stamped), stamped
+    assert "COLD_EMPTY" in ran.stdout
 
 
 _BARE_PYTHON_M = re.compile(r"(^|[^0-9a-z_])python -m")
@@ -709,3 +720,86 @@ def test_plan_and_report_argv_use_python3_not_bare_python() -> None:
     assert _BARE_PYTHON_M.search(script) is None, script
     assert "python3 -m scripts.eval_harness.bakeoff" in script
     assert "python3 -m scripts.eval_harness.build_bakeoff_report" in script
+
+
+def test_emit_shell_ready_poll_bounds_elapsed_wall_clock(tmp_path) -> None:
+    # VLM6-RV4-Q2-02 / L-04: rg-007 bound on elapsed wall clock, not attempts.
+    timeout_s = 3
+    poll_s = 2
+    plans = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)
+    script = emit_shell(plans, incumbent_runs={}, ready_timeout_s=timeout_s)
+    assert f"READY_TIMEOUT_S={timeout_s}" in script
+    assert "seq 1 " not in script
+    assert "SECONDS" in script or "_ready_t0=$(date +%s)" in script
+    poll = _ready_poll_block(script)
+    snippet = "\n".join(
+        [
+            "set -euo pipefail",
+            f"READY_TIMEOUT_S={timeout_s}",
+            "_serve_pid=$$",
+            poll,
+            "echo READY=${_ready}",
+        ]
+    )
+    stub_bin = tmp_path / "stub"
+    stub_bin.mkdir()
+    curl = stub_bin / "curl"
+    curl.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
+    curl.chmod(0o755)
+    started = time.monotonic()
+    ran = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{stub_bin}:/usr/bin:/bin"},
+        timeout=20,
+    )
+    elapsed = time.monotonic() - started
+    assert ran.returncode == 0, ran.stderr + ran.stdout
+    assert "READY=0" in ran.stdout
+    assert elapsed <= timeout_s + poll_s + READY_SLEEP_S + 1
+
+
+def test_emit_shell_runtime_preflight_failure_is_nonfatal_per_candidate(tmp_path) -> None:
+    # VLM6-RV4-Q4-02: preflight failure continues; report still runs.
+    script_path = tmp_path / "plan.sh"
+    assert main(["--only", "qwen38-27b,minicpm-v-45", "--emit-shell", str(script_path)]) == 0
+    stub_bin = tmp_path / "stub"
+    stub_bin.mkdir()
+    for name in ("curl", "llama-server", "python3"):
+        stub = stub_bin / name
+        stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        stub.chmod(0o755)
+    ran = subprocess.run(
+        ["bash", str(script_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{stub_bin}:/usr/bin:/bin"},
+        timeout=30,
+    )
+    combined = f"{ran.stdout}\n{ran.stderr}"
+    # All selected candidates failed → same contract as readiness failure.
+    assert ran.returncode == 1
+    assert "candidate qwen38-27b: cannot parse llama-server runtime build" in combined
+    assert "candidate minicpm-v-45 never became ready" in combined
+    assert "WARN: no run-records to report" in combined
+
+
+def test_skip_reason_returns_skip_reason_enum_members() -> None:
+    # VLM6-RV4-L-08: sr-007 single exhaustive skip vocabulary.
+    vllm = _recipe(stack=ServingStack.VLLM, gguf=None, mmproj=None, extra_flags=[])
+    cases = (
+        (_entry("ref", competing=False), 20.0, SkipReason.NOT_COMPETING),
+        (_entry("vllm-one", recipe=vllm), 20.0, SkipReason.STACK_NOT_SUPPORTED),
+        (_entry("huge", artifact_gb=25.0), 20.0, SkipReason.VRAM_BUDGET),
+    )
+    for entry, budget, expected in cases:
+        reason = _skip_reason(entry, planned=set(), budget_gb=budget)
+        assert reason is expected
+        assert isinstance(reason, SkipReason)
+    assert _skip_reason(_entry("ok"), planned={"ok"}, budget_gb=20.0) is None
+    assert SkipReason.STACK_NOT_SUPPORTED == SKIP_REASON_STACK
+    assert SkipReason.VRAM_BUDGET == SKIP_REASON_VRAM
+    assert SkipReason.NOT_COMPETING == SKIP_REASON_NOT_COMPETING

@@ -67,6 +67,9 @@ class SkipReason(StrEnum):
     """Why a sealed roster row is not a download job (sr-007, AGT-06)."""
 
     EXCLUDED_BY_ONLY = "excluded by --only"
+    STACK_NOT_SUPPORTED = "stack not supported"
+    VRAM_BUDGET = "vram budget"
+    NOT_COMPETING = "not competing"
 
 
 SIZE_UNVERIFIED_NOTE = "size unverified: registry has no pinned size for this artifact"

@@ -329,7 +329,7 @@ describe('TopClusterCard', () => {
     );
 
     const skip = screen.getByRole('button', { name: 'Skip' });
-    expect(skip).toBeInTheDocument();
+    expect(skip).toHaveAttribute('title', 'Skip these faces for now');
     await user.click(skip);
     expect(onDismiss).toHaveBeenCalledWith('cluster-1');
   });
@@ -411,7 +411,7 @@ describe('TopClusterCard', () => {
       { label: '3 of 3', queuePosition: 3, queueTotal: 3 },
       { label: '1 of 1', queuePosition: 1, queueTotal: 1 },
     ])(
-      'card root has Cluster review $label when ordinal pair valid',
+      'card root has Face group review $label when ordinal pair valid',
       ({ queuePosition, queueTotal }) => {
         render(
           <TopClusterCard
@@ -426,7 +426,7 @@ describe('TopClusterCard', () => {
         const card = screen.getByRole('group');
         expect(card).toHaveClass('acx-top-cluster-card');
         expect(card).toHaveAccessibleName(
-          new RegExp(`Cluster review ${queuePosition} of ${queueTotal}`),
+          new RegExp(`Face group review ${queuePosition} of ${queueTotal}`),
         );
       },
     );
@@ -438,7 +438,7 @@ describe('TopClusterCard', () => {
       { label: 'position=float', queuePosition: 1.5, queueTotal: 2 },
       { label: 'position>total', queuePosition: 4, queueTotal: 3 },
     ])(
-      'invalid queue ordinals fall back to kind-only Cluster review — $label',
+      'invalid queue ordinals fall back to kind-only Face group review — $label',
       ({ label, queuePosition, queueTotal }) => {
         render(
           <TopClusterCard
@@ -451,17 +451,17 @@ describe('TopClusterCard', () => {
         );
 
         const card = screen.getByRole('group');
-        expect(card, label).toHaveAccessibleName('Cluster review');
+        expect(card, label).toHaveAccessibleName('Face group review');
         expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5|4 of 3/i);
       },
     );
 
-    it('without queuePosition/queueTotal, accname is kind-only Cluster review (never empty)', () => {
+    it('without queuePosition/queueTotal, accname is kind-only Face group review (never empty)', () => {
       render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} isReadOnly />);
 
       const card = screen.getByRole('group');
-      expect(card).toHaveAccessibleName('Cluster review');
-      expect(screen.queryByText(/Cluster review \d+ of \d+/)).toBeNull();
+      expect(card).toHaveAccessibleName('Face group review');
+      expect(screen.queryByText(/Face group review \d+ of \d+/)).toBeNull();
     });
   });
 });

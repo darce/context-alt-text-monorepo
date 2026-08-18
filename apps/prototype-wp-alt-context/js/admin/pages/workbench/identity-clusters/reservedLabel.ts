@@ -4,9 +4,11 @@
  * pick a descriptive name. Previously duplicated across four call sites.
  */
 
+import { __ } from '@wordpress/i18n';
+
 import { isHumanLabeledTarget } from './suggestionProjection';
 
-export const RESERVED_LABEL_MESSAGE =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+export const getReservedLabelMessage = (): string =>
+  __('This label format is reserved for automatic group IDs. Choose a descriptive name.', 'alt-context');
 
 export const isReservedLabel = (label: string): boolean => !isHumanLabeledTarget(label);

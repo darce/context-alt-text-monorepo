@@ -33,7 +33,7 @@ import {
   PERSON_COMMIT_FAILURE_COPY,
   PERSON_COMMIT_SUCCESS_COPY,
   VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
+  viewInRosterHref,
 } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
@@ -91,7 +91,7 @@ import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
 
 /** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
-const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled clusters.';
+const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled faces.';
 
 /** Empty-queue position copy when the projection outage makes the count unmeasurable. */
 const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
@@ -261,13 +261,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onBandChange,
       selectedIds,
       onSelectedIdsChange,
-      onLabel,
+      onLabel: _onLabel,
       onReview,
       emptyStateAnchorRef,
       onCardPrimaryPresenceChange,
     },
     ref,
   ): React.JSX.Element | null {
+    void _onLabel;
     const findings = useWorkbenchFindings();
     const data = useSuggestionReviewData();
     const { topUnlabeledClusters } = useSuggestionReviewQueries();
@@ -1220,7 +1221,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <p className="acx-person-commit__success-message">
               {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
             </p>
-            <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
+            <a className="acx-person-commit__roster-link" href={viewInRosterHref(data.personCommit.personUuid)}>
               {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
             </a>
           </div>
@@ -1376,7 +1377,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               personCommitPending={data.personCommitPending}
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
-              onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
@@ -1463,7 +1463,6 @@ interface CurrentCardProps {
   /** BR-48: disable person-commit while bulk hold/sequence is active. */
   isBulkActive: boolean;
   onReview?: (clusterId: string) => void;
-  onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
   clearAdvanceFocus: () => void;
@@ -1600,7 +1599,6 @@ const CurrentCard = ({
   personCommitPending,
   isBulkActive,
   onReview,
-  onLabel,
   onOpenOriginal,
   markAdvanceFocus,
   clearAdvanceFocus,
@@ -1702,6 +1700,7 @@ const CurrentCard = ({
           personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
         }
         suggestedCreateName={options?.suggestedCreateName}
+        committedPersonUuid={personCommit.personUuid}
         onCommit={(request) => {
           // BR-27: person-commit success may remove the NAME card — arm advance focus.
           void schedulePersonCommit(request).then((result) => {
@@ -1927,7 +1926,6 @@ const CurrentCard = ({
           {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
           <TopClusterCard
             cluster={cluster}
-            onLabel={() => onLabel?.(cluster.id)}
             isReadOnly
             onReview={onReview}
             // BR-41: pass ordinal only when both are defined (position chrome available).

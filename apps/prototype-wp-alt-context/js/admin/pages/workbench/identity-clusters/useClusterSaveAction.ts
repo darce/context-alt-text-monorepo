@@ -9,7 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
-import { isReservedLabel, RESERVED_LABEL_MESSAGE } from './reservedLabel';
+import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
 
@@ -112,7 +112,7 @@ export const useClusterSaveAction = ({
       }
       // BR-55: shared sink rejects reserved machine labels (defense-in-depth).
       if (isReservedLabel(trimmed)) {
-        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
+        setError(getReservedLabelMessage());
         return false;
       }
       if (editableClusterId) {
@@ -123,7 +123,7 @@ export const useClusterSaveAction = ({
         mutations.createClusterForIdentity(anchorIdentityId, trimmed, abortController.signal);
         return true;
       }
-      setError(__('Cannot create cluster: no identity ID', 'alt-context'));
+      setError(__('Cannot save this name: missing person.', 'alt-context'));
       return false;
     },
     [anchorIdentityId, editableClusterId, mutations, setError],
@@ -153,7 +153,7 @@ export const useClusterSaveAction = ({
 
       // BR-55: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
       if (isReservedLabel(canonical)) {
-        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
+        setError(getReservedLabelMessage());
         return;
       }
 
@@ -225,7 +225,7 @@ export const useClusterSaveAction = ({
 
       // BR-49: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
       if (isReservedLabel(trimmed)) {
-        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
+        setError(getReservedLabelMessage());
         return;
       }
 

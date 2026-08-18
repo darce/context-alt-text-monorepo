@@ -451,7 +451,7 @@ describe('useClusterSaveAction casing grid (B6)', () => {
 });
 
 const RESERVED_LABEL_MSG =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This label format is reserved for automatic group IDs. Choose a descriptive name.';
 
 describe('useClusterSaveAction reserved-label gate (BR-49)', () => {
   it('handleSave(cluster-7) rejects reserved machine label without lookup or mutation', async () => {

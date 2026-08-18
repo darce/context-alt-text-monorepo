@@ -10,8 +10,8 @@
  * { kind: 'create', name } (create is the default outcome — PRINCIPLES §6).
  */
 
-import React, { useEffect, useRef } from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { NAMING_GROUP_SUGGESTED, parseNamingOptionValue } from './buildNamingOptions';
@@ -19,10 +19,16 @@ import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export type NameFaceResolution =
   | { readonly kind: 'roster'; readonly rosterEntryId: number; readonly name: string }
-  | { readonly kind: 'create'; readonly name: string };
+  | { readonly kind: 'create'; readonly name: string }
+  | { readonly kind: 'ambiguous'; readonly name: string; readonly matches: readonly ComboboxOption[] };
 
 /** Similarity at-or-above this threshold uses the high match-score band. */
 const MATCH_BAND_HIGH_THRESHOLD = 0.7;
+
+const LIVE_ANNOUNCE_DEBOUNCE_MS = 400;
+
+export const normalizeNameFaceLabel = (raw: string): string =>
+  raw.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
 
 const optionSource = (option: ComboboxOption): 'person' | 'cluster' | null => {
   const source =
@@ -37,11 +43,23 @@ const sourceBadgeLabel = (option: ComboboxOption): string | null => {
   if (source === 'person') {
     return __('Person', 'alt-context');
   }
-  // Include source on Suggested and All Labels cluster rows (A11Y-04 / FIX-7).
   if (source === 'cluster') {
-    return __('Cluster', 'alt-context');
+    return __('Group', 'alt-context');
   }
   return null;
+};
+
+const personMatchesFor = (
+  options: readonly ComboboxOption[],
+  raw: string,
+): ComboboxOption[] => {
+  const folded = normalizeNameFaceLabel(raw);
+  if (!folded) {
+    return [];
+  }
+  return options.filter(
+    (option) => optionSource(option) === 'person' && normalizeNameFaceLabel(option.label) === folded,
+  );
 };
 
 /** Max overlay rows; Suggested budget first so persons/All Labels are not starved (FIX-6). */
@@ -71,23 +89,24 @@ export const budgetOverlayOptions = (
 };
 
 /**
- * Resolve free-typed text against the fed options: an exact case-insensitive
- * person match binds that roster entry; anything else creates a new person.
+ * Resolve free-typed text against the FULL fed options (not the display budget):
+ * NFC + locale-aware fold + whitespace collapse; unique person match binds;
+ * two-or-more folded matches force an explicit choice; anything else creates.
  */
 export const resolveNameFaceInput = (
   options: readonly ComboboxOption[],
   raw: string,
 ): NameFaceResolution | null => {
-  const name = raw.trim();
+  const name = raw.normalize('NFC').replace(/\s+/g, ' ').trim();
   if (!name) {
     return null;
   }
-  const normalized = name.toLowerCase();
-  const person = options.find(
-    (option) =>
-      optionSource(option) === 'person' && option.label.trim().toLowerCase() === normalized,
-  );
-  if (person) {
+  const matches = personMatchesFor(options, name);
+  if (matches.length > 1) {
+    return { kind: 'ambiguous', name, matches };
+  }
+  if (matches.length === 1) {
+    const person = matches[0];
     const parsed = parseNamingOptionValue(String(person.value));
     const rosterEntryId = Number.parseInt(parsed?.id ?? '', 10);
     if (Number.isFinite(rosterEntryId)) {
@@ -97,8 +116,41 @@ export const resolveNameFaceInput = (
   return { kind: 'create', name };
 };
 
+const highlightMatch = (label: string, query: string): React.ReactNode => {
+  const nfcLabel = label.normalize('NFC');
+  const nfcQuery = query.normalize('NFC').replace(/\s+/g, ' ').trim();
+  if (!nfcQuery) {
+    return nfcLabel;
+  }
+  const escaped = nfcQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  const match = new RegExp(escaped, 'i').exec(nfcLabel);
+  if (match?.index == null) {
+    return nfcLabel;
+  }
+  const start = match.index;
+  const end = start + match[0].length;
+  return (
+    <>
+      {nfcLabel.slice(0, start)}
+      <mark className="acx-name-face__match-highlight">{nfcLabel.slice(start, end)}</mark>
+      {nfcLabel.slice(end)}
+    </>
+  );
+};
+
+const matchingOptionsFor = (
+  options: readonly ComboboxOption[],
+  value: string,
+): ComboboxOption[] => {
+  const folded = normalizeNameFaceLabel(value);
+  if (!folded) {
+    return [...options];
+  }
+  return options.filter((option) => normalizeNameFaceLabel(option.label).includes(folded));
+};
+
 interface NameFaceControlProps {
-  /** Naming options (roster persons ∪ labelled clusters ∪ similarity suggestions). */
+  /** Naming options (roster persons ∪ labelled groups ∪ similarity suggestions). */
   options: readonly ComboboxOption[];
   /** Current input value (controlled). */
   value: string;
@@ -113,14 +165,19 @@ interface NameFaceControlProps {
   onCancel?: () => void;
   isPending?: boolean;
   disabled?: boolean;
-  /** Override for the input's disabled state (defaults to isPending). */
+  /** Roster/options still loading — announced, input disabled, create path blocked. */
+  isLoading?: boolean;
+  /** Override for the input's disabled state (defaults to isPending || isLoading). */
   inputDisabled?: boolean;
   /** Suppress the built-in result-count live region (surface renders its own). */
   hideStatusAnnouncement?: boolean;
   commitLabel: string;
   pendingLabel?: string;
   placeholder?: string;
-  ariaLabel: string;
+  /** Restored Combobox prop: preferred placeholder when searching. */
+  searchPlaceholder?: string;
+  /** Optional; omitted when a visible <label htmlFor> already names the input. */
+  ariaLabel?: string;
   inputId?: string;
   autoFocus?: boolean;
   /** §7 single accent primary marker + accent chrome on the commit button (COL-03). */
@@ -131,6 +188,8 @@ interface NameFaceControlProps {
   className?: string;
   /** Class prefix for inner elements; defaults to the shared acx-name-face surface. */
   classPrefix?: string;
+  /** Overlay heading; Library vs review queue want different words. */
+  suggestionsHeader?: string;
   /** Optional hint rendered inside the input wrapper; described by the input. */
   hint?: React.ReactNode;
   hintId?: string;
@@ -146,11 +205,13 @@ export const NameFaceControl = ({
   onCancel,
   isPending = false,
   disabled = false,
+  isLoading = false,
   inputDisabled,
   hideStatusAnnouncement = false,
   commitLabel,
   pendingLabel,
   placeholder,
+  searchPlaceholder,
   ariaLabel,
   inputId,
   autoFocus = true,
@@ -158,12 +219,17 @@ export const NameFaceControl = ({
   commitButtonClassName,
   className,
   classPrefix = 'acx-name-face',
+  suggestionsHeader,
   hint,
   hintId,
 }: NameFaceControlProps): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null);
-  const isDisabled = isPending || disabled;
-  const isInputDisabled = disabled || (inputDisabled ?? isPending);
+  const reactId = useId();
+  const listboxId = `acx-name-face-listbox-${reactId}`;
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [announcedTotal, setAnnouncedTotal] = useState<number | null>(null);
+  const isDisabled = isPending || disabled || isLoading;
+  const isInputDisabled = disabled || isLoading || (inputDisabled ?? isPending);
 
   useEffect(() => {
     if (autoFocus) {
@@ -174,37 +240,131 @@ export const NameFaceControl = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const matchingOptions = React.useMemo(() => matchingOptionsFor(options, value), [options, value]);
   const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
+  const matchTotal = matchingOptions.length;
+  const overlayOpen = displayedOptions.length > 0 && !isPending && !isLoading;
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [value, matchTotal]);
+
+  useEffect(() => {
+    if (isPending || isLoading) {
+      setAnnouncedTotal(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setAnnouncedTotal(matchTotal);
+    }, LIVE_ANNOUNCE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [matchTotal, isPending, isLoading]);
 
   const commitButtonLabel = isPending && pendingLabel ? pendingLabel : commitLabel;
 
-  // Live-region status (A11Y-21): announce save progress/success at the field (PERC-05 fovea).
+  const ambiguousMatches = React.useMemo(
+    () => (value.trim() ? personMatchesFor(options, value) : []),
+    [options, value],
+  );
+  const isAmbiguous = ambiguousMatches.length > 1;
+
   const resultCountAnnouncement = React.useMemo(() => {
+    if (isLoading) {
+      return __('Loading people…', 'alt-context');
+    }
     if (isPending) {
       return commitButtonLabel;
     }
+    if (isAmbiguous) {
+      return __('Multiple people match. Choose one.', 'alt-context');
+    }
+    if (announcedTotal === null) {
+      return '';
+    }
     return sprintf(
-      /* translators: %d: number of naming suggestions shown */
-      __('%d naming options', 'alt-context'),
-      displayedOptions.length,
+      /* translators: %d: number of naming matches */
+      _n('%d naming option', '%d naming options', announcedTotal, 'alt-context'),
+      announcedTotal,
     );
-  }, [displayedOptions.length, isPending, commitButtonLabel]);
+  }, [announcedTotal, isPending, isLoading, isAmbiguous, commitButtonLabel]);
 
   const commitValue = React.useCallback(
     (raw: string) => {
-      const resolution = resolveNameFaceInput(options, raw);
-      if (resolution) {
-        onCommit(resolution);
+      if (isPending || isLoading) {
+        return;
       }
+      const resolution = resolveNameFaceInput(options, raw);
+      if (!resolution || resolution.kind === 'ambiguous') {
+        return;
+      }
+      onCommit(resolution);
     },
-    [options, onCommit],
+    [options, onCommit, isPending, isLoading],
+  );
+
+  const confirmDisplayedOption = React.useCallback(
+    (option: ComboboxOption) => {
+      if (onOptionConfirm) {
+        onOptionConfirm(option);
+        return;
+      }
+      if (optionSource(option) === 'person') {
+        commitValue(option.label);
+        return;
+      }
+      onValueChange(option.label);
+    },
+    [onOptionConfirm, commitValue, onValueChange],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      if (!overlayOpen) {
+        return;
+      }
+      e.preventDefault();
+      setActiveIndex((current) => (current + 1) % displayedOptions.length);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      if (!overlayOpen) {
+        return;
+      }
+      e.preventDefault();
+      setActiveIndex((current) =>
+        current <= 0 ? displayedOptions.length - 1 : current - 1,
+      );
+      return;
+    }
+    if (e.key === 'Home') {
+      if (!overlayOpen) {
+        return;
+      }
+      e.preventDefault();
+      setActiveIndex(0);
+      return;
+    }
+    if (e.key === 'End') {
+      if (!overlayOpen) {
+        return;
+      }
+      e.preventDefault();
+      setActiveIndex(displayedOptions.length - 1);
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (isPending || isLoading) {
+        return;
+      }
+      if (overlayOpen && activeIndex >= 0 && displayedOptions[activeIndex]) {
+        confirmDisplayedOption(displayedOptions[activeIndex]);
+        return;
+      }
       commitValue(value);
-    } else if (e.key === 'Escape') {
+      return;
+    }
+    if (e.key === 'Escape') {
       onCancel?.();
     }
   };
@@ -219,17 +379,9 @@ export const NameFaceControl = ({
   const handleConfirmOptionClick = React.useCallback(
     (option: ComboboxOption) => (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
-      if (onOptionConfirm) {
-        onOptionConfirm(option);
-        return;
-      }
-      if (optionSource(option) === 'person') {
-        commitValue(option.label);
-        return;
-      }
-      onValueChange(option.label);
+      confirmDisplayedOption(option);
     },
-    [onOptionConfirm, commitValue, onValueChange],
+    [confirmDisplayedOption],
   );
 
   const handleRejectSuggestionClick = React.useCallback(
@@ -240,6 +392,9 @@ export const NameFaceControl = ({
     [onRejectSuggestion],
   );
 
+  const activeOptionId =
+    overlayOpen && activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined;
+
   return (
     <div className={className ?? classPrefix}>
       <div className={`${classPrefix}__input-wrapper`}>
@@ -248,89 +403,114 @@ export const NameFaceControl = ({
           type="text"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={displayedOptions.length > 0}
+          aria-expanded={overlayOpen}
           aria-haspopup="listbox"
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
           className={`${classPrefix}__label-input`}
           id={inputId}
           value={value}
           onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder ?? __('Enter a name…', 'alt-context')}
+          placeholder={searchPlaceholder ?? placeholder ?? __('Enter a name…', 'alt-context')}
           disabled={isInputDisabled}
           aria-label={ariaLabel}
           aria-describedby={hint ? hintId : undefined}
         />
 
-        {displayedOptions.length > 0 && !isPending && (
-          <div className={`${classPrefix}__suggestions-overlay`}>
-            <div className={`${classPrefix}__suggestions-header`}>{__('Suggested', 'alt-context')}</div>
-            {displayedOptions.map((option) => (
-              <div key={option.value} className={`${classPrefix}__suggestion-row`}>
-                <button
-                  type="button"
-                  className={`${classPrefix}__suggestion-item`}
-                  onClick={handleSuggestionSelect(option.label)}
-                  title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
-                  aria-label={
-                    sourceBadgeLabel(option)
-                      ? sprintf(
-                          /* translators: 1: person/cluster name, 2: source (Person or Cluster) */
-                          __('%1$s (%2$s)', 'alt-context'),
-                          option.label,
-                          sourceBadgeLabel(option) ?? '',
-                        )
-                      : option.label
-                  }
+        {overlayOpen ? (
+          <div
+            className={`${classPrefix}__suggestions-overlay`}
+            role="listbox"
+            id={listboxId}
+          >
+            <div className={`${classPrefix}__suggestions-header`} id={`${listboxId}-label`}>
+              {suggestionsHeader ?? __('Suggested', 'alt-context')}
+            </div>
+            {displayedOptions.map((option, index) => {
+              const optionId = `${listboxId}-opt-${index}`;
+              const selected = index === activeIndex;
+              return (
+                <div
+                  key={option.value}
+                  id={optionId}
+                  role="option"
+                  aria-selected={selected}
+                  className={`${classPrefix}__suggestion-row${
+                    selected ? ` ${classPrefix}__suggestion-row--active` : ''
+                  }`}
                 >
-                  <span className={`${classPrefix}__suggestion-label`}>{option.label}</span>
-                  {sourceBadgeLabel(option) && (
-                    <span className="acx-badge acx-badge--source" data-source={option.source ?? ''}>
-                      {sourceBadgeLabel(option)}
-                    </span>
-                  )}
-                  {option.similarity !== undefined && (
-                    <span
-                      className={`${classPrefix}__match-score ${
-                        (option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
-                          ? `${classPrefix}__match-score--high`
-                          : `${classPrefix}__match-score--medium`
-                      }`}
-                    >
-                      {Math.round((option.similarity as number) * 100)}%{' '}
-                      <span className={`${classPrefix}__match-score-band`}>
-                        {(option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
-                          ? __('high', 'alt-context')
-                          : __('medium', 'alt-context')}
-                      </span>
-                    </span>
-                  )}
-                </button>
-                <div className={`${classPrefix}__suggestion-actions`}>
                   <button
                     type="button"
-                    className={`${classPrefix}__suggestion-confirm`}
-                    onClick={handleConfirmOptionClick(option)}
-                    title={__('Confirm match', 'alt-context')}
-                    aria-label={__('Confirm match', 'alt-context')}
+                    className={`${classPrefix}__suggestion-item`}
+                    onClick={handleSuggestionSelect(option.label)}
+                    tabIndex={-1}
+                    title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
+                    aria-label={
+                      sourceBadgeLabel(option)
+                        ? sprintf(
+                            /* translators: 1: person/group name, 2: source (Person or Group) */
+                            __('%1$s (%2$s)', 'alt-context'),
+                            option.label,
+                            sourceBadgeLabel(option) ?? '',
+                          )
+                        : option.label
+                    }
                   >
-                    ✓
+                    <span className={`${classPrefix}__suggestion-label`}>
+                      {highlightMatch(option.label, value)}
+                    </span>
+                    {sourceBadgeLabel(option) && (
+                      <span className="acx-badge acx-badge--source" data-source={option.source ?? ''}>
+                        {sourceBadgeLabel(option)}
+                      </span>
+                    )}
+                    {option.similarity !== undefined && (
+                      <span
+                        className={`${classPrefix}__match-score ${
+                          (option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
+                            ? `${classPrefix}__match-score--high`
+                            : `${classPrefix}__match-score--medium`
+                        }`}
+                      >
+                        {Math.round((option.similarity as number) * 100)}%{' '}
+                        <span className={`${classPrefix}__match-score-band`}>
+                          {(option.similarity as number) >= MATCH_BAND_HIGH_THRESHOLD
+                            ? __('high', 'alt-context')
+                            : __('medium', 'alt-context')}
+                        </span>
+                      </span>
+                    )}
                   </button>
-                  {!!option.suggestion_id && !!onRejectSuggestion && (
+                  <div className={`${classPrefix}__suggestion-actions`}>
                     <button
                       type="button"
-                      className={`${classPrefix}__suggestion-reject`}
-                      onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
-                      title={__('Reject suggestion', 'alt-context')}
-                      aria-label={__('Reject suggestion', 'alt-context')}
+                      className={`${classPrefix}__suggestion-confirm`}
+                      onClick={handleConfirmOptionClick(option)}
+                      tabIndex={-1}
+                      title={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
+                      aria-label={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
                     >
-                      ✕
+                      ✓
                     </button>
-                  )}
+                    {!!option.suggestion_id && !!onRejectSuggestion && (
+                      <button
+                        type="button"
+                        className={`${classPrefix}__suggestion-reject`}
+                        onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
+                        tabIndex={-1}
+                        title={sprintf(__('Reject %s', 'alt-context'), option.label)}
+                        aria-label={sprintf(__('Reject %s', 'alt-context'), option.label)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        )}
+        ) : null}
         {hint}
       </div>
 
@@ -345,7 +525,7 @@ export const NameFaceControl = ({
           type="button"
           className={commitButtonClassName ?? `${classPrefix}__save`}
           onClick={() => commitValue(value)}
-          disabled={isDisabled || !value.trim()}
+          disabled={isDisabled || !value.trim() || isAmbiguous}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {commitButtonLabel}

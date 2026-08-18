@@ -33,8 +33,8 @@ import {
   unwrapClusterOptionId,
   type NamingOption,
 } from './buildNamingOptions';
-import { NameFaceControl } from './NameFaceControl';
-import { isReservedLabel, RESERVED_LABEL_MESSAGE } from './reservedLabel';
+import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
+import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
@@ -225,7 +225,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       return __('Loading people…', 'alt-context');
     }
     if (rosterError) {
-      return __('People list unavailable; showing labeled clusters only.', 'alt-context');
+      return __('People list unavailable; showing named groups only.', 'alt-context');
     }
     if (rosterSuccess && persons.length === 0 && namingOptions.length === 0) {
       return __('No naming options available.', 'alt-context');
@@ -328,24 +328,32 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
-  const submitLabel = async (rawLabel: string) => {
+  const submitLabel = async (rawLabel: string, options?: { skipPersonOnlyGuard?: boolean }) => {
     const trimmed = rawLabel.trim();
     if (!trimmed) {
+      return;
+    }
+    if (labelMutation.isPending || mergeMutation.isPending) {
       return;
     }
     setError(null);
 
     // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
     if (isReservedLabel(trimmed)) {
-      setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
+      setError(getReservedLabelMessage());
       return;
     }
 
     if (!allowRenameAnyway) {
       const localGuard = evaluateDuplicateGuard(trimmed);
-      const guard = localGuard ?? (await evaluateRemoteDuplicateGuard(trimmed));
-      if (guard) {
-        setDuplicateGuard(guard);
+      const skipPersonOnly = Boolean(options?.skipPersonOnlyGuard && localGuard && !localGuard.mergeTarget);
+      if (localGuard && !skipPersonOnly) {
+        setDuplicateGuard(localGuard);
+        return;
+      }
+      const remoteGuard = await evaluateRemoteDuplicateGuard(trimmed);
+      if (remoteGuard) {
+        setDuplicateGuard(remoteGuard);
         return;
       }
     }
@@ -360,9 +368,22 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await submitLabel(labelInput);
+  const resolveCommit = (resolution: NameFaceResolution): void => {
+    if (labelMutation.isPending || mergeMutation.isPending) {
+      return;
+    }
+    if (resolution.kind === 'ambiguous') {
+      return;
+    }
+    const folded = normalizeNameFaceLabel(resolution.name);
+    const hasClusterCollision = comboboxOptions.some(
+      (option) => option.source === 'cluster' && normalizeNameFaceLabel(option.label) === folded,
+    );
+    if (resolution.kind === 'roster' && !hasClusterCollision) {
+      void submitLabel(resolution.name, { skipPersonOnlyGuard: true });
+      return;
+    }
+    void submitLabel(resolution.name);
   };
 
   const clearError = () => {
@@ -490,7 +511,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             <p>{__('Loading faces...', 'alt-context')}</p>
           ) : isError ? (
             <div className="acx-cluster-labeling-panel__error" role="alert" data-testid="acx-cluster-members-error">
-              <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+              <p>{__('Unable to load these faces.', 'alt-context')}</p>
               <button type="button" className="button" onClick={() => refetch()}>
                 {__('Retry', 'alt-context')}
               </button>
@@ -557,33 +578,28 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           </div>
         ) : null}
 
-        <form
-          onSubmit={(event) => {
-            void handleSubmit(event);
-          }}
-          className="acx-cluster-labeling-panel__form"
-        >
+        <div className="acx-cluster-labeling-panel__form">
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           <NameFaceControl
             options={comboboxOptions}
             value={labelInput}
             onValueChange={handleTypedValueChange}
-            onCommit={(resolution) => {
-              void submitLabel(resolution.name);
-            }}
+            onCommit={resolveCommit}
             onOptionConfirm={(option) => handleSelectOption(String(option.value))}
             isPending={labelMutation.isPending || mergeMutation.isPending}
+            isLoading={rosterLoading}
             inputDisabled={mergeMutation.isPending}
             disabled={mergeMutation.isPending}
-            commitLabel={__('Save', 'alt-context')}
+            commitLabel={__('Save name', 'alt-context')}
             pendingLabel={
               labelMutation.isPending ? __('Saving...', 'alt-context') : __('Merging...', 'alt-context')
             }
             placeholder={__('Enter name...', 'alt-context')}
-            ariaLabel={__('Name', 'alt-context')}
+            searchPlaceholder={__('Enter name...', 'alt-context')}
             inputId="cluster-label-input"
             autoFocus={false}
             hideStatusAnnouncement
+            suggestionsHeader={__('Matches', 'alt-context')}
             className="acx-cluster-labeling-panel__input-group"
             classPrefix="acx-cluster-labeling-panel"
           />
@@ -605,13 +621,13 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                   {typeof mergeTargetCount === 'number'
                     ? sprintf(
                         /* translators: 1: cluster label, 2: member count */
-                        __('Merge target: cluster "%1$s" (%2$d members)', 'alt-context'),
+                        __('Merge target: group "%1$s" (%2$d members)', 'alt-context'),
                         mergeTargetLabel,
                         mergeTargetCount,
                       )
                     : sprintf(
                         /* translators: %s: cluster label */
-                        __('Merge target: cluster "%s"', 'alt-context'),
+                        __('Merge target: group "%s"', 'alt-context'),
                         mergeTargetLabel,
                       )}
                 </p>
@@ -631,7 +647,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
                   >
                     {sprintf(
                       /* translators: %s: target cluster label */
-                      __('Merge into cluster "%s"', 'alt-context'),
+                      __('Merge into group "%s"', 'alt-context'),
                       mergeTargetLabel,
                     )}
                   </button>
@@ -670,7 +686,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               {error}
             </p>
           )}
-        </form>
+        </div>
       </div>
     </div>
   );

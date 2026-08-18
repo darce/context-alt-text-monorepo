@@ -58,7 +58,7 @@ const getMostRepresentative = (
 
 interface TopClusterCardProps {
   cluster: TopUnlabeledCluster;
-  onLabel: (clusterId: string) => void;
+  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
   isReadOnly?: boolean;
   onConfirmSuggestedLabel?: (
@@ -134,7 +134,7 @@ export const TopClusterCard = ({
       onDismiss(cluster.id);
       return;
     }
-    onLabel(cluster.id);
+    onLabel?.(cluster.id);
   };
 
   return (
@@ -182,7 +182,7 @@ export const TopClusterCard = ({
             <button
               type="button"
               className="acx-top-cluster-card__title-action acx-identity-cluster__label acx-identity-cluster__label--action"
-              onClick={() => onLabel(cluster.id)}
+              onClick={() => onLabel?.(cluster.id)}
               disabled={isBusy}
               title={__('Open labeling form', 'alt-context')}
             >

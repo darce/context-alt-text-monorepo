@@ -4,12 +4,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries } from '../../../../api/rosterApi';
 import { PersonCommitControl } from '../PersonCommitControl';
 import { PERSON_COMMIT_CONFIRM_COPY } from '../personCommitCopy';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
   sprintf: (template: string, ...args: (string | number)[]) => {
     let idx = 0;
     return template.replace(/%(\d+\$)?[sd]/g, () => String(args[idx++] ?? ''));
@@ -21,7 +23,7 @@ vi.mock('../../../../api/rosterApi', () => ({
 }));
 
 const RESERVED_MESSAGE =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This label format is reserved for automatic group IDs. Choose a descriptive name.';
 
 const INPUT_NAME = 'Name this person';
 
@@ -41,10 +43,12 @@ const rosterEntry = (id: number, name: string) => ({
 
 const renderControl = (
   overrides: Partial<React.ComponentProps<typeof PersonCommitControl>> = {},
+  roster: ReturnType<typeof rosterEntry>[] = [],
 ) => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  queryClient.setQueryData(queryKeys.roster.entries(), roster);
   const onCommit = vi.fn();
   const props: React.ComponentProps<typeof PersonCommitControl> = {
     clusterId: 'cluster-1',
@@ -59,7 +63,7 @@ const renderControl = (
       <PersonCommitControl {...props} />
     </QueryClientProvider>,
   );
-  return { onCommit };
+  return { onCommit, queryClient };
 };
 
 describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
@@ -81,8 +85,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
   });
 
   it('typing an existing roster name + Enter commits with rosterEntryId', async () => {
-    vi.mocked(listRosterEntries).mockResolvedValue([rosterEntry(42, 'Alex Carter')]);
-    const { onCommit } = renderControl();
+    const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
     const user = userEvent.setup();
 
     // Wait for the roster typeahead to load before typing.
@@ -97,8 +100,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
   });
 
   it('exact roster match is case-insensitive and trims whitespace', async () => {
-    vi.mocked(listRosterEntries).mockResolvedValue([rosterEntry(42, 'Alex Carter')]);
-    const { onCommit } = renderControl();
+    const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
     const user = userEvent.setup();
 
     await screen.findByText('Alex Carter');
@@ -224,5 +226,76 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
       clusterId: 'cluster-1',
       newEntryName: 'Pat Rivera',
     });
+  });
+});
+
+describe('PersonCommitControl roster query states (UXW2-3-R1-02)', () => {
+  it('loading people disables the create path and announces', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    vi.mocked(listRosterEntries).mockReturnValue(new Promise(() => undefined));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PersonCommitControl
+          clusterId="cluster-1"
+          phase="idle"
+          errorMessage={null}
+          onCommit={vi.fn()}
+          onRetry={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading people…');
+    expect(screen.getByRole('combobox', { name: INPUT_NAME })).toBeDisabled();
+  });
+
+  it('roster error blocks create and offers retry', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    vi.mocked(listRosterEntries).mockRejectedValue(new Error('boom'));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PersonCommitControl
+          clusterId="cluster-1"
+          phase="idle"
+          errorMessage={null}
+          onCommit={vi.fn()}
+          onRetry={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Unable to load people/);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('invalidates the roster query key when commit succeeds', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    queryClient.setQueryData(queryKeys.roster.entries(), []);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PersonCommitControl
+          clusterId="cluster-1"
+          phase="succeeded"
+          errorMessage={null}
+          onCommit={vi.fn()}
+          onRetry={vi.fn()}
+          committedPersonUuid="person-uuid-42"
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.entries() });
+    expect(screen.getByRole('link', { name: /View in roster/ })).toHaveAttribute(
+      'href',
+      '#/roster?person=person-uuid-42',
+    );
   });
 });

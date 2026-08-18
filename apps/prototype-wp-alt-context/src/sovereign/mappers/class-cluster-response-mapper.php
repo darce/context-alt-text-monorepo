@@ -116,6 +116,11 @@ class ClusterResponseMapper {
 			$identity_count   = $this->resolve_identity_count( $row, $members, $members_loaded, $preview_limit );
 			$preview_members  = $this->slice_members_to_preview( $members, $preview_limit );
 
+			// Queue invariant: never serve a memberless row when members were loaded (R1-03).
+			if ( $members_loaded && array() === $preview_members ) {
+				continue;
+			}
+
 			$representatives = array();
 			foreach ( $preview_members as $member_row ) {
 				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
@@ -291,11 +296,8 @@ class ClusterResponseMapper {
 							$observed_count
 						)
 					);
-					if ( 0 === $observed_count ) {
-						return 0;
-					}
-					// Non-truncated drift in either direction: members are SoR
-					// (REF-09). Cap-hit truncation is handled above.
+					// Non-truncated drift in either direction, including a
+					// total member wipe (observed=0). Members are SoR (REF-09).
 					if ( $observed_count !== $projected_count ) {
 						if ( '' !== $cluster_id ) {
 							$this->requested_repair_cluster_ids[] = $cluster_id;

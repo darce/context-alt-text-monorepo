@@ -287,9 +287,8 @@ class ClustersControllerTest extends TestCase
         // must not run (the projection would regress to a synchronous repair if it did).
         $this->assertSame([], $projectionState->targetedClusterIds);
 
-        // The current (unrepaired) projection is served immediately as-is.
-        $this->assertSame('cluster-needs-members', $data['clusters'][0]['id']);
-        $this->assertSame([], $data['clusters'][0]['representatives']);
+        // Memberless rows are dropped at the mapper boundary (R1-03).
+        $this->assertSame([], $data['clusters']);
 
         // Exactly one deduped async heal event is scheduled for this tenant instead.
         $events = $this->scheduledBootstrapEvents();

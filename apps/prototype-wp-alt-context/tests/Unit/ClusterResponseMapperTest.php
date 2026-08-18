@@ -167,12 +167,46 @@ class ClusterResponseMapperTest extends TestCase
             4
         );
 
-        $this->assertCount(1, $payload);
-        $this->assertSame(0, $payload[0]['identity_count'], 'observed empty after densify must win over projected count');
-        $this->assertSame([], $payload[0]['representatives']);
+        $this->assertCount(0, $payload, 'memberless top-unlabeled rows must be dropped when members were loaded');
+        $this->assertContains('cluster-stale-empty', $this->mapper->requested_repair_cluster_ids());
         $log = \implode("\n", $GLOBALS['__ac_error_log']);
         $this->assertStringContainsString('cluster-stale-empty', $log);
         $this->assertStringContainsString('projected=7 observed=0', $log);
+    }
+
+    public function testMapTopUnlabeledDropsZeroObservedMembersWhenMembersLoaded(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-kept',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-empty' => [],
+                'cluster-kept' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(1, $payload);
+        $this->assertSame('cluster-kept', $payload[0]['id']);
+        $this->assertSame(2, $payload[0]['identity_count']);
+        $this->assertNotEmpty($payload[0]['representatives']);
+        $this->assertContains('cluster-empty', $this->mapper->requested_repair_cluster_ids());
     }
 
     public function testMapClusterListKeepsProjectedCountWhenMembersNotFetched(): void

@@ -18,6 +18,7 @@ use WP_REST_Response;
 
 use function absint;
 use function array_keys;
+use function array_slice;
 use function array_values;
 use function count;
 use function is_array;
@@ -28,6 +29,7 @@ use function is_string;
 use function range;
 use function sanitize_text_field;
 use function sprintf;
+use function usort;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
@@ -375,7 +377,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 		$query = array(
 			'tenant_id' => $this->get_tenant_id(),
-			'top_k'     => $top_k,
+			// Cluster-grain window: fetch the Python max so a person split across
+			// N clusters cannot starve later people before PHP collapses + slices.
+			'top_k'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
 		);
 
 		$response = $this->proxy_request(
@@ -407,7 +411,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
 				try {
-					$response->set_data( $this->attach_roster_entry_ids( $data ) );
+					$response->set_data( $this->attach_roster_entry_ids( $data, $top_k ) );
 				} catch ( ProjectionQueryException $exception ) {
 					return ProjectionQueryException::to_rest_error( 'get_roster_candidates' );
 				}
@@ -419,13 +423,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 	/**
 	 * Map python labelled cluster_id → local acx_persons.id. Collapse to one row
-	 * per roster_entry_id (max similarity wins, keep its band). Name from acx_persons.
+	 * per roster_entry_id (max similarity wins, keep that row's band + name).
+	 * Re-sort similarity DESC, cluster_id ASC, then slice people-grain top_k.
 	 * Unmapped rows keep roster_entry_id null (uncommittable). Never invents total/limit.
 	 *
 	 * @param array<string,mixed> $payload
 	 * @return array<string,mixed>
 	 */
-	private function attach_roster_entry_ids( array $payload ): array {
+	private function attach_roster_entry_ids( array $payload, int $top_k ): array {
 		$candidates = $payload['candidates'] ?? null;
 		if ( ! is_array( $candidates ) || array() === $candidates ) {
 			return $payload;
@@ -459,28 +464,46 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			}
 		}
 
-		$collapsed   = array();
-		$seen_person = array();
+		$collapsed        = array();
+		$index_by_person  = array();
 		foreach ( $candidates as $candidate ) {
 			if ( ! is_array( $candidate ) ) {
 				continue;
 			}
-			$uuid                              = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
-			$person_id                         = $person_by_cluster[ $uuid ] ?? null;
-			$person_id                         = is_int( $person_id ) ? $person_id : null;
-			$candidate['roster_entry_id']      = $person_id;
+			$uuid                         = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
+			$person_id                    = $person_by_cluster[ $uuid ] ?? null;
+			$person_id                    = is_int( $person_id ) ? $person_id : null;
+			$candidate['roster_entry_id'] = $person_id;
 			if ( isset( $name_by_cluster[ $uuid ] ) ) {
 				$candidate['name'] = $name_by_cluster[ $uuid ];
 			}
-			if ( null !== $person_id ) {
-				if ( isset( $seen_person[ $person_id ] ) ) {
-					continue;
+			if ( null !== $person_id && isset( $index_by_person[ $person_id ] ) ) {
+				$existing_idx = $index_by_person[ $person_id ];
+				$existing_sim = (float) ( $collapsed[ $existing_idx ]['similarity'] ?? -INF );
+				$incoming_sim = (float) ( $candidate['similarity'] ?? -INF );
+				if ( $incoming_sim > $existing_sim ) {
+					$collapsed[ $existing_idx ] = $candidate;
 				}
-				$seen_person[ $person_id ] = true;
+				continue;
+			}
+			if ( null !== $person_id ) {
+				$index_by_person[ $person_id ] = count( $collapsed );
 			}
 			$collapsed[] = $candidate;
 		}
-		$payload['candidates'] = $collapsed;
+
+		usort(
+			$collapsed,
+			static function ( array $left, array $right ): int {
+				$sim = ( (float) ( $right['similarity'] ?? 0 ) ) <=> ( (float) ( $left['similarity'] ?? 0 ) );
+				if ( 0 !== $sim ) {
+					return $sim;
+				}
+				return ( (string) ( $left['cluster_id'] ?? '' ) ) <=> ( (string) ( $right['cluster_id'] ?? '' ) );
+			}
+		);
+
+		$payload['candidates'] = array_slice( $collapsed, 0, $top_k );
 		return $payload;
 	}
 

@@ -963,7 +963,7 @@ class SuggestionsControllerTest extends TestCase
         $query = [];
         $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
         parse_str(is_string($queryString) ? $queryString : '', $query);
-        $this->assertSame('7', (string) ($query['top_k'] ?? ''));
+        $this->assertSame('50', (string) ($query['top_k'] ?? ''), 'PHP fetches Python max window; people-grain top_k is applied after collapse');
         $this->assertNotEmpty($query['tenant_id'] ?? '');
 
         $data = $response->get_data();
@@ -1042,6 +1042,134 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('strong', $data['candidates'][0]['band']);
         $this->assertSame('Ada Lovelace', $data['candidates'][0]['name']);
         $this->assertSame($winner, $data['candidates'][0]['cluster_id']);
+    }
+
+    public function testGetRosterCandidatesCollapseKeepsMaxSimilarityWhenLoserListedFirst(): void
+    {
+        $winner = 'aaaaaaaa-bbbb-cccc-dddd-000000000111';
+        $loser = 'bbbbbbbb-cccc-dddd-eeee-000000000222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 2,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    [
+                        'cluster_id' => $loser,
+                        'name' => 'Ada-cluster-b',
+                        'similarity' => 0.70,
+                        'band' => 'possible',
+                    ],
+                    [
+                        'cluster_id' => $winner,
+                        'name' => 'Ada-cluster-a',
+                        'similarity' => 0.91,
+                        'band' => 'strong',
+                    ],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $winner, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+            ['cluster_uuid' => $loser, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 10);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['candidates']);
+        $this->assertSame(42, $data['candidates'][0]['roster_entry_id']);
+        $this->assertSame(0.91, $data['candidates'][0]['similarity']);
+        $this->assertSame('strong', $data['candidates'][0]['band']);
+        $this->assertSame('Ada Lovelace', $data['candidates'][0]['name']);
+        $this->assertSame($winner, $data['candidates'][0]['cluster_id']);
+    }
+
+    public function testGetRosterCandidatesSlicesPeopleGrainAfterCollapseFromWiderPythonWindow(): void
+    {
+        $aliceA = 'aaaaaaaa-bbbb-cccc-dddd-000000000111';
+        $aliceB = 'bbbbbbbb-cccc-dddd-eeee-000000000222';
+        $bob = 'cccccccc-dddd-eeee-ffff-000000000333';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 3,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    [
+                        'cluster_id' => $aliceA,
+                        'name' => 'Alice-a',
+                        'similarity' => 0.91,
+                        'band' => 'strong',
+                    ],
+                    [
+                        'cluster_id' => $aliceB,
+                        'name' => 'Alice-b',
+                        'similarity' => 0.90,
+                        'band' => 'strong',
+                    ],
+                    [
+                        'cluster_id' => $bob,
+                        'name' => 'Bob-a',
+                        'similarity' => 0.89,
+                        'band' => 'strong',
+                    ],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $aliceA, 'person_id' => 1, 'name' => 'Alice'],
+            ['cluster_uuid' => $aliceB, 'person_id' => 1, 'name' => 'Alice'],
+            ['cluster_uuid' => $bob, 'person_id' => 2, 'name' => 'Bob'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 2);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $query = [];
+        $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
+        parse_str(is_string($queryString) ? $queryString : '', $query);
+        $this->assertSame('50', (string) ($query['top_k'] ?? ''), 'PHP must fetch the Python max window then slice people-grain top_k');
+
+        $this->assertCount(2, $data['candidates']);
+        $this->assertSame(1, $data['candidates'][0]['roster_entry_id']);
+        $this->assertSame(0.91, $data['candidates'][0]['similarity']);
+        $this->assertSame('Alice', $data['candidates'][0]['name']);
+        $this->assertSame($aliceA, $data['candidates'][0]['cluster_id']);
+        $this->assertSame(2, $data['candidates'][1]['roster_entry_id']);
+        $this->assertSame(0.89, $data['candidates'][1]['similarity']);
+        $this->assertSame('Bob', $data['candidates'][1]['name']);
     }
 
     public function testGetRosterCandidatesRejectsInvalidTopKWithoutSignFlip(): void

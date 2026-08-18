@@ -13,7 +13,7 @@ import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from scripts.eval_harness.bakeoff_candidates import (
@@ -24,15 +24,19 @@ from scripts.eval_harness.bakeoff_candidates import (
     load_bakeoff_candidates,
 )
 
+if TYPE_CHECKING:
+    from scripts.eval_harness.prepull_weights import SkipReason
+
 DEFAULT_ENDPOINT = "http://localhost:8000"
 DEFAULT_MANIFEST = "scripts/eval_harness/corpus646-interleave-manifest-20260716.json"
 DEFAULT_OUT_DIR = "out"
 DEFAULT_MODELS_DIR = "/opt/models"
 MMPROJ_ESTIMATE_GB = 1.0
 REPORT_LIMIT = 646
-READY_ATTEMPTS = 600
+READY_TIMEOUT_S = 600
 READY_SLEEP_S = 1
-# 600 * 1s keeps the same ~10 min ceiling as 40 * 15s.
+# Wall-clock ceiling (rg-007). Attempt-count is not a bound: each failed
+# poll also spends curl --max-time.
 _CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
 _REPORT_MODULE = "scripts.eval_harness.build_bakeoff_report"
 _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
@@ -41,6 +45,13 @@ _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
 PYTHON_EXE = "python3"
 WARMUP_REQUESTS = 1
 """Discarded first-image requests before scored items, PERF-03."""
+
+# Value-identical to SkipReason members. Kept as strings so this module
+# can load without importing prepull_weights (circular). _skip_reason
+# returns the enum; list_skips still prints these exact strings.
+SKIP_REASON_STACK = "stack not supported"
+SKIP_REASON_VRAM = "vram budget"
+SKIP_REASON_NOT_COMPETING = "not competing"
 
 
 class UnsupportedStackError(Exception):
@@ -65,11 +76,6 @@ class UnknownIncumbentError(Exception):
 
 class SkipNotesInconsistentError(Exception):
     """An unplanned entry has no skip reason; planner and notes disagree."""
-
-
-SKIP_REASON_STACK = "stack not supported"
-SKIP_REASON_VRAM = "vram budget"
-SKIP_REASON_NOT_COMPETING = "not competing"
 
 
 @dataclass(frozen=True)
@@ -144,7 +150,8 @@ def _emit_ready_poll_lines(models_url: str) -> list[str]:
     return [
         '_cold=""',
         "_ready=0",
-        f"for _i in $(seq 1 {READY_ATTEMPTS}); do",
+        "SECONDS=0",
+        "while true; do",
         f"  if curl -sf --max-time 6 {shlex.quote(models_url)} >/dev/null; then",
         "    _ready=1",
         "    # cold-load resolution: ±1s poll interval; first /v1/models success, rounded to 0.1s (rg-015)",
@@ -152,6 +159,9 @@ def _emit_ready_poll_lines(models_url: str) -> list[str]:
         "    break",
         "  fi",
         '  kill -0 "$_serve_pid" 2>/dev/null || break',
+        '  if [ "${SECONDS}" -ge "${READY_TIMEOUT_S}" ]; then',
+        "    break",
+        "  fi",
         f"  sleep {READY_SLEEP_S}",
         "done",
     ]
@@ -176,7 +186,12 @@ def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
     ]
 
 
-def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, str]) -> str:
+def emit_shell(
+    plans: Sequence[CandidatePlan],
+    *,
+    incumbent_runs: Mapping[str, str],
+    ready_timeout_s: int = READY_TIMEOUT_S,
+) -> str:
     """Return a ``set -euo pipefail`` bash script for the planned bake-off.
 
     Per candidate: download-hint comment, serve, bounded wait for
@@ -192,6 +207,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         'kill "${_serve_pid}" 2>/dev/null || true; '
         'wait "${_serve_pid}" 2>/dev/null || true; fi\' EXIT',
         "",
+        f"READY_TIMEOUT_S={ready_timeout_s}",
         "_fail=0",
         "_total=0",
         "",
@@ -209,6 +225,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append(f"# candidate: {plan.candidate_id}")
         lines.append(f"# download: {hint}")
         lines.append("_total=$((_total + 1))")
+        lines.append("for _candidate_once in 1; do")
         lines.extend(_emit_runtime_build_preflight(plan))
         lines.append("_t0=$(date +%s.%N)")
         lines.append(f"{shlex.join(plan.serve_argv)} &")
@@ -223,6 +240,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append('kill "${_serve_pid}" 2>/dev/null || true')
         lines.append('wait "${_serve_pid}" 2>/dev/null || true')
         lines.append("_serve_pid=")
+        lines.append("done")
         lines.append("")
 
     lines.extend(_emit_report_lines(plans, incumbent_runs))
@@ -413,7 +431,7 @@ def _plan_candidate(
 
 
 def _emit_runtime_build_preflight(plan: CandidatePlan) -> list[str]:
-    """Emit a fail-fast llama.cpp build check before ``llama-server`` starts."""
+    """Emit a per-candidate llama.cpp build check before ``llama-server`` starts."""
     required = plan.min_runtime_build
     if not required:
         return []
@@ -424,14 +442,16 @@ def _emit_runtime_build_preflight(plan: CandidatePlan) -> list[str]:
         "_build=$(llama-server --version 2>&1 | grep -oE 'b[0-9]+' | head -1) || _build=\"\"",
         'if [ -z "${_build}" ]; then',
         f'  echo "candidate {cid}: cannot parse llama-server runtime build (required {required}, observed empty)" >&2',
-        "  exit 1",
+        "  _fail=$((_fail + 1))",
+        "  continue",
         "fi",
         "_obs=${_build#b}",
         f"_req={req_digits}",
         'if [ "${_obs}" -lt "${_req}" ]; then',
         f'  echo "candidate {cid}: runtime build ${{_build}} is older than required '
         f'{required} (observed ${{_build}})" >&2',
-        "  exit 1",
+        "  _fail=$((_fail + 1))",
+        "  continue",
         "fi",
     ]
     if plan.min_runtime_build_is_lower_bound:
@@ -441,7 +461,8 @@ def _emit_runtime_build_preflight(plan: CandidatePlan) -> list[str]:
                 f'  echo "candidate {cid}: runtime build ${{_build}} equals pinned bound '
                 f"{required}; exact requirement is unknown and strictly greater than "
                 f'{required} (observed ${{_build}})" >&2',
-                "  exit 1",
+                "  _fail=$((_fail + 1))",
+                "  continue",
                 "fi",
             ]
         )
@@ -583,16 +604,18 @@ def _skip_reason(
     entry: CandidateEntry,
     planned: set[str],
     budget_gb: float,
-) -> str | None:
+) -> SkipReason | None:
     """Return why ``entry`` is absent from the plan, or None if planned."""
+    from scripts.eval_harness.prepull_weights import SkipReason
+
     if entry.id in planned:
         return None
     if not entry.competing:
-        return SKIP_REASON_NOT_COMPETING
+        return SkipReason.NOT_COMPETING
     if entry.recipe.stack is not ServingStack.LLAMA_CPP:
-        return SKIP_REASON_STACK
+        return SkipReason.STACK_NOT_SUPPORTED
     if _entry_total_gb(entry) > budget_gb:
-        return SKIP_REASON_VRAM
+        return SkipReason.VRAM_BUDGET
     raise SkipNotesInconsistentError(
         f"candidate {entry.id!r} is not planned but has no skip reason; planner and skip notes disagree"
     )

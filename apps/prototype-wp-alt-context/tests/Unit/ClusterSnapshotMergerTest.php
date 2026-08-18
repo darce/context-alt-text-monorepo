@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Repositories\ClusterSnapshotMerger;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 /**
@@ -12,6 +13,8 @@ use AltContext\Tests\TestCase;
  */
 class ClusterSnapshotMergerTest extends TestCase
 {
+    use FindsSqlQueries;
+
     private ClusterSnapshotMerger $merger;
 
     protected function setUp(): void
@@ -35,8 +38,7 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $query);
         $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
@@ -147,6 +149,46 @@ class ClusterSnapshotMergerTest extends TestCase
         global $wpdb;
         $query = $wpdb->queries[0];
         $this->assertStringContainsString("'acx://cluster/cluster-thumb/media/42'", $query);
+    }
+
+    public function testLabelOnlyUpsertBindsPersonForHumanLabel(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 21;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-human',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Daniel',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-human',
+                    'label' => 'Daniel',
+                    'identity_count' => 4,
+                ],
+            ],
+            14
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts, 'human label-only upsert must create a person');
+        $this->assertStringContainsString("'Daniel'", $personInserts[0]);
+
+        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 21');
+        $this->assertStringContainsString('cluster-human', $bindUpdate);
     }
 
     public function testPrepareSnapshotMergeDeletesStaleNonCuratedRows(): void

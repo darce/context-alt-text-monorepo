@@ -6,6 +6,7 @@ namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+require_once __DIR__ . '/class-person-resolution-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
@@ -23,6 +24,7 @@ use WP_REST_Response;
 use function array_filter;
 use function array_map;
 use function array_unique;
+use function current_time;
 use function get_current_user_id;
 use function is_array;
 use function is_object;
@@ -110,13 +112,17 @@ class ClusterMergeService {
 
 		$moved_rows = 0;
 		$result     = $this->run_transactional(
-			function () use ( $source_id, $target_cluster_id, $target_label, $tenant_id, $source_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
+			function () use ( $source_id, $target_cluster_id, $target_label, $tenant_id, $source_cluster, $target_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
 				$moved_rows = $this->members_repository->reassign_cluster_members( $source_id, $target_cluster_id );
 				$this->clusters_repository->update_identity_count( $source_id, 0 );
 				$this->clusters_repository->adjust_identity_count( $target_cluster_id, $moved_rows );
 
 				if ( '' !== $target_label ) {
 					$this->clusters_repository->update_label( $target_cluster_id, $target_label );
+					$bound = $this->bind_person_for_human_label( $target_cluster_id, $target_label, $target_cluster );
+					if ( is_wp_error( $bound ) ) {
+						return $bound;
+					}
 				}
 
 				$this->clusters_repository->dismiss( $source_id );
@@ -288,5 +294,69 @@ class ClusterMergeService {
 		$this->host->trigger_xmp_refresh_for_cluster_ids( array( $target_cluster_id, $source_cluster_id ), 'cluster-revert-merge' );
 
 		return $result;
+	}
+
+	/**
+	 * @param array<string,mixed> $cluster
+	 */
+	private function bind_person_for_human_label( string $cluster_id, string $label, array $cluster ): true|WP_Error {
+		global $wpdb;
+
+		$resolver = new PersonResolutionService();
+		$resolved = $resolver->resolve_or_create(
+			$label,
+			function ( string $person_uuid, string $name, array $tags ) use ( $cluster ): bool {
+				return $this->host->enqueue_curation_operation(
+					'person_created',
+					$person_uuid,
+					array(
+						'local_revision'   => 0,
+						'snapshot_version' => max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
+					),
+					array(
+						'person_uuid' => $person_uuid,
+						'name'        => $name,
+						'tags'        => $tags,
+					),
+					'person'
+				);
+			}
+		);
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		$table_clusters = $wpdb->prefix . 'acx_clusters';
+		$now            = current_time( 'mysql' );
+		$bound          = $wpdb->update(
+			$table_clusters,
+			array(
+				'person_id'         => $resolved['person_id'],
+				'curation_state'    => 'confirmed',
+				'is_user_confirmed' => 1,
+				'updated_at'        => $now,
+			),
+			array( 'cluster_uuid' => $cluster_id ),
+			array( '%d', '%s', '%d', '%s' ),
+			array( '%s' )
+		);
+		if ( false === $bound ) {
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+		}
+
+		if ( ! $this->host->enqueue_curation_operation(
+			'cluster_person_bound',
+			$cluster_id,
+			$cluster,
+			array(
+				'cluster_uuid' => $cluster_id,
+				'person_uuid'  => $resolved['person_uuid'],
+				'person_name'  => $resolved['name'],
+			)
+		) ) {
+			return new WP_Error( 'acx_db_error', 'Could not enqueue person-bind replay operation.', array( 'status' => 500 ) );
+		}
+
+		return true;
 	}
 }

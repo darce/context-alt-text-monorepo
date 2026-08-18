@@ -431,6 +431,49 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertNotContains('COMMIT', $wpdb->queries);
     }
 
+    public function testProxyLabelWriteStillCreatesLocalPerson(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 33;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"cluster_id":"cluster-xyz","label":"Proxy Person","synced":true}',
+        ]);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Proxy Person');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertNotEmpty($this->getHttpCalls(), 'proxy branch must still forward the label mutation');
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(1, $personInserts, 'proxy label write must persist a local person');
+        $this->assertStringContainsString("'Proxy Person'", $personInserts[0]);
+
+        $created = $wpdb->tableRows['wp_acx_persons'][0] ?? null;
+        $this->assertIsArray($created);
+        if (!isset($created['id'])) {
+            $wpdb->tableRows['wp_acx_persons'][0]['id'] = 33;
+        }
+
+        $entries = (new RosterEntryProjectionRepository($this->syncStateRepository))
+            ->list_entries(self::currentTenantId());
+        $names = array_map(static fn(array $row): string => (string) ($row['name'] ?? ''), $entries);
+        $this->assertContains('Proxy Person', $names);
+    }
+
     public function testPersonResolutionServiceIsLoadableViaRequireOnceChain(): void
     {
         $controller = realpath(__DIR__ . '/../../src/api/class-cluster-mutations-controller.php');

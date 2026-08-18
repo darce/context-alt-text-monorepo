@@ -17,6 +17,8 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
     private const SCHEMA_RELATIVE = 'packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json';
     private const GOLDEN_RELATIVE = 'packages/shared-contracts/recognition/cluster-top-unlabeled-response.golden.json';
     private const LOCAL_FIXTURE = __DIR__ . '/../fixtures/clusters-read/list_top_unlabeled_local_projection/response.json';
+    private const PROXY_SUCCESS_FIXTURE = __DIR__ . '/../fixtures/clusters-read/list_top_unlabeled_proxy_success/response.json';
+    private const PROXY_CANONICAL_FIXTURE = __DIR__ . '/../fixtures/clusters-read/list_top_unlabeled_proxy_canonical_envelope/response.json';
 
     public function testSchemaRequiresNonEmptyRepresentatives(): void
     {
@@ -35,6 +37,26 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
     {
         $schema = $this->loadJson($this->resolveRepoPath(self::SCHEMA_RELATIVE));
         $fixture = $this->loadJson(self::LOCAL_FIXTURE);
+        $this->assertSame('response', $fixture['type']);
+        $this->assertSchemaValid($schema, $fixture['data']);
+    }
+
+    /**
+     * R2-02 / R1-06 / R1-09: backend_proxy goldens must satisfy the same
+     * representatives.minItems=1 contract as local_projection.
+     */
+    public function testProxySuccessGoldenValidatesAgainstSchema(): void
+    {
+        $schema = $this->loadJson($this->resolveRepoPath(self::SCHEMA_RELATIVE));
+        $fixture = $this->loadJson(self::PROXY_SUCCESS_FIXTURE);
+        $this->assertSame('response', $fixture['type']);
+        $this->assertSchemaValid($schema, $fixture['data']);
+    }
+
+    public function testProxyCanonicalEnvelopeGoldenValidatesAgainstSchema(): void
+    {
+        $schema = $this->loadJson($this->resolveRepoPath(self::SCHEMA_RELATIVE));
+        $fixture = $this->loadJson(self::PROXY_CANONICAL_FIXTURE);
         $this->assertSame('response', $fixture['type']);
         $this->assertSchemaValid($schema, $fixture['data']);
     }

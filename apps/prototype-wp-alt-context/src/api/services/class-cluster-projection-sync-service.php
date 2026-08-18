@@ -24,9 +24,11 @@ use WP_REST_Response;
 
 use function array_unique;
 use function array_values;
+use function count;
 use function do_action;
 use function is_array;
 use function is_numeric;
+use function max;
 use function sanitize_text_field;
 use function time;
 use function trim;
@@ -140,8 +142,11 @@ class ClusterProjectionSyncService {
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
 	 * @return string[]
 	 */
-	public function find_clusters_missing_projected_members( array $clusters, array $members_by_cluster ): array {
-		$cluster_ids = array();
+	public function find_clusters_missing_projected_members( array $clusters, array $members_by_cluster, ?int $preview_limit = null ): array {
+		$normalized_preview = null === $preview_limit
+			? IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+			: max( 0, $preview_limit );
+		$cluster_ids        = array();
 		foreach ( $clusters as $cluster ) {
 			if ( ! is_array( $cluster ) ) {
 				continue;
@@ -152,11 +157,24 @@ class ClusterProjectionSyncService {
 				continue;
 			}
 
-			if ( empty( $members_by_cluster[ $cluster_id ] ) ) {
+			$observed = isset( $members_by_cluster[ $cluster_id ] ) && is_array( $members_by_cluster[ $cluster_id ] )
+				? count( $members_by_cluster[ $cluster_id ] )
+				: 0;
+			if ( 0 === $observed ) {
+				$cluster_ids[] = $cluster_id;
+				continue;
+			}
+
+			$projected = is_numeric( $cluster['identity_count'] ?? null ) ? (int) $cluster['identity_count'] : 0;
+			// Observed below the preview cap is a provable shortfall, not
+			// truncation. Cap-hit (observed === preview, projected > observed)
+			// stays truncated and is not repair-eligible on this path.
+			if ( $normalized_preview > 0 && $observed < $normalized_preview && $observed < $projected ) {
 				$cluster_ids[] = $cluster_id;
 			}
 		}
 
+		// Bounded per request: at most one repair id per cluster on this page (rg-007).
 		return array_values( array_unique( $cluster_ids ) );
 	}
 

@@ -39,7 +39,8 @@
           },
           "identity_count": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Observed member-row count when the representative preview is not truncated; may exceed representatives.length only when the preview cap is hit. Always identity_count >= representatives.length."
           },
           "user_confirmed": {
             "type": "boolean"
@@ -60,6 +61,7 @@
           },
           "representatives": {
             "type": "array",
+            "description": "Preview of observed members (cap 4). Non-empty for top-unlabeled queue rows. identity_count reflects observed members when this array is shorter than the preview cap.",
             "items": {
               "type": "object",
               "required": ["id", "media_id", "is_pinned"],

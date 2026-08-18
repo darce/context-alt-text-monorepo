@@ -165,7 +165,8 @@ class ClusterReadService {
 			$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
 			$cluster_ids_to_repair = $this->dependencies->projection_sync_service->find_clusters_missing_projected_members(
 				$sovereign_data['clusters'],
-				$sovereign_data['members']
+				$sovereign_data['members'],
+				self::PREVIEW_IDENTITIES_PER_CLUSTER
 			);
 			if ( ! empty( $cluster_ids_to_repair ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $cluster_ids_to_repair ) ) {
 				$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );

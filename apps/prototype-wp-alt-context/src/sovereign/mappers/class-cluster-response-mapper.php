@@ -18,6 +18,19 @@ use function trim;
 class ClusterResponseMapper {
 	use MapsResponseFields;
 
+	/** @var list<string> */
+	private array $requested_repair_cluster_ids = array();
+
+	/**
+	 * Cluster UUIDs whose identity_count was rewritten from a non-truncated
+	 * member shortfall. Callers schedule a bounded targeted repair.
+	 *
+	 * @return list<string>
+	 */
+	public function requested_repair_cluster_ids(): array {
+		return $this->requested_repair_cluster_ids;
+	}
+
 	/**
 	 * @param array<int,array<string,mixed>> $cluster_rows
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
@@ -27,6 +40,7 @@ class ClusterResponseMapper {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function map_cluster_list( array $cluster_rows, array $members_by_cluster, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -52,6 +66,7 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	public function map_cluster_detail( array $cluster_row, array $member_rows, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
 		return $this->map_cluster_summary( $cluster_row, $member_rows, true, $preview_limit );
 	}
 
@@ -79,6 +94,7 @@ class ClusterResponseMapper {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function map_top_unlabeled_clusters( array $cluster_rows, array $members_by_cluster, string $tenant_id, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -261,16 +277,25 @@ class ClusterResponseMapper {
 					&& $projected_count > $observed_count;
 
 				if ( ! $is_expected_truncation ) {
+					$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
 					Telemetry::log_line(
 						sprintf(
 							'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
-							trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) ),
+							$cluster_id,
 							$projected_count,
 							$observed_count
 						)
 					);
 					if ( 0 === $observed_count ) {
 						return 0;
+					}
+					// Non-truncated shortfall: observed < preview cap (or no cap)
+					// and observed < projected. Return the honest count (REF-09).
+					if ( $observed_count < $projected_count ) {
+						if ( '' !== $cluster_id ) {
+							$this->requested_repair_cluster_ids[] = $cluster_id;
+						}
+						return $observed_count;
 					}
 				}
 			}

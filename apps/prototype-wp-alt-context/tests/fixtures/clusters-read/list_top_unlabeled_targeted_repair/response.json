@@ -1,1 +1,1 @@
-{"type":"response","status":200,"data":{"clusters":[],"limit":10,"total":0,"truncated":false,"singleton_count":0,"has_clusters":true,"data_source":"local_projection","projection_status":"available"}}
+{"type":"response","status":200,"data":{"clusters":[],"limit":10,"total":0,"truncated":false,"repair_pending":true,"singleton_count":0,"has_clusters":true,"data_source":"local_projection","projection_status":"available"}}

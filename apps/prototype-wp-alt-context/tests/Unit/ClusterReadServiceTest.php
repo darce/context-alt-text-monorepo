@@ -117,6 +117,183 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame(['tenant-1', ['cluster-upward']], $scheduled['args']);
     }
 
+    /**
+     * R2-06: envelope total/truncated describe the served list, not pre-drop COUNT(*).
+     */
+    public function testListTopUnlabeledEnvelopeDoesNotReportFilterAsPagingTruncation(): void
+    {
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-drop',
+                        'label' => '',
+                        'identity_count' => 7,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-drop' => [],
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('limit', 10);
+        $response = $service->list_top_unlabeled_clusters($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame('cluster-keep', $data['clusters'][0]['id']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    /**
+     * R2-11: drift ids for clusters absent from this page merge into the repair event.
+     */
+    public function testListTopUnlabeledMergesOffPageDriftIdsIntoRepairEvent(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-page',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                return ['cluster-off-page'];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-page' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                        ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
+        $this->assertSame('tenant-1', $scheduled['args'][0]);
+        $this->assertEqualsCanonicalizing(['cluster-off-page', 'cluster-page'], $scheduled['args'][1]);
+    }
+
+    /**
+     * R2-09: overlapping large repair sets collide after sort+cap.
+     */
+    public function testListTopUnlabeledCapsAndCollidesOverlappingRepairBatches(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+        $call = 0;
+
+        $clustersRepo = new class($call) extends NullClustersRepository {
+            public function __construct(private int &$call)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                ++$this->call;
+                $ids = [];
+                for ($i = 1; $i <= 25; $i++) {
+                    $ids[] = sprintf('cluster-%02d', $i);
+                }
+                $ids[] = $this->call === 1 ? 'cluster-extra-a' : 'cluster-extra-b';
+                return $ids;
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $service->list_top_unlabeled_clusters($request);
+        $service->list_top_unlabeled_clusters($request);
+
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
+        $this->assertCount(ClusterReadService::TARGETED_REPAIR_ID_CEILING, $scheduled['args'][1]);
+    }
+
     public function testListTopUnlabeledProxyBootstrappingFallbackEnvelope(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
@@ -303,6 +480,40 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame(10, $data['limit']);
         $this->assertSame(2, $data['total']);
         $this->assertTrue($data['truncated']);
+    }
+
+    private function localHost(): ClustersHostInterface
+    {
+        return new class() implements ClustersHostInterface {
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                return new WP_Error('unexpected', 'must stay local');
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return true;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return false;
+            }
+        };
     }
 
     private function makeService(

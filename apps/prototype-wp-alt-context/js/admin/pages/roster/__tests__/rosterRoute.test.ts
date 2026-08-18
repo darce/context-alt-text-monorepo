@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RosterEntry } from '../../../api/rosterApi';
 import {
   ROSTER_SURFACE,
-  isUnlabeledCluster,
   parseRosterRoute,
   selectDeterministicDefaultWorkspaceEntry,
   workbenchReviewQueueUrl,
@@ -106,13 +105,10 @@ describe('parseRosterRoute route compat (E21-9 Slice 5a + E21-10 lands-second)',
   });
 });
 
-describe('isUnlabeledCluster + workbench deep link (E21-9 Slice 5b contract)', () => {
-  it('treats empty/absent/whitespace labels as unlabeled', () => {
-    expect(isUnlabeledCluster({ label: '' })).toBe(true);
-    expect(isUnlabeledCluster({ label: '   ' })).toBe(true);
-    expect(isUnlabeledCluster({ label: null })).toBe(true);
-    expect(isUnlabeledCluster({})).toBe(true);
-    expect(isUnlabeledCluster({ label: 'Ada' })).toBe(false);
+describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', () => {
+  it('does not export isUnlabeledCluster (client-side rail predicate retired with the rail)', async () => {
+    const mod = await import('../rosterRoute');
+    expect('isUnlabeledCluster' in mod).toBe(false);
   });
 
   it('deep-links unlabeled clusters into the workbench review queue', () => {

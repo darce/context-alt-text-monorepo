@@ -191,12 +191,6 @@ export const PERSON_ROUTE_UNMATCHED_NOTICE = __(
   'alt-context',
 );
 
-/** Empty/absent label — same predicate family as queryKeys.clusters.topUnlabeled. */
-export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean => {
-  const label = cluster.label;
-  return label == null || label.trim() === '';
-};
-
 /**
  * Workbench review-queue deep link for card-at-a-time triage (assignment band).
  *

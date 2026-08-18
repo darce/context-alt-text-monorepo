@@ -56,42 +56,35 @@ test('roster empty state is announced via live region', async ({ page, baseURL }
 });
 
 /**
- * E21-9: full member-fix keyboard loop when a cluster drawer is open.
- * Opens via Needs assignment row (or cluster=<id> deep link). Clusters tab retired.
- * Skips cleanly when the local environment has no openable unlabeled cluster.
+ * UXW2-4: the needs-assignment rail is retired — Roster links to the workbench
+ * review queue instead. The member-fix keyboard loop below now runs only via the
+ * `cluster=<id>` deep-link shim (E21-10); supply E2E_ROSTER_CLUSTER_ID to enable it.
  */
+test('roster review CTA links to the workbench queue; no rail is rendered', async ({ page, baseURL }) => {
+  await openRoster(requireBaseUrl(baseURL), page);
+
+  const cta = page.getByTestId('roster-review-cta');
+  await expect(cta).toBeVisible();
+  await expect(cta.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
+    'href',
+    '#/workbench?tab=scan&rq=assignment.all.0',
+  );
+  await expect(page.getByTestId('needs-assignment-section')).toHaveCount(0);
+});
+
 test('keyboard member-fix loop: Move to… → pick target → role=status (≥24px control)', async ({
   page,
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
-  await openRoster(base, page);
+  const clusterId = process.env.E2E_ROSTER_CLUSTER_ID;
 
-  // Primary path: Needs assignment section row opens the in-place cluster drawer.
-  const needsSection = page.getByTestId('needs-assignment-section');
-  await expect(needsSection).toBeVisible();
-  const needsOpen = page
-    .getByTestId('needs-assignment-list')
-    .locator('button.acx-needs-assignment__open')
-    .first();
-
-  if ((await needsOpen.count()) > 0) {
-    // Prefer reading cluster id from the workbench deep-link for a reloadable cluster= URL.
-    const workbenchHref =
-      (await needsOpen
-        .locator('xpath=..')
-        .locator('a.acx-needs-assignment__workbench-link')
-        .getAttribute('href')) ?? '';
-    const clusterMatch = /(?:\?|&)cluster=([^&]+)/.exec(workbenchHref);
-    if (clusterMatch?.[1]) {
-      await openRoster(base, page, { cluster: decodeURIComponent(clusterMatch[1]) });
-    } else {
-      await needsOpen.click();
-    }
-  } else {
-    test.skip(true, 'No unlabeled clusters available for member-fix keyboard walk');
+  if (!clusterId) {
+    test.skip(true, 'Set E2E_ROSTER_CLUSTER_ID to an openable cluster id for the member-fix walk');
     return;
   }
+
+  await openRoster(base, page, { cluster: clusterId });
 
   const drawer = page.locator('.acx-cluster-drawer');
   await expect(drawer).toBeVisible();

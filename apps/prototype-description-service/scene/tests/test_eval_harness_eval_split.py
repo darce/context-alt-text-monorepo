@@ -15,6 +15,7 @@ from scripts.eval_harness.strata import (
     SPLIT_DISJOINTNESS_NOTE,
     SplitDisjointnessStatus,
     SplitHalf,
+    SplitProvisionalReason,
     assign_split,
     compute_split_seal_sha256,
     draw_eval_split,
@@ -777,7 +778,7 @@ def test_verify_provisional_empty_span_is_named():
     _reseal(artifact)
     violations = verify_eval_split(artifact, _alice_bob_manifest(), **_alice_bob_expected())
     assert any(
-        "disjointness.status provisional but identities_spanning_both_halves is empty" in message
+        "disjointness.status provisional but expected verified (provisional_reason=None)" in message
         for message in violations
     ), violations
 
@@ -1174,3 +1175,176 @@ def test_verify_resealed_source_manifest_sha_rewrite_names_mismatch():
     _reseal(artifact)
     violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
     assert any("source_manifest.sha256 mismatch" in message for message in violations), violations
+
+
+def test_draw_verify_padded_blank_notes_round_trip():
+    # VLM6-RV6-Q4-01: shared normalizer; padded + blank notes invert (EVAL-10).
+    # MUT[no_verify_normalize]: comparing expected as-given fails this with
+    # recorded=['operator note'] expected=['  operator note  '].
+    padded = ["  operator note  ", "", "  ", "second note"]
+    artifact = _draw_golden(pre_split_exposure=padded)
+    assert artifact["pre_split_exposure"] == ["operator note", "second note"]
+    assert (
+        verify_eval_split(
+            artifact,
+            _load_golden(),
+            **_fixture_expected(expected_pre_split_exposure=padded),
+        )
+        == []
+    )
+
+
+def test_verify_expected_notes_whitespace_equivalent_is_clean():
+    # VLM6-RV6-Q4-01: expected notes that differ only by whitespace verify [].
+    artifact = _draw_golden(pre_split_exposure=["operator note"])
+    assert (
+        verify_eval_split(
+            artifact,
+            _load_golden(),
+            **_fixture_expected(expected_pre_split_exposure=["  operator note  "]),
+        )
+        == []
+    )
+
+
+def test_verify_expected_notes_content_mismatch_is_named():
+    # VLM6-RV6-Q4-01: content-different expected notes name the mismatch.
+    artifact = _draw_golden(pre_split_exposure=["operator note"])
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        **_fixture_expected(expected_pre_split_exposure=["different note"]),
+    )
+    assert any("pre_split_exposure mismatch" in message for message in violations), violations
+
+
+def _cli_resealed(tmp_path, mutator) -> Path:
+    artifact = json.loads(_SEALED_SPLIT.read_text())
+    mutator(artifact)
+    _reseal(artifact)
+    out = tmp_path / "split.json"
+    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    return out
+
+
+@pytest.mark.parametrize(
+    "sha_value",
+    [None, "dead"],
+    ids=["none", "non64"],
+)
+def test_verify_resealed_source_sha_format_is_named(sha_value):
+    # VLM6-RV6-Q1-01: format check is outside the len==64 mismatch guard.
+    # MUT[delete_recorded_sha_format_check]: deleting the two-line check
+    # lets None / "dead" verify [] (mismatch is gated on isinstance+len==64).
+    artifact = _draw_golden()
+    artifact["source_manifest"]["sha256"] = sha_value
+    _reseal(artifact)
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        **_fixture_expected(source_manifest_sha256="dead"),
+    )
+    assert any("missing or not 64 hex chars" in message for message in violations), violations
+
+
+def test_verify_resealed_source_sha_missing_key_is_named():
+    artifact = _draw_golden()
+    artifact["source_manifest"].pop("sha256", None)
+    _reseal(artifact)
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        **_fixture_expected(source_manifest_sha256="dead"),
+    )
+    assert any("missing or not 64 hex chars" in message for message in violations), violations
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda a: a["source_manifest"].__setitem__("sha256", None),
+        lambda a: a["source_manifest"].pop("sha256", None),
+        lambda a: a["source_manifest"].__setitem__("sha256", "dead"),
+    ],
+    ids=["none", "missing_key", "non64"],
+)
+def test_cli_check_resealed_source_sha_format_exits_1(tmp_path, capsys, mutator):
+    out = _cli_resealed(tmp_path, mutator)
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "missing or not 64 hex chars" in captured.err
+
+
+def test_verify_resealed_source_path_none_is_named():
+    artifact = _draw_golden()
+    artifact["source_manifest"]["path"] = None
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("source_manifest.path missing or empty" in message for message in violations), violations
+
+
+def test_verify_resealed_source_path_missing_key_is_named():
+    artifact = _draw_golden()
+    artifact["source_manifest"].pop("path", None)
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("source_manifest.path missing or empty" in message for message in violations), violations
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda a: a["source_manifest"].__setitem__("path", None),
+        lambda a: a["source_manifest"].pop("path", None),
+    ],
+    ids=["none", "missing_key"],
+)
+def test_cli_check_resealed_source_path_exits_1(tmp_path, capsys, mutator):
+    out = _cli_resealed(tmp_path, mutator)
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "source_manifest.path missing or empty" in captured.err
+
+
+def test_verify_resealed_wrong_provisional_reason_member_is_named():
+    # VLM6-RV6-Q1-02 (a): correct provisional status + wrong enum member.
+    # MUT[delete_reason_mismatch_check]: deleting the compare leaves this [].
+    artifact = _draw_golden()
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    expected_member = SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES
+    wrong = SplitProvisionalReason.EMPTY_HALF
+    assert artifact["disjointness"]["provisional_reason"] == expected_member.value
+    artifact["disjointness"]["provisional_reason"] = wrong.value
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("provisional_reason mismatch" in message for message in violations), violations
+    assert any(wrong.value in message for message in violations), violations
+    assert any(expected_member.value in message for message in violations), violations
+
+
+def test_verify_resealed_verified_with_reason_is_named():
+    # VLM6-RV6-Q1-02 (b): verified status + non-None reason.
+    artifact = _draw_alice_bob()
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.VERIFIED.value
+    artifact["disjointness"]["provisional_reason"] = SplitProvisionalReason.EMPTY_HALF.value
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _alice_bob_manifest(), **_alice_bob_expected())
+    assert any("provisional_reason mismatch" in message for message in violations), violations
+    assert any(SplitProvisionalReason.EMPTY_HALF.value in message for message in violations), violations
+
+
+def test_verify_resealed_provisional_with_none_reason_is_named():
+    # VLM6-RV6-Q1-02 (c): provisional status + None reason.
+    artifact = _draw_golden()
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    artifact["disjointness"]["provisional_reason"] = None
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("provisional_reason mismatch" in message for message in violations), violations
+    assert any(SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES.value in message for message in violations), (
+        violations
+    )

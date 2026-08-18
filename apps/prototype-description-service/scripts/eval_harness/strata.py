@@ -717,6 +717,20 @@ def _unknown_key_violations(mapping: object, allowed: frozenset[str], *, label: 
     return [f"unknown {label} key: {key}" for key in sorted(set(mapping) - allowed)]
 
 
+def normalize_pre_split_exposure(notes: object) -> list[str]:
+    """Strip + drop blanks. Raise if the result is empty (EVAL-10).
+
+    Shared by draw_eval_split, verify_eval_split, and cli._collect_exposure_notes
+    so draw→verify is an inverse for padded / blank-containing notes.
+    """
+    if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
+        raise ValueError(f"pre_split_exposure must be a non-empty list of non-empty strings: {notes!r}")
+    normalized = [stripped for note in notes if (stripped := note.strip())]
+    if not normalized:
+        raise ValueError(f"pre_split_exposure must be a non-empty list of non-empty strings: {notes!r}")
+    return normalized
+
+
 def draw_eval_split(
     manifest,
     *,
@@ -731,13 +745,7 @@ def draw_eval_split(
     """Freeze a sealed eval split derived from image content hashes."""
     if not isinstance(partition_provenance, str) or not partition_provenance.strip():
         raise ValueError("partition_provenance is required and must be a non-empty string")
-    if (
-        not isinstance(pre_split_exposure, list)
-        or not pre_split_exposure
-        or not all(isinstance(note, str) and note.strip() for note in pre_split_exposure)
-    ):
-        raise ValueError(f"pre_split_exposure must be a non-empty list of non-empty strings: {pre_split_exposure!r}")
-    notes = [note.strip() for note in pre_split_exposure]
+    notes = normalize_pre_split_exposure(pre_split_exposure)
     held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
     spanning = _identities_spanning_both_halves(held_out, train)
     status, reason = _disjointness_claim(held_out, train)
@@ -817,18 +825,22 @@ def verify_eval_split(
         )
 
     exposure = artifact.get("pre_split_exposure")
-    if (
-        not isinstance(exposure, list)
-        or not exposure
-        or not all(isinstance(note, str) and note.strip() for note in exposure)
-    ):
-        violations.append(f"pre_split_exposure must be a non-empty list of non-empty strings: {exposure!r}")
+    try:
+        recorded_notes = normalize_pre_split_exposure(exposure)
+    except ValueError as exc:
+        violations.append(str(exc))
+        recorded_notes = None
     if expected_pre_split_exposure is None:
         violations.append("expected_pre_split_exposure is required (EVAL-10 fail-closed)")
-    elif exposure != expected_pre_split_exposure:
-        violations.append(
-            f"pre_split_exposure mismatch: recorded={exposure!r} expected={expected_pre_split_exposure!r}"
-        )
+        expected_notes = None
+    else:
+        try:
+            expected_notes = normalize_pre_split_exposure(expected_pre_split_exposure)
+        except ValueError as exc:
+            violations.append(str(exc))
+            expected_notes = None
+    if recorded_notes is not None and expected_notes is not None and recorded_notes != expected_notes:
+        violations.append(f"pre_split_exposure mismatch: recorded={recorded_notes!r} expected={expected_notes!r}")
 
     seed = artifact.get("seed")
     if not isinstance(seed, str) or not seed:
@@ -946,6 +958,7 @@ def verify_eval_split(
         )
     expected_status, expected_reason = _disjointness_claim(expected_held, expected_train)
     recorded_reason = disjointness.get("provisional_reason")
+    expected_reason_value = None if expected_reason is None else expected_reason.value
     if status == SplitDisjointnessStatus.VERIFIED.value and expected_status is not SplitDisjointnessStatus.VERIFIED:
         if expected_reason is SplitProvisionalReason.LABEL_COVERAGE_INSUFFICIENT:
             violations.append(
@@ -959,8 +972,11 @@ def verify_eval_split(
                 f"disjointness.status verified but identities_spanning_both_halves is non-empty: {expected_span}"
             )
     if status == SplitDisjointnessStatus.PROVISIONAL.value and expected_status is SplitDisjointnessStatus.VERIFIED:
-        violations.append("disjointness.status provisional but identities_spanning_both_halves is empty")
-    expected_reason_value = None if expected_reason is None else expected_reason.value
+        violations.append(
+            "disjointness.status provisional but expected "
+            f"{SplitDisjointnessStatus.VERIFIED.value} "
+            f"(provisional_reason={expected_reason_value!r})"
+        )
     if recorded_reason != expected_reason_value:
         violations.append(
             f"disjointness.provisional_reason mismatch: recorded={recorded_reason!r} expected={expected_reason_value!r}"

@@ -81,9 +81,9 @@ class ClusterCurationWriterTest extends TestCase
         $result = $this->writer->reset_curation('cluster-reset', self::currentTenantId());
 
         $this->assertSame(1, $result);
-        $query = $wpdb->queries[0];
-        $this->assertStringContainsString('label = NULL', $query);
-        $this->assertStringContainsString('is_user_confirmed = 0', $query);
-        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
+        $joined = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('label = NULL', $joined);
+        $this->assertStringContainsString('is_user_confirmed = 0', $joined);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $joined);
     }
 }

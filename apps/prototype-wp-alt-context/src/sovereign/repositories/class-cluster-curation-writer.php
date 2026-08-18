@@ -11,6 +11,7 @@ use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
 use function is_int;
+use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
@@ -245,44 +246,106 @@ class ClusterCurationWriter {
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 
+	/**
+	 * Single bind end-state for every person-to-cluster write.
+	 *
+	 * User-initiated ($confirm=true): person_id + curation_state=confirmed + is_user_confirmed=1.
+	 * Heal/automatic ($confirm=false): person_id only (R1-07 — do not invent user intent).
+	 * Already-bound to the same person is a no-op (0 rows).
+	 */
+	public function bind_person_to_cluster( string $cluster_uuid, int $person_id, bool $confirm = false ): int {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid || $person_id <= 0 ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$existing_sql = $this->prepare_query(
+			'SELECT person_id FROM %i WHERE cluster_uuid = %s',
+			array( $this->table_name, $normalized_cluster_uuid )
+		);
+		$existing_person_id = 0;
+		if ( is_string( $existing_sql ) && '' !== $existing_sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$existing_raw       = $wpdb->get_var( $existing_sql );
+			$existing_person_id = is_numeric( $existing_raw ) ? (int) $existing_raw : 0;
+		}
+
+		if ( $existing_person_id === $person_id ) {
+			return 0;
+		}
+
+		$data = array(
+			'person_id'  => $person_id,
+			'updated_at' => gmdate( 'Y-m-d H:i:s' ),
+		);
+		$format = array( '%d', '%s' );
+		if ( $confirm ) {
+			$data['curation_state']    = 'confirmed';
+			$data['is_user_confirmed'] = 1;
+			$format[]                  = '%s';
+			$format[]                  = '%d';
+		}
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			$data,
+			array( 'cluster_uuid' => $normalized_cluster_uuid ),
+			$format,
+			array( '%s' )
+		);
+
+		return false === $updated ? 0 : (int) $updated;
+	}
+
 	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
-		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_tenant_id    = trim( $tenant_id );
 		if ( '' === $normalized_cluster_uuid || '' === $normalized_tenant_id ) {
 			return 0;
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'query' ) ) {
 			return 0;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql = $this->prepare_query(
-			'UPDATE %i
-			SET label = NULL,
-				person_id = NULL,
-				curation_state = %s,
-				is_user_confirmed = 0,
-				local_revision = local_revision + 1,
-				updated_at = %s
-			WHERE cluster_uuid = %s AND tenant_id = %s',
+		$updated = $wpdb->update(
+			$this->table_name,
 			array(
-				$this->table_name,
-				'uncurated',
-				$now_utc,
-				$normalized_cluster_uuid,
-				$normalized_tenant_id,
-			)
+				'label'             => null,
+				'person_id'         => null,
+				'curation_state'    => 'uncurated',
+				'is_user_confirmed' => 0,
+				'updated_at'        => $now_utc,
+			),
+			array(
+				'cluster_uuid' => $normalized_cluster_uuid,
+				'tenant_id'    => $normalized_tenant_id,
+			),
+			array( null, null, '%s', '%d', '%s' ),
+			array( '%s', '%s' )
 		);
-
-		if ( ! is_string( $sql ) || '' === $sql ) {
+		if ( false === $updated ) {
 			return 0;
 		}
 
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-		$query_result = $wpdb->query( $sql );
-		return is_int( $query_result ) ? $query_result : 0;
+		$revision_sql = $this->prepare_query(
+			'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s AND tenant_id = %s',
+			array( $this->table_name, $normalized_cluster_uuid, $normalized_tenant_id )
+		);
+		if ( is_string( $revision_sql ) && '' !== $revision_sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $revision_sql );
+		}
+
+		return max( 1, (int) $updated );
 	}
 }

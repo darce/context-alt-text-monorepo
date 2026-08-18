@@ -94,8 +94,8 @@ class _FakeRosterRepo:
     async def get_member_fallback_embeddings_with_model(
         self, cluster_id: str, limit: int = 4
     ) -> tuple[list[np.ndarray], str | None]:
-        embeddings, model, _ = await self.get_member_fallback_embeddings_with_quality(cluster_id, limit=limit)
-        return embeddings, model
+        # Independent of the quality loader so preferring with_quality is observable.
+        return [], None
 
     async def get_member_fallback_embeddings_with_quality(
         self, cluster_id: str, limit: int = 4
@@ -478,6 +478,44 @@ async def test_member_fallback_quality_fail_closed_when_metrics_missing() -> Non
 
     assert result.candidates
     assert result.quality_flag is QualityFlag.LOW_QUALITY
+    assert result.probe_face_count == 1
+
+
+@pytest.mark.asyncio
+async def test_member_fallback_prefers_quality_loader() -> None:
+    """R2-04: quality loader must be used; with_model is independent and empty."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[],
+        probe_model=None,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[],
+        member_fallback=(
+            [_normalize(np.array([1.0, 0.0]))],
+            same_model,
+            [(0.95, 0.95, 0.99)],
+        ),
+    )
+
+    result = await list_roster_candidates(
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(fatal_quality_floor=0.20, fatal_confidence_floor=0.30),
+        top_k=10,
+    )
+
+    assert result.candidates
+    assert result.quality_flag is QualityFlag.OK
     assert result.probe_face_count == 1
 
 

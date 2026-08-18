@@ -590,6 +590,9 @@ class BakeoffClient(RemoteSceneClient):
             result["alt_text_draft"] = caption
         if self.two_pass or self.dual_length:
             result["passes"] = passes
+        # Token usage is a scored bake-off axis (quality vs speed vs tokens), so
+        # roll it up for every pipeline config, not only the multi-pass ones.
+        result["tokens"] = _sum_usage(passes)
         return result
 
     def weave_bench_describe(self, *, media_id: int, facts_raw: str, context_pack: dict[str, Any]) -> dict[str, Any]:
@@ -681,11 +684,13 @@ class BakeoffClient(RemoteSceneClient):
         passes: list[dict[str, Any]],
         max_tokens: int = _CAPTION_MAX_TOKENS,
     ) -> str:
-        """One greedy chat completion; appends {pass, raw, latency_s} so the A/B
-        bench can attribute per-pass latency (raw=None on failure). ``max_tokens``
+        """One greedy chat completion; appends {pass, raw, latency_s, usage} so the
+        A/B bench can attribute per-pass latency and token usage (raw=None on
+        failure; usage=None when the server reported none). ``max_tokens``
         defaults to the caption budget; the structured pass-1 raises it so a
         fact-dense JSON never truncates mid-string (PassOneJSONError)."""
         started = time.monotonic()
+        usage: dict[str, int] | None = None
         try:
             payload = self._request_dict(
                 "POST",
@@ -697,11 +702,26 @@ class BakeoffClient(RemoteSceneClient):
                     "messages": messages,
                 },
             )
+            usage = _extract_usage(payload)
             text = _extract_caption(payload)
         except Exception:
-            passes.append({"pass": pass_name, "raw": None, "latency_s": round(time.monotonic() - started, 3)})
+            passes.append(
+                {
+                    "pass": pass_name,
+                    "raw": None,
+                    "latency_s": round(time.monotonic() - started, 3),
+                    "usage": usage,
+                }
+            )
             raise
-        passes.append({"pass": pass_name, "raw": text, "latency_s": round(time.monotonic() - started, 3)})
+        passes.append(
+            {
+                "pass": pass_name,
+                "raw": text,
+                "latency_s": round(time.monotonic() - started, 3),
+                "usage": usage,
+            }
+        )
         return text
 
     def _pass1_user_text(self) -> str:
@@ -968,6 +988,51 @@ def _extract_caption(payload: dict[str, Any]) -> str:
             )
         raise RemoteClientError(f"chat completion returned empty caption: {payload!r}")
     return content.strip()
+
+
+_USAGE_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def _extract_usage(payload: dict[str, Any]) -> dict[str, int] | None:
+    """Return the OpenAI ``usage`` block, or None when the server did not send one.
+
+    Never derived from the text: a token count guessed from characters would
+    read as measured in the bake-off report (rg-015). Absent usage is reported
+    as absent so the roll-up can say so.
+    """
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    out: dict[str, int] = {}
+    for field in _USAGE_FIELDS:
+        value = usage.get(field)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        out[field] = value
+    return out
+
+
+def _sum_usage(passes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll per-pass usage up to a per-image total.
+
+    ``complete`` is False when any pass is missing usage, so a partial sum is
+    never read as the image's real cost.
+    """
+    totals = dict.fromkeys(_USAGE_FIELDS, 0)
+    missing = 0
+    for entry in passes:
+        usage = entry.get("usage")
+        if not isinstance(usage, dict):
+            missing += 1
+            continue
+        for field in _USAGE_FIELDS:
+            totals[field] += usage[field]
+    return {
+        **totals,
+        "model_calls": len(passes),
+        "passes_missing_usage": missing,
+        "complete": bool(passes) and missing == 0,
+    }
 
 
 def _safe_model_slug(model_id: str) -> str:

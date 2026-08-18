@@ -12,10 +12,11 @@ import pytest
 import yaml
 
 from scripts.eval_harness.bakeoff_candidates import (
-    QWEN38_ARTIFACT_GB,
-    QWEN38_QUANT,
+    QWEN36_ROW_ID,
     QWEN38_ROW_ID,
-    RETIRED_QWEN36_ROW_ID,
+    QWEN_GENERATION_PAIR,
+    QWEN_PAIR_QUANT,
+    QWEN_PAIR_SHARED_RECIPE_FIELDS,
     SCHEMA,
     SEALED_CANDIDATE_COUNT,
     SEALED_INCUMBENT_COUNT,
@@ -58,25 +59,57 @@ def test_committed_registry_loads(registry) -> None:
 def test_sealed_counts_are_exact(registry) -> None:
     n_cand = sum(1 for e in registry.entries if e.role is CandidateRole.CANDIDATE)
     n_inc = sum(1 for e in registry.entries if e.role is CandidateRole.INCUMBENT)
-    assert n_cand == SEALED_CANDIDATE_COUNT == 13
+    assert n_cand == SEALED_CANDIDATE_COUNT == 14
     assert n_inc == SEALED_INCUMBENT_COUNT == 2
-    assert registry.sealed.candidates == 13
+    assert registry.sealed.candidates == 14
     assert registry.sealed.incumbent_anchors == 2
 
 
-def test_qwen38_replaces_qwen36_row(registry) -> None:
-    ids = [e.id for e in registry.entries]
-    assert QWEN38_ROW_ID in ids
-    assert RETIRED_QWEN36_ROW_ID not in ids
-    row = next(e for e in registry.entries if e.id == QWEN38_ROW_ID)
-    assert row.model_id == "Qwen3.8-27B"
-    assert row.quant == QWEN38_QUANT
-    assert row.artifact_gb == QWEN38_ARTIFACT_GB
-    assert row.artifact == "Qwen3.8-27B-UD-Q4_K_XL.gguf"
-    assert row.recipe.stack is ServingStack.LLAMA_CPP
-    assert row.recipe.gguf == row.artifact
-    assert row.recipe.mmproj == "mmproj-F16.gguf"
-    assert row.revision == "1cff334a4a228324d4ee1f76d55d372588f0d556"
+def test_qwen_generation_pair_rows_present(registry) -> None:
+    by_id = {e.id: e for e in registry.entries}
+    assert set(QWEN_GENERATION_PAIR) == {QWEN38_ROW_ID, QWEN36_ROW_ID}
+    for row_id, (model_id, artifact_gb) in QWEN_GENERATION_PAIR.items():
+        row = by_id[row_id]
+        assert row.model_id == model_id
+        assert row.competing is True
+        assert row.quant == QWEN_PAIR_QUANT
+        assert row.artifact_gb == artifact_gb
+        assert row.artifact == f"{model_id}-UD-Q4_K_XL.gguf"
+        assert row.recipe.stack is ServingStack.LLAMA_CPP
+        assert row.recipe.gguf == row.artifact
+        assert row.recipe.mmproj == "mmproj-F16.gguf"
+    assert by_id[QWEN38_ROW_ID].revision == "1cff334a4a228324d4ee1f76d55d372588f0d556"
+    assert by_id[QWEN36_ROW_ID].revision == "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
+    assert by_id[QWEN38_ROW_ID].repo == "unsloth/Qwen3.8-27B-GGUF"
+    assert by_id[QWEN36_ROW_ID].repo == "unsloth/Qwen3.6-27B-GGUF"
+
+
+def test_qwen_generation_pair_shares_serving_recipe(registry) -> None:
+    by_id = {e.id: e for e in registry.entries}
+    a = by_id[QWEN38_ROW_ID].recipe
+    b = by_id[QWEN36_ROW_ID].recipe
+    for field in QWEN_PAIR_SHARED_RECIPE_FIELDS:
+        assert getattr(a, field) == getattr(b, field), field
+
+
+def test_qwen_pair_recipe_drift_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> None:
+    payload = deepcopy(raw_registry)
+    row = next(e for e in payload["entries"] if e["id"] == QWEN36_ROW_ID)
+    row["recipe"]["ctx_size"] = 4096
+    with pytest.raises(RegistryError, match="recipe drift on 'ctx_size'"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_losing_the_previous_generation_row_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    # Rename rather than delete so the sealed counts still pass: the pair
+    # invariant, not the count check, must be what catches this.
+    payload = deepcopy(raw_registry)
+    row = next(e for e in payload["entries"] if e["id"] == QWEN36_ROW_ID)
+    row["id"] = "qwen36-27b-renamed"
+    with pytest.raises(RegistryError, match=f"missing Qwen generation-pair row {QWEN36_ROW_ID}"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
 def test_every_entry_has_pin_recipe_tier(registry) -> None:
@@ -105,7 +138,7 @@ def test_unique_ids(registry) -> None:
 
 def test_cli_prints_sealed_counts(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([str(REGISTRY_PATH)]) == 0
-    assert capsys.readouterr().out.strip() == "ok: 13 candidates + 2 incumbent anchors"
+    assert capsys.readouterr().out.strip() == "ok: 14 candidates + 2 incumbent anchors"
 
 
 def test_missing_file_fails(tmp_path: Path) -> None:
@@ -159,7 +192,7 @@ def test_llama_cpp_missing_mmproj_fails(tmp_path: Path, raw_registry: dict[str, 
 def test_wrong_candidate_count_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> None:
     payload = deepcopy(raw_registry)
     payload["entries"] = [e for e in payload["entries"] if e["id"] != "ovis2-8b"]
-    with pytest.raises(RegistryError, match="expected 13 candidates, found 12"):
+    with pytest.raises(RegistryError, match="expected 14 candidates, found 13"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
@@ -167,14 +200,6 @@ def test_duplicate_id_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> Non
     payload = deepcopy(raw_registry)
     payload["entries"][1]["id"] = payload["entries"][0]["id"]
     with pytest.raises(RegistryError, match="duplicate candidate id"):
-        load_bakeoff_candidates(_write_registry(tmp_path, payload))
-
-
-def test_restoring_qwen36_row_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> None:
-    payload = deepcopy(raw_registry)
-    row = next(e for e in payload["entries"] if e["id"] == QWEN38_ROW_ID)
-    row["id"] = RETIRED_QWEN36_ROW_ID
-    with pytest.raises(RegistryError, match="retired"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 

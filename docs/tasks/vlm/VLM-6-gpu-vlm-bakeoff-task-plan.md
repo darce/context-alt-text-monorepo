@@ -62,7 +62,7 @@ The scene tier runs Florence-2-base-ft on CPU (picked for CPU viability, quality
 
 ## Target Outcome
 
-A decision memo ranks 13 candidates + 2 incumbent anchors on identical Golden-100 evidence; the GPU async profile and (if it wins) the CPU inline profile point at the new models; `gpu_phi4` is gone; the eval harness permanently gains the Golden-100 corpus and a hallucination metric, making future model swaps a re-run instead of a research project.
+A decision memo ranks 14 candidates + 2 incumbent anchors on identical Golden-100 evidence; the GPU async profile and (if it wins) the CPU inline profile point at the new models; `gpu_phi4` is gone; the eval harness permanently gains the Golden-100 corpus and a hallucination metric, making future model swaps a re-run instead of a research project.
 
 ## Context Loading
 
@@ -198,7 +198,7 @@ Proof:
 
 Changes:
 
-- `bakeoff_candidates.yaml` (all 13 candidates + 2 incumbent anchors, revision-pinned) and `bakeoff_runner.py` (serve → warm-up → 100 images at concurrency 1, open-loop per-image timing [PERF-03], p50/p95/p99 [PERF-01], cold-load, peak VRAM via `nvidia-smi` sampling, image-edge cap reusing `ACX_VLM_MAX_IMAGE_EDGE_PX` semantics with downscales recorded).
+- `bakeoff_candidates.yaml` (all 14 candidates + 2 incumbent anchors, revision-pinned) and `bakeoff_runner.py` (serve → warm-up → 100 images at concurrency 1, open-loop per-image timing [PERF-03], p50/p95/p99 [PERF-01], cold-load, peak VRAM via `nvidia-smi` sampling, image-edge cap reusing `ACX_VLM_MAX_IMAGE_EDGE_PX` semantics with downscales recorded).
 - **Execution locus**: `bakeoff_runner.py` executes **on the bake host** (invoked over Tailscale SSH from the laptop, same access path as `acx-backend`); Golden-100 images are rsynced to the host once before the window; per-model metrics + raw generations are pulled back to the laptop after each model completes (so a window abort loses at most one model's outputs).
 - Weight pre-pull script; dry-run mode validated locally against a stub server.
 - **Per-stack smoke gate**: one real inference per serving stack before the window — llama.cpp via MiniCPM-V 4.6 GGUF locally (laptop/A1); vLLM and HF Transformers via their smallest candidate on a short throwaway GPU boot (≤1 h) or CPU-mode where the stack supports it. No stack enters S3 unsmoked.
@@ -294,7 +294,7 @@ Proof:
 
 ### Checklist for Slice 2: Bench harness + registry
 
-- [ ] Registry complete: 13 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers
+- [ ] Registry complete: 14 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers
 - [ ] Runner dry-run green against stub server; VRAM/timing capture verified
 - [ ] Per-stack smoke gate passed (llama.cpp, vLLM, HF Transformers each ran one real inference)
 - [ ] Weight pre-pull script ready; grunt work offloaded via `/offload`

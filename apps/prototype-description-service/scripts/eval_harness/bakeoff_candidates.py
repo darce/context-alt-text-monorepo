@@ -21,13 +21,23 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 SCHEMA = "acx-bakeoff-candidates/v1"
-SEALED_CANDIDATE_COUNT = 13
+SEALED_CANDIDATE_COUNT = 14
 SEALED_INCUMBENT_COUNT = 2
 KNOWN_PROMPT_TEMPLATES = frozenset({"v1", "v2", "v3"})
 QWEN38_ROW_ID = "qwen38-27b"
-RETIRED_QWEN36_ROW_ID = "qwen36-27b"
-QWEN38_QUANT = "UD-Q4_K_XL"
-QWEN38_ARTIFACT_GB = 17.9
+QWEN36_ROW_ID = "qwen36-27b"
+QWEN_PAIR_QUANT = "UD-Q4_K_XL"
+# id -> (model_id, artifact_gb) for the Qwen generation pair. Both generations
+# compete so quality, speed, and token usage can be attributed to the model
+# generation; that only holds if the serving recipe is identical, which
+# ``_assert_qwen_generation_pair`` enforces.
+QWEN_GENERATION_PAIR: dict[str, tuple[str, float]] = {
+    QWEN38_ROW_ID: ("Qwen3.8-27B", 17.9),
+    QWEN36_ROW_ID: ("Qwen3.6-27B", 17.6),
+}
+# Recipe fields that must match across the pair for the comparison to be
+# like-for-like. ``gguf`` differs by construction (different artifact).
+QWEN_PAIR_SHARED_RECIPE_FIELDS = ("stack", "ctx_size", "image_max_tokens", "parallel", "extra_flags", "mmproj")
 _SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 _TODO_RE = re.compile(r"TODO|<TODO", re.IGNORECASE)
 _LLAMA_CPP_BUILD_RE = re.compile(r"^b\d+$")
@@ -277,7 +287,7 @@ def _assert_sealed_invariants(registry: BakeoffCandidateRegistry) -> None:
     ids = [e.id for e in registry.entries]
     if len(ids) != len(set(ids)):
         raise RegistryError(f"duplicate candidate id in registry: {ids}")
-    _assert_qwen38_swap(registry)
+    _assert_qwen_generation_pair(registry)
 
 
 def _assert_counts(
@@ -302,21 +312,36 @@ def _assert_counts(
         )
 
 
-def _assert_qwen38_swap(registry: BakeoffCandidateRegistry) -> None:
-    ids = {e.id for e in registry.entries}
-    if RETIRED_QWEN36_ROW_ID in ids:
-        raise RegistryError(
-            f"{RETIRED_QWEN36_ROW_ID} is retired; roster row is {QWEN38_ROW_ID}"
-        )
-    row = next((e for e in registry.entries if e.id == QWEN38_ROW_ID), None)
-    if row is None:
-        raise RegistryError(f"sealed roster missing swapped row {QWEN38_ROW_ID}")
-    if row.quant != QWEN38_QUANT:
-        raise RegistryError(f"{QWEN38_ROW_ID} quant must be {QWEN38_QUANT}, got {row.quant}")
-    if row.artifact_gb != QWEN38_ARTIFACT_GB:
-        raise RegistryError(
-            f"{QWEN38_ROW_ID} artifact_gb must be {QWEN38_ARTIFACT_GB}, got {row.artifact_gb}"
-        )
+def _assert_qwen_generation_pair(registry: BakeoffCandidateRegistry) -> None:
+    by_id = {e.id: e for e in registry.entries}
+    rows = []
+    for row_id, (model_id, artifact_gb) in QWEN_GENERATION_PAIR.items():
+        row = by_id.get(row_id)
+        if row is None:
+            raise RegistryError(f"sealed roster missing Qwen generation-pair row {row_id}")
+        if row.model_id != model_id:
+            raise RegistryError(f"{row_id} model_id must be {model_id}, got {row.model_id}")
+        if row.quant != QWEN_PAIR_QUANT:
+            raise RegistryError(f"{row_id} quant must be {QWEN_PAIR_QUANT}, got {row.quant}")
+        if row.artifact_gb != artifact_gb:
+            raise RegistryError(
+                f"{row_id} artifact_gb must be {artifact_gb}, got {row.artifact_gb}"
+            )
+        if not row.competing:
+            raise RegistryError(f"{row_id} must compete for the generation delta to be scored")
+        rows.append(row)
+
+    reference, *others = rows
+    for field in QWEN_PAIR_SHARED_RECIPE_FIELDS:
+        expected = getattr(reference.recipe, field)
+        for row in others:
+            actual = getattr(row.recipe, field)
+            if actual != expected:
+                raise RegistryError(
+                    f"Qwen generation pair recipe drift on {field!r}: "
+                    f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
+                    "The pair must share a recipe or the speed/token delta is unattributable."
+                )
 
 
 def _hf_list_repo_files(repo: str, revision: str) -> list[str]:

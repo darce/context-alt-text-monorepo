@@ -42,6 +42,7 @@ class ClusterReadService {
 	 * (sr-007, E21-14-R3-COORDINATOR-02).
 	 */
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER;
+	private const PREVIEW_IDENTITIES_FETCH_LIMIT = IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT;
 	/**
 	 * Cluster detail member page size. Canonical value lives on the repository
 	 * interface (DEFAULT_CLUSTER_MEMBER_LIMIT); do not re-state the magnitude.
@@ -77,7 +78,7 @@ class ClusterReadService {
 				);
 
 				$preview_limit      = self::PREVIEW_IDENTITIES_PER_CLUSTER;
-				$members_by_cluster = $this->load_members_by_cluster( $rows, $preview_limit );
+				$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_FETCH_LIMIT );
 				$clusters           = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, $preview_limit );
 
 				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
@@ -249,7 +250,12 @@ class ClusterReadService {
 				$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 				if ( is_array( $cluster_row ) ) {
 					$member_limit = self::CLUSTER_DETAIL_MEMBER_LIMIT;
-					$members      = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $member_limit, 0, $tenant_id );
+					$members      = $this->dependencies->members_repository->list_for_cluster(
+						$cluster_id,
+						IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_FETCH_LIMIT,
+						0,
+						$tenant_id
+					);
 					$payload      = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
 					return new WP_REST_Response( $payload, 200 );
 				}

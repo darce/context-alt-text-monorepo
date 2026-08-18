@@ -58,7 +58,7 @@ class ClusterFacade {
 				$cluster_uuids,
 				$this->members_repo->list_for_cluster_uuids(
 					$cluster_uuids,
-					IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+					IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT
 				)
 			);
 		}

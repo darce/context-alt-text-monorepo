@@ -112,8 +112,12 @@ class ClusterResponseMapper {
 				$members = $members_by_cluster[ $cluster_id ];
 			}
 
+			$members_loaded   = isset( $members_by_cluster[ $cluster_id ] );
+			$identity_count   = $this->resolve_identity_count( $row, $members, $members_loaded, $preview_limit );
+			$preview_members  = $this->slice_members_to_preview( $members, $preview_limit );
+
 			$representatives = array();
-			foreach ( array_slice( $members, 0, 4 ) as $member_row ) {
+			foreach ( $preview_members as $member_row ) {
 				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
 			}
 
@@ -125,7 +129,7 @@ class ClusterResponseMapper {
 				'label' => $label_state['label'],
 				'is_labeled' => $label_state['is_labeled'],
 				'is_auto_label' => $label_state['is_auto_label'],
-				'identity_count' => $this->resolve_identity_count( $row, $members, isset( $members_by_cluster[ $cluster_id ] ), $preview_limit ),
+				'identity_count' => $identity_count,
 				'user_confirmed' => $label_state['user_confirmed'],
 				'suggested_label' => isset( $row['suggested_label'] ) && '' !== $row['suggested_label'] ? (string) $row['suggested_label'] : null,
 				'suggested_label_source' => isset( $row['suggested_label_source'] ) && '' !== $row['suggested_label_source'] ? (string) $row['suggested_label_source'] : null,
@@ -145,9 +149,10 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	private function map_cluster_summary( array $cluster_row, array $member_rows, bool $members_loaded, ?int $preview_limit = null ): array {
-		$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
-		$label_state = $this->resolve_label_state( $cluster_row );
-		$members    = array_values( $member_rows );
+		$cluster_id     = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+		$label_state    = $this->resolve_label_state( $cluster_row );
+		$identity_count = $this->resolve_identity_count( $cluster_row, $member_rows, $members_loaded, $preview_limit );
+		$members        = $this->slice_members_to_preview( array_values( $member_rows ), $preview_limit );
 
 		$sample_members = array_slice( $members, 0, 4 );
 		$member_ids     = array();
@@ -171,7 +176,7 @@ class ClusterResponseMapper {
 			'id' => $cluster_id,
 			'label' => $label_state['label'],
 			'is_auto_label' => $label_state['is_auto_label'],
-			'identity_count' => $this->resolve_identity_count( $cluster_row, $members, $members_loaded, $preview_limit ),
+			'identity_count' => $identity_count,
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
@@ -269,12 +274,12 @@ class ClusterResponseMapper {
 			$projected_count = max( 0, (int) $cluster_row['identity_count'] );
 			$observed_count  = count( $member_rows );
 			if ( $members_loaded && $projected_count !== $observed_count ) {
-				// Cap-hit with more projected than observed is intentional preview
-				// truncation, not drift — log only genuine shortfalls (OBS-08).
+				// Cap-hit: a cap+1 fetch returning more than the cap is
+				// truncation. observed == cap is exact (R1-12).
 				$is_expected_truncation = null !== $preview_limit
 					&& $preview_limit > 0
-					&& $observed_count === $preview_limit
-					&& $projected_count > $observed_count;
+					&& $observed_count > $preview_limit
+					&& $projected_count > $preview_limit;
 
 				if ( ! $is_expected_truncation ) {
 					$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
@@ -304,6 +309,19 @@ class ClusterResponseMapper {
 		}
 
 		return count( $member_rows );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $member_rows
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function slice_members_to_preview( array $member_rows, ?int $preview_limit ): array {
+		$members = array_values( $member_rows );
+		if ( null === $preview_limit || $preview_limit <= 0 || count( $members ) <= $preview_limit ) {
+			return $members;
+		}
+
+		return array_slice( $members, 0, $preview_limit );
 	}
 
 	/**

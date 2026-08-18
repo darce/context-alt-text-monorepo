@@ -118,7 +118,7 @@ class SealedCounts(BaseModel):
 
     candidates: int
     incumbent_anchors: int
-    generation_pairs: list[GenerationPair] = Field(default_factory=list)
+    generation_pairs: list[GenerationPair] = Field(min_length=1)
 
 
 class ServingRecipe(BaseModel):

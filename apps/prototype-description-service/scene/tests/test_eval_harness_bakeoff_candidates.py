@@ -329,6 +329,46 @@ def test_generation_pair_missing_id_fails(
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
+def test_missing_generation_pairs_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    # rg-008: sibling sealed keys are required; omitting generation_pairs
+    # must not silently disable every pair invariant.
+    payload = deepcopy(raw_registry)
+    del payload["sealed"]["generation_pairs"]
+    with pytest.raises(RegistryError, match="generation_pairs"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_empty_generation_pairs_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["generation_pairs"] = []
+    with pytest.raises(RegistryError, match="generation_pairs"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_declared_incumbent_anchor_count_mismatch_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["incumbent_anchors"] = 1
+    with pytest.raises(RegistryError, match="expected 1 incumbent anchors, found 2"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_generation_pair_non_competing_row_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    _qwen_row(payload, _QWEN36_ROW_ID)["competing"] = False
+    with pytest.raises(
+        RegistryError, match=f"{_QWEN36_ROW_ID} must compete for the generation delta"
+    ):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
 def test_generation_pair_recipe_drift_on_shared_field_fails(
     tmp_path: Path, raw_registry: dict[str, Any]
 ) -> None:

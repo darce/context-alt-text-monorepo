@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sqlalchemy import Select, delete, exists, func, or_, select, text, update
+from sqlalchemy import Select, delete, exists, func, null, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
@@ -1051,13 +1051,18 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     async def get_member_fallback_embeddings_with_quality(
         self, cluster_id: str, limit: int = 4
     ) -> tuple[list[np.ndarray], str | None, list[_QualityTriple]]:
-        """Same member-fallback rows as the with_model loader plus quality metrics."""
+        """Same member-fallback rows as the with_model loader plus quality metrics.
+
+        Triple slots: identity_quality, representative_quality (NULL — no
+        representative on this path), detection_confidence. Do not select
+        quality_score twice.
+        """
         stmt = (
             select(
                 MediaIdentity.embedding,
                 MediaIdentity.embedding_model,
                 MediaIdentity.quality_score,
-                MediaIdentity.quality_score,
+                null().label("representative_quality"),
                 MediaIdentity.confidence,
             )
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)

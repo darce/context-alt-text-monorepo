@@ -687,7 +687,7 @@
   },
   {
    "media_id": 25,
-   "path": "celebs/bob_harbor_25.webp",
+   "path": "celebs/bob_ross_25.webp",
    "sha256": "0eaec7a977121eb0e3414836da7f8fb5f8e590233e6fceb3d86ba6694dbd30d2",
    "width": 1280,
    "height": 835,
@@ -1921,7 +1921,7 @@
   },
   {
    "media_id": 59,
-   "path": "celebs/linen_neeson_59.webp",
+   "path": "celebs/liam_neeson_59.webp",
    "sha256": "6996d182839e8a0ba4df9e60ea1890212f58cc3b54809f17875f59aa9afa646c",
    "width": 914,
    "height": 1280,
@@ -1966,7 +1966,7 @@
   },
   {
    "media_id": 60,
-   "path": "celebs/plumb_obama_60.jpg",
+   "path": "celebs/michelle_obama_60.jpg",
    "sha256": "39b386372f285e8879ccdb6dbdee3bd7a47d713a87a095f0d2e2d3fd91ce9a81",
    "width": 1280,
    "height": 853,

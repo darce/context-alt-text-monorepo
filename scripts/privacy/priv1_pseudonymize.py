@@ -48,6 +48,7 @@ import re
 import secrets
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -72,17 +73,25 @@ SCAN_ALLOW = (
     "workbay-overrides/",
 )
 
-# In-scope files that cannot be decoded as text, each with the reason it is
-# nonetheless not a leak. Nothing may be skipped silently: an undecodable
-# in-scope file that is NOT declared here fails `verify`, because "we could not
-# read it" and "it is clean" are not the same sentence (CARD-07).
+# In-scope files that cannot be decoded as text, each with the sha256 of the
+# bytes a human actually inspected and the reason those bytes are nonetheless
+# not a leak. Nothing may be skipped silently: an undecodable in-scope file that
+# is NOT declared here fails `verify`, because "we could not read it" and "it is
+# clean" are not the same sentence (CARD-07).
+#
+# The waiver is pinned to content, not to the path. An OOXML container fails to
+# decode no matter what is inside it, so a path-keyed waiver would go on
+# excusing that path through every future edit -- including one that introduces
+# a name nobody has reviewed. Pinning the digest keeps the waiver's scope equal
+# to the evidence behind it (CARD-06); re-inspect and re-pin when it moves.
 DECLARED_UNSCANNABLE = {
     "docs/assessments/current/AltContext_Local_AI_Strategy_Session_Brief.docx": (
+        "27f343d84e4795669d82985c892bef3b840050c6326ce0d011055367320e2a35",
         "OOXML container. Inspected part-by-part: the single roster-token hit in "
         "word/document.xml is a cited author surname inside a bibliography entry "
         "of the form `<author> & <author> (2023).pdf`, not a corpus subject. "
         "Rewriting it would corrupt somebody else's citation -- the same reason "
-        "literature/ is scanned but never edited."
+        "literature/ is scanned but never edited.",
     ),
 }
 
@@ -304,6 +313,10 @@ def _split_declared(
     Only the undeclared half fails the gate. A waiver that no longer names a
     file the scan actually hit is worse than no waiver -- it reads as coverage
     while excusing nothing -- so a stale entry is a hard error, not a shrug.
+
+    A waiver whose file has changed since it was written is the same failure in
+    slower motion, so the pinned digest is checked too: the rationale describes
+    bytes, and once the bytes move it describes nothing (CARD-06).
     """
     hit = {rel for rel, _ in unscannable}
     if stale := sorted(set(DECLARED_UNSCANNABLE) - hit):
@@ -311,6 +324,18 @@ def _split_declared(
             "DECLARED_UNSCANNABLE names files the scan did not report as unscannable: "
             f"{stale}. They were renamed, deleted, or became readable -- re-check each "
             "one and drop or update its entry."
+        )
+    drifted = [
+        (rel, DECLARED_UNSCANNABLE[rel][0], _sha_file(REPO / rel))
+        for rel in sorted(hit & set(DECLARED_UNSCANNABLE))
+        if _sha_file(REPO / rel) != DECLARED_UNSCANNABLE[rel][0]
+    ]
+    if drifted:
+        detail = "; ".join(f"{rel}: pinned {old[:12]}, found {new[:12]}" for rel, old, new in drifted)
+        raise SystemExit(
+            f"DECLARED_UNSCANNABLE waivers no longer match the files they excuse: {detail}. "
+            "The rationale was written against specific bytes and those bytes have changed. "
+            "Re-inspect the current content and re-pin the digest, or drop the waiver."
         )
     declared = [(rel, why) for rel, why in unscannable if rel in DECLARED_UNSCANNABLE]
     return declared, [(rel, why) for rel, why in unscannable if rel not in DECLARED_UNSCANNABLE]
@@ -473,6 +498,45 @@ def _validate_map(mapping: dict) -> None:
             f"{ALIAS_MAP} was minted under a different key than {MINT_KEY}.\n"
             "Applying it would produce aliases the map cannot reverse. Restore the "
             "matching key, or move both aside and re-run `plan` from a clean tree."
+        )
+
+
+def _uncovered_roster_identities(mapping: dict) -> list[str]:
+    """Personal identities in the CURRENT roster that the alias map does not cover.
+
+    Every other check in this file reasons from the map. The map is a snapshot
+    taken at `plan` time, and `plan` refuses to re-run without `--force` (which
+    would re-mint and orphan every existing alias), so the map is expected to
+    outlive many roster edits. Nothing else compares the two: a subject added to
+    the roster after the last `plan` is absent from `entries`, so no pass is ever
+    built for them, `apply` rewrites nothing, and `residue` looks for nothing --
+    both commands exit 0 over a tree carrying that person's name in cleartext.
+    That is a false green produced by the sampling frame, not by any pass
+    (CARD-11): the thing being measured has grown and the measurement has not.
+
+    A covered identity is one the map accounts for in either direction: still a
+    real name awaiting rewrite (pre-`apply`), or already the minted alias
+    (post-`apply`). Anything else is new since the last `plan`.
+
+    Returns slugs, never names -- a caller may print the result.
+    """
+    roster = json.loads(_read(ROSTER))
+    known = {e["real_name"] for e in mapping["entries"]} | {e["alias"] for e in mapping["entries"]}
+    return sorted(
+        i.get("slug", "<no-slug>")
+        for i in roster["identities"]
+        if i.get("bucket") == "personal" and i.get("name") not in known
+    )
+
+
+def _assert_roster_is_covered(mapping: dict) -> None:
+    """Fail closed when the roster has grown past the alias map."""
+    if uncovered := _uncovered_roster_identities(mapping):
+        raise SystemExit(
+            f"{len(uncovered)} personal identities in {ROSTER.name} are absent from {ALIAS_MAP.name}: "
+            f"{uncovered}. They were added after the last `plan`, so no pass covers them and both "
+            "`apply` and `verify` would report clean while their names sit in the tree in cleartext. "
+            "Extend the map for the new subjects (minting under the existing key) before continuing."
         )
 
 
@@ -725,31 +789,98 @@ def _family_words(by_token: dict[str, set[str]]) -> dict[str, str]:
     return out
 
 
-def _given_name_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
+@lru_cache(maxsize=1)
+def _nonpersonal_identities() -> tuple[dict, ...]:
+    """Roster identities the scrub promises not to touch (celebs today).
+
+    Read from the roster rather than the alias map: the map contains only the
+    personal entries, so nothing built from it can know what must be preserved.
+    Cached because `apply` rewrites the roster as it goes, and the set of people
+    who are off limits must be the one read before the first byte moved.
+    """
+    return tuple(i for i in json.loads(_read(ROSTER))["identities"] if i.get("bucket") != "personal")
+
+
+def _protected_literals(identities=None) -> list[str]:
+    """Exact strings belonging to a non-personal identity, masked before any pass.
+
+    The passes below are token-level by necessity -- corpus filenames carry name
+    tokens in orders no full-name alternation can see -- and a token index built
+    from personal entries alone has no way to know that a surname inside
+    `celebs/<first>_<last>_<id>.webp` belongs to somebody the scrub promised to
+    leave alone. It did not know, and it rewrote three real celebrities: two had
+    their media paths renamed while their `name` field kept saying who they
+    really were, desynchronising the name-to-path join the bake-off scores
+    against, and one was renamed outright, so a correct recognition of that
+    person now scores as a miss against rewritten ground truth.
+
+    Masking exact literals rather than blacklisting tokens keeps the fix from
+    creating a leak of its own: a personal subject who shares a surname with a
+    celebrity is still scrubbed everywhere except inside that celebrity's own
+    name, slug, and media path (MODEL-04 -- the identity key is the record, not
+    the name token).
+    """
+    lits: set[str] = set()
+    for i in identities if identities is not None else _nonpersonal_identities():
+        lits.add(i.get("name", ""))
+        lits.add(i.get("slug", ""))
+        for path in set(i.get("primary_of", [])) | set(i.get("appears_in", [])):
+            lits.add(path)
+            lits.add(path.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+    # Below four characters a "literal" is a fragment that would mask unrelated
+    # text; the passes themselves do not fire that short either.
+    return sorted((s for s in lits if len(s) >= 4), key=len, reverse=True)
+
+
+def _nonpersonal_tokens(identities=None) -> set[str]:
+    """Name tokens carried by a non-personal identity, for the bare-token pass.
+
+    Masking covers every *whole* protected literal, but `_given_name_regex`
+    rewrites a lone token in running prose, where there is no literal to mask:
+    a celebrity's bare given name in a caption is not their full name. Nothing
+    in the text says which person it is, so the pass declines -- the same
+    one-sided rule it already applies to dictionary words.
+    """
+    src = identities if identities is not None else _nonpersonal_identities()
+    return {t.lower() for i in src for t in re.split(r"[^A-Za-z]+", i.get("name", "")) if len(t) >= 4}
+
+
+def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -> tuple[re.Pattern | None, dict, list[str]]:
     """Bare name tokens that can only be one person and are not ordinary words.
 
     The full-name pass cannot see `Candid relax by a lake` or `Weavers'`; the
     residue is a real given name in readable prose. The filter is deliberately
-    one-sided: a token that is also a dictionary word (`rose`, `faith`, `ivy`)
-    or that more than one identity shares is left alone, so this under-scrubs
-    rather than rewriting an ordinary caption word into somebody's pseudonym.
+    one-sided: a token that is also a dictionary word (`rose`, `faith`, `ivy`),
+    that more than one identity shares, or that a non-personal identity also
+    carries is left alone, so this under-scrubs rather than rewriting an
+    ordinary caption word -- or a real celebrity -- into somebody's pseudonym.
+
+    The third return value names the tokens dropped for the last reason. A
+    silent drop here is the shape of gap that reads as coverage: the pass stops
+    looking, so `verify` stops counting, and the tree scans clean because
+    nothing is measuring (CARD-11). Callers print it.
     """
+    protected = _nonpersonal_tokens() if protected_tokens is None else protected_tokens
     words = set()
     if _DICT.is_file():
         words = {w.strip().lower() for w in _DICT.read_text(errors="ignore").splitlines()}
     by_token: dict[str, set[str]] = {}
+    deferred: set[str] = set()
     for entry in mapping["entries"]:
         real, alias = entry["real_name"].split(), entry["alias"].split()
         for i, token in enumerate(real):
             if len(token) < 4 or i >= len(alias) or token.lower() in words:
                 continue
+            if token.lower() in protected:
+                deferred.add(token.lower())
+                continue
             by_token.setdefault(token.lower(), set()).add(alias[i])
     resolved = {t: next(iter(a)) for t, a in by_token.items() if len(a) == 1}
     resolved.update(_family_words(by_token))
     if not resolved:
-        return None, {}
+        return None, {}, sorted(deferred)
     alt = "|".join(re.escape(t) for t in sorted(resolved, key=len, reverse=True))
-    return re.compile(NBL + r"(" + alt + r")" + NBR, re.IGNORECASE), resolved
+    return re.compile(NBL + r"(" + alt + r")" + NBR, re.IGNORECASE), resolved, sorted(deferred)
 
 
 class _Passes:
@@ -761,17 +892,52 @@ class _Passes:
     the checker and the rewriter provably the same code (CARD-08).
     """
 
-    def __init__(self, mapping: dict) -> None:
+    # A digit run between NULs. NUL cannot occur in a decoded source file, and
+    # no pass matches bare digits, so a placeholder is inert to every one of
+    # them -- which is the whole point: a masked span must come back byte-identical.
+    _MASK_RX = re.compile("\x00(\\d+)\x00")
+
+    def __init__(self, mapping: dict, identities=None) -> None:
+        # Both protections come from one roster read, so the literal mask and the
+        # bare-token filter can never disagree about who is off limits.
+        idents = _nonpersonal_identities() if identities is None else identities
         self.name_rx, self.by_key = _multi_token_regex(mapping)
         self.data_rx, self.data_key = _multi_token_regex(mapping, singles=True)
         self.quoted_rx, self.singles = _quoted_exact_regex(mapping)
         self.slug_rx, self.leaky = _slug_regex(mapping)
         self.token_index = _token_index(mapping)
-        self.given_rx, self.given = _given_name_regex(mapping)
+        self.given_rx, self.given, self.given_deferred = _given_name_regex(mapping, _nonpersonal_tokens(idents))
         self.concat_rx, self.concat = _concatenated_regex(mapping)
+        lits = _protected_literals(idents)
+        self.protected = lits
+        self.protect_rx = re.compile("|".join(re.escape(s) for s in lits)) if lits else None
+
+    def _mask(self, text: str) -> tuple[str, list[str]]:
+        """Hide every non-personal identity's own strings from all six passes."""
+        if self.protect_rx is None:
+            return text, []
+        held: list[str] = []
+
+        def hold(m: re.Match) -> str:
+            held.append(m.group(0))
+            return f"\x00{len(held) - 1}\x00"
+
+        return self.protect_rx.sub(hold, text), held
+
+    def _unmask(self, text: str, held: list[str]) -> str:
+        if not held:
+            return text
+        out = self._MASK_RX.sub(lambda m: held[int(m.group(1))], text)
+        if "\x00" in out:
+            # A pass ate or split a placeholder, so a protected span cannot be
+            # restored verbatim. Raising is the only honest outcome: the
+            # alternative is writing a file with NULs in it (CARD-07).
+            raise SystemExit("protected-span mask was corrupted by a rewrite pass -- refusing to write.")
+        return out
 
     def rewrite(self, text: str, suffix: str) -> tuple[str, dict[str, int], set[str]]:
         counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0}
+        text, held = self._mask(text)
 
         # Order is load-bearing, most precise pass first. A whole-string JSON
         # token names the identity unambiguously and knows whether it sits in a
@@ -839,7 +1005,7 @@ class _Passes:
 
             text = self.given_rx.sub(_given_repl, text)
 
-        return text, counts, unresolved
+        return self._unmask(text, held), counts, unresolved
 
     def rewrite_path(self, rel: str) -> str:
         """Same passes against a repo-relative path. A tracked filename that
@@ -852,8 +1018,13 @@ class _Passes:
 
     def residue(self, text: str, suffix: str) -> dict[str, int]:
         """Count what each pass *would still* rewrite. Same builders as
-        `rewrite`, so a pass cannot exist in one and be missing in the other."""
+        `rewrite`, so a pass cannot exist in one and be missing in the other.
+
+        Masked identically to `rewrite`. A protected span the rewriter will not
+        touch must not be counted as residue either, or `verify` reports a
+        permanent non-zero over text it has decided is correct."""
         found = {}
+        text, _held = self._mask(text)
         rx = self.data_rx if suffix.lower() in SINGLE_TOKEN_FREE_TEXT_SUFFIXES else self.name_rx
         if n := len(rx.findall(text)):
             found["name"] = n
@@ -901,28 +1072,53 @@ def cmd_plan(args) -> int:
 # records exist to say the parse was rejected; `media_id`, `path` and `reason`
 # carry that on their own). Redact surgically so the file's byte formatting and
 # key order survive.
+# (path, match pattern, replacement template, literal marker the replacement
+# leaves behind). The marker is what lets `verify` check this channel without
+# re-running the substitution, and what distinguishes "already redacted" from
+# "the pattern stopped matching".
 FREE_TEXT_REDACTIONS = (
     (
         "benchmarks/manifests/golden150-draft-20260723.sidecar.json",
         re.compile(r'("parsed_name":\s*)"(?:[^"\\]|\\.)*"'),
         r'\1"<redacted-filename-parse>"',
+        '"parsed_name": "<redacted-filename-parse>"',
     ),
 )
 
 
 def _redact_free_text(dry_run: bool) -> list[tuple[str, int]]:
     out = []
-    for rel, rx, repl in FREE_TEXT_REDACTIONS:
+    for rel, rx, repl, marker in FREE_TEXT_REDACTIONS:
         path = REPO / rel
         if not path.is_file():
             raise SystemExit(f"redaction target missing: {rel}. Update FREE_TEXT_REDACTIONS or restore the file.")
         text = _read(path)
         new_text, n = rx.subn(repl, text)
+        if not n and marker not in text:
+            # A declared redaction that matches nothing has either already run or
+            # stopped matching -- a renamed key, a changed escaping. Only the
+            # first is benign, and the two are distinguishable by whether the
+            # replacement is present. Returning quietly on the second would let
+            # the one channel `verify` cannot see fail open.
+            raise SystemExit(
+                f"redaction {rel} matched 0 times and its replacement is absent. The pattern no "
+                "longer fits the file -- fix FREE_TEXT_REDACTIONS rather than shipping the field unredacted."
+            )
         if n:
             out.append((rel, n))
             if not dry_run:
                 _write(path, new_text)
     return out
+
+
+def _free_text_residue() -> list[str]:
+    """Declared free-text targets whose redaction is not present in the file.
+
+    `_redact_free_text` is the one rewrite channel outside `_Passes`, so the
+    shared-object argument does not cover it and `verify` would otherwise never
+    look at it at all. This is the checker half.
+    """
+    return [rel for rel, _rx, _repl, marker in FREE_TEXT_REDACTIONS if marker not in _read(REPO / rel)]
 
 
 def _reorder_roster(passes: _Passes) -> bool:
@@ -1034,6 +1230,7 @@ def _repin_digests(
 def cmd_apply(args) -> int:
     _load_key()
     mapping = load_map()
+    _assert_roster_is_covered(mapping)
     passes = _Passes(mapping)
     files = _tracked_files()
 
@@ -1114,6 +1311,8 @@ def cmd_apply(args) -> int:
         print(f"  REPIN  {rel} {old[:12]}.. -> {new[:12]}.. (x{n})")
     if all_unresolved:
         print(f"  media stems left alone (token maps to >1 identity): {sorted(all_unresolved)}")
+    if passes.given_deferred:
+        print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     if out_of_scope:
         print(f"  OUT OF SCOPE -- scanned, deliberately not rewritten ({len(out_of_scope)} files):")
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values()))[:20]:
@@ -1122,7 +1321,7 @@ def cmd_apply(args) -> int:
         print(f"  SYMLINK  {rel} -- target string carries {counts}; retarget by hand")
     declared, undeclared = _split_declared(unscannable)
     for rel, reason in sorted(declared):
-        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel].split('.')[0]}. ({reason})")
+        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel][1].split('.')[0]}. ({reason})")
     if undeclared:
         print(f"  UNSCANNABLE -- in scope but never opened ({len(undeclared)} files); coverage is NOT complete:")
         for rel, reason in sorted(undeclared):
@@ -1133,6 +1332,11 @@ def cmd_apply(args) -> int:
 def cmd_verify(args) -> int:
     _load_key()
     mapping = load_map()
+    # Before scanning for what the passes can see, establish that the passes
+    # cover the roster as it stands now. Otherwise a subject added since the
+    # last `plan` produces a clean scan for the reason that nothing is looking
+    # for them (CARD-11).
+    _assert_roster_is_covered(mapping)
     passes = _Passes(mapping)
 
     residue: list[tuple[str, dict[str, int]]] = []
@@ -1162,12 +1366,17 @@ def cmd_verify(args) -> int:
     # which is the same sentence a green gate would print (CARD-07).
     declared, undeclared = _split_declared(unscannable)
     for rel, reason in sorted(declared):
-        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel]} ({reason})")
+        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel][1]} ({reason})")
     for rel, reason in sorted(undeclared):
         print(f"  UNSCANNABLE {rel} -- {reason}")
+    free_text = _free_text_residue()
+    for rel in free_text:
+        print(f"  RESIDUE free-text {rel} -- declared redaction marker absent")
+    if passes.given_deferred:
+        print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(
         f"in-scope residue: {len(residue)} files / {sum(sum(h.values()) for h in (x[1] for x in residue))} occ; "
-        f"paths: {len(path_residue)}; unscannable in-scope: {len(undeclared)} "
+        f"paths: {len(path_residue)}; free-text: {len(free_text)}; unscannable in-scope: {len(undeclared)} "
         f"(+{len(declared)} declared); out-of-scope (reported only): {len(out_of_scope)} files"
     )
     if undeclared:
@@ -1179,7 +1388,7 @@ def cmd_verify(args) -> int:
     if args.show_out_of_scope:
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values())):
             print(f"  OUT-OF-SCOPE {rel} {hits}")
-    return 1 if (residue or path_residue or undeclared) else 0
+    return 1 if (residue or path_residue or undeclared or free_text) else 0
 
 
 def main() -> int:

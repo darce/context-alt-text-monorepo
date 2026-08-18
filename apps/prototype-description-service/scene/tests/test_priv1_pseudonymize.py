@@ -63,6 +63,70 @@ def mapping() -> dict:
     }
 
 
+# --- non-personal identities are off limits, PRIV-1-BR-17 -----------------
+
+
+@pytest.fixture
+def shared_token_mapping() -> dict:
+    # The personal subject's surname is also the celebrity's surname. This is
+    # the shape that silently renamed three real people in the shipped run: the
+    # token index is built from personal entries only and cannot tell whose
+    # surname it is looking at.
+    return {
+        "entries": [
+            {
+                "real_name": "Calderre Vensk",
+                "alias": "Cobalt Harbor",
+                "alias_slug": "cobalt_harbor",
+                "original_slug": "calderre-vensk",
+                "slug_was_name_derived": True,
+                "tokens": 2,
+            }
+        ]
+    }
+
+
+_CELEB = [
+    {
+        "bucket": "celebs",
+        "naming": "real_name",
+        "name": "Marlow Vensk",
+        "slug": "marlow_vensk",
+        "primary_of": ["celebs/marlow_vensk_25.webp"],
+        "appears_in": ["celebs/marlow_vensk_25.webp"],
+    }
+]
+
+
+def test_celebrity_record_survives_a_shared_surname(shared_token_mapping):
+    passes = pz._Passes(shared_token_mapping, identities=_CELEB)
+    record = '{"name": "Marlow Vensk", "slug": "marlow_vensk", "primary_of": ["celebs/marlow_vensk_25.webp"]}'
+    out, _counts, _unresolved = passes.rewrite(record, ".json")
+    assert out == record, "a non-personal identity's own name, slug and media path must come back byte-identical"
+    assert passes.residue(record, ".json") == {}, "and must not be counted as residue either"
+
+
+def test_the_personal_subject_sharing_that_surname_is_still_scrubbed(shared_token_mapping):
+    # The other half of the pair. Protecting the celebrity by blacklisting the
+    # shared token would make this pass -- and leak the subject the scrub exists
+    # for -- so both directions have to be asserted together.
+    passes = pz._Passes(shared_token_mapping, identities=_CELEB)
+    text = '{"name": "Calderre Vensk", "path": "personal/calderre-vensk-04.jpg"}'
+    out, _counts, _unresolved = passes.rewrite(text, ".json")
+    assert "Calderre" not in out and "calderre" not in out
+    assert "Cobalt Harbor" in out and "cobalt_harbor" in out
+    assert passes.residue(text, ".json"), "and the checker must see the same thing the rewriter did"
+
+
+def test_masking_is_load_bearing(shared_token_mapping):
+    # Prove the guard can go red: with no protected identities the same input
+    # is corrupted, which is exactly what shipped.
+    passes = pz._Passes(shared_token_mapping, identities=[])
+    record = '{"name": "Marlow Vensk", "slug": "marlow_vensk"}'
+    out, _counts, _unresolved = passes.rewrite(record, ".json")
+    assert out != record
+
+
 # --- _inside_hex_run -------------------------------------------------------
 
 
@@ -230,8 +294,16 @@ def test_symlink_target_is_scanned_for_residue(mapping):
     assert passes.residue("../shared/ryannewistmoor/hook", ".sh").get("concat") == 1
 
 
-def test_declared_waiver_does_not_excuse_an_undeclared_file(monkeypatch):
-    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {"a.docx": "inspected; cited author"})
+def _waive(tmp_path, monkeypatch, rel: str, body: bytes, *, pin: str | None = None):
+    """Write an in-scope container and waive it under its own (or a wrong) digest."""
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    (tmp_path / rel).write_bytes(body)
+    digest = pin if pin is not None else hashlib.sha256(body).hexdigest()
+    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {rel: (digest, "inspected; cited author")})
+
+
+def test_declared_waiver_does_not_excuse_an_undeclared_file(tmp_path, monkeypatch):
+    _waive(tmp_path, monkeypatch, "a.docx", b"PK\x03\x04 opaque")
     declared, undeclared = pz._split_declared([("a.docx", "not utf-8"), ("b.docx", "not utf-8")])
     assert declared == [("a.docx", "not utf-8")]
     assert undeclared == [("b.docx", "not utf-8")], "an undeclared container must still fail the gate"
@@ -240,14 +312,33 @@ def test_declared_waiver_does_not_excuse_an_undeclared_file(monkeypatch):
 def test_stale_waiver_is_refused(monkeypatch):
     # The file was renamed or became readable. Leaving the waiver in place reads
     # as coverage while excusing nothing.
-    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {"gone.docx": "inspected"})
+    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {"gone.docx": ("00" * 32, "inspected")})
     with pytest.raises(SystemExit, match="did not report as unscannable"):
         pz._split_declared([])
 
 
-def test_every_shipped_waiver_carries_a_rationale():
-    for rel, why in pz.DECLARED_UNSCANNABLE.items():
+def test_waiver_whose_file_changed_since_inspection_is_refused(tmp_path, monkeypatch):
+    # The path still fails to decode -- an OOXML container always will -- so a
+    # path-keyed waiver would go on excusing it through an edit that introduces
+    # a name nobody reviewed. The pin is what bounds the waiver to the bytes the
+    # rationale was written against (CARD-06).
+    _waive(tmp_path, monkeypatch, "a.docx", b"PK\x03\x04 edited since", pin="11" * 32)
+    with pytest.raises(SystemExit, match="no longer match the files they excuse"):
+        pz._split_declared([("a.docx", "not utf-8")])
+
+
+def test_waiver_matching_its_pin_is_accepted(tmp_path, monkeypatch):
+    # Paired with the test above on purpose: a drift check that always raised
+    # would satisfy that one alone.
+    _waive(tmp_path, monkeypatch, "a.docx", b"PK\x03\x04 as inspected")
+    declared, undeclared = pz._split_declared([("a.docx", "not utf-8")])
+    assert declared == [("a.docx", "not utf-8")] and undeclared == []
+
+
+def test_every_shipped_waiver_carries_a_pinned_rationale():
+    for rel, (digest, why) in pz.DECLARED_UNSCANNABLE.items():
         assert len(why) > 60, f"{rel} is waived without a reviewable reason"
+        assert len(digest) == 64 and set(digest) <= set("0123456789abcdef"), f"{rel} waiver is not pinned to bytes"
 
 
 # --- roster re-serialization, PRIV-1-BR-02 --------------------------------
@@ -346,26 +437,42 @@ def test_repin_tracks_every_file_sharing_a_digest(tmp_path, monkeypatch):
 
 
 def test_repin_is_a_noop_on_dry_run(tmp_path, monkeypatch):
+    # Asserted against the live call, not against []: a body that always returns
+    # [] would satisfy the return value alone, so the same fixture is run twice
+    # and the two outcomes must differ. Dry-run must leave both the file and the
+    # pin table untouched; the real run must move the pin.
     monkeypatch.setattr(pz, "REPO", tmp_path)
-    a = tmp_path / "a.txt"
-    a.write_text("changed", encoding="utf-8")
-    assert pz._repin_digests({"a.txt": _sha("original")}, [(a, True)], dry_run=True) == []
+    data = tmp_path / "data.txt"
+    data.write_text("changed", encoding="utf-8")
+    pin = tmp_path / "pin.md"
+    stale = f"sha256: {_sha('original')}\n"
+    pin.write_text(stale, encoding="utf-8")
+    files = [(data, True), (pin, True)]
+
+    dry = {"data.txt": _sha("original")}
+    assert pz._repin_digests(dry, files, dry_run=True) == []
+    assert pin.read_text(encoding="utf-8") == stale, "dry-run must not touch the file"
+    assert dry == {"data.txt": _sha("original")}, "dry-run must not touch the pin table"
+
+    wet = {"data.txt": _sha("original")}
+    assert pz._repin_digests(wet, files, dry_run=False), "the real run must report the re-pin"
+    assert pin.read_text(encoding="utf-8") == f"sha256: {_sha('changed')}\n"
+    assert wet["data.txt"] == _sha("changed")
 
 
 # --- alias vocabulary hygiene, PRIV-1-BR-04 -------------------------------
 
 
-def test_vocab_collision_with_a_real_name_is_refused():
+def test_vocab_disjointness_separates_collisions_from_accepted_names():
+    # Both directions in one test on purpose. A bare "this call does not raise"
+    # test passes against a body of `return`, and a bare "this call raises" test
+    # passes against a body that always raises; only the pair discriminates.
     stolen = pz._ADJ[0].capitalize()
     with pytest.raises(SystemExit, match="alias vocabulary collides"):
         pz._assert_vocab_disjoint_from_roster([{"name": f"{stolen} Vensk", "bucket": "personal"}])
 
-
-def test_disjoint_vocabulary_is_accepted():
     pz._assert_vocab_disjoint_from_roster([{"name": "Ryanne Wistmoor", "bucket": "personal"}])
 
-
-def test_already_minted_aliases_are_not_treated_as_collisions():
     # A wholly alias-shaped name is a previous run's output; `_looks_pseudonymized`
     # owns that case and reports it with the right remedy.
     alias = f"{pz._ADJ[0].capitalize()} {pz._NOUN[0].capitalize()}"

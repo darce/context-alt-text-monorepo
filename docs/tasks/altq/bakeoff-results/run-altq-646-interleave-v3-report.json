@@ -701,7 +701,7 @@
           "recall": 0.0,
           "tp": 0
         },
-        "Linen Neeson": {
+        "Liam Neeson": {
           "fn": 1,
           "fp": 0,
           "precision": null,
@@ -23556,7 +23556,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "celebs/plumb_obama_60.jpg",
+      "path": "celebs/michelle_obama_60.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1538,
       "sentence_count": 1,
@@ -23571,14 +23571,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Linen Neeson"
+        "Liam Neeson"
       ],
       "long": {
         "context_duplication_ratio": null,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Linen Neeson"
+          "Liam Neeson"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -23593,7 +23593,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "celebs/linen_neeson_59.webp",
+      "path": "celebs/liam_neeson_59.webp",
       "policy_violation": false,
       "repetition_ratio": 0.1739,
       "sentence_count": 1,
@@ -24895,7 +24895,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "celebs/bob_harbor_25.webp",
+      "path": "celebs/bob_ross_25.webp",
       "policy_violation": false,
       "repetition_ratio": 0.1739,
       "sentence_count": 1,

@@ -1103,6 +1103,7 @@ def load_manifest(
     *,
     skip_hash_verification: bool = False,
     hash_skip_reason: str | None = None,
+    metadata_only: bool = False,
 ) -> GoldenManifest:
     """Load and validate a v3 golden manifest; verify image hashes by default.
 
@@ -1110,20 +1111,25 @@ def load_manifest(
     from ``len(face_boxes)``. The coverage invariant compares those two
     independently produced numbers (see module docstring).
 
-    Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution order:
+    Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution rules:
 
-    1. Explicit ``images_dir`` argument — always verified.
-    2. Else ``GOLDEN_IMAGES_DIR`` env — verified when the directory exists.
-    3. Else, if ``skip_hash_verification=True`` — metadata-only load (explicit
-       opt-out for score paths that do not read image bytes). The skip is
-       surfaced as ``HashVerificationSkippedWarning`` naming the caller
-       ``hash_skip_reason`` (or ``"no reason supplied"``) and the path
-       (OBS-04).
-    4. Else refuse with an actionable error.
-
+    ``metadata_only=True`` never resolves ``images_dir`` or ``GOLDEN_IMAGES_DIR``
+    and never calls ``_verify_hashes`` or ``resolve_verified_image``.
+    ``metadata_only=True`` requires ``skip_hash_verification=True`` and
+    ``hash_skip_reason`` or it raises ``ManifestError``.
+    ``metadata_only=True`` together with an explicit ``images_dir`` raises
+    ``ManifestError``.
+    ``images_dir=""`` raises ``ManifestError``; pass a real directory or
+    ``metadata_only=True``.
+    Explicit non-empty ``images_dir`` is always verified.
+    Else ``GOLDEN_IMAGES_DIR`` is verified when the directory exists.
+    Else ``skip_hash_verification=True`` is a metadata-only load that emits
+    ``HashVerificationSkippedWarning`` naming ``hash_skip_reason`` (or
+    ``"no reason supplied"``) and the path (OBS-04).
+    Else refuse with an actionable error.
     ``hash_skip_reason`` raises ``ManifestError`` only when
-    ``skip_hash_verification`` is False; when skip is True and images resolve,
-    hashes are still verified and the reason is unused (VLM6-W2-RV-01).
+    ``skip_hash_verification`` is False; skip=True plus resolvable images
+    verifies silently (VLM6-W2-RV-01).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, missing ``annotation_mode``, a
@@ -1275,6 +1281,27 @@ def load_manifest(
             f"is not being skipped (skip_hash_verification={skip_hash_verification}). "
             "A reason without a skip is a caller bug."
         )
+    if images_dir == "":
+        raise ManifestError(
+            "images_dir must be a real directory path; use metadata_only=True "
+            "for deliberate metadata-only loads that must not resolve GOLDEN_IMAGES_DIR"
+        )
+    if metadata_only:
+        if images_dir is not None:
+            raise ManifestError(
+                "metadata_only=True cannot be combined with images_dir; "
+                "metadata_only never resolves an images directory"
+            )
+        if not skip_hash_verification or hash_skip_reason is None:
+            raise ManifestError(
+                "metadata_only=True requires skip_hash_verification=True and hash_skip_reason"
+            )
+        warnings.warn(
+            f"load_manifest: hash verification skipped ({hash_skip_reason}) for {path}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
+        return manifest
     env_images = os.environ.get("GOLDEN_IMAGES_DIR") or None
     candidate = images_dir if images_dir is not None else env_images
     images_exist = bool(candidate) and Path(candidate).is_dir()

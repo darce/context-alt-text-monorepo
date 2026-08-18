@@ -559,6 +559,43 @@ SPLIT_DISJOINTNESS_NOTE = (
     "their images were split by content hash — acceptable for description eval, "
     "must be resolved (move to train) before any face-identification eval uses held_out"
 )
+SPLIT_TOP_LEVEL_KEYS = frozenset(
+    {
+        "schema_version",
+        "seed",
+        "held_out_fraction",
+        "assignment_rule",
+        "draw_timestamp",
+        "protection",
+        "source_manifest",
+        "pre_split_exposure",
+        "exposure_inventory",
+        "held_out",
+        "train",
+        "disjointness",
+        "seal_sha256",
+    }
+)
+SPLIT_HALF_KEYS = frozenset({"media_ids", "sha256", "identities"})
+SPLIT_SOURCE_MANIFEST_KEYS = frozenset({"path", "sha256"})
+SPLIT_DISJOINTNESS_KEYS = frozenset(
+    {
+        "status",
+        "partition_provenance",
+        "identities_spanning_both_halves",
+        "note",
+    }
+)
+SPLIT_EXPOSURE_INVENTORY_KEYS = frozenset(
+    {
+        "entries",
+        "with_present_identities",
+        "with_face_boxes",
+        "with_must_right",
+        "annotation_mode",
+        "empty_identity_media_ids",
+    }
+)
 
 
 class SplitHalf(StrEnum):
@@ -631,10 +668,23 @@ def _is_iso8601_timestamp(value: object) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    return True
+    return parsed.tzinfo is not None
+
+
+def compute_split_seal_sha256(artifact: Mapping) -> str:
+    """sha256 of canonical JSON of the artifact without the seal key (EVAL-10)."""
+    body = {key: value for key, value in artifact.items() if key != "seal_sha256"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _unknown_key_violations(mapping: object, allowed: frozenset[str], *, label: str) -> list[str]:
+    if not isinstance(mapping, dict):
+        return []
+    return [f"unknown {label} key: {key}" for key in sorted(set(mapping) - allowed)]
 
 
 def draw_eval_split(
@@ -652,7 +702,7 @@ def draw_eval_split(
     if not isinstance(partition_provenance, str) or not partition_provenance.strip():
         raise ValueError("partition_provenance is required and must be a non-empty string")
     held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
-    return {
+    artifact = {
         "schema_version": SUPPORTED_SPLIT_SCHEMA_VERSION,
         "seed": seed,
         "held_out_fraction": held_out_fraction,
@@ -671,6 +721,8 @@ def draw_eval_split(
             "note": SPLIT_DISJOINTNESS_NOTE,
         },
     }
+    artifact["seal_sha256"] = compute_split_seal_sha256(artifact)
+    return artifact
 
 
 def verify_eval_split(
@@ -682,9 +734,31 @@ def verify_eval_split(
     expected_held_out_fraction: float | None = None,
     expected_draw_timestamp: str | None = None,
     expected_partition_provenance: str | None = None,
+    expected_source_manifest_path: str | None = None,
+    expected_pre_split_exposure: list[str] | None = None,
 ) -> list[str]:
     """Recompute the expected artifact; return human-readable violations (empty = OK)."""
     violations: list[str] = []
+    violations.extend(_unknown_key_violations(artifact, SPLIT_TOP_LEVEL_KEYS, label="top-level"))
+    violations.extend(_unknown_key_violations(artifact.get("held_out"), SPLIT_HALF_KEYS, label="held_out"))
+    violations.extend(_unknown_key_violations(artifact.get("train"), SPLIT_HALF_KEYS, label="train"))
+    violations.extend(
+        _unknown_key_violations(artifact.get("source_manifest"), SPLIT_SOURCE_MANIFEST_KEYS, label="source_manifest")
+    )
+    violations.extend(
+        _unknown_key_violations(artifact.get("disjointness"), SPLIT_DISJOINTNESS_KEYS, label="disjointness")
+    )
+    violations.extend(
+        _unknown_key_violations(
+            artifact.get("exposure_inventory"), SPLIT_EXPOSURE_INVENTORY_KEYS, label="exposure_inventory"
+        )
+    )
+
+    recorded_seal = artifact.get("seal_sha256")
+    expected_seal = compute_split_seal_sha256(artifact)
+    if recorded_seal != expected_seal:
+        violations.append(f"seal digest mismatch: recorded={recorded_seal!r} recomputed={expected_seal}")
+
     schema_version = artifact.get("schema_version")
     if schema_version != SUPPORTED_SPLIT_SCHEMA_VERSION:
         violations.append(f"unsupported schema_version: {schema_version!r}")
@@ -701,8 +775,16 @@ def verify_eval_split(
         )
 
     exposure = artifact.get("pre_split_exposure")
-    if not isinstance(exposure, list) or not exposure or not all(isinstance(note, str) and note for note in exposure):
+    if (
+        not isinstance(exposure, list)
+        or not exposure
+        or not all(isinstance(note, str) and note.strip() for note in exposure)
+    ):
         violations.append(f"pre_split_exposure must be a non-empty list of non-empty strings: {exposure!r}")
+    if expected_pre_split_exposure is not None and exposure != expected_pre_split_exposure:
+        violations.append(
+            f"pre_split_exposure mismatch: recorded={exposure!r} expected={expected_pre_split_exposure!r}"
+        )
 
     seed = artifact.get("seed")
     if not isinstance(seed, str) or not seed:
@@ -722,6 +804,10 @@ def verify_eval_split(
     source = source if isinstance(source, dict) else {}
     if not source.get("path"):
         violations.append(f"source_manifest.path missing or empty: {source.get('path')!r}")
+    if expected_source_manifest_path is not None and source.get("path") != expected_source_manifest_path:
+        violations.append(
+            f"source_manifest.path mismatch: recorded={source.get('path')!r} expected={expected_source_manifest_path!r}"
+        )
     recorded_source_sha = source.get("sha256")
     if not isinstance(recorded_source_sha, str) or len(recorded_source_sha) != 64:
         violations.append(f"source_manifest.sha256 missing or not 64 hex chars: {recorded_source_sha!r}")
@@ -743,6 +829,10 @@ def verify_eval_split(
     if expected_partition_provenance is not None and provenance != expected_partition_provenance:
         violations.append(
             f"partition_provenance mismatch: recorded={provenance!r} expected={expected_partition_provenance!r}"
+        )
+    if disjointness.get("note") != SPLIT_DISJOINTNESS_NOTE:
+        violations.append(
+            f"disjointness.note mismatch: recorded={disjointness.get('note')!r} expected={SPLIT_DISJOINTNESS_NOTE!r}"
         )
 
     held = artifact.get("held_out") or {}
@@ -796,6 +886,12 @@ def verify_eval_split(
         violations.append(
             f"identities_spanning_both_halves drifted: recorded={recorded_span} recomputed={expected_span}"
         )
+    if status == SplitDisjointnessStatus.VERIFIED.value and expected_span:
+        violations.append(
+            f"disjointness.status verified but identities_spanning_both_halves is non-empty: {expected_span}"
+        )
+    if status == SplitDisjointnessStatus.PROVISIONAL.value and not expected_span:
+        violations.append("disjointness.status provisional but identities_spanning_both_halves is empty")
 
     expected_inventory = _exposure_inventory(manifest)
     recorded_inventory = artifact.get("exposure_inventory")

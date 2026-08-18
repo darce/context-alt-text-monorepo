@@ -10,7 +10,14 @@ import pytest
 
 from scripts.eval_harness.cli import main
 from scripts.eval_harness.manifest import load_manifest
-from scripts.eval_harness.strata import SplitHalf, assign_split, draw_eval_split, verify_eval_split
+from scripts.eval_harness.strata import (
+    SPLIT_DISJOINTNESS_NOTE,
+    SplitDisjointnessStatus,
+    SplitHalf,
+    assign_split,
+    draw_eval_split,
+    verify_eval_split,
+)
 
 _SEED_MANIFEST = Path(__file__).resolve().parent / "seed" / "golden.json"
 _SEALED_SPLIT = (
@@ -63,7 +70,7 @@ _SYNTHETIC_SHAS = [f"{index:064x}" for index in range(64)]
 def _load_golden():
     return load_manifest(
         str(_SEED_MANIFEST),
-        images_dir="",
+        metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason=_HASH_SKIP_REASON,
     )
@@ -150,20 +157,33 @@ def test_verify_eval_split_catches_moved_id_bad_rule_and_stale_span():
     assert any("identities_spanning_both_halves" in message for message in stale_violations)
 
 
+def _check_cli_args(out: Path, **overrides) -> list[str]:
+    args = {
+        "manifest": str(_SEED_MANIFEST),
+        "out": str(out),
+        "seed": _DRAW_SEED,
+        "draw_timestamp": _DRAW_TIMESTAMP,
+        "partition_provenance": _PARTITION_PROVENANCE,
+    }
+    args.update(overrides)
+    return [
+        "draw-eval-split",
+        "--manifest",
+        args["manifest"],
+        "--out",
+        args["out"],
+        "--check",
+        "--seed",
+        args["seed"],
+        "--draw-timestamp",
+        args["draw_timestamp"],
+        "--partition-provenance",
+        args["partition_provenance"],
+    ]
+
+
 def test_cli_check_exits_0_on_committed_artifact():
-    assert (
-        main(
-            [
-                "draw-eval-split",
-                "--manifest",
-                str(_SEED_MANIFEST),
-                "--out",
-                str(_SEALED_SPLIT),
-                "--check",
-            ]
-        )
-        is None
-    )
+    assert main(_check_cli_args(_SEALED_SPLIT)) is None
 
 
 def test_cli_draw_without_force_exits_3_on_existing_out(tmp_path):
@@ -202,6 +222,8 @@ def test_cli_held_out_fraction_bounds_exit_2(tmp_path, fraction):
                 _DRAW_SEED,
                 "--draw-timestamp",
                 _DRAW_TIMESTAMP,
+                "--partition-provenance",
+                _PARTITION_PROVENANCE,
                 "--held-out-fraction",
                 fraction,
             ]
@@ -274,82 +296,66 @@ def test_verify_invalid_disjointness_status_is_violation():
     assert any("status" in message for message in violations)
 
 
-def test_cli_check_tampered_fields_exit_1(tmp_path):
-    # RV-03 / RV-08: edited draw_timestamp / pre_split_exposure / source sha.
+def _tamper_draw_timestamp_not_iso(artifact):
+    artifact["draw_timestamp"] = "not-iso-8601"
+
+
+def _tamper_pre_split_exposure_empty(artifact):
+    artifact["pre_split_exposure"] = []
+
+
+def _tamper_source_manifest_sha(artifact):
+    artifact["source_manifest"]["sha256"] = "0" * 64
+
+
+def _tamper_held_out_sha(artifact):
+    artifact["held_out"]["sha256"][0] = "0" * 64
+
+
+@pytest.mark.parametrize(
+    "mutator, needle",
+    [
+        (_tamper_draw_timestamp_not_iso, "draw_timestamp"),
+        (_tamper_pre_split_exposure_empty, "pre_split_exposure"),
+        (_tamper_source_manifest_sha, "source_manifest.sha256"),
+        (_tamper_held_out_sha, "sha256"),
+    ],
+    ids=["draw_timestamp", "pre_split_exposure", "source_sha", "held_out_sha"],
+)
+def test_cli_check_tampered_fields_exit_1(tmp_path, capsys, mutator, needle):
+    # W3-RV-04: one tamper per case; capture the specific violation (TEST-15).
     tampered = json.loads(_SEALED_SPLIT.read_text())
-    tampered["draw_timestamp"] = "not-iso-8601"
-    tampered["pre_split_exposure"] = []
-    tampered["source_manifest"]["sha256"] = "0" * 64
+    mutator(tampered)
     out = tmp_path / "split.json"
     out.write_text(json.dumps(tampered, indent=2, sort_keys=True) + "\n")
     with pytest.raises(SystemExit) as excinfo:
-        main(
-            [
-                "draw-eval-split",
-                "--manifest",
-                str(_SEED_MANIFEST),
-                "--out",
-                str(out),
-                "--check",
-            ]
-        )
+        main(_check_cli_args(out))
     assert excinfo.value.code == 1
-
-
-def test_cli_check_tampered_sha_exits_1(tmp_path):
-    # RV-08: --check of a sha-poisoned artifact must be SystemExit 1, not None.
-    tampered = json.loads(_SEALED_SPLIT.read_text())
-    tampered["held_out"]["sha256"][0] = "0" * 64
-    out = tmp_path / "split.json"
-    out.write_text(json.dumps(tampered, indent=2, sort_keys=True) + "\n")
-    with pytest.raises(SystemExit) as excinfo:
-        main(
-            [
-                "draw-eval-split",
-                "--manifest",
-                str(_SEED_MANIFEST),
-                "--out",
-                str(out),
-                "--check",
-            ]
-        )
-    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert needle in captured.err or needle in captured.out
 
 
 def test_cli_check_wrong_partition_provenance_exits_1():
     with pytest.raises(SystemExit) as excinfo:
-        main(
-            [
-                "draw-eval-split",
-                "--manifest",
-                str(_SEED_MANIFEST),
-                "--out",
-                str(_SEALED_SPLIT),
-                "--check",
-                "--partition-provenance",
-                "pre-audit, buffalo-derived merge-only",
-            ]
-        )
+        main(_check_cli_args(_SEALED_SPLIT, partition_provenance="pre-audit, buffalo-derived merge-only"))
     assert excinfo.value.code == 1
+
+
+def test_cli_check_wrong_exposure_note_exits_1(capsys):
+    args = _check_cli_args(_SEALED_SPLIT)
+    args.extend(["--exposure-note", "no prior exposure"])
+    with pytest.raises(SystemExit) as excinfo:
+        main(args)
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "pre_split_exposure" in captured.err
 
 
 def test_cli_check_is_metadata_only_without_image_bytes(tmp_path, monkeypatch):
     empty = tmp_path / "no-bytes"
     empty.mkdir()
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
-    assert (
-        main(
-            [
-                "draw-eval-split",
-                "--manifest",
-                str(_SEED_MANIFEST),
-                "--out",
-                str(_SEALED_SPLIT),
-                "--check",
-            ]
-        )
-        is None
-    )
+    assert main(_check_cli_args(_SEALED_SPLIT)) is None
 
 
 def _draw_cli_args(out: Path) -> list[str]:
@@ -375,7 +381,130 @@ def _draw_cli_args(out: Path) -> list[str]:
 
 
 def test_cli_check_committed_and_redraw_is_byte_identical(tmp_path):
-    assert (
+    assert main(_check_cli_args(_SEALED_SPLIT)) is None
+    redrawn = tmp_path / "split.json"
+    assert main(_draw_cli_args(redrawn)) is None
+    assert redrawn.read_bytes() == _SEALED_SPLIT.read_bytes()
+
+
+def _mutate_draw_timestamp_future(artifact):
+    artifact["draw_timestamp"] = "2099-01-01T00:00:00Z"
+
+
+def _mutate_draw_timestamp_date_only(artifact):
+    artifact["draw_timestamp"] = "2026-08-18"
+
+
+def _mutate_exposure_rewrite(artifact):
+    artifact["pre_split_exposure"] = ["no prior exposure"]
+
+
+def _mutate_exposure_whitespace(artifact):
+    artifact["pre_split_exposure"] = [" "]
+
+
+def _mutate_partition_provenance(artifact):
+    artifact["disjointness"]["partition_provenance"] = "cluster-disjoint verified"
+
+
+def _mutate_source_manifest_path(artifact):
+    artifact["source_manifest"]["path"] = "apps/evil/golden.json"
+
+
+def _mutate_disjointness_note_deleted(artifact):
+    artifact["disjointness"].pop("note", None)
+
+
+def _mutate_disjointness_note_rewrite(artifact):
+    artifact["disjointness"]["note"] = "safe for face-id"
+
+
+def _mutate_top_level_unknown(artifact):
+    artifact["operator_blessed"] = True
+
+
+def _mutate_held_out_unknown(artifact):
+    artifact["held_out"]["human_override"] = True
+
+
+def _mutate_source_manifest_unknown(artifact):
+    artifact["source_manifest"]["blessed_by"] = "operator"
+
+
+def _mutate_disjointness_unknown(artifact):
+    artifact["disjointness"]["auditor"] = "buffalo"
+
+
+@pytest.mark.parametrize(
+    "mutator, needle",
+    [
+        (_mutate_draw_timestamp_future, "seal digest"),
+        (_mutate_draw_timestamp_date_only, "draw_timestamp"),
+        (_mutate_exposure_rewrite, "seal digest"),
+        (_mutate_exposure_whitespace, "pre_split_exposure"),
+        (_mutate_partition_provenance, "partition_provenance"),
+        (_mutate_source_manifest_path, "source_manifest.path"),
+        (_mutate_disjointness_note_deleted, "disjointness.note"),
+        (_mutate_disjointness_note_rewrite, "disjointness.note"),
+        (_mutate_top_level_unknown, "operator_blessed"),
+        (_mutate_held_out_unknown, "human_override"),
+        (_mutate_source_manifest_unknown, "blessed_by"),
+        (_mutate_disjointness_unknown, "auditor"),
+    ],
+    ids=[
+        "draw_timestamp_future",
+        "draw_timestamp_date_only",
+        "exposure_rewrite",
+        "exposure_whitespace",
+        "partition_provenance",
+        "source_manifest_path",
+        "note_deleted",
+        "note_rewrite",
+        "unknown_top_level",
+        "unknown_held_out",
+        "unknown_source_manifest",
+        "unknown_disjointness",
+    ],
+)
+def test_verify_eval_split_field_rewrites_name_the_field(mutator, needle):
+    artifact = _draw_golden()
+    mutator(artifact)
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        expected_draw_timestamp=_DRAW_TIMESTAMP,
+        expected_partition_provenance=_PARTITION_PROVENANCE,
+        expected_source_manifest_path="scene/tests/seed/golden.json",
+        expected_pre_split_exposure=["fixture exposure"],
+    )
+    assert violations
+    assert any(needle in message for message in violations), violations
+
+
+def test_verify_seal_digest_mismatch():
+    artifact = _draw_golden()
+    artifact["draw_timestamp"] = "2099-01-01T00:00:00Z"
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("seal digest mismatch" in message for message in violations), violations
+
+
+def test_verify_status_verified_flip_is_violation():
+    artifact = _draw_golden()
+    assert artifact["disjointness"]["identities_spanning_both_halves"]
+    artifact["disjointness"]["status"] = SplitDisjointnessStatus.VERIFIED.value
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("verified" in message and "status" in message for message in violations), violations
+
+
+def test_verify_unknown_top_level_key_is_violation():
+    artifact = _draw_golden()
+    artifact["operator_blessed"] = True
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("operator_blessed" in message for message in violations), violations
+
+
+def test_cli_bare_check_without_required_flags_exits_2():
+    with pytest.raises(SystemExit) as excinfo:
         main(
             [
                 "draw-eval-split",
@@ -386,8 +515,10 @@ def test_cli_check_committed_and_redraw_is_byte_identical(tmp_path):
                 "--check",
             ]
         )
-        is None
-    )
-    redrawn = tmp_path / "split.json"
-    assert main(_draw_cli_args(redrawn)) is None
-    assert redrawn.read_bytes() == _SEALED_SPLIT.read_bytes()
+    assert excinfo.value.code == 2
+
+
+def test_committed_artifact_verifies_clean():
+    artifact = json.loads(_SEALED_SPLIT.read_text())
+    assert verify_eval_split(artifact, _load_golden()) == []
+    assert artifact["disjointness"]["note"] == SPLIT_DISJOINTNESS_NOTE

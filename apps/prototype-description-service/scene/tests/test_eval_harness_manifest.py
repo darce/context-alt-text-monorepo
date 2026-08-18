@@ -5,6 +5,7 @@ import json
 import os
 import unicodedata
 import warnings
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -21,7 +22,6 @@ from scripts.eval_harness.manifest import (
     SliceTag,
     load_manifest,
 )
-
 
 _MOCK_PROVENANCE = {
     "source": "fixture",
@@ -577,9 +577,7 @@ def test_seed_corpus_uses_fixture_provenance():
     """Vendored seed pixels are fixture/fixture, not operator/mock_entity (PROV-01)."""
     seed_dir = os.path.join(os.path.dirname(__file__), "seed")
     for name in ("golden.json", "bakeoff_golden.json"):
-        manifest = load_manifest(
-            os.path.join(seed_dir, name), skip_hash_verification=True
-        )
+        manifest = load_manifest(os.path.join(seed_dir, name), skip_hash_verification=True)
         assert manifest.entries, f"{name} must not be empty"
         for entry in manifest.entries:
             assert entry.provenance.source.value == "fixture", entry.path
@@ -1067,9 +1065,7 @@ def test_exhaustive_matching_boxes_loads(tmp_path):
     ]
     data["entries"][1]["face_count"] = 0
     data["entries"][1]["face_boxes"] = []
-    manifest = load_manifest(
-        _write_manifest(tmp_path, data), skip_hash_verification=True
-    )
+    manifest = load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
     assert manifest.annotation_mode is AnnotationMode.EXHAUSTIVE
     assert manifest.entries[0].face_boxes[0].lineage.capture_session_id == "test-session"
 
@@ -1198,8 +1194,67 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
     )
     # roster_only score-face raises via the CLI wrapper; pin the invariant.
     with pytest.raises(SystemExit, match=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY) as exc_info:
-        cli_mod.main(
-            ["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)]
-        )
+        cli_mod.main(["score-face", "--manifest", str(man_path), "--run-record", str(face_record_path)])
     assert "score_face_run_record refuses roster_only" in str(exc_info.value)
     assert hits == []
+
+
+# --- VLM6-W3-RV-01: metadata_only load (OBS-04) --------------------------------
+
+
+def test_load_manifest_metadata_only_ignores_existing_empty_golden_dir(tmp_path, monkeypatch):
+    """W3-RV-01(a): metadata_only never opens image bytes even when GOLDEN_IMAGES_DIR exists."""
+    empty_images = tmp_path / "empty-golden"
+    empty_images.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty_images))
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    reason = "metadata-only; image bytes never opened"
+    original_read_bytes = Path.read_bytes
+    reads: list[Path] = []
+
+    def _spy(self):
+        reads.append(Path(self))
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _spy)
+    with pytest.warns(HashVerificationSkippedWarning) as rec:
+        manifest = load_manifest(
+            path,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason=reason,
+        )
+    assert len(manifest.entries) == 2
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    assert reason in str(skipped[0].message)
+    assert reads == []
+
+
+def test_load_manifest_metadata_only_without_skip_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="metadata_only"):
+        load_manifest(path, metadata_only=True)
+
+
+def test_load_manifest_metadata_only_with_images_dir_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    images = tmp_path / "images"
+    images.mkdir()
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="metadata_only"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="must not pair with images_dir",
+        )
+
+
+def test_load_manifest_empty_images_dir_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.raises(ManifestError, match="images_dir must be a real directory path; use metadata_only=True"):
+        load_manifest(path, images_dir="")

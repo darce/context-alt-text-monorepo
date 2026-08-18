@@ -31,6 +31,25 @@ python scripts/privacy/priv1_pseudonymize.py verify   # re-scan for residue
 `apply` also supports `--dry-run`, `--top N`, and `--no-reorder`; `verify`
 supports `--show-out-of-scope`.
 
+`verify` will not run without a pin record. If the private store has a map
+and a key but no `$ACX_CORPUS_PRIVATE_DIR/priv1-digest-pins.json`, it exits
+immediately:
+
+```
+pin record not found: <path>/priv1-digest-pins.json. Run `apply` (not --dry-run) to publish one. An absent record cannot be treated as 'all pins fine'.
+```
+
+That is a hard dependency, not a skip. An operator who has been running
+`verify` for weeks and has not yet re-run a wet `apply` will hit it. The
+fix is to run `apply` once (not `--dry-run`) so it publishes the record;
+`verify` will then load it.
+
+The record is deliberately untracked. Putting it in the tree would put it
+in the pin graph: it is a JSON file of 64-hex literals, persist writes it
+*after* the re-pin fixpoint, and a pin of the record file would go stale
+on every write. It lives next to the alias map, behind the same ignore
+fence, so `_tracked_files` never sees it.
+
 All three commands need a word list, used to decide which roster tokens are
 ordinary English and must be left alone. It defaults to `/usr/share/dict/words`
 and is overridden with `$PRIV1_WORDLIST`. A missing, unreadable or empty list is
@@ -91,23 +110,26 @@ $ python scripts/privacy/priv1_pseudonymize.py verify
   bare tokens left alone (also carried by a non-personal identity): ['liam']
   concat exclusions: 4 dropped (4× single-token name; no concatenation exists)
   adjacent exclusions: 6 dropped (4× no positional alias token; 2× pair maps to >1 identity)
-in-scope residue: 3 files / 3 occ; paths: 0; free-text: 0; ambiguous stems: 3;
+  ambiguous media stems: 0 left unresolved (token maps to >1 identity)
+in-scope residue: 0 files / 0 occ; paths: 0; free-text: 0;
 unscannable in-scope: 0 (+1 declared); out-of-scope (reported only): 35 files
-exit 1
+exit 0
 ```
 
-**`verify` currently exits 1, and that is the honest answer, not a
-regression.** The three occurrences are media stems whose token is shared by
-two or more personal identities. They were always on disk; what changed is
-that they are now counted. Previously `_ambiguous_stem_line` printed them as
-a note while the exit code stayed 0 — a measurement with no consequence
-attached, which is the shape a reader mistakes for a clean run (PRIV-1-BR-15).
-They have no repair path yet: the filename pass leaves an ambiguous stem
-alone by design, and the family-word backstop never sees the token because
-the given-name pass drops dictionary words before it runs, so a shared
-surname that is also an ordinary English word falls through both. Tracked as
-PRIV-1-BR-29. Until it lands, a non-zero `verify` here means *these three and
-nothing else*; a fourth would be new.
+**`verify` currently exits 0.** The three media stems that used to keep it
+at 1 were shared tokens that also happen to be ordinary English. The
+filename pass still leaves an ambiguous stem alone when no replacement
+exists, but `_ambiguous_family_words` now mints one shared family noun for
+a token two or more identities carry (PRIV-1-BR-29). Previously
+`_ambiguous_stem_line` printed them as a note while the exit code stayed 0
+— a measurement with no consequence attached, which is the shape a reader
+mistakes for a clean run (PRIV-1-BR-15). A non-zero `verify` here is new
+residue, not those three.
+
+`verify` also prints `digest pins: N published; S stale; M missing` on
+every run, including the zero case. That count is live and is not pinned
+here. A missing record is not a zero on that line — it is the hard
+failure above.
 
 Independent oracle (`str.find` over needles built from the alias map, sharing no
 code with the script) across 2,994 tracked files:
@@ -122,9 +144,11 @@ code with the script) across 2,994 tracked files:
 | slug / snake / dot-form occurrences remaining | **0** |
 | offending files                             | **0** |
 
-exit 0. The oracle scans for *pre-scrub roster forms*; the three
-ambiguous stems above are not among its needles, which is why the two
-checkers disagree on the exit code while agreeing on the bytes.
+exit 0. The oracle scans for *pre-scrub roster forms*. The two
+checkers now agree on the exit code as well as the bytes: the
+ambiguous stems the script used to count are rewritten by the family
+backstop (PRIV-1-BR-29), and they were never among the oracle's
+needles.
 
 Three classes are deliberately left in place, and none is a residue claim:
 
@@ -151,12 +175,14 @@ Three classes are deliberately left in place, and none is a residue claim:
   rationale; any *undeclared* undecodable in-scope file fails `verify` with a
   non-zero exit.
 
-Media stems that map to more than one identity are left alone by the filename
-pass; the family-word pass covers those identities' surnames. The stems are not
-listed here — one of them is a roster given name, and a document explaining the
-scrub must not be the thing that publishes it. `apply` prints the live list
-(`media stems left alone (token maps to >1 identity)`), re-derived from the
-roster on every run rather than pinned here where it would rot.
+Media stems that map to more than one identity used to be left alone by the
+filename pass; `_ambiguous_family_words` now mints a shared family noun for
+those tokens (PRIV-1-BR-29). The stems are not listed here — one of them is
+a roster given name, and a document explaining the scrub must not be the
+thing that publishes it. `apply` and `verify` print the count
+(`ambiguous media stems: N left unresolved (token maps to >1 identity)`),
+re-derived from the roster on every run rather than pinned here where it
+would rot. They never print the token.
 
 ## Traps this script exists to avoid
 
@@ -171,7 +197,7 @@ roster on every run rather than pinned here where it would rot.
   changes that file's own digest (3 second-order pins measured). Non-convergence
   raises rather than passing quietly.
 - `rewrite()` and `residue()` share one `_Passes` object, so `verify` provably
-  exercises the same seven passes as `apply` (CARD-08). Sharing the object is
+  exercises the same eight passes as `apply` (CARD-08). Sharing the object is
   necessary but not sufficient: both are built from the same builders, so a
   builder that drops an entry blinds the checker and the rewriter together.
   That has now happened three times — the concatenated form as a whole; four
@@ -257,13 +283,24 @@ roster on every run rather than pinned here where it would rot.
   makes coverage depend on whether an overlay happens to be materialized in the
   current worktree — seven git-hook links read as `FileNotFoundError` and looked
   like a scan gap.
+- A rewrite that goes around `apply` leaves every pin of that file stale.
+  `_repin_digests` only runs inside `apply` and its baseline is the in-run
+  map, so a one-shot migration that calls the passes and the writer directly
+  has nothing to detect against. `verify` now re-hashes the pin record
+  (PRIV-1-BR-32).
+- A shared surname that is also an ordinary English word had no repair path
+  in a filename stem. The given-name pass drops dictionary words before
+  `_family_words` runs, and the filename pass leaves an ambiguous stem
+  alone. `_ambiguous_family_words` is the third path (PRIV-1-BR-29).
 
 ## Known limits
 
-- **Digest pins only track drift this script caused.** `_repin_digests` diffs
-  digests captured at the top of an `apply` run against post-rewrite digests, so
-  a digest that moves out-of-band — a hand edit, a rebase, a re-serialization by
-  another tool — is invisible to it, and `verify` does not check pins at all.
-  Both commands will report clean over a stale pin. Repair is a manual old→new
-  sweep iterated to a fixpoint. Tracked as PRIV-1-BR-11.
+- **Digest re-pinning still only repairs drift this script caused.**
+  `_repin_digests` diffs digests captured at the top of an `apply` run
+  against post-rewrite digests, so a digest that moves out-of-band — a
+  hand edit, a rebase, a re-serialization by another tool — is invisible
+  to the rewriter. `verify` now re-hashes every path in the pin record
+  and exits 1 on stale or missing (PRIV-1-BR-11, PRIV-1-BR-32). Repair of
+  an out-of-band move is still a manual old→new sweep iterated to a
+  fixpoint; the next `apply` will not do it.
 - **CI cannot gate any of this** (see *The key*). `verify` is an operator check.

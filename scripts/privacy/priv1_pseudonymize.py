@@ -1713,6 +1713,12 @@ def _repin_digests(
 _PIN_RECORD_NAME = "priv1-digest-pins.json"
 _PIN_RECORD_SCHEMA = "priv1-digest-pins/1"
 
+# Pin literals are sha256 hexdigest() — lowercase, exactly 64 chars.
+# Compiled once. No word boundaries: `_live_pin_targets` used to
+# alternate the published digests with none, and a digest sitting
+# inside a longer hex run still counted (BR-34).
+_HEX64_RX = re.compile(r"[0-9a-f]{64}")
+
 
 def _pin_record_path() -> Path:
     # Derived at call time so a test that monkeypatches PRIVATE does not
@@ -1854,6 +1860,8 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
     a *previous* digest. This finds literals that match a *current* one.
     Both treat such a literal as a pin by construction, so this is not a
     guess about unmatched hex (an upstream release, an untracked artifact).
+    The scan is a generic 64-hex pass filtered through ``digest_to_rels``,
+    not an alternation of every published digest (BR-34).
 
     Current digests are hashed from ``files``. ``published`` scopes which
     paths are eligible (files the caller already knew about) but its
@@ -1880,7 +1888,10 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
         digest_to_rels.setdefault(digest, []).append(rel)
     if not digest_to_rels:
         return {}
-    rx = re.compile("|".join(re.escape(d) for d in digest_to_rels))
+    # One linear [0-9a-f]{64} pass, then a dict probe. Alternating
+    # every published digest is O(text × |digests|) in Python's `re`
+    # (BR-34). The probe is load-bearing: findall now yields 64-hex
+    # strings that are not keys of digest_to_rels.
     found: dict[str, str] = {}
     for path, in_scope in files:
         if not in_scope or not path.is_file():
@@ -1888,8 +1899,11 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
         text, _reason = _read_or_reason(path)
         if text is None:
             continue
-        for digest in set(rx.findall(text)):
-            for rel in digest_to_rels[digest]:
+        for digest in set(_HEX64_RX.findall(text)):
+            rels = digest_to_rels.get(digest)
+            if rels is None:
+                continue
+            for rel in rels:
                 found[rel] = digest
     return found
 

@@ -14,7 +14,7 @@ Lane branch: `master` (throwaway copy). Code commit `86d3bb8966f996baf19031bf7f0
 | R1-06 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `collects aria-label/title/alt/placeholder so a banned attribute fails the sweep` | `collectVisibleText(container)` only (no attrs) → `Open cluster` button does **not** match; `collectReviewSurfaceText(document.body)` does |
 | R1-07 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `normalises NFC + case + whitespace` / `binds a roster person who fell outside the display budget` / `forces an explicit choice` | Drop `.normalize('NFC')` + case-fold → `normalizeNameFaceLabel(nfd) !== normalizeNameFaceLabel('CAFÉ')` |
 | R1-08 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `type + Enter commits the typed name` / `clicking confirm on a suggestion row` / `prefilled roster name + Enter binds` | Skip `skipPersonOnlyGuard` → unique person + Enter arms rename-anyway instead of `updateClusterLabel` |
-| R1-09 | (this file) | n/a (report rewrite) | n/a — SHAs from `git rev-parse` |
+| R1-09 | `40fe0a1b193693a2b2ccda845bf71b61afe87a92` | n/a (report rewrite) | n/a — SHAs from `git rev-parse` |
 | R1-10 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `gettext first arguments are literals` | `setError(__(RESERVED_LABEL_MESSAGE))` → test lists `ClusterLabelingPanel.tsx: __(RESERVED_LABEL_MESSAGE` |
 | R1-11 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `SuggestionCard > renders the face-count string and review title` / `TopClusterCard Skip title` | Revert title to `Review cluster details` → sweep + title assert RED |
 | R1-12 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `type + Enter on an existing group name primes the same merge guard` | `onCommit` → `submitLabel` only, no collision path → `updateClusterLabel` called, no merge prompt |
@@ -100,4 +100,4 @@ Lane branch: `master` (throwaway copy). Code commit `86d3bb8966f996baf19031bf7f0
 
 ## Final HEAD
 
-(filled after this commit)
+`40fe0a1b193693a2b2ccda845bf71b61afe87a92`

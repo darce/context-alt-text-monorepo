@@ -46,3 +46,21 @@ def test_load_bench_manifest_default_still_raises_without_images_dir(tmp_path: P
 
     with pytest.raises(ManifestError):
         load_bench_manifest(manifest_path, None)
+
+
+def test_load_manifest_from_run_unresolvable_env_is_not_reason_without_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VLM6-W2-RV-01: GOLDEN_IMAGES_DIR set but missing must not fire reason-without-skip.
+
+    skip=True + unresolvable env dir does not resolve images (resolution order
+    step 2 requires a real dir). Metadata-only scoring keeps the skip path.
+    """
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "nonexistent-golden"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    write_manifest(run_dir / "manifest.json", [1, 2])
+
+    manifest = _load_manifest_from_run(run_dir)
+
+    assert {e.media_id for e in manifest.entries} == {1, 2}

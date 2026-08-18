@@ -895,6 +895,25 @@
    "appearance_count": 2
   },
   {
+   "slug": "burnished_ridgeway",
+   "name": "Burnished Ridgeway",
+   "bucket": "personal",
+   "naming": "pseudonym",
+   "primary_of": [
+    "personal/pewter_ridgeway_537.jpg",
+    "personal/pewter_ridgeway_538.jpg",
+    "personal/pewter_ridgeway_539.jpg"
+   ],
+   "appears_in": [
+    "personal/dappled_meadow_632.png",
+    "personal/pewter_ridgeway_537.jpg",
+    "personal/pewter_ridgeway_538.jpg",
+    "personal/pewter_ridgeway_539.jpg"
+   ],
+   "primary_count": 3,
+   "appearance_count": 4
+  },
+  {
    "slug": "candid_falcon",
    "name": "Candid Falcon",
    "bucket": "personal",
@@ -1092,25 +1111,6 @@
    ],
    "primary_count": 1,
    "appearance_count": 1
-  },
-  {
-   "slug": "burnished_ridgeway",
-   "name": "Burnished Ridgeway",
-   "bucket": "personal",
-   "naming": "pseudonym",
-   "primary_of": [
-    "personal/pewter_ridgeway_537.jpg",
-    "personal/pewter_ridgeway_538.jpg",
-    "personal/pewter_ridgeway_539.jpg"
-   ],
-   "appears_in": [
-    "personal/dappled_meadow_632.png",
-    "personal/pewter_ridgeway_537.jpg",
-    "personal/pewter_ridgeway_538.jpg",
-    "personal/pewter_ridgeway_539.jpg"
-   ],
-   "primary_count": 3,
-   "appearance_count": 4
   },
   {
    "slug": "dappled_juniper",

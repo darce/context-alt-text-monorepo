@@ -893,11 +893,52 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayHasKey('validate_callback', $topK);
         $validate = $topK['validate_callback'];
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
-        $this->assertFalse($validate(-5, $request, 'top_k'));
-        $this->assertFalse($validate(0, $request, 'top_k'));
-        $this->assertFalse($validate(51, $request, 'top_k'));
+        $this->assertInstanceOf(\WP_Error::class, $validate(-5, $request, 'top_k'));
+        $this->assertInstanceOf(\WP_Error::class, $validate(0, $request, 'top_k'));
+        $this->assertInstanceOf(\WP_Error::class, $validate(51, $request, 'top_k'));
         $this->assertTrue($validate(1, $request, 'top_k'));
         $this->assertTrue($validate(50, $request, 'top_k'));
+    }
+
+    /**
+     * Mimic WP REST dispatch: validate_callback WP_Error is propagated;
+     * boolean false becomes generic rest_invalid_param.
+     *
+     * @param mixed $topK
+     */
+    private function dispatchRosterCandidatesTopK($topK): \WP_REST_Response|\WP_Error
+    {
+        $this->controller->register_routes();
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/roster-candidates' === $definition['route']
+        ));
+        $this->assertNotEmpty($definitions);
+        $validate = $definitions[0]['args']['args']['top_k']['validate_callback'] ?? null;
+        $this->assertIsCallable($validate);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', $topK);
+        $valid = $validate($topK, $request, 'top_k');
+        if ($valid instanceof \WP_Error) {
+            return $valid;
+        }
+        if (false === $valid) {
+            return new \WP_Error('rest_invalid_param', 'Invalid parameter(s): top_k', ['status' => 400]);
+        }
+        return $this->controller->get_roster_candidates($request);
+    }
+
+    public function testDispatchRosterCandidatesInvalidTopKUsesSpecificError(): void
+    {
+        foreach ([-5, 0, 51, 'abc'] as $topK) {
+            $response = $this->dispatchRosterCandidatesTopK($topK);
+            $this->assertInstanceOf(\WP_Error::class, $response, 'top_k=' . var_export($topK, true));
+            $this->assertSame('invalid_top_k', $response->get_error_code(), 'top_k=' . var_export($topK, true));
+            $this->assertSame('top_k must be an integer between 1 and 50.', $response->get_error_message());
+            $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+            $this->assertSame([], $this->getHttpCalls());
+        }
     }
 
     public function testGetRosterCandidatesForwardsTopKAndMapsRosterEntryId(): void

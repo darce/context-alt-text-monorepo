@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,11 @@ _CELEB = [
     }
 ]
 
+# Stated empty rather than omitted: `_Passes` otherwise reads the roster
+# off disk, and a unit test must not inherit a sampling frame it does not
+# own (CARD-11).
+_UNIT_NONPERSONAL: list[dict] = []
+
 
 def test_celebrity_record_survives_a_shared_surname(shared_token_mapping):
     passes = pz._Passes(shared_token_mapping, identities=_CELEB)
@@ -125,6 +131,19 @@ def test_masking_is_load_bearing(shared_token_mapping):
     record = '{"name": "Marlow Vensk", "slug": "marlow_vensk"}'
     out, _counts, _unresolved = passes.rewrite(record, ".json")
     assert out != record
+
+
+def test_omitting_identities_reads_the_roster_and_fails_if_absent(mapping, tmp_path, monkeypatch):
+    # Defaulting identities to [] would keep every test green with the
+    # roster gone, while silently protecting nobody (CARD-11). Production
+    # must still read the file and fail loudly when it cannot.
+    monkeypatch.setattr(pz, "ROSTER", tmp_path / "no-such-roster.json")
+    pz._nonpersonal_identities.cache_clear()
+    try:
+        with pytest.raises(FileNotFoundError):
+            pz._Passes(mapping)
+    finally:
+        pz._nonpersonal_identities.cache_clear()
 
 
 # --- _inside_hex_run -------------------------------------------------------
@@ -161,7 +180,7 @@ def test_hex_run_guard_ignores_non_hex_matches():
 
 
 def test_concatenated_name_is_rewritten(mapping):
-    passes = pz._Passes(mapping)
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     text = "2026/07/ryannewistmoor-1721_9988776655.jpg"
     out, counts, _unresolved = passes.rewrite(text, ".json")
     assert "ryannewistmoor" not in out.lower()
@@ -172,32 +191,37 @@ def test_concatenated_name_is_rewritten(mapping):
 def test_concatenated_name_is_reported_as_residue(mapping):
     # verify and apply must agree: a class the rewriter fixes but the checker
     # cannot see is how "0 residue" was reported over 379 live occurrences.
-    passes = pz._Passes(mapping)
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     assert passes.residue("2026/07/ryannewistmoor-1721_9988.jpg", ".json").get("concat") == 1
 
 
 def test_concatenated_pass_preserves_case_shape(mapping):
-    passes = pz._Passes(mapping)
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     out, _counts, _u = passes.rewrite("RYANNEWISTMOOR and Ryannewistmoor", ".md")
     assert "AMBERFALCON" in out
     assert "AmberFalcon" in out, "mixed case must fall back to the alias's own casing"
 
 
-def test_concatenated_pass_respects_alphanumeric_boundaries(mapping):
-    # NBL/NBR, not the hex guard, are what keep this pass out of a sha256 pin:
-    # a match embedded in a longer alnum run cannot fire at all. Asserting the
-    # boundary directly is the only reachable protection to pin here.
-    passes = pz._Passes(mapping)
+def test_concatenated_pass_reaches_embedded_alnum_runs(mapping):
+    # BR-22 inverted this test. The previous assertions pinned NBL/NBR around
+    # the concatenated form -- which is the bug. A handle like
+    # `<prefix><first><last>_<id>` is a longer alnum run, and the joined
+    # form (>= 8 letters of a real name) is identifying inside it. An
+    # anchored-only compile of the same alternation cannot match this
+    # fixture; `_inside_hex_run` is now the sha256 protection, proven
+    # separately.
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     out, counts, _u = passes.rewrite("xryannewistmoorx and ryannewistmoor9", ".json")
-    assert counts["concat"] == 0
-    assert out == "xryannewistmoorx and ryannewistmoor9"
+    assert counts["concat"] == 2
+    assert "ryannewistmoor" not in out.lower()
+    assert "amberfalcon" in out.lower()
 
 
 def test_concatenated_form_is_built_when_the_alias_has_fewer_tokens():
     # A 3-token real name mapped to a 2-token alias. Requiring token-count parity
     # dropped four such identities from the pattern, and an independent oracle
     # then found 8 live occurrences of them that `verify` reported as zero.
-    rx, forms = pz._concatenated_regex(
+    rx, forms, _dropped = pz._concatenated_regex(
         {"entries": [{"real_name": "Ryanne Della Wistmoor", "alias": "Amber Falcon", "tokens": 3}]}
     )
     assert forms == {"ryannedellawistmoor": "AmberFalcon"}
@@ -214,30 +238,169 @@ def test_every_eligible_entry_yields_a_concatenated_form():
     entries = [
         {"real_name": "Ryanne Wistmoor", "alias": "Amber Falcon", "tokens": 2},
         {"real_name": "Ryanne Della Wistmoor", "alias": "Cobalt Harbor", "tokens": 3},
-        {"real_name": "Al Bo", "alias": "Pewter Coral", "tokens": 2},  # too short to join
-        {"real_name": "Solo", "alias": "Brisk Ember", "tokens": 1},  # single token
+        {"real_name": "Al Bo", "alias": "Pewter Coral", "tokens": 2},  # <8: letter-anchored, not dropped
+        {"real_name": "Solo", "alias": "Brisk Ember", "tokens": 1},  # single token — still excluded
     ]
-    _rx, forms = pz._concatenated_regex({"entries": entries})
+    _rx, forms, _dropped = pz._concatenated_regex({"entries": entries})
+    # BR-25: eligibility is "2+ tokens", not "2+ tokens AND joined >= 8".
+    # The length floor is now a tier (letter-anchor), not a drop. Widening
+    # this predicate strengthens the assertion: albo must be present.
     eligible = {
         "".join(e["real_name"].split()).lower()
         for e in entries
-        if len(e["real_name"].split()) >= 2 and len("".join(e["real_name"].split())) >= 8
+        if len(e["real_name"].split()) >= 2
     }
     assert set(forms) == eligible, "an eligible entry was dropped from the pattern"
 
 
-def test_concatenated_pass_ignores_short_joins():
-    # An 8-character floor keeps a two-token join from colliding with an
-    # ordinary word. Below it, no pattern is built at all.
-    rx, forms = pz._concatenated_regex({"entries": [{"real_name": "Al Bo", "alias": "Amber Falcon", "tokens": 2}]})
-    assert rx is None and forms == {}
+def test_short_concat_is_letter_anchored_not_dropped():
+    # BR-25 inverted this test. The previous assertions pinned
+    # `rx is None and forms == {}` for any join under 8 letters — which
+    # is the bug. A 4-letter two-token join is now admitted under a
+    # letter-only anchor so `@albo ` and `albo09` rewrite, while an
+    # in-word collision stays refused. An unanchored compile of `albo`
+    # matches `xalbox`; that is the mutant this must still fail.
+    rx, forms, _dropped = pz._concatenated_regex(
+        {"entries": [{"real_name": "Al Bo", "alias": "Amber Falcon", "tokens": 2}]}
+    )
+    assert forms == {"albo": "AmberFalcon"}
+    assert rx is not None
+    assert rx.search("albo09_1.jpg")
+    assert rx.search("@albo ")
+    assert rx.search("xalbox") is None
+
+
+# --- embedded concatenated forms, PRIV-1-BR-22 -----------------------------
+
+
+def test_embedded_concatenated_handle_is_rewritten(mapping):
+    # Social-media exports glue firstnamelastname inside a longer handle.
+    # NBL/NBR make that occurrence structurally unreachable.
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
+    joined = "ryannewistmoor"
+    text = f"theprefix{joined}_25.webp"
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert "ryannewistmoor" not in out.lower()
+    assert "amberfalcon" in out.lower()
+    assert counts["concat"] == 1
+    assert passes.residue(text, ".json").get("concat") == 1
+    assert passes.residue(out, ".json") == {}
+
+
+def test_anchored_concat_pattern_misses_an_embedded_handle(mapping):
+    # Mutant guard: a concat pass that `return text` would still let the
+    # rewrite test above pass if we never showed the fixture is unreachable
+    # under the old anchors. Compile the same joined form with NBL/NBR
+    # restored -- that is the pre-BR-22 builder -- and the handle must not
+    # match.
+    joined = "ryannewistmoor"
+    fixture = f"theprefix{joined}_25.webp"
+    anchored = re.compile(
+        r"(?<![A-Za-z0-9])(?:" + re.escape(joined) + r")(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    assert anchored.search(fixture) is None
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
+    _out, counts, _u = passes.rewrite(fixture, ".json")
+    assert counts["concat"] == 1, "live pass must still see the handle the anchors miss"
+
+
+def test_standalone_concatenated_form_is_still_rewritten(mapping):
+    # Unanchoring must not be the only way this pass can fire; a
+    # firstnamelastname sitting on a real boundary is the original BR-08
+    # case and still has to move.
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
+    text = "ryannewistmoor-1721.jpg"
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert counts["concat"] == 1
+    assert "amberfalcon" in out.lower()
+
+
+def test_concatenated_form_inside_a_hex_run_is_left_intact():
+    # Unanchoring would otherwise rewrite a sha256 pin whose hex happens
+    # to spell a joined name. `_inside_hex_run` is the only remaining
+    # guard; prove it fires. "Cade Facade" is constructed so the join is
+    # hex-valid, not because anyone is named that.
+    mapping = {
+        "entries": [
+            {
+                "real_name": "Cade Facade",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "cade-facade",
+                "slug_was_name_derived": True,
+                "tokens": 2,
+            }
+        ]
+    }
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
+    joined = "cadefacade"
+    assert all(c in pz._HEX for c in joined)
+    text = "aa" + joined + "ffff"
+    assert len(text) >= pz._HEX_RUN_MIN
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert out == text
+    assert counts["concat"] == 0
+    assert passes.residue(text, ".json") == {}
+
+
+# --- JSON-escape left boundary, PRIV-1-BR-23 -------------------------------
+
+
+# Surname is three letters so the given-name pass cannot rewrite it on
+# its own. With the shared two-token fixture, "Wistmoor" moves and the
+# escape test goes green on a surname substitution -- residue is then
+# non-empty for the wrong pass, which is not the finding.
+_ESCAPE_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Zyllora Elm",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "zyllora-elm",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        }
+    ]
+}
+
+
+def test_name_after_a_json_escape_is_rewritten():
+    # A JSON string body encodes a newline as the two characters
+    # backslash + n. NBL over raw source then sees the letter `n`, not
+    # a boundary, and both rewrite and residue decline -- verify goes
+    # green over live cleartext.
+    passes = pz._Passes(_ESCAPE_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = '{"note": "lined up\\nZyllora Elm sat down"}'
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert counts["name"] == 1
+    assert "Zyllora Elm" not in out
+    assert "Amber Falcon" in out
+    # residue runs every pass on the original text, so the given-name
+    # builder also sees `Zyllora` once NBL lets it. rewrite consumes the
+    # full name first, so the counts are not the same shape -- agreement
+    # here is that both sides see the name class, and the output is clean.
+    assert passes.residue(text, ".json").get("name") == 1
+    assert passes.residue(out, ".json") == {}
+
+
+def test_name_inside_a_longer_word_is_not_rewritten():
+    # The left-boundary widening is only for JSON escapes. Dropping NBL
+    # entirely would rewrite this too, and would pass the escape test
+    # while corrupting ordinary words.
+    passes = pz._Passes(_ESCAPE_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "the SuperZyllora Elm portrait"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert out == text
+    assert counts["name"] == 0
+    assert passes.residue(text, ".md") == {}
 
 
 # --- rewrite idempotence ---------------------------------------------------
 
 
 def test_rewrite_is_idempotent(mapping):
-    passes = pz._Passes(mapping)
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     text = json.dumps(
         {
             "name": "Ryanne Wistmoor",
@@ -290,7 +453,7 @@ def test_symlink_is_read_as_its_own_target_not_followed(tmp_path):
 
 
 def test_symlink_target_is_scanned_for_residue(mapping):
-    passes = pz._Passes(mapping)
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
     assert passes.residue("../shared/ryannewistmoor/hook", ".sh").get("concat") == 1
 
 
@@ -477,3 +640,155 @@ def test_vocab_disjointness_separates_collisions_from_accepted_names():
     # owns that case and reports it with the right remedy.
     alias = f"{pz._ADJ[0].capitalize()} {pz._NOUN[0].capitalize()}"
     pz._assert_vocab_disjoint_from_roster([{"name": alias, "bucket": "personal"}])
+
+
+# --- short concatenated forms, PRIV-1-BR-25 --------------------------------
+
+
+# Joined length is 7. Neither token is given-name-eligible on its own
+# inside the joined run (the 4-letter surname sits after a letter), so
+# concat is the only pass that can see these fixtures. Invented name;
+# not a real person.
+_SHORT_JOINED = "wynkett"
+_SHORT_CONCAT_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Wyn Kett",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "wyn-kett",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        }
+    ]
+}
+
+
+def test_seven_char_concat_digit_adjacent_is_rewritten():
+    # Leak shape 1: media filename stem. Left neighbour is start-of-string
+    # (or `/` / `"`); right neighbour is a digit. NBR rejects the digit,
+    # which is why the old anchors could not have caught this either.
+    assert len(_SHORT_JOINED) == 7
+    passes = pz._Passes(_SHORT_CONCAT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = f"{_SHORT_JOINED}09_123456_1.jpg"
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert counts["concat"] == 1
+    assert _SHORT_JOINED not in out.lower()
+    assert "amberfalcon" in out.lower()
+    assert passes.residue(out, ".json") == {}
+
+
+def test_seven_char_concat_at_handle_is_rewritten():
+    # Leak shape 2: social handle in caption free-text. Left neighbour
+    # is `@`; right neighbour is a space or `"`.
+    passes = pz._Passes(_SHORT_CONCAT_MAPPING, identities=_UNIT_NONPERSONAL)
+    caption = f"the @{_SHORT_JOINED} watermark anchored"
+    quoted = f'"..._text": ["@{_SHORT_JOINED}", "pioneer...]'
+    out_c, counts_c, _u = passes.rewrite(caption, ".md")
+    out_q, counts_q, _u = passes.rewrite(quoted, ".json")
+    assert counts_c["concat"] == 1
+    assert counts_q["concat"] == 1
+    assert _SHORT_JOINED not in out_c.lower()
+    assert _SHORT_JOINED not in out_q.lower()
+    assert "amberfalcon" in out_c.lower() and "amberfalcon" in out_q.lower()
+    assert passes.residue(out_c, ".md") == {}
+    assert passes.residue(out_q, ".json") == {}
+
+
+def test_seven_char_concat_inside_a_letter_run_is_left_alone():
+    # The floor's whole purpose: a short join inside a longer letter
+    # run must not be rewritten. Dropping the tier and unanchoring
+    # everything would pass both leak-shape tests and fail this one.
+    passes = pz._Passes(_SHORT_CONCAT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = f"super{_SHORT_JOINED}portrait"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert out == text
+    assert counts["concat"] == 0
+    assert passes.residue(text, ".md") == {}
+
+
+def test_unanchored_seven_char_form_hits_an_in_word_collision():
+    # Mutant guard: an unanchored compile of the 7-char form matches
+    # the letter-run fixture the live pass must refuse. If this search
+    # is None, the fixture is not a collision and the negative test
+    # above cannot go red.
+    fixture = f"super{_SHORT_JOINED}portrait"
+    unanchored = re.compile(re.escape(_SHORT_JOINED), re.IGNORECASE)
+    assert unanchored.search(fixture) is not None
+    passes = pz._Passes(_SHORT_CONCAT_MAPPING, identities=_UNIT_NONPERSONAL)
+    _out, counts, _u = passes.rewrite(fixture, ".md")
+    assert counts["concat"] == 0, "live pass must still refuse the in-word collision"
+
+
+def test_seven_char_concat_inside_a_hex_run_is_left_intact():
+    # "Abe Deca" is constructed so the 7-char join is hex-valid, not
+    # because anyone is named that. Neighbours are *digits*: letter
+    # hex padding (`aa`/`ffff`) is itself a letter, so the new
+    # letter-only anchor would refuse before `_inside_hex_run` ran
+    # and the guard would not be what this test is proving.
+    mapping = {
+        "entries": [
+            {
+                "real_name": "Abe Deca",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "abe-deca",
+                "slug_was_name_derived": True,
+                "tokens": 2,
+            }
+        ]
+    }
+    passes = pz._Passes(mapping, identities=_UNIT_NONPERSONAL)
+    joined = "abedeca"
+    assert len(joined) == 7
+    assert all(c in pz._HEX for c in joined)
+    text = "0" + joined + "0" * 8
+    assert len(text) >= pz._HEX_RUN_MIN
+    out, counts, _u = passes.rewrite(text, ".json")
+    assert out == text
+    assert counts["concat"] == 0
+    assert passes.residue(text, ".json") == {}
+
+
+def test_seven_char_concat_is_visible_to_residue():
+    # The finding: verify printed 0 files / 0 occ because residue()
+    # built its pattern from the same floor-gated function. This
+    # assertion is red on the unfixed builder. If it is green before
+    # the two-tier change, the fix is not what closed the gap.
+    passes = pz._Passes(_SHORT_CONCAT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = f"{_SHORT_JOINED}09_123456_1.jpg"
+    assert passes.residue(text, ".json").get("concat") == 1
+
+
+def test_concat_exclusions_are_single_token_only():
+    entries = [
+        {"real_name": "Ryanne Wistmoor", "alias": "Amber Falcon", "tokens": 2},
+        {"real_name": "Wyn Kett", "alias": "Cobalt Harbor", "tokens": 2},
+        {"real_name": "Solo", "alias": "Brisk Ember", "tokens": 1},
+    ]
+    _rx, forms, dropped = pz._concatenated_regex({"entries": entries})
+    assert set(forms) == {"ryannewistmoor", "wynkett"}
+    assert len(dropped) == 1
+    assert dropped[0]["reason"] == "single-token name; no concatenation exists"
+    assert dropped[0]["tokens"] == 1
+
+
+def test_concat_exclusion_line_reports_zero_as_a_measurement():
+    # A silent 0 is not a measurement. The formatter must name the
+    # class even when nothing was dropped.
+    empty = pz._concat_exclusion_line(())
+    assert empty == "concat exclusions: 0 dropped"
+    one = pz._concat_exclusion_line(
+        ({"reason": "single-token name; no concatenation exists", "tokens": 1, "joined_length": 4},)
+    )
+    assert one == (
+        "concat exclusions: 1 dropped (1× single-token name; no concatenation exists)"
+    )
+
+
+def test_apply_and_verify_both_emit_concat_exclusions():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
+    assert "_concat_exclusion_line" in apply_src
+    assert "_concat_exclusion_line" in verify_src

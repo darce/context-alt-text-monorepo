@@ -926,7 +926,7 @@
       "identities": [],
       "latency_s": 5.831,
       "media_id": 620,
-      "path": "2026/07/addylee09_590419223_18439486216101780_2213917758547900715_n.jpg"
+      "path": "2026/07/wickerfathom09_590419223_18439486216101780_2213917758547900715_n.jpg"
     },
     {
       "describe": {
@@ -3647,7 +3647,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Hollow Beacon stands at a DJ booth operating a Pioneer turntable, wearing black headphones and a white outfit, focused on the equipment in a dimly lit room.",
-        "alt_text_long": "Hollow Beacon commands the turntable with quiet intensity, her blonde hair catching the low light as she adjusts the Pioneer deck. The white fabric of her outfit drapes over her arms and torso, contrasting with the dark room and the sleek black gear. Her expression is concentrated, hands moving with precision over the controls. The @katduma watermark anchors the moment, a personal signature on the performance.",
+        "alt_text_long": "Hollow Beacon commands the turntable with quiet intensity, her blonde hair catching the low light as she adjusts the Pioneer deck. The white fabric of her outfit drapes over her arms and torso, contrasting with the dark room and the sleek black gear. Her expression is concentrated, hands moving with precision over the controls. The @hollowbeacon watermark anchors the moment, a personal signature on the performance.",
         "alt_text_title": "Hollow Beacon DJing",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -3655,12 +3655,12 @@
           {
             "latency_s": 1.785,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person with long blonde hair wearing a white outfit and black headphones\"}], \"setting\": \"an indoor room with a wooden table, a speaker, and a DJ setup\", \"action\": \"a person standing at a DJ booth operating a turntable\", \"legible_text\": [\"@katduma\", \"Pioneer\"], \"atmosphere\": \"focused and professional\"}"
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a person with long blonde hair wearing a white outfit and black headphones\"}], \"setting\": \"an indoor room with a wooden table, a speaker, and a DJ setup\", \"action\": \"a person standing at a DJ booth operating a turntable\", \"legible_text\": [\"@hollowbeacon\", \"Pioneer\"], \"atmosphere\": \"focused and professional\"}"
           },
           {
             "latency_s": 2.255,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Hollow Beacon DJing\",\n  \"alt\": \"Hollow Beacon stands at a DJ booth operating a Pioneer turntable, wearing black headphones and a white outfit, focused on the equipment in a dimly lit room.\",\n  \"caption\": \"Hollow Beacon commands the turntable with quiet intensity, her blonde hair catching the low light as she adjusts the Pioneer deck. The white fabric of her outfit drapes over her arms and torso, contrasting with the dark room and the sleek black gear. Her expression is concentrated, hands moving with precision over the controls. The @katduma watermark anchors the moment, a personal signature on the performance.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Hollow Beacon DJing\",\n  \"alt\": \"Hollow Beacon stands at a DJ booth operating a Pioneer turntable, wearing black headphones and a white outfit, focused on the equipment in a dimly lit room.\",\n  \"caption\": \"Hollow Beacon commands the turntable with quiet intensity, her blonde hair catching the low light as she adjusts the Pioneer deck. The white fabric of her outfit drapes over her arms and torso, contrasting with the dark room and the sleek black gear. Her expression is concentrated, hands moving with precision over the controls. The @hollowbeacon watermark anchors the moment, a personal signature on the performance.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -4192,7 +4192,7 @@
       "identities": [],
       "latency_s": 7.224,
       "media_id": 506,
-      "path": "2026/07/missivybloom_2988306763715870645.jpg"
+      "path": "2026/07/missplumbferry_2988306763715870645.jpg"
     },
     {
       "describe": {
@@ -4221,7 +4221,7 @@
       "identities": [],
       "latency_s": 7.353,
       "media_id": 505,
-      "path": "2026/07/missivybloom_2988306025216228830.jpg"
+      "path": "2026/07/missplumbferry_2988306025216228830.jpg"
     },
     {
       "describe": {
@@ -5395,7 +5395,7 @@
           {
             "latency_s": 3.737,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"top left corner\", \"appearance\": \"person wearing a red costume with a blue mask\"}], \"setting\": \"a spiral-bound notebook with handwritten text, held in someone's hand\", \"action\": \"a person holding a notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\"\", \"legible_text\": [\"kandleosborne\", \"@theunrealcoralosborne\", \"Holy Jolly Sister Christmas Contract\", \"Coral A. quarry professionally known as \\\"Cakes\\\", Coco, \\\"Hard Coral\\\" agree with Kandle M. quarry professionally known as \\\"K12\\\" to the following terms:\", \"Each Sister shall remain positive and jolly the entire holiday\", \"If one Sister fails to do so by other\", \"- Complaining\", \"- Fighting\", \"- Throwing a pity party\", \"- Insults not done in \\\"good fun\\\"\", \"The guilty sister will have to pay the better Sister a fine of:\", \"Coral to pay Kandle $100 USD (band an annual income)\", \"Kandle to pay Coral $20 CDN (based on a novel income)\", \"If a Sister finds herself slipping into a dark state, she has a window of 3 minutes to remove herself from the room or drop her B immediately and surrender to the Christmas spirit\", \"The family may use code word \\\"Grinch\\\" or \\\"3-2-1\\\" as a reminder.\", \"Signed Coral A. quarry signature\", \"Signed Kandle M. quarry signature\", \"Witness\", \"Date Dec 20 2021 Exp Dec\"], \"atmosphere\": \"playful and humorous\"}"
+            "raw": "{\"people\": [{\"position\": \"top left corner\", \"appearance\": \"person wearing a red costume with a blue mask\"}], \"setting\": \"a spiral-bound notebook with handwritten text, held in someone's hand\", \"action\": \"a person holding a notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\"\", \"legible_text\": [\"kandleosborne\", \"@theunrealpewterhollow\", \"Holy Jolly Sister Christmas Contract\", \"Coral A. quarry professionally known as \\\"Cakes\\\", Coco, \\\"Hard Coral\\\" agree with Kandle M. quarry professionally known as \\\"K12\\\" to the following terms:\", \"Each Sister shall remain positive and jolly the entire holiday\", \"If one Sister fails to do so by other\", \"- Complaining\", \"- Fighting\", \"- Throwing a pity party\", \"- Insults not done in \\\"good fun\\\"\", \"The guilty sister will have to pay the better Sister a fine of:\", \"Coral to pay Kandle $100 USD (band an annual income)\", \"Kandle to pay Coral $20 CDN (based on a novel income)\", \"If a Sister finds herself slipping into a dark state, she has a window of 3 minutes to remove herself from the room or drop her B immediately and surrender to the Christmas spirit\", \"The family may use code word \\\"Grinch\\\" or \\\"3-2-1\\\" as a reminder.\", \"Signed Coral A. quarry signature\", \"Signed Kandle M. quarry signature\", \"Witness\", \"Date Dec 20 2021 Exp Dec\"], \"atmosphere\": \"playful and humorous\"}"
           },
           {
             "latency_s": 2.77,
@@ -5410,7 +5410,7 @@
       "identities": [],
       "latency_s": 6.508,
       "media_id": 464,
-      "path": "2026/07/theunrealcoralosborne_2997759011676567491.jpg"
+      "path": "2026/07/theunrealpewterhollow_2997759011676567491.jpg"
     },
     {
       "describe": {
@@ -5439,7 +5439,7 @@
       "identities": [],
       "latency_s": 4.037,
       "media_id": 463,
-      "path": "2026/07/theunrealcoralosborne_2986758978072783532.jpg"
+      "path": "2026/07/theunrealpewterhollow_2986758978072783532.jpg"
     },
     {
       "describe": {
@@ -5468,7 +5468,7 @@
       "identities": [],
       "latency_s": 5.431,
       "media_id": 462,
-      "path": "2026/07/theunrealcoralosborne_292434547_408760934648390_3704871704450626764_n.jpg"
+      "path": "2026/07/theunrealpewterhollow_292434547_408760934648390_3704871704450626764_n.jpg"
     },
     {
       "describe": {
@@ -6889,7 +6889,7 @@
       "identities": [],
       "latency_s": 3.693,
       "media_id": 413,
-      "path": "2026/07/theunrealcoralosborne_3755008598775800608.jpg"
+      "path": "2026/07/theunrealpewterhollow_3755008598775800608.jpg"
     },
     {
       "describe": {
@@ -6918,7 +6918,7 @@
       "identities": [],
       "latency_s": 3.758,
       "media_id": 412,
-      "path": "2026/07/theunrealcoralosborne_3754999673800211225.jpg"
+      "path": "2026/07/theunrealpewterhollow_3754999673800211225.jpg"
     },
     {
       "describe": {
@@ -6947,7 +6947,7 @@
       "identities": [],
       "latency_s": 2.996,
       "media_id": 411,
-      "path": "2026/07/theunrealcoralosborne_3754998804379713569.jpg"
+      "path": "2026/07/theunrealpewterhollow_3754998804379713569.jpg"
     },
     {
       "describe": {
@@ -7121,7 +7121,7 @@
       "identities": [],
       "latency_s": 7.504,
       "media_id": 405,
-      "path": "2026/07/missivybloom_2986030430311805514.jpg"
+      "path": "2026/07/missplumbferry_2986030430311805514.jpg"
     },
     {
       "describe": {
@@ -10987,7 +10987,7 @@
       "identities": [],
       "latency_s": 3.974,
       "media_id": 271,
-      "path": "2026/07/theunrealcoralosborne_3269393919257257484.jpg"
+      "path": "2026/07/theunrealpewterhollow_3269393919257257484.jpg"
     },
     {
       "describe": {
@@ -11016,7 +11016,7 @@
       "identities": [],
       "latency_s": 4.915,
       "media_id": 270,
-      "path": "2026/07/theunrealcoralosborne_3269318145071444236.jpg"
+      "path": "2026/07/theunrealpewterhollow_3269318145071444236.jpg"
     },
     {
       "describe": {
@@ -12524,7 +12524,7 @@
       "identities": [],
       "latency_s": 6.26,
       "media_id": 218,
-      "path": "2026/07/addylee09_522706808_18416525956101780_5983880124791464488_n.jpg"
+      "path": "2026/07/wickerfathom09_522706808_18416525956101780_5983880124791464488_n.jpg"
     },
     {
       "describe": {
@@ -12553,7 +12553,7 @@
       "identities": [],
       "latency_s": 6.007,
       "media_id": 217,
-      "path": "2026/07/addylee09_482485244_18394875232101780_6383780901574755028_n.jpg"
+      "path": "2026/07/wickerfathom09_482485244_18394875232101780_6383780901574755028_n.jpg"
     },
     {
       "describe": {

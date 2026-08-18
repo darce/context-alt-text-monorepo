@@ -120,7 +120,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar, with a bright vertical light fixture in the center and a mirror reflecting patrons, including a man in a red shirt and another with gray hair, the image rotated 90 degrees counter-clockwise.",
-        "alt_text_long": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nCaitlin has long blonde hair and is wearing a dark top.  \nErika is on the right, wearing a light-colored headband and a dark shirt.  \nA bright vertical light fixture glows in the center of the image.  \nA mirror behind them reflects other patrons, including a man in a red shirt and another man with gray hair.  \nThe image is rotated 90 degrees counter-clockwise.  \nThe warm lighting creates a cozy atmosphere.  \nThe reflection shows a person holding a phone.",
+        "alt_text_long": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nRusset has long blonde hair and is wearing a dark top.  \nCandid is on the right, wearing a light-colored headband and a dark shirt.  \nA bright vertical light fixture glows in the center of the image.  \nA mirror behind them reflects other patrons, including a man in a red shirt and another man with gray hair.  \nThe image is rotated 90 degrees counter-clockwise.  \nThe warm lighting creates a cozy atmosphere.  \nThe reflection shows a person holding a phone.",
         "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -128,7 +128,7 @@
           {
             "latency_s": 8.39,
             "pass": "caption",
-            "raw": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nCaitlin has long blonde hair and is wearing a dark top.  \nErika is on the right, wearing a light-colored headband and a dark shirt.  \nA bright vertical light fixture glows in the center of the image.  \nA mirror behind them reflects other patrons, including a man in a red shirt and another man with gray hair.  \nThe image is rotated 90 degrees counter-clockwise.  \nThe warm lighting creates a cozy atmosphere.  \nThe reflection shows a person holding a phone."
+            "raw": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nRusset has long blonde hair and is wearing a dark top.  \nCandid is on the right, wearing a light-colored headband and a dark shirt.  \nA bright vertical light fixture glows in the center of the image.  \nA mirror behind them reflects other patrons, including a man in a red shirt and another man with gray hair.  \nThe image is rotated 90 degrees counter-clockwise.  \nThe warm lighting creates a cozy atmosphere.  \nThe reflection shows a person holding a phone."
           },
           {
             "latency_s": 0.888,
@@ -526,7 +526,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Auburn Current, wearing a silver tiara and \"Birthday Princess\" sash, leans her head on Muted Yarrow's shoulder as they pose in front of a balloon arch.",
-        "alt_text_long": "Auburn Current wears a silver tiara and a \"Birthday Princess\" sash while posing with Muted Yarrow.  \nKirstie has blonde hair and is in a sparkly grey dress with a high slit.  \nRyann wears a black sleeveless dress, glasses, and a gold headband.  \nThey stand in front of a balloon arch made of purple, green, and gold metallic balloons.  \nA round mirror with a gold frame hangs on the wall behind them.  \nMardi Gras beads and a crescent moon balloon are visible to the right.  \nKirstie leans her head on Muted's shoulder with her eyes closed.  \nRyann smiles and places her hand on her hip.",
+        "alt_text_long": "Auburn Current wears a silver tiara and a \"Birthday Princess\" sash while posing with Muted Yarrow.  \nAuburn has blonde hair and is in a sparkly grey dress with a high slit.  \nMuted wears a black sleeveless dress, glasses, and a gold headband.  \nThey stand in front of a balloon arch made of purple, green, and gold metallic balloons.  \nA round mirror with a gold frame hangs on the wall behind them.  \nMardi Gras beads and a crescent moon balloon are visible to the right.  \nAuburn leans her head on Muted's shoulder with her eyes closed.  \nMuted smiles and places her hand on her hip.",
         "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -534,7 +534,7 @@
           {
             "latency_s": 2.979,
             "pass": "caption",
-            "raw": "Auburn Current wears a silver tiara and a \"Birthday Princess\" sash while posing with Muted Yarrow.  \nKirstie has blonde hair and is in a sparkly grey dress with a high slit.  \nRyann wears a black sleeveless dress, glasses, and a gold headband.  \nThey stand in front of a balloon arch made of purple, green, and gold metallic balloons.  \nA round mirror with a gold frame hangs on the wall behind them.  \nMardi Gras beads and a crescent moon balloon are visible to the right.  \nKirstie leans her head on Muted's shoulder with her eyes closed.  \nRyann smiles and places her hand on her hip."
+            "raw": "Auburn Current wears a silver tiara and a \"Birthday Princess\" sash while posing with Muted Yarrow.  \nAuburn has blonde hair and is in a sparkly grey dress with a high slit.  \nMuted wears a black sleeveless dress, glasses, and a gold headband.  \nThey stand in front of a balloon arch made of purple, green, and gold metallic balloons.  \nA round mirror with a gold frame hangs on the wall behind them.  \nMardi Gras beads and a crescent moon balloon are visible to the right.  \nAuburn leans her head on Muted's shoulder with her eyes closed.  \nMuted smiles and places her hand on her hip."
           },
           {
             "latency_s": 0.576,
@@ -1019,7 +1019,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Muted Yarrow dances with five friends in matching pink satin pajamas, including Hollow Pennant, as they pose near a lit lamp with a white shade, a silver number two balloon floating behind them, and one woman holding a drink with a red straw, all under warm ambient light.",
-        "alt_text_long": "Muted Yarrow dances with five friends in matching pink satin pajamas.  \nThey stand before a shimmering pink foil curtain.  \nA silver number two balloon floats behind them.  \nOne woman holds a drink aloft with a red straw.  \nBea Burke smiles with her mouth open on the left.  \nThe group poses near a lit lamp with a white shade.  \nThey appear joyful and engaged in a celebration.  \nThe room glows with warm, ambient light.",
+        "alt_text_long": "Muted Yarrow dances with five friends in matching pink satin pajamas.  \nThey stand before a shimmering pink foil curtain.  \nA silver number two balloon floats behind them.  \nOne woman holds a drink aloft with a red straw.  \nHollow Pennant smiles with her mouth open on the left.  \nThe group poses near a lit lamp with a white shade.  \nThey appear joyful and engaged in a celebration.  \nThe room glows with warm, ambient light.",
         "injected_distractor": "Hollow Pennant",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -1027,7 +1027,7 @@
           {
             "latency_s": 1.851,
             "pass": "caption",
-            "raw": "Muted Yarrow dances with five friends in matching pink satin pajamas.  \nThey stand before a shimmering pink foil curtain.  \nA silver number two balloon floats behind them.  \nOne woman holds a drink aloft with a red straw.  \nBea Burke smiles with her mouth open on the left.  \nThe group poses near a lit lamp with a white shade.  \nThey appear joyful and engaged in a celebration.  \nThe room glows with warm, ambient light."
+            "raw": "Muted Yarrow dances with five friends in matching pink satin pajamas.  \nThey stand before a shimmering pink foil curtain.  \nA silver number two balloon floats behind them.  \nOne woman holds a drink aloft with a red straw.  \nHollow Pennant smiles with her mouth open on the left.  \nThe group poses near a lit lamp with a white shade.  \nThey appear joyful and engaged in a celebration.  \nThe room glows with warm, ambient light."
           },
           {
             "latency_s": 0.677,

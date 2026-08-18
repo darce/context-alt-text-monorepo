@@ -203,7 +203,14 @@ SINGLE_TOKEN_FREE_TEXT_SUFFIXES = {".json", ".md", ".html", ".htm", ".txt", ".cs
 # `_first_last` identifier presents, and it is why the first pass left
 # `candid_brisk_failure_analysis.md` and `_pewter_coral` untouched. Bound on
 # letters only.
-NBL = r"(?<![A-Za-z0-9])"
+#
+# A JSON string body encodes a newline as the two characters backslash + n.
+# A name at the start of a line inside that string is therefore preceded by
+# the letter `n` of the escape, and a letters-only lookbehind refuses. Treat
+# those escapes as a left boundary -- each lookbehind is fixed-width, which
+# Python requires. Right side is already fine: a name followed by an escape
+# has a backslash on its right, which is non-alphanumeric.
+NBL = r"(?:(?<![A-Za-z0-9])|(?<=\\n)|(?<=\\t)|(?<=\\r))"
 NBR = r"(?![A-Za-z0-9])"
 
 # ...and a digit-adjacent boundary is not enough on its own. A sha256 pin is a
@@ -214,6 +221,18 @@ NBR = r"(?![A-Za-z0-9])"
 # sitting inside a long hex run is refused.
 _HEX = set("0123456789abcdefABCDEF")
 _HEX_RUN_MIN = 16
+
+# Concatenated-name tiers. A joined form of this length and above is
+# matched unanchored (BR-22): that many letters of a real full name
+# cannot plausibly collide with an ordinary word. Shorter multi-token
+# joins are still admitted, but under a letter-only anchor — the floor
+# was protecting an in-word collision, not a digit/`@`/`/` neighbour,
+# and dropping them silently made `verify` report 0 over live names
+# (BR-25). Single-token names have no concatenation; those are the
+# remaining exclusion, and they are counted, not swallowed.
+CONCAT_UNANCHORED_MIN = 8
+_CONCAT_LETTER_NBL = r"(?<![A-Za-z])"
+_CONCAT_LETTER_NBR = r"(?![A-Za-z])"
 
 
 def _inside_hex_run(text: str, start: int, end: int) -> bool:
@@ -649,46 +668,102 @@ def _slug_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
     return re.compile(NBL + r"(?:" + alt + r")" + NBR, re.IGNORECASE), leaky
 
 
-def _concatenated_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
+def _concatenated_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple[dict, ...]]:
     """Multi-token names written with no separator at all (`firstnamelastname`).
 
-    Social-media exports name their files `<first><last>-<ts>_<id>.jpg`. Every
-    other pass is anchored on NBL/NBR, which require a non-alphanumeric
-    character between the tokens, and `_media_stem_pass` splits the stem on
-    `[^A-Za-z0-9]+` -- so this shape is not under-matched, it is structurally
-    unreachable. It survived the first scrub in 379 places across 38 tracked
-    files, exposing 14 identities in full cleartext, including a rendered HTML
-    evidence report. Matched only at >=8 characters so a concatenation cannot
-    collide with an ordinary word.
+    Social-media exports name their files `<first><last>-<ts>_<id>.jpg`, and
+    they also glue that form *inside* a longer alphanumeric run -- a handle
+    like `<prefix><first><last>_<id>`. Every other pass is anchored on
+    NBL/NBR, which require a non-alphanumeric character on each side, so an
+    embedded occurrence is structurally unreachable.
+
+    Two tiers, one alternation, longest-first so a shorter joined form
+    cannot win inside a longer one. `_inside_hex_run()` is applied to
+    both tiers by the rewrite/residue callers:
+
+    * ``len(joined) >= CONCAT_UNANCHORED_MIN`` (8) — fully unanchored
+      (BR-22). That many letters of a real full name cannot plausibly
+      collide with an ordinary word.
+    * ``2 <= tokens`` and ``len(joined) < 8`` — letter-only anchors
+      ``(?<![A-Za-z])`` / ``(?![A-Za-z])``. The floor's purpose was an
+      in-word collision, not a digit, ``@``, or ``/`` neighbour; those
+      are the live leak shapes a silent ``continue`` made `verify` miss
+      (BR-25).
+
+    Whatever is still not admitted — after the tier, only names with
+    fewer than two tokens — is returned as ``dropped``, each with a
+    reason. Callers print that list. A floor that ``continue``s is a
+    measurement the checker inherits.
     """
-    forms: dict[str, str] = {}
-    dropped: list[int] = []
+    long_forms: dict[str, str] = {}
+    short_forms: dict[str, str] = {}
+    excluded: list[dict] = []
+    no_alias: list[int] = []
     for entry in mapping["entries"]:
         real = [t for t in re.split(r"[^A-Za-z0-9]+", entry["real_name"]) if t]
         alias = [t for t in re.split(r"[^A-Za-z0-9]+", entry["alias"]) if t]
         joined = "".join(real)
-        if len(real) < 2 or len(joined) < 8:
+        if len(real) < 2:
+            excluded.append(
+                {
+                    "reason": (
+                        "single-token name; no concatenation exists"
+                        if len(real) == 1
+                        else "empty name; no concatenation exists"
+                    ),
+                    "tokens": len(real),
+                    "joined_length": len(joined),
+                }
+            )
             continue
         if not alias:
             # No alias to substitute is a map defect, not a name to skip.
-            dropped.append(len(joined))
+            no_alias.append(len(joined))
             continue
         # Token counts need not match. A concatenation has no internal
         # boundaries, so the whole joined name maps to the whole joined alias --
         # requiring len(alias) >= len(real) silently dropped four 3-token names
         # that carry 2-token aliases, and an independent oracle then found 8
         # occurrences of them that `verify` was reporting as zero.
-        forms[joined.lower()] = "".join(alias)
-    if dropped:
+        dest = long_forms if len(joined) >= CONCAT_UNANCHORED_MIN else short_forms
+        dest[joined.lower()] = "".join(alias)
+    if no_alias:
         raise SystemExit(
-            f"{len(dropped)} multi-token entries (name lengths {sorted(dropped)}) have no alias "
+            f"{len(no_alias)} multi-token entries (name lengths {sorted(no_alias)}) have no alias "
             "tokens, so their concatenated form cannot be rewritten. Fix the alias map; "
             "skipping them would make `verify` blind to exactly those names."
         )
+    forms = {**long_forms, **short_forms}
+    dropped = tuple(excluded)
     if not forms:
-        return None, {}
-    alt = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
-    return re.compile(NBL + r"(?:" + alt + r")" + NBR, re.IGNORECASE), forms
+        return None, {}, dropped
+    # Longest-first across both tiers. Short alternatives carry the
+    # letter-only lookaround; long ones stay fully unanchored.
+    alts: list[str] = []
+    for form in sorted(forms, key=len, reverse=True):
+        escaped = re.escape(form)
+        if len(form) >= CONCAT_UNANCHORED_MIN:
+            alts.append(escaped)
+        else:
+            alts.append(_CONCAT_LETTER_NBL + escaped + _CONCAT_LETTER_NBR)
+    return re.compile(r"(?:" + "|".join(alts) + r")", re.IGNORECASE), forms, dropped
+
+
+def _concat_exclusion_line(dropped: tuple[dict, ...] | list[dict]) -> str:
+    """One printed measurement of what the concat builder refused.
+
+    Always a complete sentence, including the zero case: a `0` that
+    cannot say what it excluded is not a measurement. Names are not
+    included — the caller may print this on `apply` and `verify`.
+    """
+    n = len(dropped)
+    if n == 0:
+        return "concat exclusions: 0 dropped"
+    by_reason: dict[str, int] = {}
+    for item in dropped:
+        by_reason[item["reason"]] = by_reason.get(item["reason"], 0) + 1
+    detail = "; ".join(f"{count}× {reason}" for reason, count in sorted(by_reason.items()))
+    return f"concat exclusions: {n} dropped ({detail})"
 
 
 _MEDIA_PATH_RX = re.compile(r"[\w./\-]*[\w\-]+\.(?:jpg|jpeg|png|webp)", re.IGNORECASE)
@@ -907,7 +982,7 @@ class _Passes:
         self.slug_rx, self.leaky = _slug_regex(mapping)
         self.token_index = _token_index(mapping)
         self.given_rx, self.given, self.given_deferred = _given_name_regex(mapping, _nonpersonal_tokens(idents))
-        self.concat_rx, self.concat = _concatenated_regex(mapping)
+        self.concat_rx, self.concat, self.concat_dropped = _concatenated_regex(mapping)
         lits = _protected_literals(idents)
         self.protected = lits
         self.protect_rx = re.compile("|".join(re.escape(s) for s in lits)) if lits else None
@@ -1026,18 +1101,29 @@ class _Passes:
         found = {}
         text, _held = self._mask(text)
         rx = self.data_rx if suffix.lower() in SINGLE_TOKEN_FREE_TEXT_SUFFIXES else self.name_rx
-        if n := len(rx.findall(text)):
+
+        def visible(pattern: re.Pattern) -> int:
+            # Same refusal rewrite applies. findall would count a match sitting
+            # inside a sha256 pin that apply will not touch, and after concat
+            # is unanchored that is a permanent verify-red on a clean tree.
+            return sum(
+                1
+                for m in pattern.finditer(text)
+                if not _inside_hex_run(text, m.start(), m.end())
+            )
+
+        if n := visible(rx):
             found["name"] = n
-        if self.slug_rx is not None and (n := len(self.slug_rx.findall(text))):
+        if self.slug_rx is not None and (n := visible(self.slug_rx)):
             found["slug"] = n
         if self.quoted_rx is not None and suffix == ".json" and (n := len(self.quoted_rx.findall(text))):
             found["single"] = n
         _out, n_media, _unresolved = _media_stem_pass(text, self.token_index)
         if n_media:
             found["media"] = n_media
-        if self.given_rx is not None and (n := len(self.given_rx.findall(text))):
+        if self.given_rx is not None and (n := visible(self.given_rx)):
             found["given"] = n
-        if self.concat_rx is not None and (n := len(self.concat_rx.findall(text))):
+        if self.concat_rx is not None and (n := visible(self.concat_rx)):
             found["concat"] = n
         return found
 
@@ -1313,6 +1399,7 @@ def cmd_apply(args) -> int:
         print(f"  media stems left alone (token maps to >1 identity): {sorted(all_unresolved)}")
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
+    print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
     if out_of_scope:
         print(f"  OUT OF SCOPE -- scanned, deliberately not rewritten ({len(out_of_scope)} files):")
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values()))[:20]:
@@ -1374,6 +1461,7 @@ def cmd_verify(args) -> int:
         print(f"  RESIDUE free-text {rel} -- declared redaction marker absent")
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
+    print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
     print(
         f"in-scope residue: {len(residue)} files / {sum(sum(h.values()) for h in (x[1] for x in residue))} occ; "
         f"paths: {len(path_residue)}; free-text: {len(free_text)}; unscannable in-scope: {len(undeclared)} "

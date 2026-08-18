@@ -301,8 +301,35 @@ Notes:
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
 - WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - The controller clamps excessive `limit` requests to the canonical `LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT=500` before local or proxied reads, and the response `limit` field reports that effective capped value.
-- Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
-- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty; `identity_count` reflects observed members when the member set is not truncated. The queue predicate is backed by `acx_identity_members` rows (`COUNT(m) >= 2`), so a cluster whose members were reprojected away is not served.
+- Clusters with fewer than 2 observed member rows, `is_user_confirmed = true`, or `dismissed_at` set are excluded. Size is `COUNT(acx_identity_members)`, not the stale `identity_count` column.
+- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty (`minItems: 1`); `identity_count` is the observed member-row count when the preview fetch is not truncated (fetch cap+1 so `observed == 4` is exact and `observed > 4` is truncation). The queue predicate is backed by `acx_identity_members` rows (`COUNT(m) >= 2`), so a cluster whose members were reprojected away is not served.
+
+## GET /recognition/clusters/{cluster_id}
+
+Return one cluster summary from local projection (or the recognition proxy).
+
+Response (cluster summary, same item shape as `GET /recognition/clusters`):
+
+```json
+{
+  "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
+  "label": "Alice",
+  "is_auto_label": false,
+  "identity_count": 5,
+  "member_ids": ["0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f"],
+  "representative_identity": {
+    "media_id": 101,
+    "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 }
+  },
+  "sample_identities": [],
+  "person_uuid": null
+}
+```
+
+Notes:
+
+- `identity_count` is the observed member-row count when the detail fetch is not truncated. The fetch asks for `DEFAULT_CLUSTER_MEMBER_LIMIT+1` (`500+1`) so `observed == 500` is exact and `observed > 500` is truncation; on truncation WordPress republishes the projected column and slices `member_ids` / samples to 500.
+- Truncation rule sits next to the top-unlabeled preview invariant (cap 4, fetch 5). Both treat `observed == cap` as exact after a cap+1 fetch.
 
 ## GET /recognition/clusters/labels
 

@@ -587,3 +587,52 @@ def test_cli_check_wrong_draw_timestamp_exits_1(capsys):
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
     assert "draw_timestamp" in captured.err or "draw_timestamp" in captured.out
+
+
+def _mutate_train_unknown(artifact):
+    artifact["train"]["human_override"] = True
+
+
+def test_verify_resealed_unknown_train_key_names_closed_key():
+    # Q1-01: reseal so only the TRAIN-half closed-key check can kill.
+    artifact = _draw_golden()
+    _mutate_train_unknown(artifact)
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("unknown train key: human_override" in message for message in violations), violations
+
+
+def test_verify_resealed_date_only_timestamp_is_iso_violation():
+    # Q1-02: resealed date-only; expected_draw_timestamp=None so only ISO check kills.
+    artifact = _draw_golden()
+    artifact["draw_timestamp"] = "2026-08-18"
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), expected_draw_timestamp=None)
+    assert any("ISO-8601" in message and "draw_timestamp" in message for message in violations), violations
+
+
+def test_verify_resealed_naive_timestamp_is_tz_violation():
+    # Q1-02: resealed naive (no tz); expected_draw_timestamp=None so only tz/ISO check kills.
+    artifact = _draw_golden()
+    artifact["draw_timestamp"] = "2026-08-18T12:00:00"
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), expected_draw_timestamp=None)
+    assert any("ISO-8601" in message and "draw_timestamp" in message for message in violations), violations
+
+
+def test_verify_resealed_whitespace_exposure_names_non_empty_strings():
+    # Q1-03: reseal whitespace note; expected_pre_split_exposure=None so only strip() kills.
+    artifact = _draw_golden()
+    artifact["pre_split_exposure"] = [" "]
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), expected_pre_split_exposure=None)
+    assert any("non-empty strings" in message for message in violations), violations
+
+
+def test_verify_resealed_unknown_exposure_inventory_key_is_named():
+    # Q1-04: extra inventory key + reseal; assert closed-key name, not just equality.
+    artifact = _draw_golden()
+    artifact["exposure_inventory"]["operator_blessed"] = True
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("unknown exposure_inventory key" in message for message in violations), violations

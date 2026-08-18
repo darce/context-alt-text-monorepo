@@ -119,6 +119,11 @@ const ReviewQueueHarness = ({ initialIndex = 0, queueRef }: HarnessProps): React
       onKindChange={setKind}
       band={band}
       onBandChange={setBand}
+      onClearFilters={() => {
+        setKind('all');
+        setBand('all');
+        setIndex(0);
+      }}
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}
     />

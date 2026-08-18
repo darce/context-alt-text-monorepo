@@ -47,6 +47,7 @@ vi.mock('../../../hooks/useWorkbenchFilters', () => ({
   useWorkbenchFilters: () => ({
     queueState: { index: 0, kind: 'all', band: 'all' },
     setQueueState: vi.fn(),
+    dispatchQueue: vi.fn(),
   }),
 }));
 

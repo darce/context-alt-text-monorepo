@@ -192,6 +192,7 @@ const ReconciledViewport = ({
           onKindChange={setKind}
           band="all"
           onBandChange={vi.fn()}
+          onClearFilters={vi.fn()}
           selectedIds={selectedIds}
           onSelectedIdsChange={setSelectedIds}
           onCardPrimaryPresenceChange={setCardPrimaryPresent}

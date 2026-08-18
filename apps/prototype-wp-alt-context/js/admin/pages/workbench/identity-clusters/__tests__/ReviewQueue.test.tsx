@@ -192,9 +192,20 @@ const ReviewQueueHarness = ({
       index={index}
       onIndexChange={setIndex}
       kind={kind}
-      onKindChange={setKind}
+      onKindChange={(next) => {
+        setKind(next);
+        setIndex(0);
+      }}
       band={band}
-      onBandChange={setBand}
+      onBandChange={(next) => {
+        setBand(next);
+        setIndex(0);
+      }}
+      onClearFilters={() => {
+        setKind('all');
+        setBand('all');
+        setIndex(0);
+      }}
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}
       emptyStateAnchorRef={emptyStateAnchorRef}
@@ -880,6 +891,11 @@ describe('ReviewQueue', () => {
               onKindChange={setKind}
               band={band}
               onBandChange={setBand}
+              onClearFilters={() => {
+                setKind('all');
+                setBand('all');
+                setIndex(0);
+              }}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
             />
@@ -1101,6 +1117,11 @@ describe('ReviewQueue', () => {
             onKindChange={setKind}
             band={band}
             onBandChange={setBand}
+            onClearFilters={() => {
+              setKind('all');
+              setBand('all');
+              setIndex(0);
+            }}
             selectedIds={selectedIds}
             onSelectedIdsChange={setSelectedIds}
           />
@@ -1365,8 +1386,7 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
-    const onKindChange = vi.fn();
-    const onBandChange = vi.fn();
+    const onClearFilters = vi.fn();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
@@ -1381,14 +1401,14 @@ describe('ReviewQueue', () => {
           index={index}
           onIndexChange={setIndex}
           kind={kind}
-          onKindChange={(next) => {
-            onKindChange(next);
-            setKind(next);
-          }}
+          onKindChange={setKind}
           band={band}
-          onBandChange={(next) => {
-            onBandChange(next);
-            setBand(next);
+          onBandChange={setBand}
+          onClearFilters={() => {
+            onClearFilters();
+            setKind('all');
+            setBand('all');
+            setIndex(0);
           }}
           selectedIds={selectedIds}
           onSelectedIdsChange={setSelectedIds}
@@ -1407,8 +1427,7 @@ describe('ReviewQueue', () => {
     expect(clearBtn).toBeInTheDocument();
 
     await user.click(clearBtn);
-    expect(onKindChange).toHaveBeenCalledWith('all');
-    expect(onBandChange).toHaveBeenCalledWith('all');
+    expect(onClearFilters).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
     });
@@ -3075,6 +3094,11 @@ describe('ReviewQueue', () => {
                 onKindChange={setKind}
                 band={band}
                 onBandChange={setBand}
+                onClearFilters={() => {
+                  setKind('all');
+                  setBand('all');
+                  setIndex(0);
+                }}
                 selectedIds={selectedIds}
                 onSelectedIdsChange={setSelectedIds}
               />
@@ -3269,6 +3293,11 @@ describe('ReviewQueue', () => {
               onKindChange={setKind}
               band={band}
               onBandChange={setBand}
+              onClearFilters={() => {
+                setKind('all');
+                setBand('all');
+                setIndex(0);
+              }}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
             />
@@ -3434,6 +3463,11 @@ describe('ReviewQueue', () => {
               onKindChange={setKind}
               band={band}
               onBandChange={setBand}
+              onClearFilters={() => {
+                setKind('all');
+                setBand('all');
+                setIndex(0);
+              }}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
             />

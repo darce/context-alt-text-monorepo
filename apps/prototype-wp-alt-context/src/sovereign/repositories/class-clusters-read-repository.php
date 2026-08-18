@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
+require_once __DIR__ . '/trait-resolves-identity-members-table-name.php';
 
 use function is_array;
 use function is_numeric;
@@ -13,12 +14,12 @@ use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function str_replace;
 use function trim;
 
 class ClustersReadRepository {
 	use PreparesSqlQueries;
 	use ResolvesPersonsTableName;
+	use ResolvesIdentityMembersTableName;
 
 	private string $table_name;
 
@@ -269,10 +270,6 @@ class ClustersReadRepository {
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_top_unlabeled', $rows, true );
 		return is_array( $rows ) ? $rows : array();
-	}
-
-	private function resolve_identity_members_table_name(): string {
-		return str_replace( 'acx_clusters', 'acx_identity_members', $this->table_name );
 	}
 
 	public function count_top_unlabeled_singletons( string $tenant_id ): int {

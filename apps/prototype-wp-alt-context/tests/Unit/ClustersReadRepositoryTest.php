@@ -121,6 +121,21 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertStringContainsString("c.label IS NOT NULL AND c.label != '' AND c.label LIKE", $wpdb->queries[0]);
     }
 
+    public function testListTopUnlabeledResolvesMembersTableFromWpdbPrefix(): void
+    {
+        global $wpdb;
+        $wpdb->prefix = 'wp_';
+        $wpdb->mockResults = [];
+
+        $repository = new ClustersReadRepository('custom_cluster_projection');
+        $repository->list_top_unlabeled(self::currentTenantId(), 10);
+
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString('`custom_cluster_projection`', $sql);
+        $this->assertStringNotContainsString('custom_identity_members', $sql);
+    }
+
     public function testListTopUnlabeledIncludesPersonUuid(): void
     {
         global $wpdb;

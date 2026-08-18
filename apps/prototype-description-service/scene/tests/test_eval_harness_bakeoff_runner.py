@@ -90,7 +90,11 @@ def _registry(entries: list[CandidateEntry], *, usable_vram_budget_gb: int = 20)
                 "vram_gb": 24,
                 "usable_vram_budget_gb": usable_vram_budget_gb,
             },
-            "sealed": {"candidates": 13, "incumbent_anchors": 2},
+            "sealed": {
+                "candidates": 13,
+                "incumbent_anchors": 2,
+                "generation_pairs": [{"ids": ["alpha", "bravo"], "quant": "Q4_K_M"}],
+            },
             "entries": entries,
         }
     )

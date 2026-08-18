@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
-import { useWorkbenchFilters } from '../useWorkbenchFilters';
+import { QUEUE_ACTION, useWorkbenchFilters } from '../useWorkbenchFilters';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/']}>
@@ -123,5 +123,78 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.queueState).toEqual({ kind: 'merge', band: 'all', index: 4 });
     expect(result.current.searchQuery).toBe('face');
     expect(result.current.currentPage).toBe(2);
+  });
+
+  it('dispatchQueue set_kind resets index inside the reducer (one write)', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=all.all.3'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+  });
+
+  it('dispatchQueue set_band preserves kind and resets index', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.2'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: 'strong' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'strong', index: 0 });
+  });
+
+  it('dispatchQueue set_index preserves kind and band', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=merge.weaker.0'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: 2 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'merge', band: 'weaker', index: 2 });
+  });
+
+  it('dispatchQueue clamp_index never goes below zero', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.1'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: -4 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+  });
+
+  it('dispatchQueue clear_filters removes rq entirely', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.strong.2'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'all', band: 'all', index: 0 });
+  });
+
+  it('two dispatchQueue calls in one tick both land (RLSE-06 write-through)', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=all.all.3'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: 'strong' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'strong', index: 0 });
   });
 });

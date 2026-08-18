@@ -138,6 +138,11 @@ export interface ReviewQueueProps {
   band: ReviewQueueBandParam;
   onBandChange: (band: ReviewQueueBandParam) => void;
   /**
+   * UXW2-1: single-write escape hatch — clears kind AND band (and resets the
+   * index) in ONE owner dispatch. Never wire this to per-filter callbacks.
+   */
+  onClearFilters: () => void;
+  /**
    * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
    * unmount). Default empty; controlled prop pair into bulk hooks.
    */
@@ -259,6 +264,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onKindChange,
       band,
       onBandChange,
+      onClearFilters,
       selectedIds,
       onSelectedIdsChange,
       onLabel,
@@ -721,16 +727,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
+    // UXW2-1: ONE callback per click — the owner resets the index inside the
+    // reducer; a second same-tick write would read a stale URL snapshot.
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
       navigateAfterFlush(() => {
         // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
         if (nextFilter === filter) {
           onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-          onIndexChange(0);
           return;
         }
         onKindChange(filterToKindParam(nextFilter));
-        onIndexChange(0);
       });
     };
 
@@ -739,11 +745,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Band chips toggle like KIND chips — active → all.
         if (nextBand === activeBand) {
           onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-          onIndexChange(0);
           return;
         }
         onBandChange(bandToBandParam(nextBand));
-        onIndexChange(0);
       });
     };
 
@@ -1276,10 +1280,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   <button
                     type="button"
                     className="button"
-                    onClick={() => {
-                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-                    }}
+                    onClick={onClearFilters}
                   >
                     {__('Clear filters', 'alt-context')}
                   </button>

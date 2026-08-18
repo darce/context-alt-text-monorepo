@@ -66,3 +66,94 @@ rg-007 / rg-015 are constitution guards, not canon lexicon rows (grep of `~/uxw2
 - `5463596c7e7b770e6e55b874c0295bbfdf41bb9e` `fix(sovereign): UXW2-2 exclude memberless clusters from top-unlabeled`
 - `4324a9a69c88f5d6682619ea17393cb942196446` `fix(sovereign): UXW2-2 golden identity_count matches observed members`
 - `9e076ac7ba2c431c3acd089bcac039d095891aca` `docs: UXW2-2 REPORT.md` (this file; HEAD if no follow-up)
+
+
+---
+
+# REPORT — LANE UXW2-2-FE (honest review counts, frontend)
+
+Final HEAD: output of `git rev-parse HEAD` on this commit (self-referential; last lane commit before this report: `b085d572b5bd561842b617b3c3c44a3ee038c040`)
+
+## Slice 1 — TopClusterCard face count matches what is shown (B5)
+
+Commit: `e90fc5dcc0f32068b572b1b3f854b0cb960e3c76` `fix(workbench): UXW2-2 face count reflects rendered faces`
+
+- RED: `TopClusterCard.test.tsx` — new test "counts rendered faces and reports unrendered members as '+N more'"
+  (`identity_count=3`, 2 usable reps → wanted `2 faces in cluster` + `+1 more`) failed: count text was
+  `3 faces in cluster` (derived from `identity_count`). Updated missing-label test failed: 39px cells carried
+  `acx-durable-face-thumb--hide-missing-label` (blank tile). RED run: `2 failed | 22 passed`.
+- GREEN: `TopClusterCard.tsx` — count text now `_n('%d face in cluster','%d faces in cluster', reps.length)`
+  plus `(+N more)` when `identity_count > reps.length` (ClusterPreview `+N` pattern); `hideMissingLabel` fixed to
+  `false` so an image-less representative renders the DurableFaceThumb missing state WITH its visible "No image"
+  label at every cell size. GREEN run: `24 passed (24)`; pre-existing `identity_count === representatives.length`
+  test (was ~L172-200) still passes unchanged.
+- Decision (brief offered two options): render the missing state WITH its visible label rather than dropping the
+  rep from `reps`. Rationale: dropping would under-report loaded member rows and contradict PRINCIPLES §11
+  (unknown is a designed state — say "No image", don't blank or vanish); it also keeps the tile grid aligned with
+  the server-provided representative list.
+- Wording: no new "cluster" string introduced; `(+%d more)` is face-count only.
+
+## Slice 2 — queue header count tracks labelling (B6, frontend)
+
+Commit: `b085d572b5bd561842b617b3c3c44a3ee038c040` `fix(workbench): UXW2-2 drop labelled cluster from review caches`
+
+- RED: `useSuggestionReviewMutations.test.tsx` — "person-commit drops the committed cluster from all four review
+  caches" failed (`sugg-x` survived in reviewPage). `ReviewQueue.test.tsx` — "header count decrements after a
+  label commit panel round-trip without a refetch" failed (count stayed 2 after `updateClusterLabel` resolved).
+- GREEN: one shared helper `dropClusterFromReviewCaches(queryClient, clusterId)` in `suggestionProjection.ts`
+  optimistically filters: assignment `reviewPage(0)` items by `clusterId`, `namePending` by `cluster_id`,
+  `mergePending` rows where either side matches, and `topUnlabeled` rows (tenant-prefix `setQueriesData`).
+  Wired into: `executePersonCommit` (replaces narrower `removeNameSuggestionForCluster`, now deleted),
+  `ClusterLabelingPanel.handleLabelSuccess` and `handleMergeSuccess`, and merge-accept success in
+  `useSuggestionReviewMutations` (held-commit path + `acceptMergeMutation`, only when the response carries an
+  authoritative `source_cluster_id` — never the client-rank fallback, rg-015). All existing invalidations kept
+  (incl. namePending `refetchType:'none'`, S2-02).
+- Header (`ReviewQueue.tsx`): all four feeds are capped pages (25/10/25/20) with no envelope total, so the count
+  now reads "%d left to review (loaded)" — honest loaded scope, no invented total (rg-015). Stays
+  `aria-hidden`; the position line remains the `aria-live` surface (A11Y-21 preserved).
+- GREEN run: both files `115 passed (115)`.
+
+## Full suite / gates
+
+- `npm test` (frontend, full): **206 files, 2341 passed, 0 failed**.
+- `npm run typecheck`: clean.
+- `npm run lint`: 117 errors + 1 warning — proven pre-existing: identical count on stashed baseline; none of the
+  six files I touched appear in the error list. Not introduced by this lane.
+
+## Files changed
+
+- `identity-clusters/TopClusterCard.tsx`, `__tests__/TopClusterCard.test.tsx` (slice 1)
+- `identity-clusters/suggestionProjection.ts` (`dropClusterFromReviewCaches`)
+- `identity-clusters/useSuggestionReviewMutations.ts` (person-commit + merge-accept wiring)
+- `identity-clusters/ClusterLabelingPanel.tsx` (label/merge success wiring)
+- `identity-clusters/ReviewQueue.tsx` (header count copy)
+- `__tests__/useSuggestionReviewMutations.test.tsx`, `__tests__/ReviewQueue.test.tsx` (slice 2 tests)
+
+## Canon IDs satisfied (verified by grep)
+
+- REF-09 derived-data drift — `~/uxw2/canon/lexicons/engineering.md:328` (count/cache now derived from rendered/loaded rows)
+- DATA-01 consistency model stated — `engineering.md:189` (optimistic drop + documented curation-lag window; existing invalidations reconcile)
+- TEST-15 prove green can go red — `engineering.md:396` (both slices landed RED first; old count test could not fail for the reported case)
+- HAI-01 evidence before label — `interaction-ux.md:210` (count no longer claims faces with no tile)
+- INT-10 status–predict–stop — `interaction-ux.md:167` (header count tracks the labelling action immediately)
+- PERC-05 fovea-first feedback — `interaction-ux.md:95` (count at the queue header updates at the point of action)
+- A11Y-21 announce status — `accessibility.md:132` (count stays aria-hidden; live position line unchanged)
+- PRINCIPLES §11 unknown is a designed state — `~/uxw2/canon/PRINCIPLES.md:260` (missing image renders labelled "No image", never blank)
+- rg-015 — no fabricated totals: header labelled "(loaded)"; merge drop only on authoritative `source_cluster_id`.
+
+## Decisions
+
+1. Missing-image rep: render missing state with visible label (not dropped from `reps`) — see Slice 1.
+2. Label-success wiring placed in `ClusterLabelingPanel.handleLabelSuccess`/`handleMergeSuccess` (the panel's own
+   mutations), not `useClusterMutations`/`useClusterLabelMutations` — the panel does not use those hooks for
+   label/merge; wiring them would have changed library-pane behaviour outside this lane's scope.
+3. Header copy "(loaded)" chosen over inventing a server total (no envelope total exists; COR-3/rg-015).
+4. Existing "+N" phrasing rendered as `(+N more)` inside the meta line — text, not a styled badge, to avoid new
+   CSS surface in a 30-min lane.
+
+## Undone / out of scope
+
+- B6 backend half (PHP/python synchronously resolving pending suggestions on label/commit) — cross-lane; the
+  frontend optimistic drop covers the visible symptom, refetches after curation reconcile.
+- Pre-existing lint debt (117 errors) untouched per scope rules.
+- True remaining-count total would need envelope totals (COR-3) — deliberately not fabricated.

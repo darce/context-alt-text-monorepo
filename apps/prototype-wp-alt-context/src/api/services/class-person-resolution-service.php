@@ -123,6 +123,129 @@ class PersonResolutionService {
 	}
 
 	/**
+	 * Automatic bind policy (R1-08): reuse a same-name person only when that
+	 * person is already bound to a cluster in this tenant. Otherwise create a
+	 * distinct person and mark collision.
+	 *
+	 * @param callable(string $person_uuid, string $name, array<int,mixed> $tags): bool $enqueue_person_created
+	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string,collision:bool}|WP_Error
+	 */
+	public function resolve_for_automatic_bind(
+		string $display_name,
+		string $tenant_id,
+		string $cluster_uuid,
+		callable $enqueue_person_created
+	): array|WP_Error {
+		$resolved = $this->resolve_or_create( $display_name, $enqueue_person_created );
+		if ( is_wp_error( $resolved ) ) {
+			return $resolved;
+		}
+
+		if ( 'created' === $resolved['outcome'] ) {
+			$resolved['collision'] = false;
+			return $resolved;
+		}
+
+		if ( $this->person_is_bound_to_cluster( (int) $resolved['person_id'], $cluster_uuid ) ) {
+			$resolved['collision'] = false;
+			return $resolved;
+		}
+
+		if ( ! $this->person_is_bound_in_tenant( (int) $resolved['person_id'], $tenant_id ) ) {
+			$resolved['collision'] = false;
+			return $resolved;
+		}
+
+		$distinct = $this->create_distinct( $display_name, $enqueue_person_created );
+		if ( is_wp_error( $distinct ) ) {
+			return $distinct;
+		}
+
+		$distinct['collision'] = true;
+		return $distinct;
+	}
+
+	public function person_is_bound_to_cluster( int $person_id, string $cluster_uuid ): bool {
+		global $wpdb;
+
+		$normalized_cluster = trim( $cluster_uuid );
+		if ( $person_id <= 0 || '' === $normalized_cluster ) {
+			return false;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$bound = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT person_id FROM %i WHERE cluster_uuid = %s AND person_id = %d LIMIT 1',
+				$wpdb->prefix . 'acx_clusters',
+				$normalized_cluster,
+				$person_id
+			)
+		);
+
+		return is_numeric( $bound ) && (int) $bound > 0;
+	}
+
+	public function person_is_bound_in_tenant( int $person_id, string $tenant_id ): bool {
+		global $wpdb;
+
+		$normalized_tenant = trim( $tenant_id );
+		if ( $person_id <= 0 || '' === $normalized_tenant ) {
+			return false;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$bound = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT person_id FROM %i WHERE tenant_id = %s AND person_id = %d LIMIT 1',
+				$wpdb->prefix . 'acx_clusters',
+				$normalized_tenant,
+				$person_id
+			)
+		);
+
+		return is_numeric( $bound ) && (int) $bound > 0;
+	}
+
+	/**
+	 * @param callable(string $person_uuid, string $name, array<int,mixed> $tags): bool $enqueue_person_created
+	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|WP_Error
+	 */
+	public function create_distinct( string $display_name, callable $enqueue_person_created ): array|WP_Error {
+		$base = \sanitize_text_field( $display_name );
+		if ( '' === $base ) {
+			return new WP_Error(
+				'acx_invalid_name',
+				__( 'Person name cannot be empty.', 'alt-context' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		for ( $suffix = 2; $suffix <= 99; $suffix++ ) {
+			$candidate = $base . ' (' . $suffix . ')';
+			$normalized = self::normalize_name( $candidate );
+			$existing   = $this->find_by_normalized_name( $GLOBALS['wpdb']->prefix . 'acx_persons', $normalized );
+			if ( null !== $existing ) {
+				continue;
+			}
+
+			return $this->resolve_or_create( $candidate, $enqueue_person_created );
+		}
+
+		return new WP_Error(
+			'acx_db_error',
+			__( 'Could not create a distinct person for the colliding label.', 'alt-context' ),
+			array( 'status' => 500 )
+		);
+	}
+
+	/**
 	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|null
 	 */
 	private function find_by_normalized_name( string $table_persons, string $normalized ): ?array {

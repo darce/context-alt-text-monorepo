@@ -96,6 +96,37 @@ class MemberResponseMapperTest extends TestCase
         $this->assertTrue($payload[0]['is_auto_label']);
     }
 
+    public function testMapMediaIdentitiesAppliesLabelAuthorityRows(): void
+    {
+        $payload = $this->mapper->map_media_identities([
+            [
+                'identity_uuid' => 'unbound',
+                'attachment_id' => 1,
+                'cluster_label' => null,
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+            [
+                'identity_uuid' => 'auto',
+                'attachment_id' => 1,
+                'cluster_label' => 'cluster-abcdef01',
+                'is_user_confirmed' => 0,
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+            [
+                'identity_uuid' => 'bound',
+                'attachment_id' => 1,
+                'cluster_label' => 'Ada Lovelace',
+                'person_name' => 'Ada Lovelace',
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+        ]);
+
+        $this->assertNull($payload['1'][0]['cluster_label']);
+        $this->assertSame('cluster-abcdef01', $payload['1'][1]['cluster_label']);
+        $this->assertTrue($payload['1'][1]['is_auto_label']);
+        $this->assertSame('Ada Lovelace', $payload['1'][2]['cluster_label']);
+    }
+
     public function testMapClusterMembersPrefersFaceThumbPathOverAttachmentUrl(): void
     {
         $GLOBALS['__ac_attachment_urls'][50] = 'http://example.test/uploads/50.jpg';

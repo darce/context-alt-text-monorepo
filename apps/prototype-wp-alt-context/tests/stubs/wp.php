@@ -2580,8 +2580,8 @@ if (!isset($GLOBALS['wpdb'])) {
             }
 
             $row = $data;
-            if (!array_key_exists('id', $row) && preg_match('/_failures$/', $table) === 1) {
-                $row['id'] = count($this->tableRows[$table]) + 1;
+            if (!array_key_exists('id', $row)) {
+                $row['id'] = $this->insert_id > 0 ? $this->insert_id : (count($this->tableRows[$table]) + 1);
             }
 
             $this->tableRows[$table][] = $row;

@@ -471,7 +471,7 @@ Response (proxy to `/recognition/clusters/reassign`):
 
 ## PATCH /recognition/clusters/{cluster_id}
 
-Update cluster label.
+Update cluster label. The plugin binds a roster person for a human label.
 
 Request body:
 
@@ -479,7 +479,20 @@ Request body:
 { "label": "Alice" }
 ```
 
-Response: `ClusterResponse`.
+Local and proxy-success responses include:
+
+```json
+{
+  "cluster_id": "...",
+  "label": "Alice",
+  "synced": false,
+  "status": "pending",
+  "person_id": 12,
+  "roster_bound": true
+}
+```
+
+`person_id` and `roster_bound` are omitted when the mutation is a no-op acknowledgement. A failed backend proxy (non-2xx) does not persist a local person.
 
 ## POST /recognition/clusters/{source_id}/merge
 

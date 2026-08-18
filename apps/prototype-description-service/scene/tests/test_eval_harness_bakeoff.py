@@ -20,7 +20,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption, _extract_usage, _sum_usage
+from scripts.eval_harness.bakeoff import (
+    BakeoffClient,
+    _extract_caption,
+    _extract_usage,
+    _stamp_pipeline_provenance,
+    _sum_usage,
+    build_parser,
+)
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
@@ -303,14 +310,53 @@ def _usage_client(usage: object) -> BakeoffClient:
     )
 
 
+_PASS1_FACTS = (
+    '{"people":[],"setting":"garden","action":"sitting","legible_text":[],"atmosphere":"bright"}'
+)
+
+
+def _sequenced_usage_transport(responses: list[tuple[str, object]]) -> httpx.MockTransport:
+    """Each response is ``(content, usage_or_None)`` consumed in order."""
+
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        content, usage = responses[calls["n"]]
+        calls["n"] += 1
+        body: dict = {"choices": [{"message": {"content": content}}]}
+        if usage is not None:
+            body["usage"] = usage
+        return httpx.Response(200, json=body)
+
+    return httpx.MockTransport(handler)
+
+
 def test_usage_is_captured_per_pass_and_rolled_up() -> None:
-    usage = {"prompt_tokens": 1500, "completion_tokens": 120, "total_tokens": 1620}
-    describe = _describe(_usage_client(usage), {"caption": "A picnic."})
+    """TEST-15 / BR-08: a genuine two-pass describe() must sum both usage blocks.
+
+    A last-pass-only roll-up (``_sum_usage(passes[-1:])``) stays green on a
+    single-call describe(); two distinct per-pass counts make that mutation red.
+    """
+    usage_facts = {"prompt_tokens": 1500, "completion_tokens": 300, "total_tokens": 1800}
+    usage_weave = {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}
+    client = BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        model_version="Q4_K_M",
+        two_pass=True,
+        transport=_sequenced_usage_transport(
+            [(_PASS1_FACTS, usage_facts), ("A caption.", usage_weave)]
+        ),
+    )
+    describe = _describe(client, {"caption": "A picnic."})
+    assert [p["pass"] for p in describe["passes"]] == ["describe_facts", "ground_weave"]
+    assert describe["passes"][0]["usage"] == usage_facts
+    assert describe["passes"][1]["usage"] == usage_weave
     assert describe["tokens"] == {
-        "prompt_tokens": 1500,
-        "completion_tokens": 120,
-        "total_tokens": 1620,
-        "model_calls": 1,
+        "prompt_tokens": 2400,
+        "completion_tokens": 410,
+        "total_tokens": 2810,
+        "model_calls": 2,
         "passes_missing_usage": 0,
         "complete": True,
     }
@@ -318,9 +364,13 @@ def test_usage_is_captured_per_pass_and_rolled_up() -> None:
 
 def test_usage_absent_is_reported_as_incomplete_not_guessed() -> None:
     tokens = _describe(_usage_client(None), {"caption": "A picnic."})["tokens"]
-    assert tokens["total_tokens"] == 0
+    # BR-05: absent usage is None, not a numeric zero a consumer can score as free.
+    assert tokens["prompt_tokens"] is None
+    assert tokens["completion_tokens"] is None
+    assert tokens["total_tokens"] is None
     assert tokens["passes_missing_usage"] == 1
     assert tokens["complete"] is False
+    assert tokens["model_calls"] == 1
 
 
 def test_malformed_usage_is_rejected_wholesale() -> None:
@@ -329,6 +379,30 @@ def test_malformed_usage_is_rejected_wholesale() -> None:
     assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": "5", "total_tokens": 15}}) is None
     assert _extract_usage({"usage": {"prompt_tokens": True, "completion_tokens": 5, "total_tokens": 15}}) is None
     assert _extract_usage({}) is None
+    # BR-11: negatives and internally inconsistent totals are also wholesale rejects.
+    assert _extract_usage({"usage": {"prompt_tokens": -10, "completion_tokens": 5, "total_tokens": -5}}) is None
+    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": -5, "total_tokens": 5}}) is None
+    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 99}}) is None
+
+
+def test_describe_malformed_usage_is_missing_not_a_crash() -> None:
+    """BR-09 / TEST-06: the reject invariant must hold on describe(), not just the helper.
+
+    A reviewer who bypasses ``_extract_usage`` inside ``_timed_chat`` used to
+    TypeError in ``_sum_usage`` on ``completion_tokens: "5"`` while the helper
+    test stayed green.
+    """
+    describe = _describe(
+        _usage_client({"prompt_tokens": 10, "completion_tokens": "5", "total_tokens": 15}),
+        {"caption": "A picnic."},
+    )
+    tokens = describe["tokens"]
+    assert tokens["passes_missing_usage"] == 1
+    assert tokens["complete"] is False
+    assert tokens["model_calls"] == 1
+    assert tokens["prompt_tokens"] is None
+    assert tokens["completion_tokens"] is None
+    assert tokens["total_tokens"] is None
 
 
 def test_sum_usage_adds_every_pass_and_flags_a_gap() -> None:
@@ -345,9 +419,74 @@ def test_sum_usage_adds_every_pass_and_flags_a_gap() -> None:
         "complete": True,
     }
     gapped = _sum_usage([*passes, {"pass": "compress_short", "usage": None}])
-    assert gapped["total_tokens"] == 2810
-    assert gapped["model_calls"] == 3
-    assert gapped["complete"] is False
+    assert gapped == {
+        "prompt_tokens": 2400,
+        "completion_tokens": 410,
+        "total_tokens": 2810,
+        "model_calls": 3,
+        "passes_missing_usage": 1,
+        "complete": False,
+    }
+    # BR-05 contract: zero passes carried usage → count fields are None, not 0.
+    absent = _sum_usage(
+        [{"pass": "describe_facts", "usage": None}, {"pass": "ground_weave", "usage": None}]
+    )
+    assert absent == {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "model_calls": 2,
+        "passes_missing_usage": 2,
+        "complete": False,
+    }
+
+
+def test_weave_bench_describe_stamps_token_roll_up() -> None:
+    """BR-10: weave-bench is the same _timed_chat path and must record the tokens axis."""
+    usage = {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}
+    client = _usage_client(usage)
+    describe = client.weave_bench_describe(
+        media_id=7,
+        facts_raw=_PASS1_FACTS,
+        context_pack={"caption": "A picnic."},
+    )
+    assert describe["tokens"] == {
+        "prompt_tokens": 900,
+        "completion_tokens": 110,
+        "total_tokens": 1010,
+        "model_calls": 1,
+        "passes_missing_usage": 0,
+        "complete": True,
+    }
+
+
+def _stamp_from_cli(argv: list[str]) -> dict:
+    args = build_parser().parse_args(["--endpoint", "http://x", "--model-id", "m", *argv])
+    provenance: dict = {}
+    _stamp_pipeline_provenance(
+        provenance,
+        prompt_variant=args.prompt_variant,
+        two_pass=args.two_pass,
+        dual_length=args.dual_length,
+        face_gate=args.face_gate,
+        eval_mode=args.eval_mode,
+        instance_shape=args.instance_shape,
+    )
+    return provenance
+
+
+def test_instance_shape_round_trips_onto_provenance() -> None:
+    """BR-07-a: --instance-shape is stamped verbatim; the harness never infers a host."""
+    provenance = _stamp_from_cli(["--instance-shape", "gpu.a10"])
+    assert provenance["instance_shape"] == "gpu.a10"
+
+
+def test_instance_shape_absent_by_default() -> None:
+    """BR-07-a: absent means absent — do not invent a machine name (rg-015)."""
+    args = build_parser().parse_args(["--endpoint", "http://x", "--model-id", "m"])
+    assert args.instance_shape is None
+    provenance = _stamp_from_cli([])
+    assert "instance_shape" not in provenance
 
 
 def test_extract_caption_reasoning_only_names_reasoning_content() -> None:

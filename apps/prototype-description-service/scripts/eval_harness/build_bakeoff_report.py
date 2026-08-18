@@ -67,17 +67,20 @@ def _index_run(path: str) -> dict[int, dict[str, Any]]:
 
 
 def _tokens_label(tokens: Any) -> str:
-    """Render the per-image token roll-up, or '' when the server reported none.
+    """Render the per-image token roll-up.
 
-    An incomplete roll-up is marked with a trailing ``+`` rather than shown as
-    if it were the whole image's cost.
+    Reader contract for the sibling ``_sum_usage`` writer:
+    - counts ``None`` → explicit ``tokens not captured``, never ``""``
+    - ``complete`` false with integer counts → trailing ``+``
+    - ``complete`` true → the plain label
+    A non-dict (the current integer-0 shape) must not crash.
     """
     if not isinstance(tokens, dict):
         return ""
     total = tokens.get("total_tokens")
     completion = tokens.get("completion_tokens")
-    if not isinstance(total, int) or not isinstance(completion, int) or total <= 0:
-        return ""
+    if not isinstance(total, int) or not isinstance(completion, int):
+        return " · tokens not captured"
     partial = "+" if not tokens.get("complete") else ""
     return f" · {total}{partial} tok ({completion} out)"
 
@@ -111,9 +114,19 @@ def _resolve_image(images_dir: Path, entry: dict[str, Any]) -> Path | None:
     return alt if alt.exists() else None
 
 
+def _attempted_media_ids(runs: dict[str, dict[int, dict]]) -> set[int]:
+    """Every media_id a run actually tried, success or failure."""
+    return {mid for run in runs.values() for mid in run}
+
+
 def _pick_varied(manifest: dict[int, dict], runs: dict[str, dict[int, dict]], n: int) -> list[int]:
-    """Deterministic spread: multi-person, text-heavy, single-id, no-id."""
-    scored = sorted(m for m in manifest if any(m in r and not r[m].get("error") for r in runs.values()))
+    """Deterministic spread: multi-person, text-heavy, single-id, no-id.
+
+    The pool is every *attempted* media_id. Timeouts and transport failures
+    stay in the frame so the measured system cannot shrink its own sample.
+    """
+    attempted = _attempted_media_ids(runs)
+    scored = sorted(m for m in manifest if m in attempted)
 
     def text_heavy(mid: int) -> bool:
         for r in runs.values():
@@ -336,9 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.embed_images and images_dir is None:
         ap.error("--embed-images requires --images-dir")
 
+    attempted_n = len(_attempted_media_ids(runs))
     subtitle = f"{len(media_ids)} images · {len(runs)} run(s): {', '.join(runs)} · self-contained, offline"
-    if args.cost_total is not None and media_ids:
-        subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / len(media_ids):.4f}/image"
+    if args.cost_total is not None and attempted_n:
+        subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / attempted_n:.4f}/image"
     doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
     Path(args.out).write_text(doc)
     print(f"wrote {args.out} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")

@@ -302,6 +302,7 @@ Notes:
 - WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - The controller clamps excessive `limit` requests to the canonical `LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT=500` before local or proxied reads, and the response `limit` field reports that effective capped value.
 - Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
+- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty; `identity_count` reflects observed members when the member set is not truncated. The queue predicate is backed by `acx_identity_members` rows (`COUNT(m) >= 2`), so a cluster whose members were reprojected away is not served.
 
 ## GET /recognition/clusters/labels
 

@@ -401,7 +401,7 @@ def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
 
 def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
     images_dir = os.environ.get("GOLDEN_IMAGES_DIR")
-    if not images_dir:
+    if not images_dir or not os.path.isdir(images_dir):
         pytest.skip("GOLDEN_IMAGES_DIR not set (fixture bytes not vendored)")
     from scripts.eval_harness.draft_labels import generate_draft_manifest, normalize_rel_path
 
@@ -751,6 +751,52 @@ def test_load_manifest_hash_skip_reason_without_skip_raises(tmp_path, monkeypatc
             images_dir=str(images),
             skip_hash_verification=False,
             hash_skip_reason="should not be here",
+        )
+
+
+def test_load_manifest_skip_true_reason_with_golden_images_dir_verifies(tmp_path, monkeypatch):
+    """VLM6-W2-RV-01: skip=True + reason + resolvable GOLDEN_IMAGES_DIR verifies.
+
+    Production metadata-only sites pass skip+reason. When the documented eval
+    env is exported and the dir exists, hashes are still checked; the reason
+    is unused (no HashVerificationSkippedWarning, no raise).
+    """
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    path = _write_manifest(tmp_path, data)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        manifest = load_manifest(
+            path,
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
+        )
+    assert len(manifest.entries) == 2
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in rec)
+
+
+def test_load_manifest_skip_true_reason_with_images_dir_still_verifies_tamper(tmp_path, monkeypatch):
+    """VLM6-W2-RV-01 / R1-02: skip=True must not bypass verify when images resolve.
+
+    Reordering skip-before-verify would load a tampered pin silently.
+    """
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
         )
 
 

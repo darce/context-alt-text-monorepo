@@ -1113,15 +1113,17 @@ def load_manifest(
     Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution order:
 
     1. Explicit ``images_dir`` argument — always verified.
-    2. Else ``GOLDEN_IMAGES_DIR`` env — verified when set.
+    2. Else ``GOLDEN_IMAGES_DIR`` env — verified when the directory exists.
     3. Else, if ``skip_hash_verification=True`` — metadata-only load (explicit
        opt-out for score paths that do not read image bytes). The skip is
        surfaced as ``HashVerificationSkippedWarning`` naming the caller
        ``hash_skip_reason`` (or ``"no reason supplied"``) and the path
-       (OBS-04). A reason without a skip (images resolved, or
-       ``skip_hash_verification=False``) is a caller bug and raises
-       ``ManifestError``.
+       (OBS-04).
     4. Else refuse with an actionable error.
+
+    ``hash_skip_reason`` raises ``ManifestError`` only when
+    ``skip_hash_verification`` is False; when skip is True and images resolve,
+    hashes are still verified and the reason is unused (VLM6-W2-RV-01).
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
     violations, unsupported version, missing ``annotation_mode``, a
@@ -1264,18 +1266,25 @@ def load_manifest(
             stacklevel=2,
         )
 
-    resolved_images = images_dir if images_dir is not None else (os.environ.get("GOLDEN_IMAGES_DIR") or None)
-    skipping = (not resolved_images) and skip_hash_verification
-    # A reason without a skip is a caller bug (VLM6-DELTA-05 / OBS-04).
-    if hash_skip_reason is not None and not skipping:
+    # A reason without skip_hash_verification=True is a caller bug
+    # (VLM6-DELTA-05 / VLM6-W2-RV-01 / OBS-04). When skip is True and images
+    # resolve, verification still runs and the reason is unused.
+    if hash_skip_reason is not None and not skip_hash_verification:
         raise ManifestError(
             f"hash_skip_reason={hash_skip_reason!r} supplied but hash verification "
-            f"is not being skipped (skip_hash_verification={skip_hash_verification}, "
-            f"images resolved={bool(resolved_images)}). A reason without a skip is "
-            "a caller bug."
+            f"is not being skipped (skip_hash_verification={skip_hash_verification}). "
+            "A reason without a skip is a caller bug."
         )
-    if resolved_images:
-        _verify_hashes(manifest, Path(resolved_images))
+    env_images = os.environ.get("GOLDEN_IMAGES_DIR") or None
+    candidate = images_dir if images_dir is not None else env_images
+    images_exist = bool(candidate) and Path(candidate).is_dir()
+    # Explicit images_dir is always verified. Env is verified when the dir
+    # exists; a set-but-missing env does not resolve when skip is True.
+    must_verify = images_dir is not None or (
+        bool(candidate) and (images_exist or not skip_hash_verification)
+    )
+    if must_verify:
+        _verify_hashes(manifest, Path(candidate))
     elif skip_hash_verification:
         # Named skip is still a silent no-op unless surfaced (VLM6-PANEL6L-rvM-03
         # / OBS-04): a caller that flips this on for a real pixel-reading path

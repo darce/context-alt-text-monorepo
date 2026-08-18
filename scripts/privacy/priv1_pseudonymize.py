@@ -652,7 +652,7 @@ def _multi_token_regex(mapping: dict, singles: bool = False) -> tuple[re.Pattern
         # `%20` is a URL-encoded space. `%2520` is a double-encoded
         # percent sequence — a different string, not a case of `%20` —
         # and is out of scope.
-        parts.append(re.escape(e["real_name"]).replace(r"\ ", r"(?:[\s_\-]+|%20)+"))
+        parts.append(re.escape(e["real_name"]).replace(r"\ ", r"(?:[\s_\-]|%20)+"))
         by_key[_name_key(e["real_name"])] = e
     if not parts:
         raise SystemExit("alias map contains no multi-token names")

@@ -1710,6 +1710,182 @@ def _repin_digests(
     )
 
 
+_PIN_RECORD_NAME = "priv1-digest-pins.json"
+_PIN_RECORD_SCHEMA = "priv1-digest-pins/1"
+
+
+def _pin_record_path() -> Path:
+    # Derived at call time so a test that monkeypatches PRIVATE does not
+    # have to also patch a module-level Path that was bound at import.
+    return PRIVATE / _PIN_RECORD_NAME
+
+
+def _validate_pin_record(record: dict) -> None:
+    """Structural validation at load time (rg-008).
+
+    A missing ``pins`` key must not become an empty list: that would make
+    `verify` report 0 stale over a record that never named a pin, which
+    is the wordlist-trap shape (an empty exclusion set meaning "all fine").
+    An empty list that *was* written is a measured zero and is allowed.
+    """
+    path = _pin_record_path()
+    if not isinstance(record, dict):
+        raise SystemExit(f"{path}: pin record is not an object")
+    if record.get("schema") != _PIN_RECORD_SCHEMA:
+        raise SystemExit(
+            f"{path}: unsupported schema {record.get('schema')!r}; expected {_PIN_RECORD_SCHEMA}"
+        )
+    if "pins" not in record:
+        raise SystemExit(f"{path}: missing required key 'pins'")
+    pins = record["pins"]
+    if not isinstance(pins, list):
+        raise SystemExit(f"{path}: `pins` must be a list")
+    required = {"path", "sha256"}
+    seen: set[str] = set()
+    for i, entry in enumerate(pins):
+        if not isinstance(entry, dict):
+            raise SystemExit(f"{path}: pins[{i}] is not an object")
+        missing = required - set(entry)
+        if missing:
+            raise SystemExit(f"{path}: pins[{i}] missing {sorted(missing)}")
+        rel = entry["path"]
+        digest = entry["sha256"]
+        if not rel:
+            raise SystemExit(f"{path}: pins[{i}] has an empty path")
+        if not isinstance(digest, str) or len(digest) != 64 or set(digest) - set("0123456789abcdef"):
+            raise SystemExit(f"{path}: pins[{i}] sha256 is not a 64-char lowercase hex digest")
+        if rel in seen:
+            raise SystemExit(f"{path}: duplicate path {rel}")
+        seen.add(rel)
+
+
+def _load_pin_record() -> dict:
+    path = _pin_record_path()
+    if not path.is_file():
+        raise SystemExit(
+            f"pin record not found: {path}. "
+            "Run `apply` (not --dry-run) to publish one. "
+            "An absent record cannot be treated as 'all pins fine'."
+        )
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{path}: malformed JSON ({exc})") from exc
+    _validate_pin_record(record)
+    return record
+
+
+def _write_pin_record(record: dict) -> None:
+    _validate_pin_record(record)
+    PRIVATE.mkdir(parents=True, exist_ok=True)
+    path = _pin_record_path()
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _merge_pin_record(updates: dict[str, str]) -> dict:
+    """Merge newly published path→digest pairs into the on-disk record.
+
+    A missing file starts a new record -- `apply` is creating the baseline.
+    `verify` must not take this path; it loads and fails closed.
+
+    Previously recorded paths that are not in ``updates`` are kept, so an
+    out-of-band rewrite (no longer a live pin) stays visible to `verify`.
+    """
+    path = _pin_record_path()
+    by_path: dict[str, str] = {}
+    if path.is_file():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        _validate_pin_record(existing)
+        by_path = {e["path"]: e["sha256"] for e in existing["pins"]}
+    by_path.update(updates)
+    record = {
+        "schema": _PIN_RECORD_SCHEMA,
+        "pins": [{"path": rel, "sha256": by_path[rel]} for rel in sorted(by_path)],
+    }
+    _write_pin_record(record)
+    return record
+
+
+def _check_published_pins(
+    record: dict,
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
+    """Re-hash each recorded path. Return ``(stale, missing)``.
+
+    A recorded path that no longer exists is its own state, not dropped
+    and not conflated with a matching pin.
+    """
+    _validate_pin_record(record)
+    stale: list[tuple[str, str, str]] = []
+    missing: list[tuple[str, str]] = []
+    for entry in record["pins"]:
+        rel = entry["path"]
+        pinned = entry["sha256"]
+        path = REPO / rel
+        if not path.is_file():
+            missing.append((rel, pinned))
+            continue
+        live = _sha_file(path)
+        if live != pinned:
+            stale.append((rel, pinned, live))
+    return stale, missing
+
+
+def _pin_check_line(n_published: int, n_stale: int, n_missing: int) -> str:
+    """Always a complete sentence, including the zero case.
+
+    Paths and names are not included -- the caller prints those on their
+    own lines, truncated the same way REPIN lines are.
+    """
+    return f"digest pins: {n_published} published; {n_stale} stale; {n_missing} missing"
+
+
+def _stale_pin_line(rel: str, pinned: str, live: str) -> str:
+    return f"STALE-PIN {rel} pinned {pinned[:12]}.. found {live[:12]}.."
+
+
+def _missing_pin_line(rel: str, pinned: str) -> str:
+    return f"MISSING-PIN {rel} pinned {pinned[:12]}.. (path gone)"
+
+
+def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]]) -> dict[str, str]:
+    """Paths whose current digest appears as a 64-hex literal in scoped text.
+
+    Inverse of `_repin_digests`: that function rewrites literals that match
+    a *previous* digest. This finds literals that match a *current* one.
+    Both treat such a literal as a pin by construction, so this is not a
+    guess about unmatched hex (an upstream release, an untracked artifact).
+    """
+    if not published:
+        return {}
+    digest_to_rels: dict[str, list[str]] = {}
+    for rel, digest in published.items():
+        if digest:
+            digest_to_rels.setdefault(digest, []).append(rel)
+    if not digest_to_rels:
+        return {}
+    rx = re.compile("|".join(re.escape(d) for d in digest_to_rels))
+    found: dict[str, str] = {}
+    for path, in_scope in files:
+        if not in_scope or not path.is_file():
+            continue
+        text, _reason = _read_or_reason(path)
+        if text is None:
+            continue
+        for digest in set(rx.findall(text)):
+            for rel in digest_to_rels[digest]:
+                found[rel] = digest
+    return found
+
+
+def _persist_published_pins(
+    published: dict[str, str], files: list[tuple[Path, bool]], dry_run: bool
+) -> dict | None:
+    """Write the pin record from live targets. Dry-run writes nothing."""
+    if dry_run:
+        return None
+    return _merge_pin_record(_live_pin_targets(published, files))
+
+
 def cmd_apply(args) -> int:
     _load_key()
     mapping = load_map()
@@ -1778,6 +1954,7 @@ def cmd_apply(args) -> int:
 
     files_after = _tracked_files() if renames and not args.dry_run else files
     repins = _repin_digests(pre_sha, files_after, args.dry_run)
+    pin_record = _persist_published_pins(pre_sha, files_after, args.dry_run)
 
     for rel, counts in sorted(changed, key=lambda r: -sum(r[1].values()))[: args.top]:
         detail = " ".join(f"{k}={v}" for k, v in counts.items() if v)
@@ -1801,6 +1978,15 @@ def cmd_apply(args) -> int:
     print(f"  {_ambiguous_family_exclusion_line(passes.ambiguous_family_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(len(all_unresolved))}")
+    if pin_record is None:
+        print(f"  {_pin_check_line(0, 0, 0)}")
+    else:
+        stale_pins, missing_pins = _check_published_pins(pin_record)
+        for rel, pinned, live in stale_pins:
+            print(f"  {_stale_pin_line(rel, pinned, live)}")
+        for rel, pinned in missing_pins:
+            print(f"  {_missing_pin_line(rel, pinned)}")
+        print(f"  {_pin_check_line(len(pin_record['pins']), len(stale_pins), len(missing_pins))}")
     if out_of_scope:
         print(f"  OUT OF SCOPE -- scanned, deliberately not rewritten ({len(out_of_scope)} files):")
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values()))[:20]:
@@ -1828,6 +2014,8 @@ def cmd_verify(args) -> int:
     _assert_map_vocab_disjoint(mapping)
     _assert_wordlist_pin(mapping)
     passes = _Passes(mapping)
+    pin_record = _load_pin_record()
+    stale_pins, missing_pins = _check_published_pins(pin_record)
 
     residue: list[tuple[str, dict[str, int]]] = []
     path_residue: list[str] = []
@@ -1869,6 +2057,11 @@ def cmd_verify(args) -> int:
     print(f"  {_ambiguous_family_exclusion_line(passes.ambiguous_family_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(sum(h.get('media_ambiguous', 0) for _rel, h in residue))}")
+    for rel, pinned, live in stale_pins:
+        print(f"  {_stale_pin_line(rel, pinned, live)}")
+    for rel, pinned in missing_pins:
+        print(f"  {_missing_pin_line(rel, pinned)}")
+    print(f"  {_pin_check_line(len(pin_record['pins']), len(stale_pins), len(missing_pins))}")
     print(
         f"in-scope residue: {len(residue)} files / {sum(sum(h.values()) for h in (x[1] for x in residue))} occ; "
         f"paths: {len(path_residue)}; free-text: {len(free_text)}; unscannable in-scope: {len(undeclared)} "
@@ -1883,7 +2076,7 @@ def cmd_verify(args) -> int:
     if args.show_out_of_scope:
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values())):
             print(f"  OUT-OF-SCOPE {rel} {hits}")
-    return 1 if (residue or path_residue or undeclared or free_text) else 0
+    return 1 if (residue or path_residue or undeclared or free_text or stale_pins or missing_pins) else 0
 
 
 def main() -> int:

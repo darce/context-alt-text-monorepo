@@ -113,7 +113,7 @@
   "onyx_marsh": "personal/onyx_marsh_623.jpg",
   "sable_verity": "personal/sable_verity_151.jpg",
   "linen_kestrel": "personal/linen_kestrel_252.jpg",
-  "coral_ridgeway": "personal/pewter_ridgeway_538.jpg",
+  "burnished_ridgeway": "personal/pewter_ridgeway_538.jpg",
   "brisk_rookery": "personal/brisk_rookery_546.jpg",
   "wicker_orchard": "personal/wicker_orchard_362.jpg",
   "saffron_orchard": "personal/saffron_orchard_191.jpg",
@@ -1788,9 +1788,9 @@
    "media_id": 537,
    "path": "personal/pewter_ridgeway_537.jpg",
    "sha256": "e1f3b89070c95831310aabde77bd8ea3be9f961f9e96ea9af6e0a2e6b0ba5e94",
-   "slug": "coral_ridgeway",
+   "slug": "burnished_ridgeway",
    "named_identities": [
-    "Coral Ridgeway"
+    "Burnished Ridgeway"
    ],
    "slice_tags": [],
    "slice_tags_derived": [

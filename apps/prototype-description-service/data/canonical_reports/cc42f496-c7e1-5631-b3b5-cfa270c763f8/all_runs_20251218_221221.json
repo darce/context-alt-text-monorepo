@@ -222,7 +222,7 @@
       }
     },
     {
-      "canonical_label": "Coral Ridgeway",
+      "canonical_label": "Burnished Ridgeway",
       "final_cluster_id": "3a99ad00-72de-4fe6-be1d-6ae84f90447d",
       "final_representatives": [
         {
@@ -284,7 +284,7 @@
       "member_identities": [
         {
           "curation": {
-            "final_label": "Coral Ridgeway"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 143,
@@ -296,7 +296,7 @@
         },
         {
           "curation": {
-            "final_label": "Coral Ridgeway"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 214,
@@ -308,7 +308,7 @@
         },
         {
           "curation": {
-            "final_label": "Coral Ridgeway"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 145,
@@ -320,7 +320,7 @@
         },
         {
           "curation": {
-            "final_label": "Coral Ridgeway"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 147,
@@ -332,7 +332,7 @@
         },
         {
           "curation": {
-            "final_label": "Coral Ridgeway"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 288,

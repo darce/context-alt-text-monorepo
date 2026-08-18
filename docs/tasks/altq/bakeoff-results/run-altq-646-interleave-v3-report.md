@@ -156,7 +156,7 @@
 - Leonardo DiCaprio: precision=null recall=0.000 (tp=0 fp=0 fn=1)
 - Linen Kestrel: precision=null recall=0.000 (tp=0 fp=0 fn=2)
 - Liam Neeson: precision=null recall=0.000 (tp=0 fp=0 fn=1)
-- Coral Ridgeway: precision=null recall=0.000 (tp=0 fp=0 fn=4)
+- Burnished Ridgeway: precision=null recall=0.000 (tp=0 fp=0 fn=4)
 - Linen Warren: precision=null recall=0.000 (tp=0 fp=0 fn=2)
 - Vellum Meadow: precision=null recall=0.000 (tp=0 fp=0 fn=1)
 - Brisk Rookery: precision=null recall=0.000 (tp=0 fp=0 fn=2)

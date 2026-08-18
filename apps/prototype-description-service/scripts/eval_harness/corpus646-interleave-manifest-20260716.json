@@ -96,7 +96,7 @@
     "Leonardo DiCaprio",
     "Linen Kestrel",
     "Liam Neeson",
-    "Coral Ridgeway",
+    "Burnished Ridgeway",
     "Linen Warren",
     "Vellum Meadow",
     "Brisk Rookery",
@@ -614,11 +614,11 @@
       "face_count": 2,
       "present_identities": [
         "Dappled Meadow",
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "must_right": [
         "Dappled Meadow",
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "easy_wrong": [],
       "policy": {
@@ -630,7 +630,7 @@
           "y": 535.0,
           "w": 213.0,
           "h": 220.0,
-          "name": "Coral Ridgeway",
+          "name": "Burnished Ridgeway",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -669,7 +669,7 @@
         }
       ],
       "context_pack": {
-        "people": "Dappled Meadow, Coral Ridgeway"
+        "people": "Dappled Meadow, Burnished Ridgeway"
       },
       "provenance": {
         "source": "localwp",
@@ -4677,10 +4677,10 @@
       "sha256": "7816f613a3499c2fcae453fc614f63eaf629fdcc877436d4458578fe49d6d2ce",
       "face_count": 1,
       "present_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "must_right": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "easy_wrong": [],
       "policy": {
@@ -4692,7 +4692,7 @@
           "y": 445.5,
           "w": 219.0,
           "h": 299.0,
-          "name": "Coral Ridgeway",
+          "name": "Burnished Ridgeway",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -4710,7 +4710,7 @@
         }
       ],
       "context_pack": {
-        "people": "Coral Ridgeway"
+        "people": "Burnished Ridgeway"
       },
       "provenance": {
         "source": "localwp",
@@ -4724,10 +4724,10 @@
       "sha256": "05d6876438ed5a495c2960fa69452d817226882cf1a783aff97c93d2468e28c0",
       "face_count": 1,
       "present_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "must_right": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "easy_wrong": [],
       "policy": {
@@ -4739,7 +4739,7 @@
           "y": 363.5,
           "w": 97.0,
           "h": 141.0,
-          "name": "Coral Ridgeway",
+          "name": "Burnished Ridgeway",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -4757,7 +4757,7 @@
         }
       ],
       "context_pack": {
-        "people": "Coral Ridgeway"
+        "people": "Burnished Ridgeway"
       },
       "provenance": {
         "source": "localwp",
@@ -4771,10 +4771,10 @@
       "sha256": "e1f3b89070c95831310aabde77bd8ea3be9f961f9e96ea9af6e0a2e6b0ba5e94",
       "face_count": 1,
       "present_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "must_right": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "easy_wrong": [],
       "policy": {
@@ -4786,7 +4786,7 @@
           "y": 348.5,
           "w": 256.0,
           "h": 365.0,
-          "name": "Coral Ridgeway",
+          "name": "Burnished Ridgeway",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -4804,7 +4804,7 @@
         }
       ],
       "context_pack": {
-        "people": "Coral Ridgeway"
+        "people": "Burnished Ridgeway"
       },
       "provenance": {
         "source": "localwp",

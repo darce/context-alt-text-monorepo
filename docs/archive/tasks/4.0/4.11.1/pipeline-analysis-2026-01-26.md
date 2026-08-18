@@ -214,7 +214,7 @@ else:
         new_clusters.append(([member], [1.0]))
 ```
 
-### Media 6656: Clear image of Coral Ridgeway, no match
+### Media 6656: Clear image of Burnished Ridgeway, no match
 
 ```
 new_cluster job_id=e7aaee06-1830-4611-a174-0bbf47932246 identity_count=1 media_ids=['6656']
@@ -222,7 +222,7 @@ new_cluster job_id=e7aaee06-1830-4611-a174-0bbf47932246 identity_count=1 media_i
 
 This became a singleton cluster. Need to check:
 
-1. Was there an existing Coral Ridgeway cluster?
+1. Was there an existing Burnished Ridgeway cluster?
 2. What was the similarity to that cluster?
 3. Why did it not match?
 
@@ -306,6 +306,6 @@ GROUP BY 1;
 1. [x] Implement P0 fix (remove label eligibility check)
 2. [x] Add pairwise validation to prevent HDBSCAN false positives
 3. [ ] Re-run clustering to verify suggestions are created
-4. [ ] Trace media 6656 specific decisions (Coral Ridgeway false negative)
+4. [ ] Trace media 6656 specific decisions (Burnished Ridgeway false negative)
 5. [ ] Implement P3 (cluster matching UI) for better UX
 6. [ ] Consider P1 (HAC refinement) for singleton reduction

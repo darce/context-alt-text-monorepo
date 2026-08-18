@@ -554,9 +554,9 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Dappled Meadow and Coral Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.",
-        "alt_text_long": "Dappled Meadow and Coral Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.",
-        "alt_text_title": "Dappled Meadow and Coral Ridgeway selfie",
+        "alt_text_draft": "Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.",
+        "alt_text_long": "Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.",
+        "alt_text_title": "Dappled Meadow and Burnished Ridgeway selfie",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -568,7 +568,7 @@
           {
             "latency_s": 2.678,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Dappled Meadow and Coral Ridgeway selfie\",\n  \"alt\": \"Dappled Meadow and Coral Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.\",\n  \"caption\": \"Dappled Meadow and Coral Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Dappled Meadow and Burnished Ridgeway selfie\",\n  \"alt\": \"Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.\",\n  \"caption\": \"Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -3211,9 +3211,9 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Coral Ridgeway sits on a purple reflective floor, leaning back on her left hand, wearing a white shirt over a black lace bra, with a scorpion tattoo on her left shoulder and a small tattoo on her left hand.",
-        "alt_text_long": "Coral Ridgeway poses confidently against a deep purple backdrop, her long brown hair spilling over her shoulders. She leans back on one hand, her gaze fixed on the camera with quiet intensity. The white shirt draped over her frame contrasts with the black lace beneath and the sleek black shorts she wears. A scorpion tattoo marks her left shoulder, and a small ink design rests on her left hand, adding to the sultry, deliberate mood of the scene.",
-        "alt_text_title": "Coral Ridgeway posing in purple",
+        "alt_text_draft": "Burnished Ridgeway sits on a purple reflective floor, leaning back on her left hand, wearing a white shirt over a black lace bra, with a scorpion tattoo on her left shoulder and a small tattoo on her left hand.",
+        "alt_text_long": "Burnished Ridgeway poses confidently against a deep purple backdrop, her long brown hair spilling over her shoulders. She leans back on one hand, her gaze fixed on the camera with quiet intensity. The white shirt draped over her frame contrasts with the black lace beneath and the sleek black shorts she wears. A scorpion tattoo marks her left shoulder, and a small ink design rests on her left hand, adding to the sultry, deliberate mood of the scene.",
+        "alt_text_title": "Burnished Ridgeway posing in purple",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -3225,7 +3225,7 @@
           {
             "latency_s": 5.155,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Coral Ridgeway posing in purple\",\n  \"alt\": \"Coral Ridgeway sits on a purple reflective floor, leaning back on her left hand, wearing a white shirt over a black lace bra, with a scorpion tattoo on her left shoulder and a small tattoo on her left hand.\",\n  \"caption\": \"Coral Ridgeway poses confidently against a deep purple backdrop, her long brown hair spilling over her shoulders. She leans back on one hand, her gaze fixed on the camera with quiet intensity. The white shirt draped over her frame contrasts with the black lace beneath and the sleek black shorts she wears. A scorpion tattoo marks her left shoulder, and a small ink design rests on her left hand, adding to the sultry, deliberate mood of the scene.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Burnished Ridgeway posing in purple\",\n  \"alt\": \"Burnished Ridgeway sits on a purple reflective floor, leaning back on her left hand, wearing a white shirt over a black lace bra, with a scorpion tattoo on her left shoulder and a small tattoo on her left hand.\",\n  \"caption\": \"Burnished Ridgeway poses confidently against a deep purple backdrop, her long brown hair spilling over her shoulders. She leans back on one hand, her gaze fixed on the camera with quiet intensity. The white shirt draped over her frame contrasts with the black lace beneath and the sleek black shorts she wears. A scorpion tattoo marks her left shoulder, and a small ink design rests on her left hand, adding to the sultry, deliberate mood of the scene.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -3240,8 +3240,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Three women pose playfully on a red carpet in front of a branded backdrop. The woman on the left wears a sheer black top and white pants, the woman in the center wears a black sweater, and the woman on the right wears a black lace top and holds a bottle. Coral Ridgeway is on the right.",
-        "alt_text_long": "Three women strike playful poses on a red carpet at a glamorous event. The backdrop features logos from Automobili Lamborghini, Cineplex, and the Italian Trade Commission. The woman on the right, Coral Ridgeway, holds a bottle and sticks her tongue out while making a peace sign. The atmosphere is lively and celebratory.",
+        "alt_text_draft": "Three women pose playfully on a red carpet in front of a branded backdrop. The woman on the left wears a sheer black top and white pants, the woman in the center wears a black sweater, and the woman on the right wears a black lace top and holds a bottle. Burnished Ridgeway is on the right.",
+        "alt_text_long": "Three women strike playful poses on a red carpet at a glamorous event. The backdrop features logos from Automobili Lamborghini, Cineplex, and the Italian Trade Commission. The woman on the right, Burnished Ridgeway, holds a bottle and sticks her tongue out while making a peace sign. The atmosphere is lively and celebratory.",
         "alt_text_title": "Three women posing on red carpet",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -3254,7 +3254,7 @@
           {
             "latency_s": 2.984,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Three women posing on red carpet\",\n  \"alt\": \"Three women pose playfully on a red carpet in front of a branded backdrop. The woman on the left wears a sheer black top and white pants, the woman in the center wears a black sweater, and the woman on the right wears a black lace top and holds a bottle. Coral Ridgeway is on the right.\",\n  \"caption\": \"Three women strike playful poses on a red carpet at a glamorous event. The backdrop features logos from Automobili Lamborghini, Cineplex, and the Italian Trade Commission. The woman on the right, Coral Ridgeway, holds a bottle and sticks her tongue out while making a peace sign. The atmosphere is lively and celebratory.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Three women posing on red carpet\",\n  \"alt\": \"Three women pose playfully on a red carpet in front of a branded backdrop. The woman on the left wears a sheer black top and white pants, the woman in the center wears a black sweater, and the woman on the right wears a black lace top and holds a bottle. Burnished Ridgeway is on the right.\",\n  \"caption\": \"Three women strike playful poses on a red carpet at a glamorous event. The backdrop features logos from Automobili Lamborghini, Cineplex, and the Italian Trade Commission. The woman on the right, Burnished Ridgeway, holds a bottle and sticks her tongue out while making a peace sign. The atmosphere is lively and celebratory.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -3269,9 +3269,9 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Coral Ridgeway poses for the camera, wearing a white shirt unbuttoned over a black lace bra, a black blazer with gold buttons, and a gold necklace, against a purple background.",
-        "alt_text_long": "Coral Ridgeway stands confidently against a deep purple backdrop, her wavy red hair framing her face as she gazes directly at the camera. She wears a white button-up shirt open over a black lace bra, layered with a black blazer adorned with gold buttons. A delicate gold necklace with a pendant rests at her collarbone, adding a touch of elegance to her bold look.",
-        "alt_text_title": "Coral Ridgeway posing",
+        "alt_text_draft": "Burnished Ridgeway poses for the camera, wearing a white shirt unbuttoned over a black lace bra, a black blazer with gold buttons, and a gold necklace, against a purple background.",
+        "alt_text_long": "Burnished Ridgeway stands confidently against a deep purple backdrop, her wavy red hair framing her face as she gazes directly at the camera. She wears a white button-up shirt open over a black lace bra, layered with a black blazer adorned with gold buttons. A delicate gold necklace with a pendant rests at her collarbone, adding a touch of elegance to her bold look.",
+        "alt_text_title": "Burnished Ridgeway posing",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -3283,7 +3283,7 @@
           {
             "latency_s": 2.617,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Coral Ridgeway posing\",\n  \"alt\": \"Coral Ridgeway poses for the camera, wearing a white shirt unbuttoned over a black lace bra, a black blazer with gold buttons, and a gold necklace, against a purple background.\",\n  \"caption\": \"Coral Ridgeway stands confidently against a deep purple backdrop, her wavy red hair framing her face as she gazes directly at the camera. She wears a white button-up shirt open over a black lace bra, layered with a black blazer adorned with gold buttons. A delicate gold necklace with a pendant rests at her collarbone, adding a touch of elegance to her bold look.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Burnished Ridgeway posing\",\n  \"alt\": \"Burnished Ridgeway poses for the camera, wearing a white shirt unbuttoned over a black lace bra, a black blazer with gold buttons, and a gold necklace, against a purple background.\",\n  \"caption\": \"Burnished Ridgeway stands confidently against a deep purple backdrop, her wavy red hair framing her face as she gazes directly at the camera. She wears a white button-up shirt open over a black lace bra, layered with a black blazer adorned with gold buttons. A delicate gold necklace with a pendant rests at her collarbone, adding a touch of elegance to her bold look.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"

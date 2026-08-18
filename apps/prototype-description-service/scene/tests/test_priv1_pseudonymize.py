@@ -792,3 +792,79 @@ def test_apply_and_verify_both_emit_concat_exclusions():
     verify_src = src[src.index("def cmd_verify") : src.index("def main")]
     assert "_concat_exclusion_line" in apply_src
     assert "_concat_exclusion_line" in verify_src
+
+
+# --- PRIV-1-BR-19: the shipped map must not reuse a real name token as a
+# --- pseudonym token ---------------------------------------------------------
+
+
+def _map(*pairs):
+    return {"entries": [{"real_name": r, "alias": a} for r, a in pairs]}
+
+
+def test_map_vocab_guard_fires_when_an_alias_word_is_also_a_real_name_word():
+    # "Coral" is the operator's real given name for one subject and the
+    # adjective half of another subject's minted alias. Neither the re-run
+    # guard nor the residue scan can tell the two apart, so every downstream
+    # check reports clean over a live ambiguity.
+    with pytest.raises(SystemExit) as excinfo:
+        pz._assert_map_vocab_disjoint(
+            _map(("Coral Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Coral Ridgeway"))
+        )
+    assert "coral (1 alias, 1 real name)" in str(excinfo.value)
+
+
+def test_map_vocab_guard_is_silent_on_a_disjoint_map():
+    pz._assert_map_vocab_disjoint(
+        _map(("Coral Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Burnished Ridgeway"))
+    )
+
+
+def test_map_vocab_guard_counts_every_colliding_entry():
+    # One offending word carried by two entries is two separate live
+    # ambiguities, not one. A guard that reported the word once would
+    # understate the repair needed.
+    with pytest.raises(SystemExit) as excinfo:
+        pz._assert_map_vocab_disjoint(
+            _map(
+                ("Coral Ashgrove", "Marbled Quarry"),
+                ("Wyn Kett", "Coral Ridgeway"),
+                ("Ryanne Wistmoor", "Coral Hollow"),
+            )
+        )
+    # Two aliases carry the word but only one real name does. The guard must
+    # not collapse them: the repair is two re-mints, not one.
+    assert "coral (2 aliases, 1 real name)" in str(excinfo.value)
+
+
+def test_map_vocab_guard_does_not_read_the_alias_vocabulary(monkeypatch):
+    # The measurement must not be derived from the thing being changed.
+    # An earlier revision of this guard compared real-name tokens against
+    # `_ALIAS_VOCAB`, so editing the offending word out of `_ADJ` silenced it
+    # while the minted alias carrying that word stayed on disk -- the same
+    # blind-spot shape as the bug it exists to catch (CARD-08). Emptying the
+    # vocabulary entirely must not change the verdict: the question is about
+    # the shipped artifact, not the current source.
+    monkeypatch.setattr(pz, "_ALIAS_VOCAB", set())
+    monkeypatch.setattr(pz, "_ADJ", ())
+    monkeypatch.setattr(pz, "_NOUN", ())
+    with pytest.raises(SystemExit) as excinfo:
+        pz._assert_map_vocab_disjoint(_map(("Wyn Kett", "Coral Ridgeway"), ("Coral Ashgrove", "Marbled Quarry")))
+    assert "coral (1 alias, 1 real name)" in str(excinfo.value)
+
+
+def test_map_vocab_guard_matches_whole_tokens_not_substrings():
+    # "Coralline" is not "Coral". A substring test would raise on ordinary
+    # words and train the operator to bypass the guard.
+    pz._assert_map_vocab_disjoint(_map(("Coralline Ashgrove", "Marbled Quarry"), ("Wyn Kett", "Coral Ridgeway")))
+
+
+def test_apply_and_verify_both_recheck_the_shipped_map_vocabulary():
+    # `plan` is the only other caller of a disjointness check, and it cannot
+    # run post-apply: it reads the roster, which `apply` has pseudonymized.
+    # The two commands that *do* run against a shipped map must carry it.
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
+    assert "_assert_map_vocab_disjoint" in apply_src
+    assert "_assert_map_vocab_disjoint" in verify_src

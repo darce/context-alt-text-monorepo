@@ -74,7 +74,7 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertCount(1, $wpdb->queries);
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString("c.label IS NOT NULL AND c.label != ''", $wpdb->queries[0]);
-        $this->assertStringNotContainsString('LIKE', $wpdb->queries[0]);
+        $this->assertStringContainsString('THEN p.name', $wpdb->queries[0]);
     }
 
     public function testListForTenantSearchIncludesPersonUuid(): void

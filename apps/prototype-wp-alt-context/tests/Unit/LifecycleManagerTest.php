@@ -489,6 +489,33 @@ class LifecycleManagerTest extends TestCase
         );
     }
 
+    public function testMaybeUpgradeHealsUnboundHumanLabelsIncludingUnderscoreSkip(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+        global $wpdb;
+        $wpdb->insert_id = 3;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-heal',
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->manager->maybe_upgrade();
+
+        $listSql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("LIKE 'cluster\\_%%'", $listSql);
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts);
+    }
+
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
     {
         $this->assertFalse(get_option('acx_version'));

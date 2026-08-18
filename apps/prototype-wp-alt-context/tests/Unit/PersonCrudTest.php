@@ -194,14 +194,9 @@ class PersonCrudTest extends TestCase
         $this->assertNotInstanceOf(\WP_Error::class, $response);
         $data = $response->get_data();
         $this->assertTrue($data['deleted']);
-
-        // Verify soft dissociation on clusters
-        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
-        $this->assertStringContainsString('person_id = NULL', $dissociateQuery);
-        $this->assertStringContainsString('label = NULL', $dissociateQuery);
-        $this->assertStringContainsString("curation_state = 'uncurated'", $dissociateQuery);
-        $this->assertStringContainsString('is_user_confirmed = 0', $dissociateQuery);
-        $this->assertStringContainsString('person_id = 1', $dissociateQuery);
+        $this->assertArrayHasKey('clusters_dissociated', $data);
+        $this->assertArrayHasKey('cluster_ids', $data);
+        $this->assertSame(0, $data['clusters_dissociated']);
 
         // Verify person deletion
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
@@ -244,7 +239,10 @@ class PersonCrudTest extends TestCase
         $response = $this->api->delete_person($request);
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);
-        $this->assertTrue($response->get_data()['deleted']);
+        $data = $response->get_data();
+        $this->assertTrue($data['deleted']);
+        $this->assertSame(1, $data['clusters_dissociated']);
+        $this->assertSame([$clusterUuid], $data['cluster_ids']);
 
         $cluster = $wpdb->tableRows['wp_acx_clusters'][0];
         $this->assertNull($cluster['label']);
@@ -262,17 +260,57 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString("'cluster_person_unbound'", $outboxJoined);
         $this->assertStringContainsString("'cluster_label_updated'", $outboxJoined);
 
-        $qualifiesForUnlabeled = (int) $cluster['is_user_confirmed'] === 0
-            && ($cluster['label'] === null || $cluster['label'] === '' || str_starts_with((string) $cluster['label'], 'cluster-'))
-            && (int) $cluster['identity_count'] >= 2
-            && ($cluster['curation_state'] === null || $cluster['curation_state'] !== 'dismissed');
-        $this->assertTrue($qualifiesForUnlabeled, 'dissociated cluster must match list_top_unlabeled predicate');
-
-        $wpdb->mockResults = $qualifiesForUnlabeled ? [$cluster] : [];
-        $rows = (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
+        $wpdb->queries = [];
+        $wpdb->mockResults = [];
+        (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
             ->list_top_unlabeled(self::currentTenantId(), 10);
-        $this->assertCount(1, $rows);
-        $this->assertSame($clusterUuid, $rows[0]['cluster_uuid']);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
+        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString('c.identity_count >= 2', $sql);
+    }
+
+    public function testDeletePersonSingletonIsCountedByTopUnlabeledSingletons(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $clusterUuid = 'cluster-singleton';
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Solo',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 1,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Solo',
+                'person_id' => 1,
+                'is_user_confirmed' => 1,
+                'identity_count' => 1,
+                'curation_state' => 'confirmed',
+            ],
+        ];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $wpdb->queries = [];
+        $wpdb->mockVar = 1;
+        $count = (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
+            ->count_top_unlabeled_singletons(self::currentTenantId());
+        $this->assertSame(1, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('c.identity_count <= 1', $sql);
+        $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
+        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertSame(0, (int) $wpdb->tableRows['wp_acx_clusters'][0]['is_user_confirmed']);
+        $this->assertNull($wpdb->tableRows['wp_acx_clusters'][0]['label']);
     }
 
     public function testCommitRosterClusterMarksClusterAsCuratedAndQueuesOutboxEvent(): void

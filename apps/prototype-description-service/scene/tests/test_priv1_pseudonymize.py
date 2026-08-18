@@ -2394,14 +2394,28 @@ def test_plan_does_not_write_a_pin_record():
     assert "_write_pin_record" not in plan_src
 
 
-def test_apply_does_not_persist_under_the_dry_run_name():
-    # The persist call must pass the dry-run flag through. A wet-only
-    # call that ignored dry-run would write a record claiming pins
-    # were published when nothing was.
-    src = _SCRIPT.read_text(encoding="utf-8")
-    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
-    assert "_persist_published_pins(" in apply_src
-    assert "args.dry_run" in apply_src[apply_src.index("_persist_published_pins(") :]
+def test_apply_does_not_persist_under_the_dry_run_name(tmp_path, monkeypatch):
+    # End-to-end: `apply --dry-run` must not write a pin record and must
+    # leave the fixture tree byte-identical. A source-grep of the dry-run
+    # flag next to the persist call would stay green if persist grew a
+    # second write that ignored the flag (REV-D-12).
+    repo, private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: "hello Zyllora Elm\n", _PIN_NOTE: "note\n"},
+        record=None,
+    )
+    before = {p.relative_to(repo): p.read_bytes() for p in repo.rglob("*") if p.is_file()}
+    pin_path = private / pz._PIN_RECORD_NAME
+    assert not pin_path.exists()
+    try:
+        rc = pz.cmd_apply(type("Args", (), {"dry_run": True, "reorder": True, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    assert rc == 0
+    assert not pin_path.exists()
+    after = {p.relative_to(repo): p.read_bytes() for p in repo.rglob("*") if p.is_file()}
+    assert after == before
 
 
 def test_apply_records_the_post_apply_digest_of_a_moved_pin(tmp_path, monkeypatch):
@@ -2975,4 +2989,159 @@ def test_apply_dry_run_prints_pins_not_checked(tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert "digest pins: not checked (dry run; no record published)" in out
     assert "digest pins: 0 published; 0 stale; 0 missing" not in out
+
+
+# ---- wave 8: reviewer-D coverage ----
+#
+# Invented tokens only (`nylphra`, `qorvex`, `veldrun`, `Zyllora`, plus
+# the existing fixture vocabulary). `Qorvist` stays in the autouse
+# wordlist so the given-name pass cannot steal the W8-1 fixtures.
+
+
+_FAMILY_ADJACENT_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Qorvist Velmoth",
+            "alias": "Cobalt Quarry",
+            "alias_slug": "cobalt_quarry",
+            "original_slug": "qorvist-velmoth",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+        {
+            "real_name": "Zyllora Velmoth",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "zyllora-velmoth",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+    ]
+}
+
+
+def _family_word_for_velmoth() -> str:
+    return pz._family_words({"velmoth": {"Falcon", "Quarry"}})["velmoth"]
+
+
+def test_family_word_adjacent_redacts_the_dictionary_given_name():
+    # REV-D-03 / W8-1. Surname is a family-word alias (`harbor` under
+    # the pinned test key), so an adjacent builder that only pairs
+    # against positional alias words (`quarry` / `falcon`) cannot see
+    # the mixed form. Qorvist stays in the wordlist so given-name
+    # cannot steal it. Before the fix the given token survives and
+    # residue reports nothing (TEST-15).
+    family = _family_word_for_velmoth()
+    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = f"Qorvist {family} sat down"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "Qorvist" not in out
+    assert "Cobalt" in out
+    assert family.lower() in out.lower()
+    assert counts["adjacent"] == 1
+    assert passes.residue(text, ".md").get("adjacent") == 1
+    assert passes.residue(out, ".md") == {}
+
+
+def test_family_word_adjacent_with_middle_initial_is_rewritten():
+    family = _family_word_for_velmoth()
+    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = f"Qorvist K. {family} sat down"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "Qorvist" not in out
+    assert f"Cobalt K. {family}" in out
+    assert counts["adjacent"] == 1
+    assert passes.residue(text, ".md").get("adjacent") == 1
+    assert passes.residue(out, ".md") == {}
+
+
+def test_family_word_adjacent_title_case_is_rewritten():
+    family = _family_word_for_velmoth()
+    passes = pz._Passes(_FAMILY_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    titled = family[:1].upper() + family[1:].lower()
+    text = f"Qorvist {titled} sat down"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "Qorvist" not in out
+    assert f"Cobalt {titled}" in out
+    assert counts["adjacent"] == 1
+    assert passes.residue(text, ".md").get("adjacent") == 1
+
+
+def _name_alpha_roster() -> dict:
+    # Real-name alphabetical: Nylphra then Veldrun. (bucket, slug) order
+    # is the reverse: amber_falcon then zyllora-nylphra.
+    return {
+        "identities": [
+            {"bucket": "personal", "slug": "zyllora-nylphra", "name": "Nylphra Veldrith"},
+            {"bucket": "personal", "slug": "amber_falcon", "name": "Veldrun Qorvex"},
+        ]
+    }
+
+
+def test_reorder_applies_to_every_roster_bearing_fixture(tmp_path, monkeypatch):
+    # REV-D-07 / W8-2. Two roster-bearing copies, both in real-name
+    # order, must both come out (bucket, slug) ordered.
+    v3r = tmp_path / "corpus-manifest-v3r.json"
+    golden = tmp_path / "golden150-draft.json"
+    body = json.dumps(_name_alpha_roster(), indent=2) + "\n"
+    v3r.write_text(body, encoding="utf-8")
+    golden.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(pz, "ROSTER", tmp_path / "absent-roster.json")
+    assert pz._reorder_roster(object(), files=[(v3r, True), (golden, True)]) is True
+    for path in (v3r, golden):
+        rows = json.loads(path.read_text(encoding="utf-8"))["identities"]
+        slugs = [r["slug"] for r in rows]
+        names = [r["name"] for r in rows]
+        assert slugs == ["amber_falcon", "zyllora-nylphra"]
+        assert names != sorted(names), "came out in real-name alphabetical order"
+
+
+def test_family_word_pass_preserves_source_case():
+    # REV-D-09 / W8-3. `_family_words` stores the noun lowercase; the
+    # given pass must still emit Title / UPPER / lower of the source.
+    passes = pz._Passes(_RARE_SHARED_MAPPING, identities=_UNIT_NONPERSONAL)
+    family = pz._family_words({"velmoth": {"Falcon", "Harbor"}})["velmoth"]
+    title, c_t, _u = passes.rewrite("Velmoth sat down", ".md")
+    upper, c_u, _u = passes.rewrite("VELMOTH sat down", ".md")
+    lower, c_l, _u = passes.rewrite("velmoth sat down", ".md")
+    assert title == family[:1].upper() + family[1:].lower() + " sat down"
+    assert upper == family.upper() + " sat down"
+    assert lower == family.lower() + " sat down"
+    assert c_t["given"] == 1 and c_u["given"] == 1 and c_l["given"] == 1
+
+
+def test_given_name_docstring_uses_invented_vocab():
+    # REV-D-06 / W8-4. The given-name docstring printed a real surname
+    # plural and three real dictionary-word given names.
+    src = _SCRIPT.read_text(encoding="utf-8")
+    chunk = src[src.index("def _given_name_regex") : src.index("# Optional middle initial")]
+    for token in ("Weavers", "`rose`", "`faith`", "`ivy`", "Candid"):
+        assert token not in chunk, token
+    assert "Qorvexes" in chunk
+    assert "qorvist" in chunk and "brook" in chunk and "self" in chunk
+
+
+def test_rename_with_absent_pre_sha_raises_naming_the_path(tmp_path, monkeypatch):
+    # REV-D-11 / W8-5. A renamed in-scope path that was never hashed
+    # must not plant an empty digest key (empty regex alternative =
+    # mass insertion).
+    old_rel = "apps/nylphra/zyllora-elm.py"
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_NOTE: "no digest\n"},
+        record=None,
+    )
+
+    def tracked():
+        return [(repo / old_rel, True), (repo / _PIN_NOTE, True)]
+
+    monkeypatch.setattr(pz, "_tracked_files", tracked)
+    try:
+        with pytest.raises(SystemExit, match=re.escape(old_rel)) as exc:
+            pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    msg = str(exc.value).lower()
+    assert "empty" in msg or "absent" in msg
 

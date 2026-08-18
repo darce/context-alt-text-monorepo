@@ -36,7 +36,7 @@
           "identity_count": {
             "type": "integer",
             "minimum": 0,
-            "description": "Total number of identities currently assigned to the cluster."
+            "description": "Observed member-row count when the member fetch is not truncated (list preview cap PREVIEW_IDENTITIES_PER_CLUSTER=4; detail cap DEFAULT_CLUSTER_MEMBER_LIMIT=500). When the fetch returns more than the cap, this is the projected column and representatives/samples are sliced to the cap."
           },
           "member_ids": {
             "type": "array",

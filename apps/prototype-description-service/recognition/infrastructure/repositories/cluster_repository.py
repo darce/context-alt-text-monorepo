@@ -1053,16 +1053,16 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     ) -> tuple[list[np.ndarray], str | None, list[_QualityTriple]]:
         """Same member-fallback rows as the with_model loader plus quality metrics.
 
-        Triple slots: identity_quality, representative_quality (NULL — no
-        representative on this path), detection_confidence. Do not select
-        quality_score twice.
+        Triple slots match the protocol: representative_quality (NULL — no
+        representative on this path), identity_quality, detection_confidence.
+        Do not select quality_score twice.
         """
         stmt = (
             select(
                 MediaIdentity.embedding,
                 MediaIdentity.embedding_model,
-                MediaIdentity.quality_score,
                 null().label("representative_quality"),
+                MediaIdentity.quality_score,
                 MediaIdentity.confidence,
             )
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)

@@ -156,6 +156,59 @@ class ClusterMergeServiceTest extends TestCase
         $this->assertStringContainsString("'cluster_person_bound'", $outboxJoined);
     }
 
+    public function testMergeProxyWithTargetLabelPersistsPersonAfterSuccess(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 70;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"source_cluster_id":"cluster-source","target_cluster_id":"cluster-target"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Proxy Merged');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(70, $response->get_data()['person_id']);
+        $this->assertTrue($response->get_data()['roster_bound']);
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(1, $personInserts);
+    }
+
+    public function testMergeRejectsRebindToDifferentPerson(): void
+    {
+        $this->repository->localClusterRows['cluster-target']['person_id'] = 5;
+        $this->repository->localClusterRows['cluster-target']['label'] = 'Existing';
+
+        global $wpdb;
+        $wpdb->insert_id = 71;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Different Person');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('cluster_already_bound', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status']);
+    }
+
     public function testMergeRollsBackWhenOutboxEnqueueFails(): void
     {
         global $wpdb;

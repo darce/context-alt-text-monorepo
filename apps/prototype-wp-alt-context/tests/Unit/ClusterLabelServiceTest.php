@@ -79,15 +79,12 @@ class ClusterLabelServiceTest extends TestCase
 
         // Response shape stays pre-slice-2 (plan: request/response shapes unchanged).
         $data = $response->get_data();
-        $this->assertSame(
-            [
-                'cluster_id' => 'cluster-xyz',
-                'label' => 'Known Person',
-                'synced' => false,
-                'status' => 'pending',
-            ],
-            $data
-        );
+        $this->assertSame('cluster-xyz', $data['cluster_id']);
+        $this->assertSame('Known Person', $data['label']);
+        $this->assertFalse($data['synced']);
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame(77, $data['person_id']);
+        $this->assertTrue($data['roster_bound']);
         $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 77');
         $this->assertStringContainsString("cluster_uuid = 'cluster-xyz'", $bindUpdate);
     }
@@ -167,15 +164,11 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertInstanceOf(WP_REST_Response::class, $response);
         $data = $response->get_data();
         // Response shape unchanged; rebind identity is a side effect (DB + outbox).
-        $this->assertSame(
-            [
-                'cluster_id' => 'cluster-xyz',
-                'label' => 'ada lovelace',
-                'synced' => false,
-                'status' => 'pending',
-            ],
-            $data
-        );
+        $this->assertSame('cluster-xyz', $data['cluster_id']);
+        $this->assertSame('ada lovelace', $data['label']);
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame(42, $data['person_id']);
+        $this->assertTrue($data['roster_bound']);
 
         $personInserts = array_values(
             array_filter(
@@ -221,12 +214,9 @@ class ClusterLabelServiceTest extends TestCase
         $response = $this->service->update_cluster_label($request);
         $this->assertInstanceOf(WP_REST_Response::class, $response);
 
-        // Ensure list_entries can project the created person row (stub insert may omit id).
         $created = $wpdb->tableRows['wp_acx_persons'][0] ?? null;
         $this->assertIsArray($created);
-        if (!isset($created['id'])) {
-            $wpdb->tableRows['wp_acx_persons'][0]['id'] = 91;
-        }
+        $this->assertSame(91, $created['id']);
 
         $entries = (new RosterEntryProjectionRepository($this->syncStateRepository))
             ->list_entries(self::currentTenantId());
@@ -464,14 +454,47 @@ class ClusterLabelServiceTest extends TestCase
 
         $created = $wpdb->tableRows['wp_acx_persons'][0] ?? null;
         $this->assertIsArray($created);
-        if (!isset($created['id'])) {
-            $wpdb->tableRows['wp_acx_persons'][0]['id'] = 33;
-        }
+        $this->assertSame(33, $created['id']);
+        $this->assertTrue($response->get_data()['roster_bound']);
+        $this->assertSame(33, $response->get_data()['person_id']);
 
         $entries = (new RosterEntryProjectionRepository($this->syncStateRepository))
             ->list_entries(self::currentTenantId());
         $names = array_map(static fn(array $row): string => (string) ($row['name'] ?? ''), $entries);
         $this->assertContains('Proxy Person', $names);
+    }
+
+    public function testProxyLabelWriteDoesNotPersistPersonOnProxyFailure(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 33;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $failure = [
+            'response' => ['code' => 500, 'message' => 'Error'],
+            'body' => '{"error":"backend failed"}',
+        ];
+        $this->queueHttpResponse($failure);
+        $this->queueHttpResponse($failure);
+        $this->queueHttpResponse($failure);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Orphan Person');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertTrue(is_wp_error($response) || ($response instanceof WP_REST_Response && $response->get_status() >= 500));
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons'] ?? []);
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts);
     }
 
     public function testPersonResolutionServiceIsLoadableViaRequireOnceChain(): void

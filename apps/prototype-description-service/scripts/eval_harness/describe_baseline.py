@@ -41,17 +41,11 @@ SCRATCH = HERE / "out"  # gitignored: progressive/resumable JSONL only
 # carry real curated names, so they live behind the /benchmarks/ ignore fence
 # rather than under docs/ (VLM6-GATE-PRIV-02/04; MLDATA-13 body-derived
 # identifiers). Override the root with ACX_CORPUS_PRIVATE_DIR.
-PRIVATE = Path(
-    os.environ.get("ACX_CORPUS_PRIVATE_DIR")
-    or HERE.parents[3] / "benchmarks" / "private"
-)
+PRIVATE = Path(os.environ.get("ACX_CORPUS_PRIVATE_DIR") or HERE.parents[3] / "benchmarks" / "private")
 RESULTS = PRIVATE
 # No hardcoded operator-laptop uploads path (VLM6-RH-01). Resolve via --uploads
 # or BASELINE_UPLOADS only.
-ATTACH_TSV = Path(
-    os.environ.get("ACX_CORPUS_ATTACH_TSV")
-    or PRIVATE / "vlm-corpus-attachments-20260716.tsv"
-)
+ATTACH_TSV = Path(os.environ.get("ACX_CORPUS_ATTACH_TSV") or PRIVATE / "vlm-corpus-attachments-20260716.tsv")
 JSONL = SCRATCH / "vlm-baseline-descriptions-20260716.jsonl"
 REPORT_JSON = RESULTS / "vlm-baseline-descriptions-20260716.json"
 REPORT_MD = RESULTS / "vlm-baseline-descriptions-20260716.md"
@@ -66,6 +60,7 @@ HEAD_SHA: str | None = None
 BAKEOFF_BASE_URL = os.environ.get("BAKEOFF_BASE_URL", "")
 BAKEOFF_MODEL_ID = os.environ.get("BAKEOFF_MODEL_ID", "Qwen3-VL-30B-A3B-Instruct")
 BAKEOFF_MODEL_VERSION = os.environ.get("BAKEOFF_MODEL_VERSION", "Q4_K_M")
+
 
 def resolve_head_sha(raw: str | None = None) -> str | None:
     """Return an explicit real HEAD SHA, or None when unset (never forty zeros).
@@ -96,6 +91,7 @@ def resolve_head_sha(raw: str | None = None) -> str | None:
         verify_git=True,
         label="HEAD_SHA",
     )
+
 
 _UPLOADS_MARKERS = ("/wp-content/uploads/", "/uploads/")
 
@@ -284,11 +280,13 @@ def score_rows_against_golden(
         }
 
     # Rubric-only: scores JSONL captions against golden must_right/easy_wrong;
-    # never opens image files (EVAL-01 offline delta).
+    # never opens image files (EVAL-01 offline delta). metadata_only=True so an
+    # existing-but-empty GOLDEN_IMAGES_DIR cannot resolve and fail (OBS-04).
     manifest = load_manifest(
         str(path),
         skip_hash_verification=True,
         hash_skip_reason="baseline scorer matches captions to golden rubric; image bytes never opened",
+        metadata_only=True,
     )
     by_media = {int(e.media_id): e for e in manifest.entries}
     roster = list(manifest.roster)
@@ -316,13 +314,13 @@ def score_rows_against_golden(
         matched += 1
         policy = entry.policy
         recognition = bool(policy.recognition_enabled) if policy is not None else True
-        kwargs = dict(
-            present_identities=list(entry.present_identities),
-            must_right=list(entry.must_right),
-            easy_wrong=list(entry.easy_wrong),
-            recognition_enabled=recognition,
-            roster=roster,
-        )
+        kwargs = {
+            "present_identities": list(entry.present_identities),
+            "must_right": list(entry.must_right),
+            "easy_wrong": list(entry.easy_wrong),
+            "recognition_enabled": recognition,
+            "roster": roster,
+        }
         candidate_scores.append(score_caption(_cap(row), **kwargs))
         zero_scores.append(score_caption("", **kwargs))
 

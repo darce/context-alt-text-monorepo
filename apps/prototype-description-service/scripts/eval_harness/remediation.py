@@ -119,7 +119,7 @@ V3_IDENTITY_CLAIM_DROP_RATIONALE = (
     "(FIR-11 Slice 1)"
 )
 
-V3_SOURCE_SHA256 = "d4b3576ec7ab134b888af4efff560fb967211eb3ea04ca05d4d92272f948a98c"
+V3_SOURCE_SHA256 = "252fb88c0cb3099e515c2454fe9fb62f206d443a6092509351e435f29c87eaaf"
 
 
 # ---------------------------------------------------------------------------

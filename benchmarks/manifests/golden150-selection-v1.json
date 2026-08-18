@@ -3,7 +3,7 @@
  "name": "golden150",
  "built_at": "2026-07-28T18:26:44+00:00",
  "corpus_manifest": "corpus-manifest-v3.json",
- "corpus_manifest_sha256": "d4b3576ec7ab134b888af4efff560fb967211eb3ea04ca05d4d92272f948a98c",
+ "corpus_manifest_sha256": "252fb88c0cb3099e515c2454fe9fb62f206d443a6092509351e435f29c87eaaf",
  "size": 150,
  "sampling_frame": {
   "corpus_entries": 646,

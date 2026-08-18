@@ -605,7 +605,7 @@ describe('banned vocabulary across js/admin pages', () => {
    * rendered directly here with representative fixtures.
    */
   it('roster surfaces render without cluster/identity jargon', () => {
-    const ROSTER_BANNED = ['cluster', 'identities', 'projected instances'] as const;
+    const ROSTER_BANNED = ['cluster', 'identity', 'identities', 'projected instances'] as const;
 
     const drawerCluster: ClusterSummary = {
       id: 'drawer-fixture-1',
@@ -619,25 +619,27 @@ describe('banned vocabulary across js/admin pages', () => {
       { identity_id: 'face-1', media_id: 7, similarity: 0.9, confidence: 0.9, bbox: null },
     ];
     const { container: drawerContainer } = render(
-      <ClusterDrawerPanel
-        cluster={drawerCluster}
-        identities={drawerFaces}
-        mediaMap={{}}
-        onClose={vi.fn()}
-        onRescanCluster={vi.fn()}
-        isRescanning={false}
-        onCommitCluster={vi.fn()}
-        onOpenPersonWorkspace={vi.fn()}
-        isCommitting={false}
-        rosterEntries={[]}
-        isDetailLoading={false}
-        onFaceDragStart={vi.fn()}
-        onFaceDragEnd={vi.fn()}
-        onDropTargetChange={vi.fn()}
-        dropTarget={null}
-        isDragging={false}
-        onDiscardDrop={vi.fn()}
-      />,
+      wrap(
+        <ClusterDrawerPanel
+          cluster={drawerCluster}
+          identities={drawerFaces}
+          mediaMap={{}}
+          onClose={vi.fn()}
+          onRescanCluster={vi.fn()}
+          isRescanning={false}
+          onCommitCluster={vi.fn()}
+          onOpenPersonWorkspace={vi.fn()}
+          isCommitting={false}
+          rosterEntries={[]}
+          isDetailLoading={false}
+          onFaceDragStart={vi.fn()}
+          onFaceDragEnd={vi.fn()}
+          onDropTargetChange={vi.fn()}
+          dropTarget={null}
+          isDragging={false}
+          onDiscardDrop={vi.fn()}
+        />,
+      ),
     );
 
     const rosterEntry: RosterEntry = {
@@ -682,10 +684,20 @@ describe('banned vocabulary across js/admin pages', () => {
 
     const { container: pageContainer } = render(wrap(<RosterPage />));
 
-    for (const surface of [drawerContainer, workspaceContainer, pageContainer]) {
-      const text = collectVisibleText(surface).toLowerCase();
+    const drawerText = collectVisibleText(drawerContainer).toLowerCase();
+    expect(drawerText).toContain('unnamed face group');
+    const workspaceText = collectVisibleText(workspaceContainer).toLowerCase();
+    expect(workspaceText).toContain('alice');
+    const pageText = collectVisibleText(pageContainer).toLowerCase();
+    expect(pageText).toMatch(/unnamed faces|face groups waiting|reviewed in the workbench/);
+
+    for (const [label, text] of [
+      ['drawer', drawerText],
+      ['workspace', workspaceText],
+      ['page', pageText],
+    ] as const) {
       for (const banned of ROSTER_BANNED) {
-        expect(text).not.toContain(banned);
+        expect(text, `${label} leaked "${banned}"`).not.toContain(banned);
       }
       expect(text).not.toMatch(UUID_REGEX);
     }

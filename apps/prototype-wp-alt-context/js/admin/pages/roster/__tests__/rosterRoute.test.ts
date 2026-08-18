@@ -113,7 +113,7 @@ describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', (
 
   it('deep-links unlabeled clusters into the workbench review queue', () => {
     // cluster= dropped (jobId precedent): workbench has no cluster reader.
-    expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=assignment.all.0');
+    expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=all.all.0');
     expect(workbenchReviewQueueUrl()).not.toContain('cluster=');
   });
 });

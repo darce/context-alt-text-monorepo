@@ -450,6 +450,123 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
 
+  it('prefers cluster detail person_uuid over a competing list person of the same name shape', async () => {
+    const detailCluster = makeCluster({ person_uuid: 'person-uuid-detail', label: 'Detail Label' });
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: detailCluster,
+        isLoading: false,
+        isError: false,
+      }),
+    );
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 7,
+            person_uuid: 'person-uuid-list',
+            name: 'List Person',
+            tags: [],
+            cluster_count: 1,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+          {
+            id: 8,
+            person_uuid: 'person-uuid-detail',
+            name: 'Detail Person',
+            tags: [],
+            cluster_count: 1,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '2026-01-01T00:00:00Z',
+            source_version: 1,
+            projection_status: 'current',
+            projection_refreshed_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
+          <RosterPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('link', { name: /Open person review/i }));
+
+    expect(screen.getByRole('region', { name: /Person workspace: Detail Person/i })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /Person workspace: List Person/i })).not.toBeInTheDocument();
+  });
+
+  it('mounts the drawer shell with Close while the cluster= deep link is loading', () => {
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: undefined,
+        isLoading: true,
+        isError: false,
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
+  });
+
+  it('mounts the drawer shell with Close and error copy when the cluster= fetch fails', async () => {
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: new Error('Unable to load face group details.'),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+    expect(screen.getByText('Unable to load face group details.')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Close$/i }));
+
+    expect(screen.queryByRole('button', { name: /^Close$/i })).not.toBeInTheDocument();
+  });
+
+  it('does not claim the tenant has no other face groups on the cluster= shim', () => {
+    render(
+      <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Move faces between groups in the Workbench/i)).toBeInTheDocument();
+  });
+
   // UXW2-4: rail-era tests (bulk merge/dismiss, select-all, truncation notice,
   // retainVisible) deleted with the rail — bulk merge/dismiss reachability moves
   // to the workbench queue in a later task (E21-9 Q1).

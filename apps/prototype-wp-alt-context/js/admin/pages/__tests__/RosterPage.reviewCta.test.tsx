@@ -168,7 +168,7 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
     const cta = screen.getByTestId('roster-review-cta');
     expect(cta).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /Review in Workbench/i });
-    expect(link).toHaveAttribute('href', '#/workbench?tab=scan&rq=assignment.all.0');
+    expect(link).toHaveAttribute('href', '#/workbench?tab=scan&rq=all.all.0');
 
     // Rail retired: no section, no bulk rail controls, no per-cluster rail rows.
     expect(screen.queryByTestId('needs-assignment-section')).not.toBeInTheDocument();
@@ -191,5 +191,17 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
     const cta = screen.getByTestId('roster-review-cta');
     expect(cta).toHaveTextContent('Unnamed faces are reviewed in the Workbench.');
     expect(cta).not.toHaveTextContent(/face groups waiting/);
+    expect(cta).not.toHaveTextContent('Unnamed faces waiting');
+  });
+
+  it('uses empty copy when the envelope total is a known zero', () => {
+    mockedUseTopUnlabeledTotal.mockReturnValue(0);
+
+    renderRosterPage('/');
+
+    const cta = screen.getByTestId('roster-review-cta');
+    expect(cta).toHaveTextContent('No unnamed face groups right now');
+    expect(cta).not.toHaveTextContent('0 face groups waiting');
+    expect(cta).not.toHaveTextContent('Unnamed faces waiting');
   });
 });

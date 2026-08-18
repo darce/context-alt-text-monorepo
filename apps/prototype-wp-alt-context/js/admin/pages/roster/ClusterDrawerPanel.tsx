@@ -54,6 +54,13 @@ interface Props {
 
   /** Other clusters available as reassignment targets (current cluster already excluded). */
   reassignTargets?: ClusterReassignTarget[];
+  /**
+   * When set, Move chrome is hidden and this copy is shown instead of claiming
+   * the tenant has no other face groups (deep-link shim has no target list).
+   */
+  reassignUnavailableReason?: string | null;
+  /** Deep-link id: mount the shell even when `cluster` is still null (loading/error). */
+  requestedClusterId?: string | null;
   /** Single atomic reassign call (rg-002); same mutation as drag path. */
   onReassignFace?: (faceId: string, targetClusterId: string) => void;
   isReassigning?: boolean;
@@ -95,6 +102,8 @@ export const ClusterDrawerPanel = ({
   onDiscardDrop,
 
   reassignTargets = EMPTY_TARGETS,
+  reassignUnavailableReason = null,
+  requestedClusterId = null,
   onReassignFace,
   isReassigning = false,
   reassignErrorMessage = null,
@@ -268,23 +277,26 @@ export const ClusterDrawerPanel = ({
     [closePicker, onReassignFace],
   );
 
-  if (!cluster) {
+  if (!cluster && !requestedClusterId) {
     return null;
   }
 
   const isCreatingEntry = selectedEntryId === 'create';
-  const canCommit = (isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== '');
-  const assignedPersonUuid = getClusterPersonUuid(cluster);
-  const drawerState = getClusterDrawerState(cluster);
+  const canCommit =
+    cluster !== null &&
+    ((isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== ''));
+  const assignedPersonUuid = cluster ? getClusterPersonUuid(cluster) : null;
+  const drawerState = cluster ? getClusterDrawerState(cluster) : null;
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
-  const hasReassignTargets = reassignTargets.length > 0;
+  const hideReassign = Boolean(reassignUnavailableReason);
+  const hasReassignTargets = !hideReassign && reassignTargets.length > 0;
   // Native disabled only for busy/missing handler — empty targets stay focusable (aria-disabled).
   const moveNativelyDisabled = isReassigning || !onReassignFace;
   const moveAriaDisabled = !hasReassignTargets || moveNativelyDisabled;
 
   const handleCommit = () => {
-    if (!canCommit) {
+    if (!canCommit || !cluster) {
       return;
     }
 
@@ -321,29 +333,31 @@ export const ClusterDrawerPanel = ({
                   : __('Unresolved face group', 'alt-context')}
             </span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label?.trim() ? cluster.label : __('Unnamed face group', 'alt-context')}
+              {cluster?.label?.trim() ? cluster.label : __('Unnamed face group', 'alt-context')}
             </h3>
-            <ul className="acx-cluster-drawer__meta">
-              <li>
-                <strong>{__('Faces:', 'alt-context')}</strong>
-                {sprintf(
-                  _n('%d face', '%d faces', cluster.identity_count, 'alt-context'),
-                  cluster.identity_count,
+            {cluster ? (
+              <ul className="acx-cluster-drawer__meta">
+                <li>
+                  <strong>{__('Faces:', 'alt-context')}</strong>
+                  {sprintf(
+                    _n('%d face', '%d faces', cluster.identity_count, 'alt-context'),
+                    cluster.identity_count,
+                  )}
+                </li>
+                {cluster.confidence_score !== undefined && (
+                  <li>
+                    <strong>{__('Confidence:', 'alt-context')}</strong>
+                    {sprintf('%d%%', Math.round(cluster.confidence_score * 100))}
+                  </li>
                 )}
-              </li>
-              {cluster.confidence_score !== undefined && (
-                <li>
-                  <strong>{__('Confidence:', 'alt-context')}</strong>
-                  {sprintf('%d%%', Math.round(cluster.confidence_score * 100))}
-                </li>
-              )}
-              {cluster.created_at && (
-                <li>
-                  <strong>{__('Found:', 'alt-context')}</strong>
-                  {new Date(cluster.created_at).toLocaleDateString()}
-                </li>
-              )}
-            </ul>
+                {cluster.created_at && (
+                  <li>
+                    <strong>{__('Found:', 'alt-context')}</strong>
+                    {new Date(cluster.created_at).toLocaleDateString()}
+                  </li>
+                )}
+              </ul>
+            ) : null}
           </div>
           <button
             type="button"
@@ -363,7 +377,9 @@ export const ClusterDrawerPanel = ({
             <p>{__('No faces found in this face group.', 'alt-context')}</p>
           ) : (
             <>
-              {!hasReassignTargets ? (
+              {hideReassign && reassignUnavailableReason ? (
+                <p className="acx-cluster-drawer__reassign-unavailable">{reassignUnavailableReason}</p>
+              ) : !hasReassignTargets ? (
                 <span id={NO_TARGETS_REASON_ID} className="screen-reader-text">
                   {NO_TARGETS_REASON}
                 </span>
@@ -384,7 +400,12 @@ export const ClusterDrawerPanel = ({
                     onDragEnd={onFaceDragEnd}
                   >
                     <a href={mediaEditUrl(identity.media_id)} target="_blank" rel="noopener noreferrer">
-                      <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
+                      <IdentityThumbnail
+                        identity={identity}
+                        mediaMeta={mediaMap[identity.media_id]}
+                        size={128}
+                        alt={sprintf(__('Face from media %d', 'alt-context'), identity.media_id)}
+                      />
                     </a>
                     <figcaption>
                       {sprintf(
@@ -395,6 +416,7 @@ export const ClusterDrawerPanel = ({
                       {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
                     </figcaption>
                     <div className="acx-cluster-drawer__face-actions">
+                      {hideReassign ? null : (
                       <button
                         type="button"
                         className="acx-cluster-drawer__move-btn"
@@ -411,6 +433,7 @@ export const ClusterDrawerPanel = ({
                       >
                         {__('Move to…', 'alt-context')}
                       </button>
+                      )}
                       {pickerOpen ? (
                         <div
                           id={`acx-cluster-move-targets-${identity.identity_id}`}
@@ -465,6 +488,7 @@ export const ClusterDrawerPanel = ({
 
         {detailError && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>}
 
+        {cluster ? (
         <div className="acx-cluster-drawer__dropzone-wrapper">
           <div
             className={`acx-cluster-drawer__dropzone${dropTarget === 'discard' ? ' is-drop-target' : ''}`}
@@ -479,7 +503,9 @@ export const ClusterDrawerPanel = ({
             {__('Drop faces here to remove them from this face group.', 'alt-context')}
           </div>
         </div>
+        ) : null}
 
+        {cluster ? (
         <div className="acx-cluster-drawer__actions">
           <button
             type="button"
@@ -492,13 +518,15 @@ export const ClusterDrawerPanel = ({
             {isRescanning ? __('Rescanning…', 'alt-context') : __('Rescan with sensitive settings', 'alt-context')}
           </button>
         </div>
+        ) : null}
 
-        {drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL ? (
+        {cluster && drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL ? (
           <p className="acx-cluster-drawer__state">
             {__('This face group is a proposal, not a curated person. Review it before assigning.', 'alt-context')}
           </p>
         ) : null}
 
+        {cluster ? (
         <div className="acx-cluster-drawer__assignment">
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
             {__('Assign to person', 'alt-context')}
@@ -562,6 +590,7 @@ export const ClusterDrawerPanel = ({
             ) : null}
           </div>
         </div>
+        ) : null}
       </aside>
     </>
   );

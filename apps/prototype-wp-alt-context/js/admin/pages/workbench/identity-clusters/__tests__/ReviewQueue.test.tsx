@@ -2691,6 +2691,30 @@ describe('ReviewQueue', () => {
     expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
   });
 
+  it('R2-12: repair_pending with empty served page mounts Resync and does not drain-only', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+    const live = screen.getByRole('status');
+    expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+  });
+
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
   // Omitting data.refetchName() leaves this call count at the initial 1.
   it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {

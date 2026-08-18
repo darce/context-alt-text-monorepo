@@ -153,6 +153,7 @@ export const useSuggestionReviewQueries = () => {
     topUnlabeledClusters: topUnlabeledQuery.data?.clusters ?? [],
     topUnlabeledTotal: topUnlabeledQuery.data?.total,
     topUnlabeledTruncated: topUnlabeledQuery.data?.truncated === true,
+    topUnlabeledRepairPending: topUnlabeledQuery.data?.repair_pending === true,
     topUnlabeledHasClusters: topUnlabeledQuery.data?.has_clusters,
     topUnlabeledDataSource: topUnlabeledQuery.data?.data_source,
     reviewItems: buildSuggestionReviewItems(assignmentSuggestions),

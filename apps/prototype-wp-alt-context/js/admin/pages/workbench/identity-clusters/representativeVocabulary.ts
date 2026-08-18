@@ -10,6 +10,10 @@ export const REPRESENTATIVE_VOCABULARY = {
   imageUnavailable: REPRESENTATIVE_IMAGE_UNAVAILABLE,
 } as const;
 
+export function repairGatedCount(zeroEvidenceClusterCount: number, unlabeledClusters: number): number {
+  return zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : Math.max(unlabeledClusters, 1);
+}
+
 export function gatedClusterCopy(count: number, truncated = false): string {
   if (truncated) {
     return sprintf(

@@ -54,7 +54,7 @@ import {
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
-import { gatedClusterCopy } from './representativeVocabulary';
+import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
@@ -597,12 +597,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         } else if (filteredEmptyWithWork) {
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
           setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
-        } else if (findings.zeroEvidenceClusterCount > 0) {
-          // REV2-09: the queue is genuinely empty — keep the drain confirmation
-          // and name the gated clusters that still need a resync.
+        } else if (findings.repairPending) {
+          // R2-12: envelope repair_pending (or total>served empty page) — never
+          // announce drain-only while work remains on the server.
+          const gatedCount = repairGatedCount(
+            findings.zeroEvidenceClusterCount,
+            findings.counts.unlabeledClusters,
+          );
           setLiveMessage(
             `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
-              findings.zeroEvidenceClusterCount,
+              gatedCount,
               findings.topUnlabeledTruncated,
             )}`,
           );
@@ -622,6 +626,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       findings.zeroEvidenceClusterCount,
+      findings.repairPending,
+      findings.counts.unlabeledClusters,
       findings.topUnlabeledTruncated,
       focusPrimaryInCard,
       length,
@@ -1307,12 +1313,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   <p className="acx-review-queue__empty">
                     {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
                   </p>
-                  {findings.zeroEvidenceClusterCount > 0 ? (
+                  {findings.repairPending ? (
                     <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
                       <p id="acx-review-queue-repair-copy">
                         <AlertTriangle aria-hidden="true" size={16} />
                         {gatedClusterCopy(
-                          findings.zeroEvidenceClusterCount,
+                          repairGatedCount(
+                            findings.zeroEvidenceClusterCount,
+                            findings.counts.unlabeledClusters,
+                          ),
                           findings.topUnlabeledTruncated,
                         )}
                       </p>

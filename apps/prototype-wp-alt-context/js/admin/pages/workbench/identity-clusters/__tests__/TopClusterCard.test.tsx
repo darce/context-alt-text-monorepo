@@ -197,10 +197,33 @@ describe('TopClusterCard', () => {
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
-  // E21-20-REV8-01 / TEST-15: two-or-more reps use cellSize 39 and must hide
-  // the visible missing label; the single-rep 80px path must keep it.
-  // Mutation: drop hideMissingLabel from the 39px Avatars -> RED.
-  it('hides the missing-state visible label at cellSize 39 and keeps it at cellSize 80', () => {
+  // UXW2-2 (B5): the count text derives from what the grid renders. When
+  // identity_count exceeds the rendered representatives, the remainder is
+  // reported as "+N more" (ClusterPreview +N pattern) instead of claiming
+  // faces that have no tile.
+  it('counts rendered faces and reports unrendered members as "+N more"', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 3,
+          representatives: [
+            buildRepresentative({ id: 'rep-1', thumb_url: `${FACE_THUMB_URL}?n=1` }),
+            buildRepresentative({ id: 'rep-2', thumb_url: `${FACE_THUMB_URL}?n=2` }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/2 faces in cluster/)).toBeInTheDocument();
+    expect(screen.getByText(/\+1 more/)).toBeInTheDocument();
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(2);
+  });
+
+  // UXW2-2 (B5): a representative without a usable image must not render as a
+  // blank tile — the missing state keeps its visible label at every cell size.
+  it('keeps the missing-state visible label at cellSize 39 and cellSize 80', () => {
     const twoMissingReps = [
       buildRepresentative({ id: 'rep-1' }),
       buildRepresentative({ id: 'rep-2' }),
@@ -220,8 +243,10 @@ describe('TopClusterCard', () => {
     expect(smallCells).toHaveLength(2);
     smallCells.forEach((cell) => {
       expect(cell).toHaveStyle({ width: '39px', height: '39px' });
-      expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
-      expect(cell.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent('No image');
+      expect(cell).not.toHaveClass('acx-durable-face-thumb--hide-missing-label');
+      const fallbackLabel = cell.querySelector('.acx-durable-face-thumb__fallback-label');
+      expect(fallbackLabel).toHaveTextContent('No image');
+      expect(fallbackLabel).toBeVisible();
     });
     unmount();
 

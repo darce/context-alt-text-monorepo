@@ -2172,6 +2172,71 @@ def test_live_pin_targets_does_not_record_a_stale_digest_literal(tmp_path, monke
     assert new not in found.values() and old not in found.values()
 
 
+def test_live_pin_targets_hit_set_on_a_mixed_hex_fixture(tmp_path, monkeypatch):
+    """Hit-set lock for PRIV-1-BR-34.
+
+    The scan used to alternate every published digest. The replacement
+    is a generic 64-hex pass plus a dict probe. Those two strategies
+    must agree here: an exact 64-char current digest is a pin, a
+    65+ char hex run that is not any published digest is not, and an
+    unmatched exact 64-hex is not. The assertion is the hit set, not
+    the pattern string.
+
+    A membership filter that is missing KeyErrors on the long run
+    once the scan is generic. Alternation still agrees with the
+    oracle, so this test stays green on the unfixed body.
+    """
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    unmatched = "cd" * 32
+    # 70 hex chars. No 64-char window equals a published current digest.
+    long_run = "f" * 70
+    assert digest not in long_run
+    assert unmatched not in long_run
+    assert all(long_run[i : i + 64] != digest for i in range(len(long_run) - 63))
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note_text = f"sha256: {digest}\nnoise: {long_run}\nunmatched: {unmatched}\n"
+    note.write_text(note_text, encoding="utf-8")
+    note_digest = pz._sha_file(note)
+    published = {_PIN_REL: digest, _PIN_NOTE: note_digest}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+
+    # Oracle: which current published digests appear as a literal
+    # substring. Same candidate set as the unanchored alternation.
+    current = {digest, note_digest}
+    oracle = {d for d in current if d in note_text}
+    assert oracle == {digest}
+    assert found == {_PIN_REL: digest}
+    assert set(found.values()) == oracle
+    assert unmatched not in found.values()
+    assert note_digest not in found.values()
+    windows = {long_run[i : i + 64] for i in range(len(long_run) - 63)}
+    assert windows.isdisjoint(found.values())
+
+    # In-test copy of both strategies over the same bytes. They must
+    # agree with each other and with `_live_pin_targets`. This is the
+    # "if you add hex-run guards, prove the hit set did not move" lock
+    # the brief asked for.
+    alt = re.compile("|".join(re.escape(d) for d in current))
+    generic = re.compile(r"[0-9a-f]{64}")
+    alt_hits = set(alt.findall(note_text))
+    gen_hits = {d for d in generic.findall(note_text) if d in current}
+    assert alt_hits == gen_hits == {digest}
+    # The generic pass must still *see* the first 64 of the long run
+    # (and drop it in the filter). A hex-run guard that never produces
+    # that candidate would skip the membership probe this finding is
+    # about. This assertion is on the in-test generic, not on
+    # production's pattern string.
+    raw_generic = generic.findall(note_text)
+    assert long_run[:64] in raw_generic
+    assert digest in raw_generic
+    assert unmatched in raw_generic
+
+
 def test_persist_published_pins_is_a_noop_on_dry_run(tmp_path, monkeypatch):
     private = tmp_path / "private"
     private.mkdir()

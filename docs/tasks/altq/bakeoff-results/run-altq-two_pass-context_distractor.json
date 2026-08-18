@@ -1011,7 +1011,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Yarrow and Slate Willow pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out.",
+        "alt_text_draft": "Muted Yarrow and Slate Willow pose together on a couch.  \nMuted wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nMuted looks at the camera with a soft expression while Maria makes a playful face with her tongue out.",
         "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -1024,7 +1024,7 @@
           {
             "latency_s": 4.931,
             "pass": "ground_weave",
-            "raw": "Muted Yarrow and Slate Willow pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out."
+            "raw": "Muted Yarrow and Slate Willow pose together on a couch.  \nMuted wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nMuted looks at the camera with a soft expression while Maria makes a playful face with her tongue out."
           }
         ],
         "prompt_variant": "v2"

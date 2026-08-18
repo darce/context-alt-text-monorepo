@@ -116,14 +116,14 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Russet Fathom and Muted Current smile at the camera upside down in a dimly lit bar, with a bright vertical light fixture and reflections in a mirror behind them.",
-        "alt_text_long": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nCaitlin has long blonde hair and is wearing a dark top.  \nErika is on the right, wearing a light-colored headband.  \nA bright vertical light fixture glows behind them.  \nTheir reflections and the reflections of other patrons appear in a mirror behind them.  \nThe image is rotated 180 degrees, so the subjects appear upside down.  \nThe warm lighting creates a cozy atmosphere in the bar.  \nA textured lampshade is visible on the left side of the frame.",
+        "alt_text_long": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nRusset has long blonde hair and is wearing a dark top.  \nCandid is on the right, wearing a light-colored headband.  \nA bright vertical light fixture glows behind them.  \nTheir reflections and the reflections of other patrons appear in a mirror behind them.  \nThe image is rotated 180 degrees, so the subjects appear upside down.  \nThe warm lighting creates a cozy atmosphere in the bar.  \nA textured lampshade is visible on the left side of the frame.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
           {
             "latency_s": 8.419,
             "pass": "caption",
-            "raw": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nCaitlin has long blonde hair and is wearing a dark top.  \nErika is on the right, wearing a light-colored headband.  \nA bright vertical light fixture glows behind them.  \nTheir reflections and the reflections of other patrons appear in a mirror behind them.  \nThe image is rotated 180 degrees, so the subjects appear upside down.  \nThe warm lighting creates a cozy atmosphere in the bar.  \nA textured lampshade is visible on the left side of the frame."
+            "raw": "Russet Fathom and Muted Current smile at the camera in a dimly lit bar.  \nRusset has long blonde hair and is wearing a dark top.  \nCandid is on the right, wearing a light-colored headband.  \nA bright vertical light fixture glows behind them.  \nTheir reflections and the reflections of other patrons appear in a mirror behind them.  \nThe image is rotated 180 degrees, so the subjects appear upside down.  \nThe warm lighting creates a cozy atmosphere in the bar.  \nA textured lampshade is visible on the left side of the frame."
           },
           {
             "latency_s": 0.748,

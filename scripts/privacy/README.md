@@ -57,38 +57,63 @@ rebuilds both the separated and the concatenated surface forms from scratch, and
 rescans the working tree (MLDATA-17 — a de-identification claim needs a measured
 re-identification attempt, not an assertion).
 
-The two are quoted together on purpose. An earlier revision of this section
-claimed "0 tokens remain" on `verify` alone, and that claim was false by 379
-occurrences: `verify` was built from the same boundary-anchored builders as the
-rewriter, so it could not see the one class the rewriter also missed. A checker
-that shares the rewriter's blind spot is not evidence (CARD-08).
+The two are quoted together on purpose, and this section has now been wrong
+twice for the same reason. An early revision claimed "0 tokens remain" on
+`verify` alone; that was false by 379 occurrences. A later revision published
+the numbers below with the concatenated row reading "≥8 chars"; that floor was a
+silent `continue` in `_concatenated_regex`, which `residue()` builds from too,
+so `verify` printed `0 files / 0 occ` while **17 occurrences of 2 identities
+across 3 tracked in-scope files** sat on disk in cleartext (PRIV-1-BR-25). Both
+were caught only by the independent oracle. A checker that shares the rewriter's
+blind spot is not evidence, and an exclusion applied while *building* a pattern
+is an exclusion applied to the *measurement* (CARD-08).
+
+The concatenated pass is now two-tiered rather than floored: joined forms of
+≥8 letters match unanchored, and shorter multi-token joins match under a
+letter-only anchor `(?<![A-Za-z])…(?![A-Za-z])`, which still refuses an in-word
+collision — the floor's actual purpose — while admitting the digit, `@` and `/`
+neighbours both live leak shapes needed. Whatever the builder still refuses is
+counted and printed by `apply` and `verify` rather than dropped.
 
 ```
 $ python scripts/privacy/priv1_pseudonymize.py verify
-in-scope residue: 0 files / 0 occ; paths: 0; unscannable in-scope: 0 (+1 declared);
-out-of-scope (reported only): 35 files
+  bare tokens left alone (also carried by a non-personal identity): ['liam']
+  concat exclusions: 4 dropped (4× single-token name; no concatenation exists)
+in-scope residue: 0 files / 0 occ; paths: 0; free-text: 0;
+unscannable in-scope: 0 (+1 declared); out-of-scope (reported only): 35 files
 exit 0
 ```
 
-Independent oracle over the same 2,816 in-scope tracked files, 0 undecodable:
+Independent oracle (`str.find` over needles built from the alias map, sharing no
+code with the script) across 2,994 tracked files:
 
-| measure                                  | value  |
-| ---------------------------------------- | ------ |
-| personal identities in the pre-scrub roster | 90     |
-| non-dictionary name tokens (≥4 chars)    | 85     |
-| concatenated forms (≥8 chars)            | 84     |
-| separated-form occurrences remaining     | **0**  |
-| concatenated-form occurrences remaining  | **0**  |
-| offending files                          | **0**  |
+| measure                                     | value |
+| ------------------------------------------- | ----- |
+| personal identities in the pre-scrub roster | 90    |
+| multi-token identities (concat-eligible)    | 86    |
+| single-token identities (see below)         | 4     |
+| separated-form occurrences remaining        | **0** |
+| concatenated-form occurrences remaining     | **0** |
+| slug / snake / dot-form occurrences remaining | **0** |
+| offending files                             | **0** |
 
 exit 0.
 
-Two classes are deliberately left in place, and neither is a residue claim:
+Three classes are deliberately left in place, and none is a residue claim:
 
 - 73 roster tokens are ordinary dictionary words that happen to also be given
   names (15,555 occurrences, overwhelmingly prose in `literature/` and synthetic
   test fixtures). Rewriting them corrupts unrelated English, so they are out of
   scope by design rather than missed.
+- 3 of the 4 single-token identities fall in that same class: each is a
+  dictionary word, and one is a 4-letter token with 10,662 in-scope occurrences
+  across 689 files (`Makefile`, `Dockerfile`, `pyproject.toml`, module names).
+  Those occurrences are the ordinary word, not references to a subject. The
+  fourth single-token identity is covered by the given-name pass and was
+  rewritten. **Caveat:** the dictionary is `/usr/share/dict/words`, an untracked
+  host file that the builder degrades to an empty set when absent — so this row
+  is host-dependent and not reproducible from the repo alone (PRIV-1-BR-26,
+  open).
 - 1 in-scope file is undecodable and declared, not skipped: an OOXML strategy
   brief whose single roster-token hit is a cited author surname in a
   bibliography entry. It is listed in `DECLARED_UNSCANNABLE` with that
@@ -118,9 +143,13 @@ roster on every run rather than pinned here where it would rot.
   exercises the same six passes as `apply` (CARD-08). Sharing the object is
   necessary but not sufficient: both are built from the same builders, so a
   builder that drops an entry blinds the checker and the rewriter together.
-  That happened twice — once for the concatenated form as a whole, and once for
-  four 3-token names whose 2-token aliases tripped a token-count guard. Both
-  were caught only by the independent oracle, never by `verify`.
+  That has now happened three times — the concatenated form as a whole; four
+  3-token names whose 2-token aliases tripped a token-count guard; and two
+  7-letter joined names dropped by an `>= 8` length floor. Every one was caught
+  only by the independent oracle, never by `verify`. The floor is the clearest
+  case: it was a *defensible* guard, correctly reasoned in its own docstring,
+  and still wrong — because it was enforced by `continue` instead of by
+  anchoring. Guard by narrowing the match, not by removing the entry.
 - An entry that cannot be rewritten raises instead of being skipped. A `continue`
   in a builder is indistinguishable, at the output, from a name that was never
   there.

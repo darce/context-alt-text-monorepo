@@ -291,7 +291,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Auburn Current wears a silver \"Birthday Princess\" sash and a tiara while posing with Muted Yarrow.  \nShe leans her head on Muted's shoulder, both smiling beneath a balloon arch of purple, green, and gold.  \nRyann wears a black dress, glasses, and a gold headband, with one hand on her hip.  \nA round mirror and Mardi Gras beads hang on the wall behind them.",
+        "alt_text_draft": "Auburn Current wears a silver \"Birthday Princess\" sash and a tiara while posing with Muted Yarrow.  \nShe leans her head on Muted's shoulder, both smiling beneath a balloon arch of purple, green, and gold.  \nMuted wears a black dress, glasses, and a gold headband, with one hand on her hip.  \nA round mirror and Mardi Gras beads hang on the wall behind them.",
         "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -435,7 +435,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow bites into a slice of cake with red and white stripes.  \nShe wears a sparkly dark top and holds a phone on a selfie stick that captures her reflection.  \nIn the background, a couple embraces near a mirrored disco ball.  \nCaitlin Weaver is also present in the scene.",
+        "alt_text_draft": "Slate Willow bites into a slice of cake with red and white stripes.  \nShe wears a sparkly dark top and holds a phone on a selfie stick that captures her reflection.  \nIn the background, a couple embraces near a mirrored disco ball.  \nRusset Fathom is also present in the scene.",
         "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -563,7 +563,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Yarrow raises a drink while dancing with five friends in matching pink satin pajamas.  \nBea Burke stands to the left, smiling with a bottle in hand.  \nThe group poses in front of a shimmering pink foil curtain with a silver number two balloon.  \nA lit lamp with a white shade sits in the foreground.",
+        "alt_text_draft": "Muted Yarrow raises a drink while dancing with five friends in matching pink satin pajamas.  \nHollow Pennant stands to the left, smiling with a bottle in hand.  \nThe group poses in front of a shimmering pink foil curtain with a silver number two balloon.  \nA lit lamp with a white shade sits in the foreground.",
         "injected_distractor": "Hollow Pennant",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",

@@ -226,6 +226,8 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString("identity_count DESC", $sql);
         $this->assertStringContainsString("c.is_user_confirmed = 0", $sql);
         $this->assertStringContainsString("c.identity_count >= 2", $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString(') >= 2', $sql);
         $this->assertStringContainsString("label IS NULL", $sql);
         $this->assertStringContainsString("curation_state <> 'dismissed'", $sql);
     }

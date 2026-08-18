@@ -13,6 +13,7 @@ use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
+use function str_replace;
 use function trim;
 
 class ClustersReadRepository {
@@ -233,6 +234,7 @@ class ClustersReadRepository {
 
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
+		$members_table    = $this->resolve_identity_members_table_name();
 		$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label 
 				FROM %i c
@@ -241,6 +243,11 @@ class ClustersReadRepository {
 					AND c.is_user_confirmed = 0
 					AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
 					AND c.identity_count >= 2
+					AND (
+						SELECT COUNT(*)
+						FROM %i m
+						WHERE m.cluster_uuid = c.cluster_uuid
+					) >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
 				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
 				LIMIT %d",
@@ -248,6 +255,7 @@ class ClustersReadRepository {
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$members_table,
 					$normalized_limit,
 				)
 			);
@@ -257,6 +265,10 @@ class ClustersReadRepository {
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_top_unlabeled', $rows, true );
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	private function resolve_identity_members_table_name(): string {
+		return str_replace( 'acx_clusters', 'acx_identity_members', $this->table_name );
 	}
 
 	public function count_top_unlabeled_singletons( string $tenant_id ): int {

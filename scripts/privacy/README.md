@@ -90,10 +90,24 @@ counted and printed by `apply` and `verify` rather than dropped.
 $ python scripts/privacy/priv1_pseudonymize.py verify
   bare tokens left alone (also carried by a non-personal identity): ['liam']
   concat exclusions: 4 dropped (4× single-token name; no concatenation exists)
-in-scope residue: 0 files / 0 occ; paths: 0; free-text: 0;
+  adjacent exclusions: 6 dropped (4× no positional alias token; 2× pair maps to >1 identity)
+in-scope residue: 3 files / 3 occ; paths: 0; free-text: 0; ambiguous stems: 3;
 unscannable in-scope: 0 (+1 declared); out-of-scope (reported only): 35 files
-exit 0
+exit 1
 ```
+
+**`verify` currently exits 1, and that is the honest answer, not a
+regression.** The three occurrences are media stems whose token is shared by
+two or more personal identities. They were always on disk; what changed is
+that they are now counted. Previously `_ambiguous_stem_line` printed them as
+a note while the exit code stayed 0 — a measurement with no consequence
+attached, which is the shape a reader mistakes for a clean run (PRIV-1-BR-15).
+They have no repair path yet: the filename pass leaves an ambiguous stem
+alone by design, and the family-word backstop never sees the token because
+the given-name pass drops dictionary words before it runs, so a shared
+surname that is also an ordinary English word falls through both. Tracked as
+PRIV-1-BR-29. Until it lands, a non-zero `verify` here means *these three and
+nothing else*; a fourth would be new.
 
 Independent oracle (`str.find` over needles built from the alias map, sharing no
 code with the script) across 2,994 tracked files:
@@ -108,14 +122,19 @@ code with the script) across 2,994 tracked files:
 | slug / snake / dot-form occurrences remaining | **0** |
 | offending files                             | **0** |
 
-exit 0.
+exit 0. The oracle scans for *pre-scrub roster forms*; the three
+ambiguous stems above are not among its needles, which is why the two
+checkers disagree on the exit code while agreeing on the bytes.
 
 Three classes are deliberately left in place, and none is a residue claim:
 
 - 73 roster tokens are ordinary dictionary words that happen to also be given
   names (15,555 occurrences, overwhelmingly prose in `literature/` and synthetic
   test fixtures). Rewriting them corrupts unrelated English, so they are out of
-  scope by design rather than missed.
+  scope by design rather than missed. *Bare* is the operative word: since
+  PRIV-1-BR-27 one of these tokens standing next to an alias token of the same
+  identity is rewritten, because the adjacency identifies it. The exclusion
+  covers the lone word, not the phrase.
 - 3 of the 4 single-token identities fall in that same class: each is a
   dictionary word, and one is a 4-letter token with 10,662 in-scope occurrences
   across 689 files (`Makefile`, `Dockerfile`, `pyproject.toml`, module names).
@@ -152,7 +171,7 @@ roster on every run rather than pinned here where it would rot.
   changes that file's own digest (3 second-order pins measured). Non-convergence
   raises rather than passing quietly.
 - `rewrite()` and `residue()` share one `_Passes` object, so `verify` provably
-  exercises the same six passes as `apply` (CARD-08). Sharing the object is
+  exercises the same seven passes as `apply` (CARD-08). Sharing the object is
   necessary but not sufficient: both are built from the same builders, so a
   builder that drops an entry blinds the checker and the rewriter together.
   That has now happened three times — the concatenated form as a whole; four
@@ -178,6 +197,59 @@ roster on every run rather than pinned here where it would rot.
   Retiring a vocabulary word is a *replacement* at a fixed index, never a
   deletion: the minter hashes into the list, so a length change re-mints
   everybody. Replacing in place left the other 89 aliases byte-identical.
+- A correct exclusion can still leak, because it only looks at one word. The
+  given-name pass refuses ordinary dictionary words on purpose — rewriting them
+  corrupts unrelated English — and that judgement is right about the word and
+  wrong about the phrase. A dictionary-word given name sitting next to a surname
+  this scrub itself minted is not ordinary English; the neighbour is the
+  evidence. `verify` reported 0 because `residue()` was built from the same
+  builder that declined to look (CARD-08, third instance). The adjacent pass
+  fires only when both halves are provable from the alias map — the leading
+  token is a real-name token of identity X with a positional alias, and the
+  neighbour is a *different-index* alias token of the same X — so ordinary
+  English is safe by construction rather than by a length floor. Same-index
+  pairing would have rewritten `<given> <own-alias-noun>` to
+  `<alias-noun> <alias-noun>`. Built from the map, never the wordlist: a builder
+  that reads the exclusion list can be silenced by editing the exclusion list
+  while the exposed surface stays on disk (PRIV-1-BR-27).
+- Widening a character class is not a free change. Adding `%20` to the separator
+  as `(?:[\s_\-]+|%20)+` put a `+` inside an alternation under another `+`. For
+  a run of N separator characters that ultimately fails to match, the engine can
+  partition them into `[\s_\-]+` groups in 2^(N-1) ways and tries all of them:
+  0.8 ms at 14 characters, 249 ms at 22, a clean 4× per two added characters. A
+  JSON manifest indents far past 22, so `verify` stopped terminating on a corpus
+  it had finished in two minutes the day before. The de-nested
+  `(?:[\s_\-]|%20)+` accepts the same language with a unique parse, so matching
+  is linear. The 65-test unit suite passed throughout — no fixture held a long
+  separator run — and it was caught only by running `verify` end-to-end
+  (PRIV-1-BR-28). Note for whoever tests the next one: a wall-clock assertion
+  cannot catch this. `re.search` runs in C and never yields to the interpreter,
+  so a timing check placed after the call never executes and `SIGALRM` never
+  fires. Bound it structurally, by asserting on `regex.pattern`, and
+  out-of-process with `subprocess.run(timeout=...)`.
+- `re.IGNORECASE` changes what `[A-Za-z]` means. Under the flag it also matches
+  the characters that case-fold into ASCII letters — U+017F LATIN SMALL LETTER
+  LONG S folds to `s`, U+212A KELVIN SIGN folds to `k`. The adjacent pass
+  compiles with the flag and then re-parses the matched span with a second
+  pattern; that second pattern was compiled without it, so it rejected spans the
+  first had accepted and the replacer returned them unchanged. The damage is not
+  a missed rewrite, it is a *divergence*: `residue()` counts the span through the
+  same pattern that matched it, so `verify` would have reported residue `apply`
+  could never clear, permanently non-zero with no counter naming the cause. Any
+  time one regex re-reads what another matched, the flags are part of the
+  contract. Document-side lookups use `.casefold()`, not `.lower()`
+  (PRIV-1-BR-30).
+- A test fixture can spell a real leak. Minted aliases are ordinary English
+  adjectives and nouns, and 73 roster tokens are ordinary dictionary words, so an
+  author inventing plausible names draws from the same vocabulary the real map
+  uses. One fixture here paired a genuine roster name token with a genuine minted
+  alias token, and the moment the adjacent pass landed, `verify` counted this
+  repo's own test file as residue — correctly, because at the byte level a
+  fixture that spells a real pair and a real leak are the same string. The
+  collision is invisible from inside an offload lane, which never receives the
+  map. The repair is to rename the fixture, never to exclude the test file from
+  the scan: excluding it would be an exclusion applied to the measurement, which
+  is the one mistake this file has now made three times (PRIV-1-BR-31).
 - An entry that cannot be rewritten raises instead of being skipped. A `continue`
   in a builder is indistinguishable, at the output, from a name that was never
   there.

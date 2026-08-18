@@ -1854,13 +1854,30 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
     a *previous* digest. This finds literals that match a *current* one.
     Both treat such a literal as a pin by construction, so this is not a
     guess about unmatched hex (an upstream release, an untracked artifact).
+
+    Current digests are hashed from ``files``. ``published`` scopes which
+    paths are eligible (files the caller already knew about) but its
+    values are not trusted: they may still be the pre-run map (`pre_sha`)
+    that `_repin_digests` mutates in place. Hashing here is the same pass
+    `_repin_digests` already does.
+
+    This does not remove the ordering requirement. The pin *literal in
+    the text* is only the new digest after `_repin_digests` has written
+    it. If persist runs first, this pass finds no current-digest literal
+    and records nothing for that file, rather than recording the stale
+    one. The coupling is not gone.
     """
     if not published:
         return {}
     digest_to_rels: dict[str, list[str]] = {}
-    for rel, digest in published.items():
-        if digest:
-            digest_to_rels.setdefault(digest, []).append(rel)
+    for path, in_scope in files:
+        if not in_scope or not path.is_file():
+            continue
+        rel = str(path.relative_to(REPO))
+        if rel not in published:
+            continue
+        digest = _sha_file(path)
+        digest_to_rels.setdefault(digest, []).append(rel)
     if not digest_to_rels:
         return {}
     rx = re.compile("|".join(re.escape(d) for d in digest_to_rels))
@@ -1880,7 +1897,11 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
 def _persist_published_pins(
     published: dict[str, str], files: list[tuple[Path, bool]], dry_run: bool
 ) -> dict | None:
-    """Write the pin record from live targets. Dry-run writes nothing."""
+    """Write the pin record from live targets. Dry-run writes nothing.
+
+    ``published`` is a path scope, not a digest oracle. Live targets
+    hash ``files`` themselves; they do not read these values.
+    """
     if dry_run:
         return None
     return _merge_pin_record(_live_pin_targets(published, files))
@@ -1953,6 +1974,10 @@ def cmd_apply(args) -> int:
         reordered = _reorder_roster(passes)
 
     files_after = _tracked_files() if renames and not args.dry_run else files
+    # `_repin_digests` must run first: persist hashes current file
+    # bytes, but the pin *literals* are only those current digests
+    # after the rewrite. Persist does not read the mutated values of
+    # `pre_sha`; the coupling is the text, not the dict.
     repins = _repin_digests(pre_sha, files_after, args.dry_run)
     pin_record = _persist_published_pins(pre_sha, files_after, args.dry_run)
 

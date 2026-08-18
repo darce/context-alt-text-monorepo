@@ -53,7 +53,6 @@ from typing import Any
 import httpx
 
 from .bench_capture import (
-    CaptureStatus,
     LoadLoop,
     VramSampler,
     collect_item_latencies,
@@ -1077,14 +1076,14 @@ def _nonneg_finite_float_arg(raw: str) -> float:
 
 
 def _gpu_sampling_disabled() -> dict[str, Any]:
-    return {
-        "source": "nvidia-smi",
-        "status": CaptureStatus.UNAVAILABLE,
-        "peak_used_mb": None,
-        "total_mb": None,
-        "samples": 0,
-        "reason": "sampling disabled",
-    }
+    """Unavailable GPU block with VramSampler.stop() keys (OBS-04, rg-015).
+
+    Derives the key set from VramSampler's zero-sample factory — do not
+    hand-write the record shape here. Unmeasured numerics stay null.
+    """
+    record = VramSampler().stop()
+    record["reason"] = "sampling disabled"
+    return record
 
 
 def _timeout_s_of(client: BakeoffClient) -> float | None:

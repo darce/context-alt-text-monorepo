@@ -2685,8 +2685,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     exposure_notes = _collect_exposure_notes(args.exposure_note, args.exposure_file)
     if not exposure_notes:
         print(
-            "draw-eval-split requires --exposure-note (repeatable) or --exposure-file "
-            "with at least one note (EVAL-10)",
+            "draw-eval-split requires --exposure-note (repeatable) or --exposure-file with at least one note (EVAL-10)",
             file=sys.stderr,
         )
         raise SystemExit(2)

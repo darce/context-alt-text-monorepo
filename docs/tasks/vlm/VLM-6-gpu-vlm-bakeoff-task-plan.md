@@ -174,6 +174,8 @@ Changes:
 >
 > This obligation is shared with FIR-11, which owns the split artifact for the face corpus. Use a distinct term — **"sealed eval split"** — because FIR-11 already uses "sealed" in an unrelated proposal-reveal sense. If the split has not been drawn and the curation tenant is live, **stop curating and draw it first**; work already curated without a frozen split is usable as *training/development* material but not as an evaluation half.
 
+- [x] Sealed eval split drawn + committed by hash — `bakeoff-results/S1-sealed-eval-split-20260818.json`, `draw-eval-split` CLI, `scene/tests/test_eval_harness_eval_split.py`
+
 - Stratify across people/faces, **crowds, occlusion, mirrors/reflections, animals/pets, art (paintings/illustration), abstract imagery, black-and-white**, dense scenes, text-in-image, charts/screenshots, products, low-light/blur. Every stratum gets ≥5 images; per-domain counts reported in the slice decision.
 - License/PII screen every new image; record provenance per image in the manifest.
 - `manifest.py`: additive `difficulty`/`domain`/`reference_facts` fields. **Face identity ground truth for all 100 images**: present-identity labels + `face_count` (incl. non-roster strangers) curated per image using the existing manifest v2 fields; roster extended if new recurring people are added; golden-37 subset membership pinned by test so historical face P/R stays comparable.

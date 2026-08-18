@@ -23,6 +23,8 @@ confirms every stratum. No ML, no network, fully deterministic.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import sys
 from collections import defaultdict
@@ -538,6 +540,150 @@ def _main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
     return 0
+
+
+# --- Sealed eval split (VLM-6 S1 / EVAL-07 / MLDATA-09 / EVAL-10) -------------
+# Keyed by image CONTENT hash so later-procured images get a half at ingestion
+# with no human choosing. The RULE is frozen; membership is derived from it.
+
+ASSIGNMENT_RULE = "hmac-sha256(seed, image_sha256)[:8]/2**64 < held_out_fraction"
+SUPPORTED_SPLIT_SCHEMA_VERSION = 1
+SPLIT_PROTECTION = (
+    "forward-from-draw-timestamp: any image, identity or curation decision first "
+    "observed after draw_timestamp is protected by this split; entries listed in "
+    "pre_split_exposure were already exposed"
+)
+SPLIT_DISJOINTNESS_NOTE = (
+    "identity labels are per-image, not per-cluster; a person in both halves means "
+    "their images were split by content hash — acceptable for description eval, "
+    "must be resolved (move to train) before any face-identification eval uses held_out"
+)
+SPLIT_PARTITION_PROVENANCE = "pre-audit, buffalo-derived merge-only"
+
+
+class SplitHalf(StrEnum):
+    """Which sealed-split half an image belongs to (sr-007)."""
+
+    HELD_OUT = "held_out"
+    TRAIN = "train"
+
+
+def assign_split(sha256: str, *, seed: str, held_out_fraction: float) -> SplitHalf:
+    """Assign an image to a half from hmac(seed, content-sha256). Accepts closed [0, 1]."""
+    digest = hmac.new(seed.encode(), sha256.lower().encode(), hashlib.sha256).digest()
+    bucket = int.from_bytes(digest[:8], "big")
+    if bucket / 2**64 < held_out_fraction:
+        return SplitHalf.HELD_OUT
+    return SplitHalf.TRAIN
+
+
+def _half_payload(entries: Sequence[GoldenEntry]) -> dict:
+    return {
+        "media_ids": sorted(entry.media_id for entry in entries),
+        "sha256": sorted(entry.sha256 for entry in entries),
+        "identities": sorted({ident for entry in entries for ident in entry.present_identities}),
+    }
+
+
+def _identities_spanning_both_halves(held_out: Sequence[GoldenEntry], train: Sequence[GoldenEntry]) -> list[str]:
+    held_ids = {ident for entry in held_out for ident in entry.present_identities}
+    train_ids = {ident for entry in train for ident in entry.present_identities}
+    return sorted(held_ids & train_ids)
+
+
+def _partition_entries(manifest, *, seed: str, held_out_fraction: float) -> tuple[list[GoldenEntry], list[GoldenEntry]]:
+    held_out: list[GoldenEntry] = []
+    train: list[GoldenEntry] = []
+    for entry in manifest.entries:
+        half = assign_split(entry.sha256, seed=seed, held_out_fraction=held_out_fraction)
+        if half is SplitHalf.HELD_OUT:
+            held_out.append(entry)
+        else:
+            train.append(entry)
+    return held_out, train
+
+
+def draw_eval_split(
+    manifest,
+    *,
+    seed: str,
+    held_out_fraction: float,
+    draw_timestamp: str,
+    source_manifest_path: str,
+    source_manifest_sha256: str,
+    pre_split_exposure: list[str],
+) -> dict:
+    """Freeze a sealed eval split derived from image content hashes."""
+    held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
+    return {
+        "schema_version": SUPPORTED_SPLIT_SCHEMA_VERSION,
+        "seed": seed,
+        "held_out_fraction": held_out_fraction,
+        "assignment_rule": ASSIGNMENT_RULE,
+        "draw_timestamp": draw_timestamp,
+        "protection": SPLIT_PROTECTION,
+        "source_manifest": {"path": source_manifest_path, "sha256": source_manifest_sha256},
+        "pre_split_exposure": list(pre_split_exposure),
+        "held_out": _half_payload(held_out),
+        "train": _half_payload(train),
+        "disjointness": {
+            "status": "provisional",
+            "partition_provenance": SPLIT_PARTITION_PROVENANCE,
+            "identities_spanning_both_halves": _identities_spanning_both_halves(held_out, train),
+            "note": SPLIT_DISJOINTNESS_NOTE,
+        },
+    }
+
+
+def verify_eval_split(artifact: dict, manifest) -> list[str]:
+    """Recompute every entry's half; return human-readable violations (empty = OK)."""
+    violations: list[str] = []
+    schema_version = artifact.get("schema_version")
+    if schema_version != SUPPORTED_SPLIT_SCHEMA_VERSION:
+        violations.append(f"unsupported schema_version: {schema_version!r}")
+    if artifact.get("assignment_rule") != ASSIGNMENT_RULE:
+        violations.append(f"unsupported assignment_rule: {artifact.get('assignment_rule')!r}")
+
+    held = artifact.get("held_out") or {}
+    train = artifact.get("train") or {}
+    held_ids = set(held.get("media_ids") or [])
+    train_ids = set(train.get("media_ids") or [])
+    held_shas = set(held.get("sha256") or [])
+    train_shas = set(train.get("sha256") or [])
+
+    both_ids = sorted(held_ids & train_ids)
+    if both_ids:
+        violations.append(f"media_id in both halves: {both_ids}")
+    both_shas = sorted(held_shas & train_shas)
+    if both_shas:
+        violations.append(f"sha256 in both halves: {both_shas}")
+
+    manifest_ids = {entry.media_id for entry in manifest.entries}
+    neither = sorted(manifest_ids - held_ids - train_ids)
+    if neither:
+        violations.append(f"media_id in manifest but in neither half: {neither}")
+
+    seed = artifact.get("seed")
+    fraction = artifact.get("held_out_fraction")
+    if isinstance(seed, str) and isinstance(fraction, (int, float)) and not isinstance(fraction, bool):
+        expected_held, expected_train = _partition_entries(manifest, seed=seed, held_out_fraction=float(fraction))
+        expected_held_ids = {entry.media_id for entry in expected_held}
+        expected_train_ids = {entry.media_id for entry in expected_train}
+        for media_id in sorted(expected_held_ids - held_ids):
+            violations.append(f"membership mismatch: media_id {media_id} recomputes held_out but is not in held_out")
+        for media_id in sorted(expected_train_ids - train_ids):
+            violations.append(f"membership mismatch: media_id {media_id} recomputes train but is not in train")
+        for media_id in sorted((held_ids - expected_held_ids) & manifest_ids):
+            violations.append(f"membership mismatch: media_id {media_id} is in held_out but recomputes train")
+        for media_id in sorted((train_ids - expected_train_ids) & manifest_ids):
+            violations.append(f"membership mismatch: media_id {media_id} is in train but recomputes held_out")
+        expected_span = _identities_spanning_both_halves(expected_held, expected_train)
+        recorded_span = list((artifact.get("disjointness") or {}).get("identities_spanning_both_halves") or [])
+        if recorded_span != expected_span:
+            violations.append(
+                f"identities_spanning_both_halves drifted: recorded={recorded_span} recomputed={expected_span}"
+            )
+    return violations
 
 
 if __name__ == "__main__":

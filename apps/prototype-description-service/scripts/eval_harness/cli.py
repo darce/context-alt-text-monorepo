@@ -2647,6 +2647,72 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     print(f"compare meet-or-beat: PASS candidate={candidate_path} baseline={baseline_path}")
 
 
+def _held_out_fraction_arg(raw: str) -> float:
+    """argparse type: open interval (0, 1). Pure assign_split accepts the closed range."""
+    value = float(raw)
+    if not 0 < value < 1:
+        raise argparse.ArgumentTypeError("must satisfy 0 < f < 1")
+    return value
+
+
+def _service_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _source_manifest_path_for_artifact(manifest_arg: str) -> str:
+    """Path relative to the service dir when under it; otherwise the argument as given."""
+    given = Path(manifest_arg)
+    try:
+        return given.resolve().relative_to(_service_root()).as_posix()
+    except ValueError:
+        return manifest_arg
+
+
+def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) -> list[str]:
+    collected = list(notes or [])
+    if exposure_file:
+        collected.extend(Path(exposure_file).read_text().splitlines())
+    return collected
+
+
+def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
+    """Draw or verify a sealed eval split. Sealed artifacts are never silently redrawn."""
+    from .strata import draw_eval_split, verify_eval_split
+
+    manifest = load_manifest(args.manifest, skip_hash_verification=True)
+    out = Path(args.out)
+    if args.check:
+        artifact = json.loads(out.read_text())
+        violations = verify_eval_split(artifact, manifest)
+        for message in violations:
+            print(message)
+        if violations:
+            raise SystemExit(1)
+        return
+
+    if not args.seed or not args.draw_timestamp:
+        print("draw mode requires --seed and --draw-timestamp", file=sys.stderr)
+        raise SystemExit(2)
+    if out.exists() and not args.force:
+        print(f"refusing to overwrite sealed split {out} without --force", file=sys.stderr)
+        raise SystemExit(3)
+
+    source_path = _source_manifest_path_for_artifact(args.manifest)
+    source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+    artifact = draw_eval_split(
+        manifest,
+        seed=args.seed,
+        held_out_fraction=args.held_out_fraction,
+        draw_timestamp=args.draw_timestamp,
+        source_manifest_path=source_path,
+        source_manifest_sha256=source_sha,
+        pre_split_exposure=_collect_exposure_notes(args.exposure_note, args.exposure_file),
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    print(out)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="eval_harness", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2920,6 +2986,25 @@ def main(argv: list[str] | None = None) -> None:
         help="candidate score report JSON to check against baseline",
     )
     compare_p.set_defaults(func=_cmd_compare)
+
+    draw_split_p = sub.add_parser(
+        "draw-eval-split",
+        help="draw or verify a sealed eval split (VLM-6 S1; EVAL-07 / MLDATA-09 / EVAL-10)",
+    )
+    draw_split_p.add_argument("--manifest", required=True)
+    draw_split_p.add_argument("--out", required=True)
+    draw_split_p.add_argument("--seed", default=None)
+    draw_split_p.add_argument("--held-out-fraction", type=_held_out_fraction_arg, default=0.5)
+    draw_split_p.add_argument(
+        "--draw-timestamp",
+        default=None,
+        help="ISO-8601 timestamp; required in draw mode; never defaulted to now",
+    )
+    draw_split_p.add_argument("--exposure-note", action="append", default=None)
+    draw_split_p.add_argument("--exposure-file", default=None, help="one pre-split exposure note per line")
+    draw_split_p.add_argument("--force", action="store_true", help="permit overwriting an existing sealed split")
+    draw_split_p.add_argument("--check", action="store_true", help="verify an existing artifact against --manifest")
+    draw_split_p.set_defaults(func=_cmd_draw_eval_split)
 
     args = parser.parse_args(argv)
     if getattr(args, "max_cost", None) is not None and getattr(args, "cost_per_image", None) is None:

@@ -7,12 +7,13 @@ namespace AltContext\Api\Services;
 require_once __DIR__ . '/class-person-resolution-service.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once __DIR__ . '/../../sovereign/repositories/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-cluster-curation-writer.php';
 
 use AltContext\Support\DetectsSystemDefinedLabels;
+use AltContext\Sovereign\Repositories\ClusterCurationWriter;
 use AltContext\Sovereign\Repositories\PreparesSqlQueries;
 
 use function array_values;
-use function current_time;
 use function is_array;
 use function is_numeric;
 use function is_object;
@@ -25,6 +26,8 @@ use function trim;
 
 /**
  * Idempotent heal: bind persons for human-labelled clusters that have no person_id.
+ *
+ * Heal binds person_id ONLY (does not set is_user_confirmed / curation_state).
  */
 class PersonLabelBackfillService {
 	use DetectsSystemDefinedLabels;
@@ -34,24 +37,35 @@ class PersonLabelBackfillService {
 	public const MAX_STALLS = 3;
 
 	/**
-	 * @return array{bound:int,examined:int,stalls:int,stalled:bool}
+	 * @return array{bound:int,created:int,persons:int,skipped:int,examined:int,collisions:int,stalls:int,stalled:bool,empty:bool}
 	 */
-	public function backfill_tenant( string $tenant_id, int $batch_size = self::BATCH_SIZE ): array {
+	public function backfill_tenant( string $tenant_id, int $batch_size = self::BATCH_SIZE, bool $dry_run = false ): array {
 		$normalized_tenant = trim( $tenant_id );
 		$bound             = 0;
+		$created           = 0;
+		$skipped           = 0;
 		$examined          = 0;
+		$collisions        = 0;
 		$stalls            = 0;
 		$stalled           = false;
+		$person_ids        = array();
 		$seen              = array();
 		$limit             = max( 1, min( $batch_size, self::BATCH_SIZE ) );
 
+		$empty = array(
+			'bound'      => 0,
+			'created'    => 0,
+			'persons'    => 0,
+			'skipped'    => 0,
+			'examined'   => 0,
+			'collisions' => 0,
+			'stalls'     => 0,
+			'stalled'    => false,
+			'empty'      => true,
+		);
+
 		if ( '' === $normalized_tenant ) {
-			return array(
-				'bound'    => 0,
-				'examined' => 0,
-				'stalls'   => 0,
-				'stalled'  => false,
-			);
+			return $empty;
 		}
 
 		while ( true ) {
@@ -76,10 +90,22 @@ class PersonLabelBackfillService {
 			$examined   += count( $fresh );
 			$batch_bound = 0;
 			foreach ( $fresh as $row ) {
-				$cluster_uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
-				if ( $this->bind_row( $row ) ) {
-					$seen[ $cluster_uuid ] = true;
+				$cluster_uuid          = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+				$seen[ $cluster_uuid ] = true;
+				$result                = $this->bind_row( $row, $normalized_tenant, $dry_run );
+				if ( 'bound' === $result['status'] ) {
 					++$batch_bound;
+					if ( $result['person_id'] > 0 ) {
+						$person_ids[ $result['person_id'] ] = true;
+					}
+					if ( $result['created'] ) {
+						++$created;
+					}
+					if ( $result['collision'] ) {
+						++$collisions;
+					}
+				} else {
+					++$skipped;
 				}
 			}
 
@@ -96,10 +122,15 @@ class PersonLabelBackfillService {
 		}
 
 		return array(
-			'bound'    => $bound,
-			'examined' => $examined,
-			'stalls'   => $stalls,
-			'stalled'  => $stalled,
+			'bound'      => $bound,
+			'created'    => $created,
+			'persons'    => count( $person_ids ),
+			'skipped'    => $skipped,
+			'examined'   => $examined,
+			'collisions' => $collisions,
+			'stalls'     => $stalls,
+			'stalled'    => $stalled,
+			'empty'      => 0 === $examined,
 		);
 	}
 
@@ -120,7 +151,7 @@ class PersonLabelBackfillService {
 				AND person_id IS NULL
 				AND label IS NOT NULL
 				AND label <> ''
-				AND label NOT LIKE 'cluster-%%'
+				AND NOT (label LIKE 'cluster-%%' OR label LIKE 'cluster\\_%%')
 			LIMIT %d",
 			array( $table, $tenant_id, $limit )
 		);
@@ -135,48 +166,61 @@ class PersonLabelBackfillService {
 
 	/**
 	 * @param array<string,mixed> $row
+	 * @return array{status:string,person_id:int,created:bool,collision:bool}
 	 */
-	private function bind_row( array $row ): bool {
-		global $wpdb;
+	private function bind_row( array $row, string $tenant_id, bool $dry_run ): array {
+		$none = array(
+			'status'     => 'skipped',
+			'person_id'  => 0,
+			'created'    => false,
+			'collision'  => false,
+		);
 
 		$cluster_uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
 		$label        = trim( (string) ( $row['label'] ?? '' ) );
 		if ( '' === $cluster_uuid || '' === $label || $this->is_reserved_label_shape( $label ) ) {
-			return false;
+			return $none;
 		}
 
 		if ( is_numeric( $row['person_id'] ?? null ) && (int) $row['person_id'] > 0 ) {
-			return false;
+			return $none;
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
-			return false;
+		if ( $dry_run ) {
+			return array(
+				'status'     => 'bound',
+				'person_id'  => 0,
+				'created'    => false,
+				'collision'  => false,
+			);
+		}
+
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) ) {
+			return $none;
 		}
 
 		$resolver = new PersonResolutionService();
-		$resolved = $resolver->resolve_or_create(
+		$resolved = $resolver->resolve_for_automatic_bind(
 			$label,
+			$tenant_id,
+			$cluster_uuid,
 			static function (): bool {
 				return true;
 			}
 		);
 		if ( is_wp_error( $resolved ) ) {
-			return false;
+			return $none;
 		}
 
-		$updated = $wpdb->update(
-			$wpdb->prefix . 'acx_clusters',
-			array(
-				'person_id'         => $resolved['person_id'],
-				'curation_state'    => 'confirmed',
-				'is_user_confirmed' => 1,
-				'updated_at'        => current_time( 'mysql' ),
-			),
-			array( 'cluster_uuid' => $cluster_uuid ),
-			array( '%d', '%s', '%d', '%s' ),
-			array( '%s' )
-		);
+		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
+		$writer->bind_person_to_cluster( $cluster_uuid, (int) $resolved['person_id'], false );
 
-		return false !== $updated;
+		return array(
+			'status'     => 'bound',
+			'person_id'  => (int) $resolved['person_id'],
+			'created'    => 'created' === $resolved['outcome'],
+			'collision'  => true === ( $resolved['collision'] ?? false ),
+		);
 	}
 }

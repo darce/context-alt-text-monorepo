@@ -66,8 +66,14 @@ class ClusterMergeServiceTest extends TestCase
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
 
-        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
-        $this->assertStringContainsString("'cluster_merged'", $outboxInsert);
+        $outboxJoined = implode(
+            "\n",
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+            )
+        );
+        $this->assertStringContainsString("'cluster_merged'", $outboxJoined);
     }
 
     public function testMergeClusterRejectsReservedTargetLabelBeforeTransaction(): void
@@ -107,6 +113,47 @@ class ClusterMergeServiceTest extends TestCase
 
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'revert_merge_cluster'", $outboxInsert);
+    }
+
+    public function testMergeClusterWithTargetLabelBindsPerson(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 88;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Merged Person');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame('Merged Person', $this->repository->updatedLabel);
+        $this->assertSame('cluster-target', $this->repository->updatedLabelClusterId);
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(1, $personInserts, 'target relabel must resolve_or_create a person');
+        $this->assertStringContainsString("'Merged Person'", $personInserts[0]);
+
+        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 88');
+        $this->assertStringContainsString("cluster_uuid = 'cluster-target'", $bindUpdate);
+
+        $outboxJoined = implode(
+            "\n",
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+            )
+        );
+        $this->assertStringContainsString("'person_created'", $outboxJoined);
+        $this->assertStringContainsString("'cluster_person_bound'", $outboxJoined);
     }
 
     public function testMergeRollsBackWhenOutboxEnqueueFails(): void

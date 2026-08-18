@@ -72,6 +72,11 @@ class ClusterLabelService {
 		}
 
 		if ( $this->host->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			$resolved = $this->persist_local_person_for_label( $label );
+			if ( is_wp_error( $resolved ) ) {
+				return $resolved;
+			}
+
 			return $this->host->proxy_cluster_mutation(
 				'PATCH',
 				sprintf( '/recognition/clusters/%s', $cluster_id ),
@@ -222,6 +227,40 @@ class ClusterLabelService {
 		if ( $affected_rows > 0 || $person_write_through ) {
 			$this->host->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-label-update' );
 		}
+
+		return $result;
+	}
+
+	/**
+	 * Persist a roster person when the label mutation is proxied (no local cluster row).
+	 *
+	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|WP_Error
+	 */
+	private function persist_local_person_for_label( string $label ): array|WP_Error {
+		$result = $this->run_transactional(
+			function () use ( $label ): array|WP_Error {
+				$resolver = new PersonResolutionService();
+				return $resolver->resolve_or_create(
+					$label,
+					function ( string $person_uuid, string $name, array $tags ): bool {
+						return $this->host->enqueue_curation_operation(
+							'person_created',
+							$person_uuid,
+							array(
+								'local_revision'   => 0,
+								'snapshot_version' => 0,
+							),
+							array(
+								'person_uuid' => $person_uuid,
+								'name'        => $name,
+								'tags'        => $tags,
+							),
+							'person'
+						);
+					}
+				);
+			}
+		);
 
 		return $result;
 	}

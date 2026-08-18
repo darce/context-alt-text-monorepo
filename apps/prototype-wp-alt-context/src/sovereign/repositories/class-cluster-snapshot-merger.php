@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
+
+use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function absint;
 use function array_chunk;
@@ -23,6 +28,7 @@ use function is_bool;
 use function is_numeric;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function max;
 use function method_exists;
 use function preg_match;
@@ -30,6 +36,7 @@ use function sprintf;
 use function trim;
 
 class ClusterSnapshotMerger {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 
 	private string $table_name;
@@ -150,6 +157,65 @@ class ClusterSnapshotMerger {
 				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 				$wpdb->query( $sql );
 			}
+		}
+
+		$this->backfill_persons_for_human_labels( $normalized_tenant_id, $normalized_clusters );
+	}
+
+	/**
+	 * Bind a person for each batch cluster whose label is human and person_id is null.
+	 *
+	 * @param array<int,array<string,mixed>> $clusters
+	 */
+	private function backfill_persons_for_human_labels( string $tenant_id, array $clusters ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'update' ) ) {
+			return;
+		}
+
+		$resolver = new PersonResolutionService();
+		foreach ( $clusters as $cluster ) {
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			$label        = $this->normalize_label( $cluster );
+			if ( '' === $cluster_uuid || '' === $label || $this->is_reserved_label_shape( $label ) ) {
+				continue;
+			}
+
+			$person_id_sql = $this->prepare_query(
+				'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+				array(
+					$this->table_name,
+					$cluster_uuid,
+					$tenant_id,
+				)
+			);
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$existing_person_id = is_string( $person_id_sql ) ? $wpdb->get_var( $person_id_sql ) : null;
+			if ( is_numeric( $existing_person_id ) && (int) $existing_person_id > 0 ) {
+				continue;
+			}
+
+			$resolved = $resolver->resolve_or_create(
+				$label,
+				static function (): bool {
+					return true;
+				}
+			);
+			if ( is_wp_error( $resolved ) ) {
+				continue;
+			}
+
+			$wpdb->update(
+				$this->table_name,
+				array(
+					'person_id'  => $resolved['person_id'],
+					'updated_at' => gmdate( 'Y-m-d H:i:s' ),
+				),
+				array( 'cluster_uuid' => $cluster_uuid ),
+				array( '%d', '%s' ),
+				array( '%s' )
+			);
 		}
 	}
 

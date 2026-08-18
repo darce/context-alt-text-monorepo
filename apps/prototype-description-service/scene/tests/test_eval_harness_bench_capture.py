@@ -197,6 +197,67 @@ def test_vram_sampler_zero_samples_is_unavailable() -> None:
     assert result["reason"]
 
 
+def _scripted_csv_runner(stdouts: list[str]) -> Any:
+    remaining = list(stdouts)
+
+    def runner(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+        stdout = remaining.pop(0) if remaining else ""
+        return CompletedProcess(args=["nvidia-smi"], returncode=0, stdout=stdout, stderr="")
+
+    return runner
+
+
+def test_vram_sampler_peak_sample_consistent_when_gpu_count_shrinks() -> None:
+    """OBS-05 / rg-015: 2 rows then 1-row peak must snapshot that peak sample only.
+
+    Independent per-index max yields peak_used=5000 gpu_count=1 per_gpu=[5000, 2000].
+    """
+    sampler = VramSampler(
+        interval_s=0.05,
+        runner=_scripted_csv_runner(["1000, 8000\n2000, 8000\n", "5000, 24576\n"]),
+    )
+    sampler._sample()
+    sampler._sample()
+    result = sampler.stop()
+    assert result["status"] == CaptureStatus.MEASURED
+    assert result["peak_used_mb"] == 5000
+    assert result["total_mb"] == 24576
+    assert result["gpu_count"] == 1
+    assert result["per_gpu_peak_used_mb"] == [5000]
+    assert result["gpu_count"] == len(result["per_gpu_peak_used_mb"])
+    assert sum(result["per_gpu_peak_used_mb"]) == result["peak_used_mb"]
+
+
+def test_vram_sampler_peak_sample_consistent_when_gpu_count_grows() -> None:
+    """OBS-05 / rg-015: 1 row then 2-row peak must snapshot the 2-row sample.
+
+    Independent per-index max yields peak_used=13000 gpu_count=2 per_gpu=[6000, 9000]
+    (sum 15000 != peak).
+    """
+    sampler = VramSampler(
+        interval_s=0.05,
+        runner=_scripted_csv_runner(["6000, 8000\n", "4000, 24576\n9000, 24576\n"]),
+    )
+    sampler._sample()
+    sampler._sample()
+    result = sampler.stop()
+    assert result["status"] == CaptureStatus.MEASURED
+    assert result["peak_used_mb"] == 13000
+    assert result["total_mb"] == 49152
+    assert result["gpu_count"] == 2
+    assert result["per_gpu_peak_used_mb"] == [4000, 9000]
+    assert result["gpu_count"] == len(result["per_gpu_peak_used_mb"])
+    assert sum(result["per_gpu_peak_used_mb"]) == result["peak_used_mb"]
+
+
+def test_vram_sampler_rejects_non_finite_interval() -> None:
+    """rg-008: NaN/Inf interval must fail at construction (busy-spin + JSON NaN)."""
+    with pytest.raises(ValueError, match="finite"):
+        VramSampler(interval_s=float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        VramSampler(interval_s=float("inf"))
+
+
 def _write_manifest(tmp_path: Path, n_images: int = 2) -> Path:
     entries = []
     digest = hashlib.sha256(_IMAGE_BYTES).hexdigest()

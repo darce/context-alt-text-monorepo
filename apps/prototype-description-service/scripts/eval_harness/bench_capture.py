@@ -132,9 +132,14 @@ def collect_item_latencies(record: Mapping[str, Any]) -> list[float]:
 class VramSampler:
     """Background ``nvidia-smi`` peak-used sampler (OBS-05 high-water mark).
 
-    ``runner`` is injectable for tests. Missing binary, errors, or zero
-    samples yield ``status=unavailable`` plus a one-line ``reason`` — never a
-    fabricated 0 MB (rg-015, AGT-06).
+    ``stop()`` emits one internally consistent observation: ``gpu_count``,
+    ``total_mb``, and ``per_gpu_peak_used_mb`` are snapshotted from the same
+    sample that set ``peak_used_mb`` (row-count changes across samples must
+    not mix per-index maxima with a different topology). ``runner`` is
+    injectable for tests. Missing binary, errors, or zero samples yield
+    ``status=unavailable`` plus a one-line ``reason`` — never a fabricated
+    0 MB (rg-015, AGT-06). Non-finite ``interval_s`` is rejected at
+    construction (rg-008).
     """
 
     def __init__(
@@ -142,7 +147,10 @@ class VramSampler:
         interval_s: float = 1.0,
         runner: Callable[..., CompletedProcess[str]] | None = None,
     ) -> None:
-        self.interval_s = float(interval_s)
+        interval = float(interval_s)
+        if not math.isfinite(interval) or interval < 0:
+            raise ValueError("interval_s must be a non-negative finite float")
+        self.interval_s = interval
         self._runner: Callable[..., CompletedProcess[str]] = runner or subprocess.run
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -207,15 +215,7 @@ class VramSampler:
             self._peak_used = sample_used
             self._total = sample_total
             self._gpu_count = len(used_vals)
-        if not self._per_gpu_peak:
             self._per_gpu_peak = list(used_vals)
-        else:
-            for index, used in enumerate(used_vals):
-                if index < len(self._per_gpu_peak):
-                    if used > self._per_gpu_peak[index]:
-                        self._per_gpu_peak[index] = used
-                else:
-                    self._per_gpu_peak.append(used)
         return False
 
     def stop(self) -> dict[str, Any]:

@@ -486,6 +486,7 @@ class BakeoffClient(RemoteSceneClient):
         if timeout_s is not None:
             kwargs["timeout_s"] = timeout_s
         super().__init__(base_url, api_key="", **kwargs)
+        self._transport = transport
         self.model_id = model_id
         self.model_version = model_version
         self.no_think = no_think
@@ -1109,6 +1110,7 @@ def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
         model_version=client.model_version,
         no_think=client.no_think,
         timeout_s=_timeout_s_of(client),
+        transport=client._transport,
         eval_mode=client.eval_mode,
         entry_traits=client.entry_traits,
         roster=client.roster,
@@ -1313,7 +1315,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--vram-sample-interval-s",
-        type=_nonneg_float_arg,
+        type=_nonneg_finite_float_arg,
         default=1.0,
         help="nvidia-smi sample interval (default 1.0; 0 disables sampling)",
     )

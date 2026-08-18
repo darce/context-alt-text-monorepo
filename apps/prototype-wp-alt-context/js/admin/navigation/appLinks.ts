@@ -42,6 +42,8 @@ export type AppLinkParam = (typeof APP_LINK_PARAMS)[keyof typeof APP_LINK_PARAMS
 export const APP_LINK_VALUES = {
   advancedOpen: 'open',
   personFilterUnassigned: 'unassigned',
+  /** UXW2-4: `panel=review` (+ `cluster=<id>`) persists the scan-tab review panel. */
+  panelReview: 'review',
   /** WBUX-5 workbench two-pane collapse states (`?panes=`). Default `both` is omitted. */
   panesBoth: 'both',
   panesControlCollapsed: 'control-collapsed',

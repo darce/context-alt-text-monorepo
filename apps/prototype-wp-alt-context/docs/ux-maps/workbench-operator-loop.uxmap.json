@@ -79,7 +79,7 @@
       "route": "#/workbench?tab=scan",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["tab", "status", "media", "s", "p", "perPage"],
+      "url_params": ["tab", "status", "media", "s", "p", "perPage", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
       "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],

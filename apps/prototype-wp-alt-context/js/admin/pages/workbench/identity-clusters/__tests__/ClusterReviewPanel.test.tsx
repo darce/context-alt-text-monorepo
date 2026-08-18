@@ -2,6 +2,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
@@ -62,9 +63,11 @@ vi.mock('../../../../api/recognition', async () => {
 });
 
 const PanelProviders = ({ children }: { children: React.ReactNode }) => (
-  <ClusterPanelProvider>
-    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
-  </ClusterPanelProvider>
+  <MemoryRouter>
+    <ClusterPanelProvider>
+      <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+    </ClusterPanelProvider>
+  </MemoryRouter>
 );
 
 /** Always-mounted owner (mirrors ScanTabContent): opens the review via the panel

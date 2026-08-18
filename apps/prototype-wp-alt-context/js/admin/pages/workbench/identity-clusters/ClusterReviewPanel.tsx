@@ -112,7 +112,14 @@ export const ClusterReviewPanel = ({
 
   return (
     <div className="acx-cluster-review-panel">
+      {/* UXW2-4 / A11Y-21: announce the queue → panel swap on mount. */}
+      <p className="screen-reader-text" role="status">
+        {__('Reviewing faces — press Back to return to suggestions', 'alt-context')}
+      </p>
       <div className="acx-cluster-review-panel__header">
+        <button type="button" className="acx-cluster-review-panel__back" onClick={onClose}>
+          {__('← Back to Review Suggestions', 'alt-context')}
+        </button>
         <h2>{__('Review Cluster', 'alt-context')}</h2>
         <button type="button" className="acx-close-button" onClick={onClose} aria-label={__('Close', 'alt-context')}>
           ×

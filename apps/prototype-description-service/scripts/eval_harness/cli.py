@@ -2683,11 +2683,10 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     """Draw or verify a sealed eval split. Sealed artifacts are never silently redrawn."""
     from .strata import draw_eval_split, verify_eval_split
 
-    # images_dir="" disables GOLDEN_IMAGES_DIR resolution (manifest.py order 1
-    # beats env). Metadata-only: seal pins sha256; image bytes never opened.
+    # Metadata-only: seal pins sha256; image bytes never opened (W3-RV-01 / OBS-04).
     manifest = load_manifest(
         args.manifest,
-        images_dir="",
+        metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason=_SPLIT_HASH_SKIP_REASON,
     )
@@ -2695,6 +2694,9 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     if args.check:
         artifact = json.loads(out.read_text())
         source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+        expected_exposure = None
+        if args.exposure_note or args.exposure_file:
+            expected_exposure = _collect_exposure_notes(args.exposure_note, args.exposure_file)
         violations = verify_eval_split(
             artifact,
             manifest,
@@ -2703,19 +2705,15 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             expected_held_out_fraction=args.held_out_fraction,
             expected_draw_timestamp=args.draw_timestamp,
             expected_partition_provenance=args.partition_provenance,
+            expected_source_manifest_path=_source_manifest_path_for_artifact(args.manifest),
+            expected_pre_split_exposure=expected_exposure,
         )
         for message in violations:
-            print(message)
+            print(message, file=sys.stderr)
         if violations:
             raise SystemExit(1)
         return
 
-    if not args.seed or not args.draw_timestamp:
-        print("draw mode requires --seed and --draw-timestamp", file=sys.stderr)
-        raise SystemExit(2)
-    if not args.partition_provenance:
-        print("draw mode requires --partition-provenance", file=sys.stderr)
-        raise SystemExit(2)
     if out.exists() and not args.force:
         print(f"refusing to overwrite sealed split {out} without --force", file=sys.stderr)
         raise SystemExit(3)
@@ -3018,17 +3016,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     draw_split_p.add_argument("--manifest", required=True)
     draw_split_p.add_argument("--out", required=True)
-    draw_split_p.add_argument("--seed", default=None)
+    draw_split_p.add_argument("--seed", required=True)
     draw_split_p.add_argument("--held-out-fraction", type=_held_out_fraction_arg, default=None)
     draw_split_p.add_argument(
         "--draw-timestamp",
-        default=None,
-        help="ISO-8601 timestamp; required in draw mode; never defaulted to now",
+        required=True,
+        help="ISO-8601 timestamp with timezone; required in draw and --check; never defaulted to now",
     )
     draw_split_p.add_argument(
         "--partition-provenance",
-        default=None,
-        help="required in draw mode; in --check, must equal the artifact when supplied",
+        required=True,
+        help="required in draw and --check; --check compares the value for equality",
     )
     draw_split_p.add_argument("--exposure-note", action="append", default=None)
     draw_split_p.add_argument("--exposure-file", default=None, help="one pre-split exposure note per line")

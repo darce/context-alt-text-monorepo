@@ -89,6 +89,7 @@
   ],
   "protection": "forward-from-draw-timestamp: any image, identity or curation decision first observed after draw_timestamp is protected by this split; entries listed in pre_split_exposure were already exposed",
   "schema_version": 1,
+  "seal_sha256": "0ef73929d12c9847fea04f892a7d5814de2a980fc381c5d10339d2184d83f09c",
   "seed": "vlm6-s1-sealed-eval-split-20260818",
   "source_manifest": {
     "path": "scene/tests/seed/golden.json",

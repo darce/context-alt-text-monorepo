@@ -16,12 +16,12 @@ differ on — identity weaving, spatial (multi-face), celeb recognition, OCR:
 
 | media_id | file | axis |
 | --- | --- | --- |
-| 93 | ellynheald…308648490 | multi-person (2 curated) |
+| 93 | gildedcypress…308648490 | multi-person (2 curated) |
 | 154 | 11249412…2004 | multi-person (3 curated) |
 | 200 | IMG_2957-scaled | multi-person (3 curated) |
 | 46 | emma_stone_1 | single identity (curated) |
 | 62 | 104450565…3259 | single identity (curated) |
-| 98 | ellynheald…5107970990 | single identity (curated) |
+| 98 | gildedcypress…5107970990 | single identity (curated) |
 | 6 | al_pacino_10-scaled | single identity (celeb) |
 | 11 | anne_hathaway_13 | uncurated celeb (spontaneous recognition) |
 | 400 | hotgirlsgotoheaven-1 | text / OCR heavy |

@@ -1,6 +1,7 @@
 """VLM-6 S1: identity-source readers (celeb filenames + XMP face regions)."""
 
 import os
+from xml.etree import ElementTree
 
 import pytest
 
@@ -47,9 +48,9 @@ def test_celeb_identity_handles_path_and_empty():
         "IMG_9DABF3F03B85-1.jpeg",  # camera id, no name word after index strip
         "12345678.png",
         # Scraped `<handle>_<post-id>` uploads: an unbounded trailing-index strip ate
-        # the 19-digit id and yielded the fake public-figure labels "Ellynheald" /
+        # the 19-digit id and yielded the fake public-figure labels "GildedCypress" /
         # "Oliviajaynelee" on 21 of the first 200 real LocalWP uploads.
-        "ellynheald_3134640125107970990.jpg",
+        "gildedcypress_3134640125107970990.jpg",
         "oliviajaynelee_3644180080911632673.jpg",
     ],
 )
@@ -169,12 +170,24 @@ def test_named_identities_dedup_and_order():
 @pytest.mark.skipif(not os.path.isfile(_REAL_XMP_IMG), reason="real LocalWP XMP fixture not present")
 def test_real_localwp_image_yields_named_region():
     with open(_REAL_XMP_IMG, "rb") as fh:
-        regions = extract_face_regions(fh.read())
+        raw = fh.read()
+    regions = extract_face_regions(raw)
     named = named_identities(regions)
     # The name lives in the image's own XMP, which this repo does not own and
-    # cannot pseudonymize; assert the structure the reader must produce instead
-    # of pinning the subject's real name into a tracked file.
+    # cannot pseudonymize, so it must not be pinned as a literal in a tracked
+    # file. A shape-only check would pass on a wrong-field, truncated, or
+    # corrupted read, so compare against an oracle that re-derives the expected
+    # value from the bytes at run time — via a real XML parse, which shares no
+    # code with the reader's regex extraction.
+    xmp = raw[raw.index(b"<x:xmpmeta") : raw.index(b"</x:xmpmeta>") + len(b"</x:xmpmeta>")]
+    expected = list(
+        dict.fromkeys(
+            (el.text or "").strip()
+            for el in ElementTree.fromstring(xmp).iter()
+            if el.tag.rsplit("}", 1)[-1] == "Name" and (el.text or "").strip()
+        )
+    )
     assert named, "plugin-written XMP regions should yield at least one named identity"
-    assert all(len(n.split()) >= 2 for n in named), named
+    assert named == expected, "reader disagrees with the XMP <*:Name> elements"
     iptc = [r for r in regions if r.source == "iptc" and r.name]
     assert iptc and all(0.0 <= r.x <= 1.0 and 0.0 <= r.w <= 1.0 for r in iptc)

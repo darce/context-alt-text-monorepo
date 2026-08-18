@@ -58,12 +58,12 @@ def test_record_helper_matches_the_real_dataclass_shape():
     assert {f.name for f in fields(ImageRecord)} == set(rec().__dict__)
 
 
-# --- identity-label gating (the Ellynheald defense) ---------------------------
+# --- identity-label gating (the GildedCypress defense) ---------------------------
 
 
 def test_uploads_never_yield_an_identity_label_even_with_a_parsed_name():
     # A scraped upload filename can parse to a plausible name that names nobody.
-    assert celeb_label(rec(celeb_name="Ellynheald"), Source.LOCALWP_UPLOADS) is None
+    assert celeb_label(rec(celeb_name="GildedCypress"), Source.LOCALWP_UPLOADS) is None
 
 
 def test_celebs01_filename_is_the_identity_label():
@@ -71,7 +71,7 @@ def test_celebs01_filename_is_the_identity_label():
 
 
 def test_candidate_from_uploads_carries_no_celeb_name():
-    report = build_report([(rec(celeb_name="Ellynheald", xmp_face_count=1), Source.LOCALWP_UPLOADS)])
+    report = build_report([(rec(celeb_name="GildedCypress", xmp_face_count=1), Source.LOCALWP_UPLOADS)])
     candidates = report.offline[Domain.PEOPLE].candidates
     assert len(candidates) == 1 and candidates[0].celeb_name is None
 

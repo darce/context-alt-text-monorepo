@@ -1102,6 +1102,7 @@ def load_manifest(
     images_dir: str | None = None,
     *,
     skip_hash_verification: bool = False,
+    hash_skip_reason: str | None = None,
 ) -> GoldenManifest:
     """Load and validate a v3 golden manifest; verify image hashes by default.
 
@@ -1114,7 +1115,12 @@ def load_manifest(
     1. Explicit ``images_dir`` argument — always verified.
     2. Else ``GOLDEN_IMAGES_DIR`` env — verified when set.
     3. Else, if ``skip_hash_verification=True`` — metadata-only load (explicit
-       opt-out for score paths that do not read image bytes).
+       opt-out for score paths that do not read image bytes). The skip is
+       surfaced as ``HashVerificationSkippedWarning`` naming the caller
+       ``hash_skip_reason`` (or ``"no reason supplied"``) and the path
+       (OBS-04). A reason without a skip (images resolved, or
+       ``skip_hash_verification=False``) is a caller bug and raises
+       ``ManifestError``.
     4. Else refuse with an actionable error.
 
     Raises ManifestError on: missing/unreadable file, malformed JSON, schema
@@ -1259,14 +1265,26 @@ def load_manifest(
         )
 
     resolved_images = images_dir if images_dir is not None else (os.environ.get("GOLDEN_IMAGES_DIR") or None)
+    skipping = (not resolved_images) and skip_hash_verification
+    # A reason without a skip is a caller bug (VLM6-DELTA-05 / OBS-04).
+    if hash_skip_reason is not None and not skipping:
+        raise ManifestError(
+            f"hash_skip_reason={hash_skip_reason!r} supplied but hash verification "
+            f"is not being skipped (skip_hash_verification={skip_hash_verification}, "
+            f"images resolved={bool(resolved_images)}). A reason without a skip is "
+            "a caller bug."
+        )
     if resolved_images:
         _verify_hashes(manifest, Path(resolved_images))
     elif skip_hash_verification:
         # Named skip is still a silent no-op unless surfaced (VLM6-PANEL6L-rvM-03
         # / OBS-04): a caller that flips this on for a real pixel-reading path
-        # would otherwise never learn the pins went unverified.
+        # would otherwise never learn the pins went unverified. The warning
+        # names the caller reason so metadata-only sites are distinguishable
+        # (VLM6-DELTA-05).
+        reason = hash_skip_reason if hash_skip_reason is not None else "no reason supplied"
         warnings.warn(
-            f"load_manifest: hash verification skipped (metadata-only load) for {path}",
+            f"load_manifest: hash verification skipped ({reason}) for {path}",
             HashVerificationSkippedWarning,
             stacklevel=2,
         )

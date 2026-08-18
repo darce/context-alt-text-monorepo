@@ -283,7 +283,13 @@ def score_rows_against_golden(
             "delta": None,
         }
 
-    manifest = load_manifest(str(path), skip_hash_verification=True)
+    # Rubric-only: scores JSONL captions against golden must_right/easy_wrong;
+    # never opens image files (EVAL-01 offline delta).
+    manifest = load_manifest(
+        str(path),
+        skip_hash_verification=True,
+        hash_skip_reason="baseline scorer matches captions to golden rubric; image bytes never opened",
+    )
     by_media = {int(e.media_id): e for e in manifest.entries}
     roster = list(manifest.roster)
 

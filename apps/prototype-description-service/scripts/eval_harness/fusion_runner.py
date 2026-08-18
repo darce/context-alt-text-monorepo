@@ -780,7 +780,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Metadata-only: run_fusion_eval uses _synthetic_image_bytes (path/sha/media_id pins),
         # never opens fixture image files — skip hash verification (VLM6-R2-05 / OBS-04).
-        manifest = load_manifest(args.manifest, skip_hash_verification=True)
+        manifest = load_manifest(
+            args.manifest,
+            skip_hash_verification=True,
+            hash_skip_reason="fusion runner synthesizes image bytes from pins; fixture files never opened",
+        )
     except ManifestError as exc:
         print(f"manifest error: {exc}", file=sys.stderr)
         return 2

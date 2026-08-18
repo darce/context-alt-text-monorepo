@@ -527,7 +527,11 @@ def write_anchor(
 
     # Metadata-only: uses path/sha256/media_id/present_identities/face_count for synthetic
     # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
-    base = load_manifest(str(manifest_path), skip_hash_verification=True)
+    base = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="caption-anchor generator mints synthetic images from metadata; fixture bytes never opened",
+    )
     raw_manifest = build_caption_anchor_manifest(base)
 
     man_name = f"{manifest_stem}.json"
@@ -548,7 +552,11 @@ def write_anchor(
         tmp_dir = Path(tmp)
         (tmp_dir / man_name).write_text(_dumps(raw_manifest))
         # Load through the real loader so sha matches score-time computation (rg-015).
-        manifest = load_manifest(str(tmp_dir / man_name), skip_hash_verification=True)
+        manifest = load_manifest(
+            str(tmp_dir / man_name),
+            skip_hash_verification=True,
+            hash_skip_reason="caption-anchor reloads the synthetic temp manifest so score-time SHA matches",
+        )
 
         if pin_live_provenance:
             # Byte-stable mode: null contract head_sha/started_at (never fabricate).

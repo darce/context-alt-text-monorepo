@@ -816,7 +816,11 @@ def write_face_anchor(
 
         # Load through the real loader so sha matches score-time computation (rg-015).
         # Metadata-only: synthetic anchor has no image files; scoring uses roster/face_count/tags only.
-        manifest = load_manifest(str(tmp_dir / man_name), skip_hash_verification=True)
+        manifest = load_manifest(
+            str(tmp_dir / man_name),
+            skip_hash_verification=True,
+            hash_skip_reason="face-anchor generator scores a synthetic roster-only manifest; no image files exist",
+        )
         # Computed at generation time from the loaded manifest — never hand-stamped.
         manifest_sha = _manifest_sha(manifest)
 

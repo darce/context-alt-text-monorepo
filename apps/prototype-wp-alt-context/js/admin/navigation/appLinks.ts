@@ -77,12 +77,18 @@ export const parsePanes = (raw: string | null | undefined): PanesState =>
 export const serializePanes = (v: PanesState): string | null =>
   v === APP_LINK_VALUES.panesBoth ? null : v;
 
+export type WorkbenchPanelValue =
+  | Exclude<WorkbenchOverlay, null>
+  | typeof APP_LINK_VALUES.panelReview;
+
 export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;
   tab?: WorkbenchTab;
   /** When true or `'open'`, emits `advanced=open`. */
   advanced?: true | typeof APP_LINK_VALUES.advancedOpen;
-  panel?: Exclude<WorkbenchOverlay, null>;
+  panel?: WorkbenchPanelValue;
+  /** Review-panel target; emitted only with `panel=review`. */
+  cluster?: string;
   /** Two-pane collapse; `'both'` (default) is omitted from the href. */
   panes?: PanesState;
 }
@@ -117,6 +123,9 @@ export const toWorkbench = (options: ToWorkbenchOptions = {}): string => {
   }
   if (options.panel !== undefined) {
     params.set(APP_LINK_PARAMS.panel, options.panel);
+  }
+  if (options.panel === APP_LINK_VALUES.panelReview && options.cluster) {
+    params.set(APP_LINK_PARAMS.cluster, options.cluster);
   }
   const panesWire = options.panes !== undefined ? serializePanes(options.panes) : null;
   if (panesWire !== null) {

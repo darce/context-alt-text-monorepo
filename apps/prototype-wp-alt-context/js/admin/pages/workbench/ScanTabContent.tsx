@@ -75,6 +75,17 @@ export const ScanTabContent = (): React.JSX.Element => {
     // panel reducer and the mounted review target agree.
     onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
   });
+
+  const lastAnnouncedReviewId = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (reviewClusterId !== null && lastAnnouncedReviewId.current !== reviewClusterId) {
+      lastAnnouncedReviewId.current = reviewClusterId;
+      announceReviewLifecycle(__('Reviewing faces — press Back to return to suggestions', 'alt-context'));
+    }
+    if (reviewClusterId === null) {
+      lastAnnouncedReviewId.current = null;
+    }
+  }, [announceReviewLifecycle, reviewClusterId]);
   // §7 / BR-75/BR-82/BR-83: the queue reports whether IT owns the viewport's single accent
   // primary (its card marker or bulk-commit marker) via the shared ReviewSurfaceContext. The
   // READER — the media footer's CTA demotion — lives in the sibling library host
@@ -190,10 +201,6 @@ export const ScanTabContent = (): React.JSX.Element => {
             <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
               {__('Name this person', 'alt-context')}
             </h3>
-          ) : reviewClusterId !== null ? (
-            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
-              {__('Review Cluster', 'alt-context')}
-            </h3>
           ) : null}
           <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
             {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
@@ -209,7 +216,13 @@ export const ScanTabContent = (): React.JSX.Element => {
               <ClusterReviewPanel
                 key={reviewClusterId}
                 clusterId={reviewClusterId}
-                onClose={() => dispatchClusterPanel({ type: 'close' })}
+                onClose={() => {
+                  dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(
+                    __('Returned to review suggestions', 'alt-context'),
+                  );
+                  focusQueueRoot();
+                }}
               />
             ) : (
               <ReviewQueue

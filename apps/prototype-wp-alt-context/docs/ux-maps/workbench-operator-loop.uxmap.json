@@ -82,8 +82,21 @@
       "url_params": ["tab", "status", "media", "s", "p", "perPage", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
-      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input", "reviewing"],
       "zones": [
+        {
+          "id": "z-review-queue",
+          "label": "Review Suggestions queue header / count",
+          "role": "queue",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-review-panel",
+          "label": "Face-group review panel (panel=review&cluster=)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "empty"]
+        },
         {
           "id": "z-filters",
           "label": "Status / search filters",

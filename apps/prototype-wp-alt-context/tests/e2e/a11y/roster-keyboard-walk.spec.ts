@@ -57,8 +57,8 @@ test('roster empty state is announced via live region', async ({ page, baseURL }
 
 /**
  * UXW2-4: the needs-assignment rail is retired — Roster links to the workbench
- * review queue instead. The member-fix keyboard loop below now runs only via the
- * `cluster=<id>` deep-link shim (E21-10); supply E2E_ROSTER_CLUSTER_ID to enable it.
+ * review queue instead. Member-fix walks the `cluster=` deep-link shim after
+ * discovering an unlabeled group from the same REST envelope the CTA counts.
  */
 test('roster review CTA links to the workbench queue; no rail is rendered', async ({ page, baseURL }) => {
   await openRoster(requireBaseUrl(baseURL), page);
@@ -67,20 +67,43 @@ test('roster review CTA links to the workbench queue; no rail is rendered', asyn
   await expect(cta).toBeVisible();
   await expect(cta.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
     'href',
-    '#/workbench?tab=scan&rq=assignment.all.0',
+    '#/workbench?tab=scan&rq=all.all.0',
   );
   await expect(page.getByTestId('needs-assignment-section')).toHaveCount(0);
 });
 
-test('keyboard member-fix loop: Move to… → pick target → role=status (≥24px control)', async ({
+test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy', async ({
   page,
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
-  const clusterId = process.env.E2E_ROSTER_CLUSTER_ID;
+  await openRoster(base, page);
+
+  const clusterId = await page.evaluate(async () => {
+    const config = (
+      window as unknown as {
+        acxAdmin?: { tenantId?: string; restUrl?: string; nonce?: string };
+      }
+    ).acxAdmin;
+    const restBase = config?.restUrl ?? '/wp-json/acx/v1/';
+    const tenant = config?.tenantId ?? '';
+    const url = new URL(`${restBase.replace(/\/?$/, '/')}recognition/clusters/top-unlabeled`, window.location.origin);
+    if (tenant) {
+      url.searchParams.set('tenant_id', tenant);
+    }
+    url.searchParams.set('limit', '1');
+    const response = await fetch(url.toString(), {
+      headers: config?.nonce ? { 'X-WP-Nonce': config.nonce } : {},
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as { clusters?: Array<{ id?: string }> };
+    return payload.clusters?.[0]?.id ?? null;
+  });
 
   if (!clusterId) {
-    test.skip(true, 'Set E2E_ROSTER_CLUSTER_ID to an openable cluster id for the member-fix walk');
+    test.skip(true, 'No unlabeled face group from /clusters/top-unlabeled — drawer walk needs a live row');
     return;
   }
 
@@ -88,36 +111,7 @@ test('keyboard member-fix loop: Move to… → pick target → role=status (≥2
 
   const drawer = page.locator('.acx-cluster-drawer');
   await expect(drawer).toBeVisible();
-
-  const moveButton = drawer.getByRole('button', { name: /Move to/i }).first();
-  if ((await moveButton.count()) === 0) {
-    test.skip(true, 'No face Move to… control in drawer (empty identities)');
-    return;
-  }
-
-  await expect(moveButton).toBeVisible();
-  const box = await moveButton.boundingBox();
-  expect(box, 'Move to… must expose a layout box').not.toBeNull();
-  expect(box!.width, 'Move to… min width ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
-  expect(box!.height, 'Move to… min height ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
-
-  if (await moveButton.isDisabled()) {
-    await expect(moveButton).toHaveAttribute('title', /No other face groups available/i);
-    test.skip(true, 'Only one cluster present — empty-target disabled-with-reason path covered by unit tests');
-    return;
-  }
-
-  await moveButton.focus();
-  await expect(moveButton).toBeFocused();
-  await page.keyboard.press('Enter');
-
-  const picker = drawer.getByRole('listbox', { name: /Choose a target face group/i });
-  await expect(picker).toBeVisible();
-  const firstOption = picker.getByRole('option').first();
-  await expect(firstOption).toBeFocused();
-  await page.keyboard.press('Enter');
-
-  const status = drawer.getByTestId('cluster-drawer-reassign-status');
-  await expect(status).toHaveAttribute('role', 'status');
-  await expect(status).toContainText(/Moving face|Moved face/i);
+  await expect(drawer.getByRole('button', { name: /^Close$/i })).toBeVisible();
+  await expect(drawer.getByText(/Move faces between groups in the Workbench/i)).toBeVisible();
+  await expect(drawer.getByRole('button', { name: /Move to/i })).toHaveCount(0);
 });

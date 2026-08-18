@@ -67,32 +67,48 @@ export const ClusterPanelProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   // State → URL: one setSearchParams write per transition, touching only the
   // panel/cluster keys (UXW2-4; rq= and friends keep their own owners).
+  // Close decides from `next` + the functional `prev` snapshot so a same-tick
+  // open then retire-close cannot leave panel=review in the hash.
   const dispatchClusterPanel = React.useCallback<React.Dispatch<ClusterPanelAction>>(
     (action) => {
       const next = clusterPanelReducer(stateRef.current, action);
+      stateRef.current = next;
       dispatch(action);
-      const currentPanel = searchParams.get(APP_LINK_PARAMS.panel);
-      const currentCluster = searchParams.get(APP_LINK_PARAMS.cluster);
       if (next.mode === 'review' && next.clusterId) {
-        if (currentPanel !== APP_LINK_VALUES.panelReview || currentCluster !== next.clusterId) {
-          const clusterId = next.clusterId;
-          setSearchParams((prev) => {
-            const params = new URLSearchParams(prev);
-            params.set(APP_LINK_PARAMS.panel, APP_LINK_VALUES.panelReview);
-            params.set(APP_LINK_PARAMS.cluster, clusterId);
-            return params;
-          });
-        }
-      } else if (currentPanel === APP_LINK_VALUES.panelReview) {
+        const clusterId = next.clusterId;
         setSearchParams((prev) => {
+          if (
+            prev.get(APP_LINK_PARAMS.panel) === APP_LINK_VALUES.panelReview &&
+            prev.get(APP_LINK_PARAMS.cluster) === clusterId
+          ) {
+            return prev;
+          }
           const params = new URLSearchParams(prev);
-          params.delete(APP_LINK_PARAMS.panel);
-          params.delete(APP_LINK_PARAMS.cluster);
+          params.set(APP_LINK_PARAMS.panel, APP_LINK_VALUES.panelReview);
+          params.set(APP_LINK_PARAMS.cluster, clusterId);
           return params;
         });
+      } else {
+        setSearchParams(
+          (prev) => {
+            if (prev.get(APP_LINK_PARAMS.panel) !== APP_LINK_VALUES.panelReview) {
+              if (!prev.has(APP_LINK_PARAMS.cluster)) {
+                return prev;
+              }
+              const params = new URLSearchParams(prev);
+              params.delete(APP_LINK_PARAMS.cluster);
+              return params;
+            }
+            const params = new URLSearchParams(prev);
+            params.delete(APP_LINK_PARAMS.panel);
+            params.delete(APP_LINK_PARAMS.cluster);
+            return params;
+          },
+          { replace: true },
+        );
       }
     },
-    [searchParams, setSearchParams],
+    [setSearchParams],
   );
 
   const value = useMemo<ClusterPanelContextValue>(

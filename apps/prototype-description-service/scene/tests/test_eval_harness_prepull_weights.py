@@ -33,6 +33,7 @@ from scripts.eval_harness.prepull_weights import (
     DiskBudgetError,
     DownloadStatus,
     SkipReason,
+    _missing_files,
     already_present,
     check_disk_budget,
     list_skips,
@@ -208,7 +209,7 @@ def test_disk_budget_fail_names_required_and_free(tmp_path) -> None:
     free_gb = 1.5
 
     def tight(_path: str) -> SimpleNamespace:
-        return SimpleNamespace(total=10 * 1024**3, used=0, free=int(free_gb * 1024**3))
+        return SimpleNamespace(total=10 * 1e9, used=0, free=int(free_gb * 1e9))
 
     with pytest.raises(DiskBudgetError) as exc_info:
         check_disk_budget(jobs, str(tmp_path), margin_gb=5.0, disk_usage=tight)
@@ -542,3 +543,83 @@ def test_timeout_expired_is_failed_and_runner_gets_timeout(tmp_path) -> None:
     assert DOWNLOAD_TIMEOUT_S == 3600
     assert results[0].status is DownloadStatus.FAILED
     assert results[0].returncode is None
+
+
+def test_present_size_ratio_locked_and_089_is_absent(tmp_path) -> None:
+    """TEST-15: pin 0.90; undersize count uses a literal, not PRESENT_SIZE_RATIO."""
+    assert PRESENT_SIZE_RATIO == 0.90
+    artifact_gb = 1.0
+    jobs = plan_downloads(
+        _registry([_entry("alpha", artifact_gb=artifact_gb, recipe=_recipe(mmproj_gb=artifact_gb))]),
+        models_dir=str(tmp_path),
+    )
+    expected_bytes = 1_000_000_000
+    dest = Path(jobs[0].local_dir)
+    dest.mkdir(parents=True)
+    gguf, mmproj = jobs[0].files
+    undersize = int(0.89 * expected_bytes)
+    at_ratio = int(0.90 * expected_bytes)
+    with (dest / gguf).open("wb") as handle:
+        handle.truncate(undersize)
+    with (dest / mmproj).open("wb") as handle:
+        handle.truncate(at_ratio)
+    assert already_present(jobs[0]) is False
+    assert gguf in _missing_files(jobs[0])
+    with (dest / gguf).open("wb") as handle:
+        handle.truncate(at_ratio)
+    assert already_present(jobs[0]) is True
+    assert _missing_files(jobs[0]) == []
+
+
+def test_execute_exit_0_leaves_undersized_files_failed(tmp_path) -> None:
+    """TEST-15: post-download size probe; no-op runner must not mark DOWNLOADED."""
+    jobs = plan_downloads(
+        _registry([_entry("alpha", artifact_gb=1.0)]),
+        models_dir=str(tmp_path),
+    )
+    dest = Path(jobs[0].local_dir)
+    dest.mkdir(parents=True)
+    gguf, mmproj = jobs[0].files
+    expected_bytes = 1_000_000_000
+    with (dest / gguf).open("wb") as handle:
+        handle.truncate(int(0.89 * expected_bytes))
+    (dest / mmproj).write_bytes(b"x")
+    logs: list[str] = []
+
+    def runner(argv: Any, **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+    results = run_downloads(jobs, execute=True, runner=runner, log=logs.append)
+    assert results[0].status is DownloadStatus.FAILED
+    assert results[0].returncode == 0
+    assert any("downloaded but expected file missing:" in line for line in logs)
+    assert any(gguf in line for line in logs)
+
+
+def test_list_skips_only_reraises_inconsistent_wanted_row() -> None:
+    """TEST-15: only= must re-raise when a wanted id is unplanned."""
+    registry = _registry([_entry("keep"), _entry("drop-a")])
+    jobs = plan_downloads(registry, models_dir=_MODELS_DIR, only=["keep"])
+    with pytest.raises(SkipNotesInconsistentError):
+        list_skips(registry, jobs, only=["keep", "drop-a"])
+
+
+def test_disk_budget_uses_decimal_gb_bytes(tmp_path) -> None:
+    """rg-015/L-06: free bytes convert with 1e9 (decimal GB), same as presence."""
+    jobs = plan_downloads(_registry([_entry("alpha")]), models_dir=str(tmp_path))
+    required_gb = jobs[0].size_gb + 5.0
+
+    def just_under(_path: str) -> SimpleNamespace:
+        return SimpleNamespace(total=10**15, used=0, free=int(required_gb * 1e9) - 1)
+
+    def just_over(_path: str) -> SimpleNamespace:
+        return SimpleNamespace(total=10**15, used=0, free=int(required_gb * 1e9) + 1)
+
+    with pytest.raises(DiskBudgetError) as exc_info:
+        check_disk_budget(jobs, str(tmp_path), margin_gb=5.0, disk_usage=just_under)
+    assert exc_info.value.required_gb == pytest.approx(required_gb)
+    assert exc_info.value.free_gb < required_gb
+
+    budget = check_disk_budget(jobs, str(tmp_path), margin_gb=5.0, disk_usage=just_over)
+    assert budget.ok is True
+    assert budget.free_gb > required_gb

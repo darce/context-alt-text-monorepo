@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,16 +18,21 @@ from scripts.eval_harness.bakeoff_candidates import (
     CandidateRole,
     ServingRecipe,
     ServingStack,
+    load_bakeoff_candidates,
 )
 from scripts.eval_harness.bakeoff_runner import (
     SKIP_REASON_NOT_COMPETING,
     SKIP_REASON_STACK,
+    SkipNotesInconsistentError,
     UnknownCandidateError,
     build_plans,
 )
 from scripts.eval_harness.prepull_weights import (
+    DOWNLOAD_TIMEOUT_S,
+    PRESENT_SIZE_RATIO,
     DiskBudgetError,
     DownloadStatus,
+    SkipReason,
     already_present,
     check_disk_budget,
     list_skips,
@@ -135,13 +142,21 @@ def _plenty(_path: str) -> SimpleNamespace:
     return SimpleNamespace(total=10**15, used=0, free=10**15)
 
 
-def _write_job_files(job: Any) -> None:
-    from pathlib import Path
-
+def _write_job_files(job: Any, *, size_bytes: int | None = None) -> None:
     dest = Path(job.local_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    for name in job.files:
-        (dest / name).write_bytes(b"x")
+    expecteds = getattr(job, "file_expected_gb", None)
+    for idx, name in enumerate(job.files):
+        path = dest / name
+        if size_bytes is not None:
+            nbytes = size_bytes
+        elif expecteds:
+            expected = expecteds[idx] if idx < len(expecteds) else None
+            nbytes = 1 if expected is None else max(1, int(PRESENT_SIZE_RATIO * float(expected) * 1e9))
+        else:
+            nbytes = 1
+        with path.open("wb") as handle:
+            handle.truncate(nbytes)
 
 
 def test_plan_argv_shape_and_order_match_build_plans() -> None:
@@ -370,3 +385,160 @@ def test_cli_dry_run_prints_plan_and_skip(
     assert "BUDGET " in out
     assert "required_gb=" in out
     assert "free_gb=" in out
+
+
+_COMPETING_LLAMA_CPP_EXCLUDED_BY_ONLY = (
+    "gemma-4-12b",
+    "kimi-vl-a3b",
+    "minicpm-v-46",
+    "qwen36-27b",
+    "qwen38-27b",
+)
+
+
+def test_only_union_covers_every_row_and_names_excluded_llama_cpp() -> None:
+    registry = _registry(
+        [
+            _entry("keep"),
+            _entry("drop-a"),
+            _entry("drop-b"),
+            _entry("ref", competing=False),
+            _entry(
+                "vllm-one",
+                recipe=_recipe(stack=ServingStack.VLLM, gguf=None, mmproj=None, extra_flags=[]),
+            ),
+        ]
+    )
+    only = ["keep"]
+    jobs = plan_downloads(registry, models_dir=_MODELS_DIR, only=only)
+    skips = list_skips(registry, jobs, only=only)
+    job_ids = {job.candidate_id for job in jobs}
+    skip_ids = {candidate_id for candidate_id, _reason in skips}
+    assert job_ids | skip_ids == {entry.id for entry in registry.entries}
+    assert job_ids.isdisjoint(skip_ids)
+    reasons = dict(skips)
+    assert reasons["drop-a"] == SkipReason.EXCLUDED_BY_ONLY
+    assert reasons["drop-b"] == SkipReason.EXCLUDED_BY_ONLY
+    assert reasons["ref"] == SKIP_REASON_NOT_COMPETING
+    assert reasons["vllm-one"] == SKIP_REASON_STACK
+
+
+def test_only_real_roster_names_five_competing_gguf_skips() -> None:
+    registry = load_bakeoff_candidates()
+    only = ["minicpm-v-45"]
+    jobs = plan_downloads(registry, models_dir=_MODELS_DIR, only=only)
+    skips = list_skips(registry, jobs, only=only)
+    job_ids = {job.candidate_id for job in jobs}
+    skip_ids = {candidate_id for candidate_id, _reason in skips}
+    sealed_ids = {entry.id for entry in registry.entries}
+    assert job_ids | skip_ids == sealed_ids
+    assert job_ids == {"minicpm-v-45"}
+    reasons = dict(skips)
+    for candidate_id in _COMPETING_LLAMA_CPP_EXCLUDED_BY_ONLY:
+        assert reasons[candidate_id] == SkipReason.EXCLUDED_BY_ONLY
+
+
+def test_list_skips_without_only_reraises_inconsistent_competing_row() -> None:
+    registry = _registry([_entry("keep"), _entry("drop-a")])
+    jobs = plan_downloads(registry, models_dir=_MODELS_DIR, only=["keep"])
+    with pytest.raises(SkipNotesInconsistentError):
+        list_skips(registry, jobs)
+
+
+def test_cli_margin_gb_negative_exits_2() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--margin-gb", "-1"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_margin_gb_nan_exits_2() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--margin-gb", "nan"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_margin_gb_inf_exits_2() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--margin-gb", "inf"])
+    assert exc_info.value.code == 2
+
+
+def test_check_disk_budget_rejects_negative_margin(tmp_path) -> None:
+    jobs = plan_downloads(_registry([_entry("alpha")]), models_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="margin"):
+        check_disk_budget(jobs, str(tmp_path), margin_gb=-1000, disk_usage=_plenty)
+
+
+def test_check_disk_budget_rejects_nonfinite_margin(tmp_path) -> None:
+    jobs = plan_downloads(_registry([_entry("alpha")]), models_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="margin"):
+        check_disk_budget(jobs, str(tmp_path), margin_gb=float("nan"), disk_usage=_plenty)
+    with pytest.raises(ValueError, match="margin"):
+        check_disk_budget(jobs, str(tmp_path), margin_gb=math.inf, disk_usage=_plenty)
+
+
+def test_one_byte_files_are_not_present_and_runner_is_called(tmp_path) -> None:
+    jobs = plan_downloads(_registry([_entry("alpha")]), models_dir=str(tmp_path))
+    _write_job_files(jobs[0], size_bytes=1)
+    assert already_present(jobs[0]) is False
+    calls: list[Any] = []
+
+    def runner(argv: Any, **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        calls.append(argv)
+        _write_job_files(jobs[0])
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+    results = run_downloads(jobs, execute=True, runner=runner)
+    assert calls, "truncated 1-byte artifacts must not skip the runner"
+    assert results[0].status is DownloadStatus.DOWNLOADED
+
+
+def test_file_at_threshold_is_skipped_present(tmp_path) -> None:
+    jobs = plan_downloads(_registry([_entry("alpha", artifact_gb=0.00001)]), models_dir=str(tmp_path))
+    _write_job_files(jobs[0])
+    assert already_present(jobs[0]) is True
+    results = run_downloads(
+        jobs,
+        execute=True,
+        runner=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("runner must not run")),
+    )
+    assert results[0].status is DownloadStatus.SKIPPED_PRESENT
+
+
+def test_missing_registry_size_requires_nonzero_and_notes_unverified(tmp_path) -> None:
+    jobs = plan_downloads(
+        _registry([_entry("alpha", artifact_gb=0.00001)]),
+        models_dir=str(tmp_path),
+    )
+    assert jobs[0].file_expected_gb[1] is None
+    dest = Path(jobs[0].local_dir)
+    dest.mkdir(parents=True)
+    gguf, mmproj = jobs[0].files
+    threshold = max(1, int(PRESENT_SIZE_RATIO * 0.00001 * 1e9))
+    with (dest / gguf).open("wb") as handle:
+        handle.truncate(threshold)
+    (dest / mmproj).write_bytes(b"")
+    assert already_present(jobs[0]) is False
+    (dest / mmproj).write_bytes(b"x")
+    notes: list[str] = []
+    assert already_present(jobs[0], notes=notes) is True
+    assert any("unverified" in note.lower() for note in notes)
+    results = run_downloads(jobs, execute=False, runner=lambda *_a, **_k: None)
+    assert results[0].status is DownloadStatus.SKIPPED_PRESENT
+    assert results[0].note is not None
+    assert "unverified" in results[0].note.lower()
+
+
+def test_timeout_expired_is_failed_and_runner_gets_timeout(tmp_path) -> None:
+    jobs = plan_downloads(_registry([_entry("alpha")]), models_dir=str(tmp_path))
+    seen: dict[str, Any] = {}
+
+    def runner(*_args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(cmd="huggingface-cli", timeout=kwargs.get("timeout", 0))
+
+    results = run_downloads(jobs, execute=True, runner=runner)
+    assert seen.get("timeout") == DOWNLOAD_TIMEOUT_S
+    assert DOWNLOAD_TIMEOUT_S == 3600
+    assert results[0].status is DownloadStatus.FAILED
+    assert results[0].returncode is None

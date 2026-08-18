@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from scripts.eval_harness import bakeoff as bakeoff_mod
 from scripts.eval_harness.bakeoff import (
     BakeoffClient,
     _clone_bakeoff_client,
@@ -788,6 +789,19 @@ def test_vram_sample_interval_s_rejects_nan_and_inf() -> None:
         with pytest.raises(SystemExit) as excinfo:
             parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--vram-sample-interval-s", raw])
         assert excinfo.value.code == 2, raw
+
+
+def test_bakeoff_has_no_dead_nonneg_float_arg() -> None:
+    """VLM6-RV5-L-04: re-adding `_nonneg_float_arg` cannot green this test.
+
+    hasattr is the assertion a reviewer cannot green by restoring the dead helper.
+    type= on the two float flags is extra: swapping either to a weaker helper
+    (even under a new name) still fails.
+    """
+    assert not hasattr(bakeoff_mod, "_nonneg_float_arg")
+    by_dest = {action.dest: action for action in build_parser()._actions}
+    assert by_dest["cold_load_s"].type is bakeoff_mod._nonneg_finite_float_arg
+    assert by_dest["vram_sample_interval_s"].type is bakeoff_mod._nonneg_finite_float_arg
 
 
 def test_clone_bakeoff_client_propagates_transport() -> None:

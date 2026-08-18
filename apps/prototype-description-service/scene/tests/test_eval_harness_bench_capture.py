@@ -16,6 +16,7 @@ from scripts.eval_harness.bakeoff import main as bakeoff_main
 from scripts.eval_harness.bench_capture import (
     CaptureStatus,
     LoadLoop,
+    PerGpuSemantics,
     VramSampler,
     collect_item_latencies,
     summarize_latencies,
@@ -144,7 +145,12 @@ def test_vram_sampler_single_gpu_peak() -> None:
     assert result["peak_used_mb"] == 250
     assert result["total_mb"] == 24576
     assert result["gpu_count"] == 1
+    assert result["per_gpu_used_mb_at_peak"] == [250]
     assert result["per_gpu_peak_used_mb"] == [250]
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
+    assert sum(result["per_gpu_used_mb_at_peak"]) == result["peak_used_mb"]
+    assert len(result["per_gpu_used_mb_at_peak"]) == result["gpu_count"]
+    assert len(result["per_gpu_peak_used_mb"]) == result["gpu_count"]
     assert result["samples"] >= 1
     assert result["interval_s"] == 0.05
 
@@ -167,7 +173,12 @@ def test_vram_sampler_dual_gpu_sums_used_and_totals() -> None:
     assert result["peak_used_mb"] == 20000
     assert result["total_mb"] == 49152
     assert result["gpu_count"] == 2
+    assert result["per_gpu_used_mb_at_peak"] == [10000, 10000]
     assert result["per_gpu_peak_used_mb"] == [10000, 10000]
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
+    assert sum(result["per_gpu_used_mb_at_peak"]) == result["peak_used_mb"]
+    assert len(result["per_gpu_used_mb_at_peak"]) == result["gpu_count"]
+    assert len(result["per_gpu_peak_used_mb"]) == result["gpu_count"]
 
 
 def test_vram_sampler_missing_binary_is_unavailable() -> None:
@@ -180,6 +191,9 @@ def test_vram_sampler_missing_binary_is_unavailable() -> None:
     assert result["status"] == CaptureStatus.UNAVAILABLE
     assert result["peak_used_mb"] is None
     assert result["total_mb"] is None
+    assert result["per_gpu_used_mb_at_peak"] is None
+    assert result["per_gpu_peak_used_mb"] is None
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
     assert result["samples"] == 0
     assert "nvidia-smi" in result["reason"]
 
@@ -193,6 +207,9 @@ def test_vram_sampler_zero_samples_is_unavailable() -> None:
     result = sampler.stop()
     assert result["status"] == CaptureStatus.UNAVAILABLE
     assert result["peak_used_mb"] is None
+    assert result["per_gpu_used_mb_at_peak"] is None
+    assert result["per_gpu_peak_used_mb"] is None
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
     assert result["samples"] == 0
     assert result["reason"]
 
@@ -207,10 +224,34 @@ def _scripted_csv_runner(stdouts: list[str]) -> Any:
     return runner
 
 
-def test_vram_sampler_peak_sample_consistent_when_gpu_count_shrinks() -> None:
-    """OBS-05 / rg-015: 2 rows then 1-row peak must snapshot that peak sample only.
+def test_vram_sampler_snapshot_at_peak_vs_independent_high_water() -> None:
+    """OBS-05: probe gpu0 900 then 100 vs gpu1 100 then 1000 (VLM6-RV5-L-03).
 
-    Independent per-index max yields peak_used=5000 gpu_count=1 per_gpu=[5000, 2000].
+    Aggregate peak is sample 2 (1100). Snapshot-at-peak must not overwrite GPU0's
+    true high-water (900); the two arrays answer different questions.
+    """
+    sampler = VramSampler(
+        interval_s=0.05,
+        runner=_scripted_csv_runner(["900, 8000\n100, 8000\n", "100, 8000\n1000, 8000\n"]),
+    )
+    sampler._sample()
+    sampler._sample()
+    result = sampler.stop()
+    assert result["status"] == CaptureStatus.MEASURED
+    assert result["peak_used_mb"] == 1100
+    assert result["gpu_count"] == 2
+    assert result["per_gpu_used_mb_at_peak"] == [100, 1000]
+    assert result["per_gpu_peak_used_mb"] == [900, 1000]
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
+    assert sum(result["per_gpu_used_mb_at_peak"]) == result["peak_used_mb"]
+    assert len(result["per_gpu_used_mb_at_peak"]) == result["gpu_count"]
+    assert len(result["per_gpu_peak_used_mb"]) == result["gpu_count"]
+
+
+def test_vram_sampler_peak_sample_consistent_when_gpu_count_shrinks() -> None:
+    """OBS-05 / rg-015: 2 rows then 1-row peak snapshots that peak sample only.
+
+    Independent per-index max keeps GPU1's earlier 2000; length = max index seen.
     """
     sampler = VramSampler(
         interval_s=0.05,
@@ -223,16 +264,18 @@ def test_vram_sampler_peak_sample_consistent_when_gpu_count_shrinks() -> None:
     assert result["peak_used_mb"] == 5000
     assert result["total_mb"] == 24576
     assert result["gpu_count"] == 1
-    assert result["per_gpu_peak_used_mb"] == [5000]
-    assert result["gpu_count"] == len(result["per_gpu_peak_used_mb"])
-    assert sum(result["per_gpu_peak_used_mb"]) == result["peak_used_mb"]
+    assert result["per_gpu_used_mb_at_peak"] == [5000]
+    assert result["gpu_count"] == len(result["per_gpu_used_mb_at_peak"])
+    assert sum(result["per_gpu_used_mb_at_peak"]) == result["peak_used_mb"]
+    assert result["per_gpu_peak_used_mb"] == [5000, 2000]
+    assert len(result["per_gpu_peak_used_mb"]) == 2
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
 
 
 def test_vram_sampler_peak_sample_consistent_when_gpu_count_grows() -> None:
-    """OBS-05 / rg-015: 1 row then 2-row peak must snapshot the 2-row sample.
+    """OBS-05 / rg-015: 1 row then 2-row peak snapshots the 2-row sample.
 
-    Independent per-index max yields peak_used=13000 gpu_count=2 per_gpu=[6000, 9000]
-    (sum 15000 != peak).
+    Independent per-index max keeps GPU0's earlier 6000 (sum 15000 != peak).
     """
     sampler = VramSampler(
         interval_s=0.05,
@@ -245,9 +288,12 @@ def test_vram_sampler_peak_sample_consistent_when_gpu_count_grows() -> None:
     assert result["peak_used_mb"] == 13000
     assert result["total_mb"] == 49152
     assert result["gpu_count"] == 2
-    assert result["per_gpu_peak_used_mb"] == [4000, 9000]
-    assert result["gpu_count"] == len(result["per_gpu_peak_used_mb"])
-    assert sum(result["per_gpu_peak_used_mb"]) == result["peak_used_mb"]
+    assert result["per_gpu_used_mb_at_peak"] == [4000, 9000]
+    assert result["gpu_count"] == len(result["per_gpu_used_mb_at_peak"])
+    assert sum(result["per_gpu_used_mb_at_peak"]) == result["peak_used_mb"]
+    assert result["per_gpu_peak_used_mb"] == [6000, 9000]
+    assert len(result["per_gpu_peak_used_mb"]) == result["gpu_count"]
+    assert result["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
 
 
 def test_vram_sampler_rejects_non_finite_interval() -> None:
@@ -413,6 +459,9 @@ def test_bakeoff_gpu_unavailable_when_nvidia_smi_missing(tmp_path: Path, monkeyp
     record = _run_bakeoff(tmp_path, monkeypatch, ["--warmup", "0", "--vram-sample-interval-s", "0.05"])
     assert record["gpu"]["status"] == CaptureStatus.UNAVAILABLE
     assert record["gpu"]["peak_used_mb"] is None
+    assert record["gpu"]["per_gpu_used_mb_at_peak"] is None
+    assert record["gpu"]["per_gpu_peak_used_mb"] is None
+    assert record["gpu"]["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
     assert record["gpu"]["samples"] == 0
     assert "nvidia-smi" in record["gpu"]["reason"]
     assert record["timing"]["warmup"]["requests"] == 0

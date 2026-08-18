@@ -71,12 +71,9 @@ class _FakeRosterRepo:
     async def get_by_id(self, cluster_id: str) -> SimpleNamespace | None:
         if self._probe is None or str(self._probe.id) != str(cluster_id):
             return None
-        # Production get_by_id selectinloads members only — representatives stay empty.
-        return SimpleNamespace(
-            id=self._probe.id,
-            tenant_id=self._probe.tenant_id,
-            representatives=[],
-        )
+        # Return the probe object so fused_low representatives are visible.
+        # Production quality must still come from ranking-row loaders, not these.
+        return self._probe
 
     async def get_representative_embeddings_with_model(
         self, cluster_id: str

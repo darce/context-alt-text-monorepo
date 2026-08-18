@@ -584,6 +584,7 @@ SPLIT_DISJOINTNESS_KEYS = frozenset(
         "partition_provenance",
         "identities_spanning_both_halves",
         "note",
+        "provisional_reason",
     }
 )
 SPLIT_EXPOSURE_INVENTORY_KEYS = frozenset(
@@ -612,6 +613,14 @@ class SplitDisjointnessStatus(StrEnum):
     VERIFIED = "verified"
 
 
+class SplitProvisionalReason(StrEnum):
+    """Why a split is provisional rather than verified (rg-015 / sr-007)."""
+
+    IDENTITIES_SPAN_BOTH_HALVES = "identities_span_both_halves"
+    LABEL_COVERAGE_INSUFFICIENT = "label_coverage_insufficient"
+    EMPTY_HALF = "empty_half"
+
+
 def assign_split(sha256: str, *, seed: str, held_out_fraction: float) -> SplitHalf:
     """Assign an image to a half from hmac(seed, content-sha256). Accepts closed [0, 1]."""
     digest = hmac.new(seed.encode(), sha256.lower().encode(), hashlib.sha256).digest()
@@ -633,6 +642,27 @@ def _identities_spanning_both_halves(held_out: Sequence[GoldenEntry], train: Seq
     held_ids = {ident for entry in held_out for ident in entry.present_identities}
     train_ids = {ident for entry in train for ident in entry.present_identities}
     return sorted(held_ids & train_ids)
+
+
+def _label_coverage_complete(held_out: Sequence[GoldenEntry], train: Sequence[GoldenEntry]) -> bool:
+    """True iff both halves are non-empty and every entry carries a non-empty identity list."""
+    if not held_out or not train:
+        return False
+    return all(entry.present_identities for entry in (*held_out, *train))
+
+
+def _disjointness_claim(
+    held_out: Sequence[GoldenEntry], train: Sequence[GoldenEntry]
+) -> tuple[SplitDisjointnessStatus, SplitProvisionalReason | None]:
+    """VERIFIED only from positive full-coverage evidence; never from label absence (rg-015)."""
+    if not held_out or not train:
+        return SplitDisjointnessStatus.PROVISIONAL, SplitProvisionalReason.EMPTY_HALF
+    spanning = _identities_spanning_both_halves(held_out, train)
+    if spanning:
+        return SplitDisjointnessStatus.PROVISIONAL, SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES
+    if not _label_coverage_complete(held_out, train):
+        return SplitDisjointnessStatus.PROVISIONAL, SplitProvisionalReason.LABEL_COVERAGE_INSUFFICIENT
+    return SplitDisjointnessStatus.VERIFIED, None
 
 
 def _partition_entries(manifest, *, seed: str, held_out_fraction: float) -> tuple[list[GoldenEntry], list[GoldenEntry]]:
@@ -701,9 +731,16 @@ def draw_eval_split(
     """Freeze a sealed eval split derived from image content hashes."""
     if not isinstance(partition_provenance, str) or not partition_provenance.strip():
         raise ValueError("partition_provenance is required and must be a non-empty string")
+    if (
+        not isinstance(pre_split_exposure, list)
+        or not pre_split_exposure
+        or not all(isinstance(note, str) and note.strip() for note in pre_split_exposure)
+    ):
+        raise ValueError(f"pre_split_exposure must be a non-empty list of non-empty strings: {pre_split_exposure!r}")
+    notes = [note.strip() for note in pre_split_exposure]
     held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
     spanning = _identities_spanning_both_halves(held_out, train)
-    status = SplitDisjointnessStatus.VERIFIED.value if not spanning else SplitDisjointnessStatus.PROVISIONAL.value
+    status, reason = _disjointness_claim(held_out, train)
     artifact = {
         "schema_version": SUPPORTED_SPLIT_SCHEMA_VERSION,
         "seed": seed,
@@ -712,15 +749,16 @@ def draw_eval_split(
         "draw_timestamp": draw_timestamp,
         "protection": SPLIT_PROTECTION,
         "source_manifest": {"path": source_manifest_path, "sha256": source_manifest_sha256},
-        "pre_split_exposure": list(pre_split_exposure),
+        "pre_split_exposure": notes,
         "exposure_inventory": _exposure_inventory(manifest),
         "held_out": _half_payload(held_out),
         "train": _half_payload(train),
         "disjointness": {
-            "status": status,
+            "status": status.value,
             "partition_provenance": partition_provenance,
             "identities_spanning_both_halves": spanning,
             "note": SPLIT_DISJOINTNESS_NOTE,
+            "provisional_reason": None if reason is None else reason.value,
         },
     }
     artifact["seal_sha256"] = compute_split_seal_sha256(artifact)
@@ -814,14 +852,22 @@ def verify_eval_split(
     source = source if isinstance(source, dict) else {}
     if not source.get("path"):
         violations.append(f"source_manifest.path missing or empty: {source.get('path')!r}")
-    if expected_source_manifest_path is not None and source.get("path") != expected_source_manifest_path:
+    if expected_source_manifest_path is None:
+        violations.append("expected_source_manifest_path is required (EVAL-10 fail-closed)")
+    elif source.get("path") != expected_source_manifest_path:
         violations.append(
             f"source_manifest.path mismatch: recorded={source.get('path')!r} expected={expected_source_manifest_path!r}"
         )
     recorded_source_sha = source.get("sha256")
     if not isinstance(recorded_source_sha, str) or len(recorded_source_sha) != 64:
         violations.append(f"source_manifest.sha256 missing or not 64 hex chars: {recorded_source_sha!r}")
-    elif source_manifest_sha256 is not None and recorded_source_sha != source_manifest_sha256:
+    if source_manifest_sha256 is None:
+        violations.append("source_manifest_sha256 is required (EVAL-10 fail-closed)")
+    elif (
+        isinstance(recorded_source_sha, str)
+        and len(recorded_source_sha) == 64
+        and recorded_source_sha != source_manifest_sha256
+    ):
         violations.append(
             f"source_manifest.sha256 mismatch: recorded={recorded_source_sha} recomputed={source_manifest_sha256}"
         )
@@ -898,12 +944,27 @@ def verify_eval_split(
         violations.append(
             f"identities_spanning_both_halves drifted: recorded={recorded_span} recomputed={expected_span}"
         )
-    if status == SplitDisjointnessStatus.VERIFIED.value and expected_span:
-        violations.append(
-            f"disjointness.status verified but identities_spanning_both_halves is non-empty: {expected_span}"
-        )
-    if status == SplitDisjointnessStatus.PROVISIONAL.value and not expected_span:
+    expected_status, expected_reason = _disjointness_claim(expected_held, expected_train)
+    recorded_reason = disjointness.get("provisional_reason")
+    if status == SplitDisjointnessStatus.VERIFIED.value and expected_status is not SplitDisjointnessStatus.VERIFIED:
+        if expected_reason is SplitProvisionalReason.LABEL_COVERAGE_INSUFFICIENT:
+            violations.append(
+                "disjointness.status verified but label coverage is insufficient "
+                "(not every entry in both halves has non-empty present_identities)"
+            )
+        elif expected_reason is SplitProvisionalReason.EMPTY_HALF:
+            violations.append("disjointness.status verified but a half is empty")
+        else:
+            violations.append(
+                f"disjointness.status verified but identities_spanning_both_halves is non-empty: {expected_span}"
+            )
+    if status == SplitDisjointnessStatus.PROVISIONAL.value and expected_status is SplitDisjointnessStatus.VERIFIED:
         violations.append("disjointness.status provisional but identities_spanning_both_halves is empty")
+    expected_reason_value = None if expected_reason is None else expected_reason.value
+    if recorded_reason != expected_reason_value:
+        violations.append(
+            f"disjointness.provisional_reason mismatch: recorded={recorded_reason!r} expected={expected_reason_value!r}"
+        )
 
     expected_inventory = _exposure_inventory(manifest)
     recorded_inventory = artifact.get("exposure_inventory")

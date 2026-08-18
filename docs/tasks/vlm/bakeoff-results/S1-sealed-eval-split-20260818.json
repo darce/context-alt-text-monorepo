@@ -10,6 +10,7 @@
     ],
     "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
     "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
+    "provisional_reason": "identities_span_both_halves",
     "status": "provisional"
   },
   "draw_timestamp": "2026-08-18T00:00:00Z",
@@ -89,7 +90,7 @@
   ],
   "protection": "forward-from-draw-timestamp: any image, identity or curation decision first observed after draw_timestamp is protected by this split; entries listed in pre_split_exposure were already exposed",
   "schema_version": 1,
-  "seal_sha256": "0ef73929d12c9847fea04f892a7d5814de2a980fc381c5d10339d2184d83f09c",
+  "seal_sha256": "2800617127e4e7150768d602eea3e528008a95d6cedcaa29915d641c24b80b71",
   "seed": "vlm6-s1-sealed-eval-split-20260818",
   "source_manifest": {
     "path": "scene/tests/seed/golden.json",

@@ -250,9 +250,13 @@ def _alice_bob_manifest() -> GoldenManifest:
     )
 
 
+# "alpha" splits a*64 / b*64 across halves; "alice-bob-seed" parked both in held_out.
+_ALICE_BOB_SEED = "alpha"
+
+
 def _draw_alice_bob(**overrides):
     kwargs = {
-        "seed": "alice-bob-seed",
+        "seed": _ALICE_BOB_SEED,
         "held_out_fraction": 0.5,
         "draw_timestamp": _DRAW_TIMESTAMP,
         "source_manifest_path": "alice-bob.json",
@@ -267,7 +271,7 @@ def _draw_alice_bob(**overrides):
 def _alice_bob_expected(**overrides):
     kwargs = {
         "source_manifest_sha256": "c" * 64,
-        "expected_seed": "alice-bob-seed",
+        "expected_seed": _ALICE_BOB_SEED,
         "expected_held_out_fraction": 0.5,
         "expected_draw_timestamp": _DRAW_TIMESTAMP,
         "expected_partition_provenance": "synthetic two-entry Alice/Bob",
@@ -380,11 +384,13 @@ def test_verify_emptied_sha_and_identities_are_violations():
     assert any("identities" in message for message in ident_violations)
 
 
-def test_verify_phantom_media_id_is_violation():
+@pytest.mark.parametrize("phantom_id", [99999, 88888])
+def test_verify_phantom_media_id_is_violation(phantom_id):
     tampered = copy.deepcopy(_draw_golden())
-    tampered["held_out"]["media_ids"].append(99999)
+    tampered["held_out"]["media_ids"].append(phantom_id)
     violations = verify_eval_split(tampered, _load_golden())
-    assert any("99999" in message for message in violations)
+    assert any("not in manifest" in message for message in violations), violations
+    assert any(str(phantom_id) in message for message in violations), violations
 
 
 def test_verify_schema_version_99_is_violation():
@@ -749,10 +755,11 @@ def test_draw_disjoint_alice_bob_is_verified_and_round_trips():
 
 @pytest.mark.parametrize("fraction", [0.0, 1.0])
 def test_draw_verify_closed_fraction_round_trip(fraction):
-    # VLM6-RV4-Q1-03: 0.0/1.0 empty one half; span is empty; draw/verify are inverses.
+    # VLM6-RV5-L-01: 0.0/1.0 empty one half → provisional/empty_half; draw/verify inverses.
     artifact = _draw_alice_bob(held_out_fraction=fraction)
     assert artifact["disjointness"]["identities_spanning_both_halves"] == []
-    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.VERIFIED.value
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    assert artifact["disjointness"]["provisional_reason"] == "empty_half"
     assert (
         verify_eval_split(
             artifact,
@@ -847,23 +854,29 @@ def test_verify_seedless_neither_ids_names_neither_half():
     assert any(str(dropped) in message for message in violations), violations
 
 
-def test_verify_seedless_extra_ids_names_not_in_manifest():
-    # MUT[delete_extra_ids]: phantom must name 'not in manifest', not membership mismatch.
+@pytest.mark.parametrize("phantom_id", [99999, 88888])
+def test_verify_seedless_extra_ids_names_not_in_manifest(phantom_id):
+    # VLM6-RV5-Q1-02: ≥2 phantoms so `if 99999 in recorded` dies.
+    # MUT[sentinel_99999]: loosen to `if 99999 in extra_ids` fails on 88888.
     artifact = _draw_golden()
     del artifact["seed"]
-    artifact["held_out"]["media_ids"].append(99999)
+    artifact["held_out"]["media_ids"].append(phantom_id)
     violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
     assert any("held_out media_id not in manifest" in message for message in violations), violations
+    assert any(str(phantom_id) in message for message in violations), violations
     assert not any("membership mismatch" in message for message in violations), violations
 
 
-def test_verify_seedless_extra_shas_names_not_in_manifest():
-    # MUT[delete_extra_shas]
+@pytest.mark.parametrize("phantom_sha", ["f" * 64, "e" * 64])
+def test_verify_seedless_extra_shas_names_not_in_manifest(phantom_sha):
+    # VLM6-RV5-Q1-02: ≥2 phantoms so `if 'f'*64 in shas` dies.
+    # MUT[sentinel_ffff]: loosen to `if 'f'*64 in extra_shas` fails on e*64.
     artifact = _draw_golden()
     del artifact["seed"]
-    artifact["held_out"]["sha256"].append("f" * 64)
+    artifact["held_out"]["sha256"].append(phantom_sha)
     violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
     assert any("held_out sha256 not in manifest" in message for message in violations), violations
+    assert any(phantom_sha in message for message in violations), violations
 
 
 def test_cli_check_missing_held_out_fraction_exits_2():
@@ -956,3 +969,208 @@ def test_cli_check_resealed_exposure_rewrite_exits_1(tmp_path, capsys):
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
     assert "pre_split_exposure" in captured.err
+
+
+def _unlabelled_alice_bob() -> GoldenManifest:
+    base = _alice_bob_manifest()
+    return base.model_copy(
+        update={"entries": [entry.model_copy(update={"present_identities": []}) for entry in base.entries]}
+    )
+
+
+def _golden_with_blanked_held_out_spanning_labels() -> GoldenManifest:
+    """Blank present_identities on held-out images of the 5 spanning people (L-01)."""
+    manifest = _load_golden()
+    baseline = _draw_golden()
+    spanning = set(baseline["disjointness"]["identities_spanning_both_halves"])
+    held_ids = set(baseline["held_out"]["media_ids"])
+    assert spanning, "golden fixture must span identities (L-01 repro)"
+    entries = []
+    for entry in manifest.entries:
+        if entry.media_id in held_ids and spanning.intersection(entry.present_identities):
+            entries.append(entry.model_copy(update={"present_identities": []}))
+        else:
+            entries.append(entry)
+    return manifest.model_copy(update={"entries": entries})
+
+
+def test_draw_blanked_held_out_spanning_labels_is_provisional():
+    # VLM6-RV5-L-01: blanking held-out labels of spanning people must not verify.
+    # MUT[status=not spanning]: reverting the coverage gate makes this fail
+    # (status==verified, span==[]).
+    manifest = _golden_with_blanked_held_out_spanning_labels()
+    artifact = draw_eval_split(
+        manifest,
+        seed=_DRAW_SEED,
+        held_out_fraction=0.5,
+        draw_timestamp=_DRAW_TIMESTAMP,
+        source_manifest_path="scene/tests/seed/golden.json",
+        source_manifest_sha256="a" * 64,
+        pre_split_exposure=["fixture exposure"],
+        partition_provenance=_PARTITION_PROVENANCE,
+    )
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    assert artifact["disjointness"]["provisional_reason"] == "label_coverage_insufficient"
+
+
+def test_draw_unlabelled_corpus_is_provisional():
+    # VLM6-RV5-L-01: zero identity labels → provisional, not verified-from-absence.
+    # MUT[status=not spanning]: reverting the coverage gate makes this fail
+    # (status==verified on an unlabelled corpus).
+    artifact = draw_eval_split(
+        _unlabelled_alice_bob(),
+        seed=_ALICE_BOB_SEED,
+        held_out_fraction=0.5,
+        draw_timestamp=_DRAW_TIMESTAMP,
+        source_manifest_path="alice-bob.json",
+        source_manifest_sha256="c" * 64,
+        pre_split_exposure=["fixture exposure"],
+        partition_provenance="synthetic two-entry Alice/Bob",
+    )
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    assert artifact["disjointness"]["provisional_reason"] == "label_coverage_insufficient"
+
+
+def test_draw_alice_bob_verified_has_no_provisional_reason():
+    # VLM6-RV5-L-01: fully-labelled disjoint Alice/Bob stays verified.
+    artifact = _draw_alice_bob()
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.VERIFIED.value
+    assert artifact["disjointness"]["provisional_reason"] is None
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.0])
+def test_draw_empty_half_is_provisional_with_reason(fraction):
+    # VLM6-RV5-L-01: empty half is provisional (empty_half), never verified.
+    # MUT[status=not spanning]: reverting the empty-half gate makes this fail.
+    artifact = _draw_alice_bob(held_out_fraction=fraction)
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    assert artifact["disjointness"]["provisional_reason"] == "empty_half"
+    assert (
+        verify_eval_split(
+            artifact,
+            _alice_bob_manifest(),
+            **_alice_bob_expected(expected_held_out_fraction=fraction),
+        )
+        == []
+    )
+
+
+def test_verify_verified_under_insufficient_coverage_names_label_coverage():
+    # VLM6-RV5-L-01: artifact stamped verified while coverage is incomplete.
+    # MUT[delete_coverage_cross_check]: dropping the verify precondition
+    # makes this return [] / omit "label coverage".
+    manifest = _unlabelled_alice_bob()
+    artifact = draw_eval_split(
+        manifest,
+        seed=_ALICE_BOB_SEED,
+        held_out_fraction=0.5,
+        draw_timestamp=_DRAW_TIMESTAMP,
+        source_manifest_path="alice-bob.json",
+        source_manifest_sha256="c" * 64,
+        pre_split_exposure=["fixture exposure"],
+        partition_provenance="synthetic two-entry Alice/Bob",
+    )
+    artifact["disjointness"]["status"] = SplitDisjointnessStatus.VERIFIED.value
+    artifact["disjointness"]["provisional_reason"] = None
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, manifest, **_alice_bob_expected())
+    assert any("label coverage" in message for message in violations), violations
+
+
+def test_cli_exposure_file_blank_lines_draw_and_check(tmp_path):
+    # VLM6-RV5-L-02: blank / \\r lines must be stripped so draw and --check invert.
+    # MUT[no_strip]: reverting strip/filter seals ['note one','','note two']
+    # and --check then exits 1.
+    exposure = tmp_path / "notes.txt"
+    exposure.write_bytes(b"note one\r\n\r\nnote two\r\n")
+    out = tmp_path / "split.json"
+    draw_argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(out),
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-file",
+        str(exposure),
+        "--force",
+    ]
+    assert main(draw_argv) is None
+    sealed = json.loads(out.read_text())
+    assert sealed["pre_split_exposure"] == ["note one", "note two"]
+    check_argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(out),
+        "--check",
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-file",
+        str(exposure),
+    ]
+    assert main(check_argv) is None
+
+
+def test_draw_whitespace_only_exposure_raises():
+    # VLM6-RV5-L-02: library caller [' '] must not seal. MUT[skip_draw_notes_gate]
+    # reverting the draw-time emptiness check lets this return an artifact.
+    with pytest.raises((ValueError, TypeError)) as excinfo:
+        _draw_golden(pre_split_exposure=[" "])
+    assert "pre_split_exposure" in str(excinfo.value)
+
+
+def test_verify_none_expected_source_manifest_path():
+    # VLM6-RV5-Q1-01: omit path pin → named fail-closed violation.
+    # MUT[skip_none_path]: reverting the None-pin check makes this miss the token.
+    violations = verify_eval_split(
+        _draw_golden(), _load_golden(), **_fixture_expected(expected_source_manifest_path=None)
+    )
+    assert any(
+        "expected_source_manifest_path is required (EVAL-10 fail-closed)" in message for message in violations
+    ), violations
+
+
+def test_verify_none_source_manifest_sha256():
+    # VLM6-RV5-Q1-01: omit sha pin → named fail-closed violation.
+    # MUT[skip_none_sha]: reverting the None-pin check makes this miss the token.
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(source_manifest_sha256=None))
+    assert any("source_manifest_sha256 is required (EVAL-10 fail-closed)" in message for message in violations), (
+        violations
+    )
+
+
+def test_verify_resealed_source_manifest_path_rewrite_names_mismatch():
+    # VLM6-RV5-Q1-01: pin present + resealed path rewrite → named mismatch.
+    artifact = _draw_golden()
+    artifact["source_manifest"]["path"] = "apps/evil/golden.json"
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("source_manifest.path mismatch" in message for message in violations), violations
+
+
+def test_verify_resealed_source_manifest_sha_rewrite_names_mismatch():
+    # VLM6-RV5-Q1-01: pin present + resealed sha rewrite → named mismatch.
+    artifact = _draw_golden()
+    artifact["source_manifest"]["sha256"] = "0" * 64
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("source_manifest.sha256 mismatch" in message for message in violations), violations

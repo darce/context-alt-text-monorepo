@@ -2661,7 +2661,8 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
     collected = list(notes or [])
     if exposure_file:
         collected.extend(Path(exposure_file).read_text().splitlines())
-    return collected
+    # Strip each line (incl. leftover \\r) and drop blanks so draw/--check invert (EVAL-10).
+    return [stripped for note in collected if (stripped := note.strip())]
 
 
 _SPLIT_HASH_SKIP_REASON = "split seal pins sha256 metadata; image bytes never opened"

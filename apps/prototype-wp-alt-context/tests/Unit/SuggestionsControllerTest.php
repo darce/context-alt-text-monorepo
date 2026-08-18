@@ -869,4 +869,84 @@ class SuggestionsControllerTest extends TestCase
             'refused 3xx on bulk-accept must not be laundered as unavailable'
         );
     }
+
+    public function testRegisterRoutesIncludesRosterCandidates(): void
+    {
+        $this->controller->register_routes();
+
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/roster-candidates' === $definition['route']
+        ));
+
+        $this->assertCount(1, $definitions);
+        $this->assertSame('GET', $definitions[0]['args']['methods'] ?? null);
+        $this->assertSame('integer', $definitions[0]['args']['args']['top_k']['type'] ?? null);
+        $this->assertSame(10, $definitions[0]['args']['args']['top_k']['default'] ?? null);
+    }
+
+    public function testGetRosterCandidatesForwardsTopKAndMapsRosterEntryId(): void
+    {
+        $clusterId = 'aaaaaaaa-bbbb-cccc-dddd-000000000111';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'reference_face_count' => 2,
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    [
+                        'cluster_id' => $clusterId,
+                        'name' => 'Ada',
+                        'similarity' => 0.81,
+                        'band' => 'strong',
+                        'quality_flag' => 'ok',
+                    ],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => $clusterId,
+                'person_id' => 42,
+            ],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 7);
+
+        $response = $this->controller->get_roster_candidates($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString(
+            '/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates',
+            $calls[0]['url']
+        );
+
+        $query = [];
+        $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
+        parse_str(is_string($queryString) ? $queryString : '', $query);
+        $this->assertSame('7', (string) ($query['top_k'] ?? ''));
+        $this->assertNotEmpty($query['tenant_id'] ?? '');
+
+        $data = $response->get_data();
+        $this->assertSame(42, $data['candidates'][0]['roster_entry_id'] ?? null);
+        $this->assertSame($clusterId, $data['candidates'][0]['cluster_id'] ?? null);
+        $this->assertArrayNotHasKey('total', $data);
+        $this->assertArrayNotHasKey('limit', $data);
+        $this->assertSame('opencv-sface+cv5@128d/l2/cosine', $data['model_id'] ?? null);
+    }
 }

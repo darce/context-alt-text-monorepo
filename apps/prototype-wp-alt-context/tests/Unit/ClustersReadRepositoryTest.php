@@ -138,4 +138,23 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString('c.is_user_confirmed = 0', $wpdb->queries[0]);
     }
+
+    /**
+     * E21-14-R3 / B5: queue predicate must be backed by acx_identity_members
+     * rows so a stale identity_count=3 with 0 members cannot be served.
+     */
+    public function testListTopUnlabeledRequiresObservedMemberRows(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_top_unlabeled(self::currentTenantId(), 10);
+
+        $this->assertCount(1, $wpdb->queries);
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString('m.cluster_uuid = c.cluster_uuid', $sql);
+        $this->assertMatchesRegularExpression('/COUNT\(\*\)\s*FROM\s*`wp_acx_identity_members`/i', $sql);
+        $this->assertStringContainsString(') >= 2', $sql);
+    }
 }

@@ -191,3 +191,72 @@ def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_
     assert body["probe_face_count"] == 1
     assert body["reference_face_count"] >= 2
     assert fake_cluster_repository.clusters[probe.id].representatives == []
+
+
+def test_roster_candidates_low_quality_flag_caps_strong_band_on_the_wire(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """R2-03: quality_flag is not a literal 'ok'; low probe metrics cap Strong."""
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    monkeypatch.setattr(
+        "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",
+        lambda: ClusteringSettings(
+            suggestion_floor=0.40,
+            suggestion_ceiling=0.80,
+            similarity_threshold=0.77,
+            fatal_quality_floor=0.45,
+            fatal_confidence_floor=0.40,
+        ),
+    )
+
+    probe = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    strong = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Ada",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_repository.seed(
+        probe.id,
+        tenant_id,
+        label=None,
+        representatives=[
+            _rep(
+                embedding=probe_vec,
+                embedding_model=same_model,
+                quality_score=0.10,
+                landmark_quality=0.10,
+                det_score=0.99,
+            )
+        ],
+    )
+    fake_cluster_repository.seed(
+        strong.id,
+        tenant_id,
+        label="Ada",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+    )
+
+    resp = api_client.get(
+        f"/recognition/clusters/{probe.id}/roster-candidates",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"top_k": 10},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    jsonschema.validate(body, _schema())
+    assert body["quality_flag"] == "low_quality"
+    assert body["candidates"]
+    assert body["candidates"][0]["similarity"] >= 0.80
+    assert all(row["band"] != "strong" for row in body["candidates"])

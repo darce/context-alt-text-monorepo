@@ -348,4 +348,4 @@ No frontend work needed for low-confidence styling.
 - [x] Newly created unlabeled clusters from later batches can surface suggestions to already confirmed labels without relabeling triggers.
 - [x] Clusters with null `representative_identity_id` still receive inferred top-card suggestions when representative/member embeddings are available.
 - [x] Previously rejected suggestions are never mutated by the backend — new evidence is surfaced as a distinct proposal.
-- [x] Automated tests cover the reported Laura/Sable/Jen-style scenarios as suggestion CTAs (including low-confidence where applicable) instead of persistent "Name this person".
+- [x] Automated tests cover the reported Sable/Sable/Jen-style scenarios as suggestion CTAs (including low-confidence where applicable) instead of persistent "Name this person".

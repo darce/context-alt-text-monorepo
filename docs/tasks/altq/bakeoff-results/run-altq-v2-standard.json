@@ -453,7 +453,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches under glacier ice with a camera.  \nShe wears a white Black Diamond helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots.  \nHer gloved hand rests on a wet rock beside her.  \nShe looks up toward the camera with a focused expression.",
+        "alt_text_draft": "Slate Willow crouches under glacier ice with a camera.  \nShe wears a white Black Bramble helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots.  \nHer gloved hand rests on a wet rock beside her.  \nShe looks up toward the camera with a focused expression.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "prompt_variant": "v2"

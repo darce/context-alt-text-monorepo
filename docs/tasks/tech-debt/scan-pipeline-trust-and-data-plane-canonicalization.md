@@ -365,7 +365,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 | Stale clusters for media 6622–6626 | E2 | E16-1a (root cause), E16-1g (cleanup) |
 | Media 6624 has 6× similarity=1.0 assignments | E2 | E16-1h |
 | Dashboard SQL error in debug.log | E4 | E16-1f |
-| Self-merge offered on Saffron Cypress cluster | E8 | E16-1e |
+| Indigo-merge offered on Saffron Cypress cluster | E8 | E16-1e |
 | `make reset-local` does not produce expected clean state | E3 | E16-1a |
 
 ---

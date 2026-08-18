@@ -300,7 +300,7 @@ def test_first_name_only_mention_trips_trap():  # B-01 (high)
 def test_shared_surname_with_present_identity_does_not_trip_trap():  # B-01 guard
     scores = score_caption(
         "Russet Fathom stands on the shore.",
-        **_entry(present_identities=["Russet Fathom"], must_right=["Russet Fathom"], easy_wrong=["Muted Weaver"]),
+        **_entry(present_identities=["Russet Fathom"], must_right=["Russet Fathom"], easy_wrong=["Muted Fathom"]),
     )
     assert scores.wrong_name_hits == []
     assert scores.gated_score == 1.0

@@ -166,6 +166,47 @@ def test_omitting_identities_reads_the_roster_and_fails_if_absent(mapping, tmp_p
         pz._nonpersonal_identities.cache_clear()
 
 
+def _seed_env(tmp_path, monkeypatch, seed_text: str, roster_identities=()):
+    roster = tmp_path / "roster.json"
+    roster.write_text(json.dumps({"identities": list(roster_identities)}), encoding="utf-8")
+    seed = tmp_path / "clustering-manifest.txt"
+    seed.write_text(seed_text, encoding="utf-8")
+    monkeypatch.setattr(pz, "ROSTER", roster)
+    monkeypatch.setattr(pz, "SEED_MANIFEST", seed)
+    pz._nonpersonal_identities.cache_clear()
+
+
+def test_seed_manifest_slugs_are_protected_literals(mapping, tmp_path, monkeypatch):
+    # PRIV-1 D-05: a demo-seed public figure who shares a token with a personal
+    # subject had that token rewritten inside their `<first>_<last>_<n>.jpg`
+    # slug while the display-name column kept naming them. The seed manifest
+    # is a non-personal identity source, so its slugs mask like roster celebs.
+    _seed_env(tmp_path, monkeypatch, "nylphra_quorbex 5\nother_person 3\n")
+    try:
+        passes = pz._Passes(mapping)
+        assert "nylphra_quorbex" in passes.protected
+        row = "| nylphra_quorbex_12.jpg | Nylphra Quorbex | demo |"
+        assert passes.rewrite(row, ".md")[0] == row
+        assert passes.residue(row, ".md") == {}
+        # The personal subject is still rewritten everywhere else.
+        assert "Nylphra Veldrith" not in passes.rewrite("Nylphra Veldrith smiles.", ".md")[0]
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+
+
+def test_missing_seed_manifest_fails_loudly(mapping, tmp_path, monkeypatch):
+    # Defaulting to no seed identities would keep every test green with the
+    # manifest gone while silently protecting nobody (CARD-11).
+    _seed_env(tmp_path, monkeypatch, "x_y 1\n")
+    monkeypatch.setattr(pz, "SEED_MANIFEST", tmp_path / "no-such-manifest.txt")
+    pz._nonpersonal_identities.cache_clear()
+    try:
+        with pytest.raises(FileNotFoundError):
+            pz._Passes(mapping)
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+
+
 # --- _inside_hex_run -------------------------------------------------------
 
 
@@ -1265,6 +1306,20 @@ def test_unambiguous_stem_still_uses_identity_word_not_family():
     assert "brook" not in unresolved
     if family != "falcon":
         assert family not in out.lower()
+
+
+def test_stem_token_glued_to_digits_is_still_rewritten():
+    # Upload filenames fuse the surname onto a numeric id with no separator.
+    # Splitting only on punctuation left `veldrith40068305` as one part the
+    # index cannot see, so the surname survived beside an aliased given name.
+    # `brook` is shared by two identities here, so the family word backstop fires.
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "uploads/amber-brook40068305_934039216_n-scaled.jpg"
+    out, counts, _unresolved = passes.rewrite(text, ".md")
+    assert "brook" not in out.lower()
+    assert "40068305_934039216_n-scaled.jpg" in out
+    assert counts["media"] == 1
+    assert passes.residue(text, ".md").get("media", 0) == 1
 
 
 def test_unresolved_keeps_its_meaning_when_no_family_word():
@@ -3145,3 +3200,51 @@ def test_rename_with_absent_pre_sha_raises_naming_the_path(tmp_path, monkeypatch
     msg = str(exc.value).lower()
     assert "empty" in msg or "absent" in msg
 
+
+
+# ---------------------------------------------------------------------------
+# D-04: dictionary given token co-mentioned with an alias in the same caption.
+
+
+def test_declined_given_token_beside_an_alias_sentence_is_rewritten():
+    # `qorvist` is a wordlist word so the bare pass declines it. Once the
+    # caption has already named the aliased co-subject (`Amber Harbor`),
+    # the bare Title-case token is the other person in the frame.
+    passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "Amber Harbor holds a wrap while Qorvist eats from a container."
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "qorvist" not in out.lower()
+    assert "Cobalt eats" in out
+    assert counts["comention"] == 1
+    assert passes.residue(text, ".md").get("comention") == 1
+    assert passes.residue(out, ".md") == {}
+
+
+def test_declined_given_token_licensed_by_the_previous_sentence():
+    passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "Amber sits on the left. Qorvist beams at the camera."
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "Cobalt beams" in out
+    assert counts["comention"] == 1
+
+
+def test_declined_given_token_two_sentences_away_is_left_alone():
+    passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "Amber sits on the left. The light is warm. Qorvist is a word here."
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert out == text
+    assert counts.get("comention", 0) == 0
+    assert "comention" not in passes.residue(text, ".md")
+
+
+def test_lowercase_or_unlicensed_dictionary_word_survives_comention():
+    passes = pz._Passes(_ADJACENT_MAPPING, identities=_UNIT_NONPERSONAL)
+    # lower-case beside an alias: the noun, not the person
+    text = "Amber Harbor walks past a qorvist on the path."
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert out == text
+    # capitalised alias word absent (lower-case `amber` is a colour): no licence
+    text2 = "The amber light falls where Qorvist stands."
+    out2, counts2, _u = passes.rewrite(text2, ".md")
+    assert out2 == text2
+    assert counts2.get("comention", 0) == 0

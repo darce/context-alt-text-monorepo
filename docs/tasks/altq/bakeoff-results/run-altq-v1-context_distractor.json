@@ -259,7 +259,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Tidal Harbor and Auburn Current pose with a friend in costume at a party. The friend in the center wears a fluffy white sheep hat with pink ears and a pink crop top, while Cristina wears a pink mesh top over a green bikini top. All three hold plastic cups, with a grey brick wall behind them.",
+        "alt_text_draft": "Tidal Harbor and Auburn Current pose with a friend in costume at a party. The friend in the center wears a fluffy white sheep hat with pink ears and a pink crop top, while Tidal wears a pink mesh top over a green bikini top. All three hold plastic cups, with a grey brick wall behind them.",
         "injected_distractor": "Auburn Current",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -483,7 +483,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches inside a glacial ice cave, wearing a white Black Diamond helmet with a headlamp, a black fur-hooded parka, and crampon-fitted boots. She holds a DSLR camera at her side while looking up, surrounded by dark, wet rocks and translucent ice walls.",
+        "alt_text_draft": "Slate Willow crouches inside a glacial ice cave, wearing a white Black Bramble helmet with a headlamp, a black fur-hooded parka, and crampon-fitted boots. She holds a DSLR camera at her side while looking up, surrounded by dark, wet rocks and translucent ice walls.",
         "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -579,7 +579,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Yarrow and Slate Willow sit together on a couch, dressed in elaborate costumes. Muted wears a white lace bralette, a pearl necklace, and long white lace gloves, while Maria wears a black corset with pink trim, a white feather boa, and black gloves. They are positioned in front of a wall decorated with framed photos and a red clock.",
+        "alt_text_draft": "Muted Yarrow and Slate Willow sit together on a couch, dressed in elaborate costumes. Muted wears a white lace bralette, a pearl necklace, and long white lace gloves, while Slate wears a black corset with pink trim, a white feather boa, and black gloves. They are positioned in front of a wall decorated with framed photos and a red clock.",
         "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",

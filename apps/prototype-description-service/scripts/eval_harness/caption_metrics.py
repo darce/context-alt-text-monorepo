@@ -215,7 +215,7 @@ def score_caption(
     # "Muted" must trip the "Muted Yarrow" trap — full-name-only matching reads
     # as perfect distractor resistance while the model names the wrong person.
     # Tokens shared with a present identity (family surname) are excluded so a
-    # correct "Russet Fathom" never trips a "Muted Weaver" trap [GRPH-18].
+    # correct "Russet Fathom" never trips a "Muted Fathom" trap [GRPH-18].
     # Insertion credit above stays full-name (strict): credit requires the whole
     # name; a violation triggers on any distinctive fragment — asymmetric by
     # design, erring toward the gate.

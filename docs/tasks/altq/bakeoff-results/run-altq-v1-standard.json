@@ -453,7 +453,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches inside a glacial ice cave, wearing a white Black Diamond helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots. She holds a DSLR camera at her knee, looking toward the viewer amidst dark, wet rocks and translucent ice walls.",
+        "alt_text_draft": "Slate Willow crouches inside a glacial ice cave, wearing a white Black Bramble helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots. She holds a DSLR camera at her knee, looking toward the viewer amidst dark, wet rocks and translucent ice walls.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "prompt_variant": "v1"

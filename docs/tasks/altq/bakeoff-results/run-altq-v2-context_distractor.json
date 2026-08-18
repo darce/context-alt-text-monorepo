@@ -243,7 +243,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Russet Fathom's face appears blurred behind netting and bokeh lights.  \nShe is bathed in pink concert lighting, her expression calm and distant.  \nThe image captures her out of focus, with bright lights creating a dreamy glow.  \nMaria Willow is also pictured in the scene.",
+        "alt_text_draft": "Russet Fathom's face appears blurred behind netting and bokeh lights.  \nShe is bathed in pink concert lighting, her expression calm and distant.  \nThe image captures her out of focus, with bright lights creating a dreamy glow.  \nSlate Willow is also pictured in the scene.",
         "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -483,7 +483,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Diamond helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots. Her expression is focused as she looks toward the camera in the dimly lit cave.",
+        "alt_text_draft": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Bramble helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots. Her expression is focused as she looks toward the camera in the dimly lit cave.",
         "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -579,7 +579,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Yarrow and Slate Willow sit on a couch in costume. Muted wears a white lace bralette, layered pearl necklaces, and white lace gloves. Maria wears a black corset with pink trim, a white feather boa, and black gloves. They pose beneath a red clock and framed photos on the wall.",
+        "alt_text_draft": "Muted Yarrow and Slate Willow sit on a couch in costume. Muted wears a white lace bralette, layered pearl necklaces, and white lace gloves. Slate wears a black corset with pink trim, a white feather boa, and black gloves. They pose beneath a red clock and framed photos on the wall.",
         "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",

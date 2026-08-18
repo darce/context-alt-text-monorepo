@@ -554,8 +554,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.",
-        "alt_text_long": "Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.",
+        "alt_text_draft": "Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Bramble wearing a sparkly top.",
+        "alt_text_long": "Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Bramble wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.",
         "alt_text_title": "Dappled Meadow and Burnished Ridgeway selfie",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -568,7 +568,7 @@
           {
             "latency_s": 2.678,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Dappled Meadow and Burnished Ridgeway selfie\",\n  \"alt\": \"Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Lindsay wearing a sparkly top.\",\n  \"caption\": \"Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Lindsay wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Dappled Meadow and Burnished Ridgeway selfie\",\n  \"alt\": \"Dappled Meadow and Burnished Ridgeway take a mirror selfie, with Dappled holding a phone and Bramble wearing a sparkly top.\",\n  \"caption\": \"Dappled Meadow and Burnished Ridgeway capture a casual moment in a mirror selfie, their expressions relaxed and intimate. Dappled holds a phone with a colorful case, framing the shot in a softly lit room. Bramble wears a sparkly silver top and sheer black sleeves, her long brown hair falling over her shoulders. The scene feels personal and unposed, a quiet snapshot of friendship.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -1937,7 +1937,7 @@
         "adapter": "bakeoff",
         "alt_text_draft": "Two women pose for a photo in front of a pink backdrop with the name BARBARA in pink letters, one with dark hair in a white top and blue pants, the other with blonde hair in a patterned top and white pants, both resting their chins on their hands.",
         "alt_text_long": "Two women sit together in front of a festive pink backdrop adorned with the name BARBARA, their hands resting on their chins in a thoughtful pose. Sheer white fabric drapes the wall, accented with pink flowers and glowing lights, creating a celebratory atmosphere. The woman on the left wears a white top and dark blue pants, while the woman on the right wears a patterned top and white pants. The name Opaline Tanner appears in the corner, suggesting a personal celebration.",
-        "alt_text_title": "Two women posing at Barbara's party",
+        "alt_text_title": "Two women posing at Quiet's party",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -2452,7 +2452,7 @@
       "identities": [],
       "latency_s": 2.756,
       "media_id": 566,
-      "path": "2026/07/flaxen.ross22_95948996_190648219059287_3308158481555547200_n.jpg"
+      "path": "2026/07/flaxen.harbor22_95948996_190648219059287_3308158481555547200_n.jpg"
     },
     {
       "describe": {
@@ -2515,8 +2515,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Citrine Juniper holds a pink sign reading FREE KESTREL DIAMOND and #FREE THEM ALL in a bedroom.",
-        "alt_text_long": "Citrine Juniper stands in a dimly lit room, holding a pink sign with urgent handwritten text demanding the release of kestrel Diamond. Her expression is serious, the warm glow of the room highlighting her focused gaze. The background reveals a bed, a mirror, and a radiator, grounding the moment in a private space turned stage for advocacy.",
+        "alt_text_draft": "Citrine Juniper holds a pink sign reading FREE KESTREL BRAMBLE and #FREE THEM ALL in a bedroom.",
+        "alt_text_long": "Citrine Juniper stands in a dimly lit room, holding a pink sign with urgent handwritten text demanding the release of kestrel Bramble. Her expression is serious, the warm glow of the room highlighting her focused gaze. The background reveals a bed, a mirror, and a radiator, grounding the moment in a private space turned stage for advocacy.",
         "alt_text_title": "Citrine Juniper holding sign",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -2529,7 +2529,7 @@
           {
             "latency_s": 6.628,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Citrine Juniper holding sign\",\n  \"alt\": \"Citrine Juniper holds a pink sign reading FREE KESTREL DIAMOND and #FREE THEM ALL in a bedroom.\",\n  \"caption\": \"Citrine Juniper stands in a dimly lit room, holding a pink sign with urgent handwritten text demanding the release of kestrel Diamond. Her expression is serious, the warm glow of the room highlighting her focused gaze. The background reveals a bed, a mirror, and a radiator, grounding the moment in a private space turned stage for advocacy.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Citrine Juniper holding sign\",\n  \"alt\": \"Citrine Juniper holds a pink sign reading FREE KESTREL BRAMBLE and #FREE THEM ALL in a bedroom.\",\n  \"caption\": \"Citrine Juniper stands in a dimly lit room, holding a pink sign with urgent handwritten text demanding the release of kestrel Bramble. Her expression is serious, the warm glow of the room highlighting her focused gaze. The background reveals a bed, a mirror, and a radiator, grounding the moment in a private space turned stage for advocacy.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -2777,7 +2777,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "Slate Willow sticks her tongue out while Plumb Tanner smiles, both taking a selfie outdoors in a park with trees and people in the background.",
-        "alt_text_long": "Slate Willow and Plumb Tanner share a playful moment in a sunlit park, their laughter captured in a candid selfie. Maria, in a red turtleneck, sticks her tongue out with a mischievous grin, while Michelle beams beside her in a sheer black top. The background hums with life\u2014trees sway gently and distant figures stroll under a bright sky.",
+        "alt_text_long": "Slate Willow and Plumb Tanner share a playful moment in a sunlit park, their laughter captured in a candid selfie. Slate, in a red turtleneck, sticks her tongue out with a mischievous grin, while Plumb beams beside her in a sheer black top. The background hums with life\u2014trees sway gently and distant figures stroll under a bright sky.",
         "alt_text_title": "Slate Willow and Plumb Tanner",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -2790,7 +2790,7 @@
           {
             "latency_s": 3.968,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Slate Willow and Plumb Tanner\",\n  \"alt\": \"Slate Willow sticks her tongue out while Plumb Tanner smiles, both taking a selfie outdoors in a park with trees and people in the background.\",\n  \"caption\": \"Slate Willow and Plumb Tanner share a playful moment in a sunlit park, their laughter captured in a candid selfie. Maria, in a red turtleneck, sticks her tongue out with a mischievous grin, while Michelle beams beside her in a sheer black top. The background hums with life\u2014trees sway gently and distant figures stroll under a bright sky.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Slate Willow and Plumb Tanner\",\n  \"alt\": \"Slate Willow sticks her tongue out while Plumb Tanner smiles, both taking a selfie outdoors in a park with trees and people in the background.\",\n  \"caption\": \"Slate Willow and Plumb Tanner share a playful moment in a sunlit park, their laughter captured in a candid selfie. Slate, in a red turtleneck, sticks her tongue out with a mischievous grin, while Plumb beams beside her in a sheer black top. The background hums with life\u2014trees sway gently and distant figures stroll under a bright sky.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -2945,7 +2945,7 @@
       "identities": [],
       "latency_s": 3.644,
       "media_id": 549,
-      "path": "2026/07/Saffron_Hunter1.jpg"
+      "path": "2026/07/Saffron_Orchard1.jpg"
     },
     {
       "describe": {
@@ -4714,7 +4714,7 @@
       "identities": [],
       "latency_s": 16.961,
       "media_id": 488,
-      "path": "2026/07/hazel-mcleod40068305_934039216794174_3437820999154794496_n-scaled.jpg"
+      "path": "2026/07/hazel-cypress40068305_934039216794174_3437820999154794496_n-scaled.jpg"
     },
     {
       "describe": {
@@ -5149,7 +5149,7 @@
       "identities": [],
       "latency_s": 2.426,
       "media_id": 473,
-      "path": "2026/07/Emilie20-201.jpg"
+      "path": "2026/07/thistle20-201.jpg"
     },
     {
       "describe": {
@@ -5386,8 +5386,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "A person holds a spiral-bound notebook with a handwritten contract titled \"Holy Jolly Sister Christmas Contract\" between Coral A. quarry and Kandle M. quarry, listing humorous holiday rules and fines.",
-        "alt_text_long": "A handwritten Christmas contract titled \"Holy Jolly Sister Christmas Contract\" lies open in a spiral-bound notebook, detailing playful rules between Coral A. quarry and Kandle M. quarry. The document humorously outlines consequences for failing to stay positive during the holidays, including fines and a three-minute window to surrender to the Christmas spirit. The signed agreement, dated December 20, 2021, includes whimsical clauses like using the code words \"Grinch\" or \"3-2-1\" as reminders. A person in a red costume with a blue mask appears in the top-left corner of the image.",
+        "alt_text_draft": "A person holds a spiral-bound notebook with a handwritten contract titled \"Holy Jolly Sister Christmas Contract\" between Ochre Quarry and Tidal Quarry, listing humorous holiday rules and fines.",
+        "alt_text_long": "A handwritten Christmas contract titled \"Holy Jolly Sister Christmas Contract\" lies open in a spiral-bound notebook, detailing playful rules between Ochre Quarry and Tidal Quarry. The document humorously outlines consequences for failing to stay positive during the holidays, including fines and a three-minute window to surrender to the Christmas spirit. The signed agreement, dated December 20, 2021, includes whimsical clauses like using the code words \"Grinch\" or \"3-2-1\" as reminders. A person in a red costume with a blue mask appears in the top-left corner of the image.",
         "alt_text_title": "Christmas contract notebook",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -5395,12 +5395,12 @@
           {
             "latency_s": 3.737,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"top left corner\", \"appearance\": \"person wearing a red costume with a blue mask\"}], \"setting\": \"a spiral-bound notebook with handwritten text, held in someone's hand\", \"action\": \"a person holding a notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\"\", \"legible_text\": [\"kandleosborne\", \"@theunrealpewterhollow\", \"Holy Jolly Sister Christmas Contract\", \"Coral A. quarry professionally known as \\\"Cakes\\\", Coco, \\\"Hard Coral\\\" agree with Kandle M. quarry professionally known as \\\"K12\\\" to the following terms:\", \"Each Sister shall remain positive and jolly the entire holiday\", \"If one Sister fails to do so by other\", \"- Complaining\", \"- Fighting\", \"- Throwing a pity party\", \"- Insults not done in \\\"good fun\\\"\", \"The guilty sister will have to pay the better Sister a fine of:\", \"Coral to pay Kandle $100 USD (band an annual income)\", \"Kandle to pay Coral $20 CDN (based on a novel income)\", \"If a Sister finds herself slipping into a dark state, she has a window of 3 minutes to remove herself from the room or drop her B immediately and surrender to the Christmas spirit\", \"The family may use code word \\\"Grinch\\\" or \\\"3-2-1\\\" as a reminder.\", \"Signed Coral A. quarry signature\", \"Signed Kandle M. quarry signature\", \"Witness\", \"Date Dec 20 2021 Exp Dec\"], \"atmosphere\": \"playful and humorous\"}"
+            "raw": "{\"people\": [{\"position\": \"top left corner\", \"appearance\": \"person wearing a red costume with a blue mask\"}], \"setting\": \"a spiral-bound notebook with handwritten text, held in someone's hand\", \"action\": \"a person holding a notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\"\", \"legible_text\": [\"kandleosborne\", \"@theunrealpewterhollow\", \"Holy Jolly Sister Christmas Contract\", \"Ochre Quarry professionally known as \\\"Cakes\\\", Coco, \\\"Hard Pewter\\\" agree with Tidal Quarry professionally known as \\\"K12\\\" to the following terms:\", \"Each Sister shall remain positive and jolly the entire holiday\", \"If one Sister fails to do so by other\", \"- Complaining\", \"- Fighting\", \"- Throwing a pity party\", \"- Insults not done in \\\"good fun\\\"\", \"The guilty sister will have to pay the better Sister a fine of:\", \"Pewter to pay Kandle $100 USD (band an annual income)\", \"Kandle to pay Pewter $20 CDN (based on a novel income)\", \"If a Sister finds herself slipping into a dark state, she has a window of 3 minutes to remove herself from the room or drop her B immediately and surrender to the Christmas spirit\", \"The family may use code word \\\"Grinch\\\" or \\\"3-2-1\\\" as a reminder.\", \"Signed Ochre Quarry signature\", \"Signed Tidal Quarry signature\", \"Witness\", \"Date Dec 20 2021 Exp Dec\"], \"atmosphere\": \"playful and humorous\"}"
           },
           {
             "latency_s": 2.77,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Christmas contract notebook\",\n  \"alt\": \"A person holds a spiral-bound notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\" between Coral A. quarry and Kandle M. quarry, listing humorous holiday rules and fines.\",\n  \"caption\": \"A handwritten Christmas contract titled \\\"Holy Jolly Sister Christmas Contract\\\" lies open in a spiral-bound notebook, detailing playful rules between Coral A. quarry and Kandle M. quarry. The document humorously outlines consequences for failing to stay positive during the holidays, including fines and a three-minute window to surrender to the Christmas spirit. The signed agreement, dated December 20, 2021, includes whimsical clauses like using the code words \\\"Grinch\\\" or \\\"3-2-1\\\" as reminders. A person in a red costume with a blue mask appears in the top-left corner of the image.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Christmas contract notebook\",\n  \"alt\": \"A person holds a spiral-bound notebook with a handwritten contract titled \\\"Holy Jolly Sister Christmas Contract\\\" between Ochre Quarry and Tidal Quarry, listing humorous holiday rules and fines.\",\n  \"caption\": \"A handwritten Christmas contract titled \\\"Holy Jolly Sister Christmas Contract\\\" lies open in a spiral-bound notebook, detailing playful rules between Ochre Quarry and Tidal Quarry. The document humorously outlines consequences for failing to stay positive during the holidays, including fines and a three-minute window to surrender to the Christmas spirit. The signed agreement, dated December 20, 2021, includes whimsical clauses like using the code words \\\"Grinch\\\" or \\\"3-2-1\\\" as reminders. A person in a red costume with a blue mask appears in the top-left corner of the image.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -8607,7 +8607,7 @@
         "adapter": "bakeoff",
         "alt_text_draft": "Pewter Hollow feeds Tidal Quarry a spoonful of food in a kitchen, both wearing aprons and smiling.",
         "alt_text_long": "In a playful kitchen moment, Pewter Hollow feeds Tidal Quarry a spoonful of food. Both women wear aprons and share a lighthearted smile. The black-and-white image captures a joyful, intimate interaction between the two.",
-        "alt_text_title": "Coral feeding Tidal",
+        "alt_text_title": "Pewter feeding Tidal",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -8619,7 +8619,7 @@
           {
             "latency_s": 2.685,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Coral feeding Tidal\",\n  \"alt\": \"Pewter Hollow feeds Tidal Quarry a spoonful of food in a kitchen, both wearing aprons and smiling.\",\n  \"caption\": \"In a playful kitchen moment, Pewter Hollow feeds Tidal Quarry a spoonful of food. Both women wear aprons and share a lighthearted smile. The black-and-white image captures a joyful, intimate interaction between the two.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Pewter feeding Tidal\",\n  \"alt\": \"Pewter Hollow feeds Tidal Quarry a spoonful of food in a kitchen, both wearing aprons and smiling.\",\n  \"caption\": \"In a playful kitchen moment, Pewter Hollow feeds Tidal Quarry a spoonful of food. Both women wear aprons and share a lighthearted smile. The black-and-white image captures a joyful, intimate interaction between the two.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -9281,9 +9281,9 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "A student ID card for Sylvan Coppins shows a photo of a young woman with long brown hair and bangs on the left side of the card.",
-        "alt_text_long": "A student discount card from the Toronto Transit Commission features a photo of Sylvan Coppins, a student at Oakwood CI. The card is valid for the 08/09 school year and expires on 10/31/09. Icons at the bottom represent various transit services.",
-        "alt_text_title": "Student ID card for Sylvan Coppins",
+        "alt_text_draft": "A student ID card for Sylvan Veldrith shows a photo of a young woman with long brown hair and bangs on the left side of the card.",
+        "alt_text_long": "A student discount card from the Toronto Transit Commission features a photo of Sylvan Veldrith, a student. The card is valid for the 08/09 school year and expires on 10/31/09. Icons at the bottom represent various transit services.",
+        "alt_text_title": "Student ID card for Sylvan Veldrith",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -9295,7 +9295,7 @@
           {
             "latency_s": 1.427,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Student ID card for Sylvan Coppins\",\n  \"alt\": \"A student ID card for Sylvan Coppins shows a photo of a young woman with long brown hair and bangs on the left side of the card.\",\n  \"caption\": \"A student discount card from the Toronto Transit Commission features a photo of Sylvan Coppins, a student at Oakwood CI. The card is valid for the 08/09 school year and expires on 10/31/09. Icons at the bottom represent various transit services.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Student ID card for Sylvan Veldrith\",\n  \"alt\": \"A student ID card for Sylvan Veldrith shows a photo of a young woman with long brown hair and bangs on the left side of the card.\",\n  \"caption\": \"A student discount card from the Toronto Transit Commission features a photo of Sylvan Veldrith, a student. The card is valid for the 08/09 school year and expires on 10/31/09. Icons at the bottom represent various transit services.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -12442,8 +12442,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Fathom and Auburn Hollow eat food at an outdoor festival at dusk. kestrel holds a wrap while India eats from a paper container. A crowd of people is in the background.",
-        "alt_text_long": "At a lively outdoor festival at dusk, Muted Fathom and Auburn Hollow enjoy their food. kestrel holds a wrap while India eats from a paper container. The warm glow of the setting sun illuminates the crowd behind them.",
+        "alt_text_draft": "Muted Fathom and Auburn Hollow eat food at an outdoor festival at dusk. Kestrel holds a wrap while Auburn eats from a paper container. A crowd of people is in the background.",
+        "alt_text_long": "At a lively outdoor festival at dusk, Muted Fathom and Auburn Hollow enjoy their food. Kestrel holds a wrap while Auburn eats from a paper container. The warm glow of the setting sun illuminates the crowd behind them.",
         "alt_text_title": "Muted Fathom and Auburn Hollow eating",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -12456,7 +12456,7 @@
           {
             "latency_s": 4.264,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Muted Fathom and Auburn Hollow eating\",\n  \"alt\": \"Muted Fathom and Auburn Hollow eat food at an outdoor festival at dusk. kestrel holds a wrap while India eats from a paper container. A crowd of people is in the background.\",\n  \"caption\": \"At a lively outdoor festival at dusk, Muted Fathom and Auburn Hollow enjoy their food. kestrel holds a wrap while India eats from a paper container. The warm glow of the setting sun illuminates the crowd behind them.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Muted Fathom and Auburn Hollow eating\",\n  \"alt\": \"Muted Fathom and Auburn Hollow eat food at an outdoor festival at dusk. Kestrel holds a wrap while Auburn eats from a paper container. A crowd of people is in the background.\",\n  \"caption\": \"At a lively outdoor festival at dusk, Muted Fathom and Auburn Hollow enjoy their food. Kestrel holds a wrap while Auburn eats from a paper container. The warm glow of the setting sun illuminates the crowd behind them.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -13408,7 +13408,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Russet Ridgeway and a woman pose for a photo, Hillary holds a glass of white wine, both wear pearl necklaces, and the setting is indoors with a yellow cushion in the background.",
+        "alt_text_draft": "Russet Ridgeway and a woman pose for a photo, Russet holds a glass of white wine, both wear pearl necklaces, and the setting is indoors with a yellow cushion in the background.",
         "alt_text_long": "Russet Ridgeway and a friend share a joyful moment, their wide smiles capturing the warmth of a casual gathering. Both wear pearl necklaces, adding a touch of elegance to their relaxed outfits. The soft glow of the room highlights their laughter and the golden hue of the wine in the glass. A yellow cushion in the background suggests a cozy, intimate setting.",
         "alt_text_title": "Russet Ridgeway with friend",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
@@ -13422,7 +13422,7 @@
           {
             "latency_s": 2.132,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Russet Ridgeway with friend\",\n  \"alt\": \"Russet Ridgeway and a woman pose for a photo, Hillary holds a glass of white wine, both wear pearl necklaces, and the setting is indoors with a yellow cushion in the background.\",\n  \"caption\": \"Russet Ridgeway and a friend share a joyful moment, their wide smiles capturing the warmth of a casual gathering. Both wear pearl necklaces, adding a touch of elegance to their relaxed outfits. The soft glow of the room highlights their laughter and the golden hue of the wine in the glass. A yellow cushion in the background suggests a cozy, intimate setting.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Russet Ridgeway with friend\",\n  \"alt\": \"Russet Ridgeway and a woman pose for a photo, Russet holds a glass of white wine, both wear pearl necklaces, and the setting is indoors with a yellow cushion in the background.\",\n  \"caption\": \"Russet Ridgeway and a friend share a joyful moment, their wide smiles capturing the warmth of a casual gathering. Both wear pearl necklaces, adding a touch of elegance to their relaxed outfits. The soft glow of the room highlights their laughter and the golden hue of the wine in the glass. A yellow cushion in the background suggests a cozy, intimate setting.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"

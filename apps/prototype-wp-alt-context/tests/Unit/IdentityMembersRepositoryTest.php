@@ -184,7 +184,8 @@ class IdentityMembersRepositoryTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
-        $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
+        $this->assertStringNotContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
+        $this->assertStringContainsString('THEN p.name', $sql);
     }
 
     public function testListForMediaIdsScopesByTenantAndMediaIds(): void
@@ -206,7 +207,30 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertStringContainsString('attachment_id IN (55, 56)', $sql);
         $this->assertStringContainsString('tenant-media', $sql);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
-        $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
+        $this->assertStringNotContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
+        $this->assertStringContainsString('WHEN p.name IS NOT NULL AND p.name <> \'\' THEN p.name', $sql);
+        $this->assertStringContainsString("c.label LIKE 'cluster-%'", $sql);
+        $this->assertStringContainsString('ELSE NULL', $sql);
+    }
+
+    public function testListForMediaIdsDoesNotFallBackToRawHumanLabel(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'identity_uuid' => 'id-human',
+                'cluster_uuid' => 'cluster-human',
+                'attachment_id' => 6731,
+                'cluster_label' => null,
+            ],
+        ];
+
+        $this->repository->list_for_media_ids('tenant-media', [6731]);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringNotContainsString('COALESCE(p.name, c.label)', $sql);
+        $this->assertStringContainsString('THEN p.name', $sql);
+        $this->assertStringContainsString("WHEN c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%' THEN c.label", $sql);
     }
 
     public function testGetCuratedMembersForTenantIndexesRowsByIdentityUuid(): void

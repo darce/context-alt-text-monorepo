@@ -183,7 +183,7 @@
 - Candid Lantern: precision=null recall=0.000 (tp=0 fp=0 fn=6)
 - Opaline Tanner: precision=null recall=0.000 (tp=0 fp=0 fn=2)
 - Sylvan Beacon: precision=null recall=0.000 (tp=0 fp=0 fn=5)
-- Self: precision=null recall=0.000 (tp=0 fp=0 fn=9)
+- Indigo: precision=null recall=0.000 (tp=0 fp=0 fn=9)
 - Sylvan Ridgeway: precision=null recall=0.000 (tp=0 fp=0 fn=4)
 - Onyx Harbor: precision=null recall=0.000 (tp=0 fp=0 fn=5)
 - Verdant Beacon: precision=null recall=0.000 (tp=0 fp=0 fn=1)

@@ -873,8 +873,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches under glacier ice in a dark cave, wearing a white Black Diamond helmet with a headlamp, a black fur-hooded parka, and brown boots with orange crampons, holding a DSLR camera as she looks toward the camera, surrounded by glowing blue ice and wet rocks.",
-        "alt_text_long": "Slate Willow crouches under glacier ice in a dark cave. She wears a white Black Diamond helmet with a headlamp and a black fur-hooded parka. Her long brown hair spills over the hood as she looks toward the camera. She is crouched on wet rocks with a DSLR camera at her knee. Her brown boots have orange crampons attached. The surrounding ice glows blue in the dim light. Water droplets glisten on the rocks and her gear.",
+        "alt_text_draft": "Slate Willow crouches under glacier ice in a dark cave, wearing a white Black Bramble helmet with a headlamp, a black fur-hooded parka, and brown boots with orange crampons, holding a DSLR camera as she looks toward the camera, surrounded by glowing blue ice and wet rocks.",
+        "alt_text_long": "Slate Willow crouches under glacier ice in a dark cave. She wears a white Black Bramble helmet with a headlamp and a black fur-hooded parka. Her long brown hair spills over the hood as she looks toward the camera. She is crouched on wet rocks with a DSLR camera at her knee. Her brown boots have orange crampons attached. The surrounding ice glows blue in the dim light. Water droplets glisten on the rocks and her gear.",
         "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -882,12 +882,12 @@
           {
             "latency_s": 9.447,
             "pass": "caption",
-            "raw": "Slate Willow crouches under glacier ice in a dark cave. She wears a white Black Diamond helmet with a headlamp and a black fur-hooded parka. Her long brown hair spills over the hood as she looks toward the camera. She is crouched on wet rocks with a DSLR camera at her knee. Her brown boots have orange crampons attached. The surrounding ice glows blue in the dim light. Water droplets glisten on the rocks and her gear."
+            "raw": "Slate Willow crouches under glacier ice in a dark cave. She wears a white Black Bramble helmet with a headlamp and a black fur-hooded parka. Her long brown hair spills over the hood as she looks toward the camera. She is crouched on wet rocks with a DSLR camera at her knee. Her brown boots have orange crampons attached. The surrounding ice glows blue in the dim light. Water droplets glisten on the rocks and her gear."
           },
           {
             "latency_s": 0.935,
             "pass": "compress_short",
-            "raw": "Slate Willow crouches under glacier ice in a dark cave, wearing a white Black Diamond helmet with a headlamp, a black fur-hooded parka, and brown boots with orange crampons, holding a DSLR camera as she looks toward the camera, surrounded by glowing blue ice and wet rocks."
+            "raw": "Slate Willow crouches under glacier ice in a dark cave, wearing a white Black Bramble helmet with a headlamp, a black fur-hooded parka, and brown boots with orange crampons, holding a DSLR camera as she looks toward the camera, surrounded by glowing blue ice and wet rocks."
           }
         ],
         "prompt_variant": "v2"
@@ -1047,8 +1047,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Muted Yarrow and Slate Willow sit on a couch, Muted in a white lace bralette and gloves with pearls, Maria in a black corset with pink trim and a white feather boa, both wearing pearl necklaces, Muted with blonde hair smiling at the camera, Maria with dark hair sticking her tongue out, a red clock and framed photos on the wall behind them, a black pillow with white skulls beside them.",
-        "alt_text_long": "Muted Yarrow and Slate Willow sit closely on a couch. Muted wears a white lace bralette and long white lace gloves with pearls. Maria wears a black corset with pink trim and a white feather boa. Both women wear pearl necklaces and pose for the camera. Muted has blonde hair and looks at the camera with a slight smile. Maria has dark hair and sticks her tongue out playfully. A red clock and framed photos hang on the wall behind them. A black pillow with white skulls rests beside them on the couch.",
+        "alt_text_draft": "Muted Yarrow and Slate Willow sit on a couch, Muted in a white lace bralette and gloves with pearls, Slate in a black corset with pink trim and a white feather boa, both wearing pearl necklaces, Muted with blonde hair smiling at the camera, Slate with dark hair sticking her tongue out, a red clock and framed photos on the wall behind them, a black pillow with white skulls beside them.",
+        "alt_text_long": "Muted Yarrow and Slate Willow sit closely on a couch. Muted wears a white lace bralette and long white lace gloves with pearls. Slate wears a black corset with pink trim and a white feather boa. Both women wear pearl necklaces and pose for the camera. Muted has blonde hair and looks at the camera with a slight smile. Slate has dark hair and sticks her tongue out playfully. A red clock and framed photos hang on the wall behind them. A black pillow with white skulls rests beside them on the couch.",
         "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -1056,12 +1056,12 @@
           {
             "latency_s": 4.646,
             "pass": "caption",
-            "raw": "Muted Yarrow and Slate Willow sit closely on a couch. Muted wears a white lace bralette and long white lace gloves with pearls. Maria wears a black corset with pink trim and a white feather boa. Both women wear pearl necklaces and pose for the camera. Muted has blonde hair and looks at the camera with a slight smile. Maria has dark hair and sticks her tongue out playfully. A red clock and framed photos hang on the wall behind them. A black pillow with white skulls rests beside them on the couch."
+            "raw": "Muted Yarrow and Slate Willow sit closely on a couch. Muted wears a white lace bralette and long white lace gloves with pearls. Slate wears a black corset with pink trim and a white feather boa. Both women wear pearl necklaces and pose for the camera. Muted has blonde hair and looks at the camera with a slight smile. Slate has dark hair and sticks her tongue out playfully. A red clock and framed photos hang on the wall behind them. A black pillow with white skulls rests beside them on the couch."
           },
           {
             "latency_s": 1.029,
             "pass": "compress_short",
-            "raw": "Muted Yarrow and Slate Willow sit on a couch, Muted in a white lace bralette and gloves with pearls, Maria in a black corset with pink trim and a white feather boa, both wearing pearl necklaces, Muted with blonde hair smiling at the camera, Maria with dark hair sticking her tongue out, a red clock and framed photos on the wall behind them, a black pillow with white skulls beside them."
+            "raw": "Muted Yarrow and Slate Willow sit on a couch, Muted in a white lace bralette and gloves with pearls, Slate in a black corset with pink trim and a white feather boa, both wearing pearl necklaces, Muted with blonde hair smiling at the camera, Slate with dark hair sticking her tongue out, a red clock and framed photos on the wall behind them, a black pillow with white skulls beside them."
           }
         ],
         "prompt_variant": "v2"

@@ -813,7 +813,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches in a dark ice cave, wearing a white Black Diamond helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice.",
+        "alt_text_draft": "Slate Willow crouches in a dark ice cave, wearing a white Black Bramble helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -825,7 +825,7 @@
           {
             "latency_s": 9.417,
             "pass": "ground_weave",
-            "raw": "Slate Willow crouches in a dark ice cave, wearing a white Black Diamond helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice."
+            "raw": "Slate Willow crouches in a dark ice cave, wearing a white Black Bramble helmet with a headlamp and a fur-hooded parka. She looks toward the camera with a calm expression, her brown boots fitted with orange crampons resting on wet rocks. A DSLR camera hangs at her knee as she sits beside a wall of translucent blue ice."
           }
         ],
         "prompt_variant": "v2"

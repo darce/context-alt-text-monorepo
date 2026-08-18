@@ -53,6 +53,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 ROSTER = REPO / "benchmarks" / "manifests" / "corpus-manifest-v3.json"
+# Demo seed rows are public figures the corpus roster does not carry; the
+# scrub must leave their slugs alone the same way it leaves roster celebs alone.
+SEED_MANIFEST = REPO / "infra" / "oci" / "demo" / "seed" / "clustering-manifest.txt"
 PRIVATE = Path(os.environ.get("ACX_CORPUS_PRIVATE_DIR") or REPO / "benchmarks" / "private")
 ALIAS_MAP = PRIVATE / "priv1-alias-map.json"
 MINT_KEY = PRIVATE / "priv1-mint-key"
@@ -934,7 +937,11 @@ def _media_stem_pass(
         whole = match.group(0)
         head, _, filename = whole.rpartition("/")
         stem, dot, ext = filename.rpartition(".")
-        parts = re.split(r"([^A-Za-z0-9]+)", stem)
+        # Digits split too: upload stems glue a surname straight onto a
+        # numeric id (`hazel-<surname>40068305_...`), and a token that only
+        # exists fused to digits was invisible to the index while the given
+        # name beside it had already been aliased.
+        parts = re.split(r"([^A-Za-z]+)", stem)
         votes: dict[str, int] = {}
         width: dict[str, int] = {}
         for part in parts:
@@ -1141,7 +1148,27 @@ def _nonpersonal_identities() -> tuple[dict, ...]:
     Cached because `apply` rewrites the roster as it goes, and the set of people
     who are off limits must be the one read before the first byte moved.
     """
-    return tuple(i for i in json.loads(_read(ROSTER))["identities"] if i.get("bucket") != "personal")
+    roster = tuple(i for i in json.loads(_read(ROSTER))["identities"] if i.get("bucket") != "personal")
+    return roster + _seed_identities()
+
+
+def _seed_identities() -> tuple[dict, ...]:
+    """Public figures listed by the demo seed manifest, as roster-shaped identities.
+
+    The seed set is not a subset of the corpus roster, and a personal subject
+    who shares a given name or surname with one of these people had that token
+    rewritten inside the seed slug (`<first>_<last>_<n>.jpg`) while the display
+    name column beside it kept naming the celebrity. Deriving identities from
+    the manifest gives `_protected_literals` the slug and `_nonpersonal_tokens`
+    the bare tokens; a missing manifest protects nobody and says so.
+    """
+    out = []
+    for line in _read(SEED_MANIFEST).splitlines():
+        slug = line.split()[0] if line.strip() else ""
+        if not slug or "_" not in slug:
+            continue
+        out.append({"bucket": "seed", "slug": slug, "name": " ".join(t.title() for t in slug.split("_"))})
+    return tuple(out)
 
 
 def _protected_literals(identities=None) -> list[str]:
@@ -1186,6 +1213,77 @@ def _nonpersonal_tokens(identities=None) -> set[str]:
     """
     src = identities if identities is not None else _nonpersonal_identities()
     return {t.lower() for i in src for t in re.split(r"[^A-Za-z]+", i.get("name", "")) if len(t) >= 4}
+
+
+_SENTENCE_SPLIT_RX = re.compile(r"(?<=[.!?])\s+|\n")
+
+
+def _comention_words(mapping: dict, protected_tokens: set[str]) -> tuple[dict[str, str], set[str]]:
+    """Given tokens the bare pass declines, resolvable when an alias stands nearby.
+
+    `_given_name_regex` leaves a dictionary-word given name (`Grace`, `Hope`)
+    or a celebrity-shared one alone because, on its own, nothing says whether
+    the word is a person. A caption that has already named `Kestrel Marsh` and
+    goes on `... while Faith eats from a paper container` is not on its own:
+    the aliased co-subject is the context, and the bare word beside it is the
+    real given name of the other person in the frame. Returns
+    token -> replacement for tokens carried by one identity (or the shared
+    family word), and the set of alias words whose capitalised presence in
+    the same or the previous sentence licenses the rewrite.
+    """
+    words, _digest, _path = _load_wordlist()
+    by_token: dict[str, set[str]] = {}
+    for entry in mapping["entries"]:
+        real, alias = entry["real_name"].split(), entry["alias"].split()
+        for i, token in enumerate(real):
+            if len(token) < 4 or i >= len(alias):
+                continue
+            if token.lower() in words or token.lower() in protected_tokens:
+                by_token.setdefault(token.lower(), set()).add(alias[i])
+    resolved = {t: next(iter(a)) for t, a in by_token.items() if len(a) == 1}
+    resolved.update(_family_words(by_token))
+    anchors = {w for entry in mapping["entries"] for w in entry["alias"].split()}
+    return resolved, anchors
+
+
+def _comention_pass(text: str, resolved: dict[str, str], anchors: set[str], count_only: bool = False) -> tuple[str, int]:
+    """Rewrite a declined given token when an alias word is in reach.
+
+    Reach is the current sentence or the one before it. Only a capitalised
+    token qualifies -- lower-case `grace` in running prose is the noun -- and
+    the licence is a capitalised alias word, so an ordinary `current` or
+    `hollow` does not vouch for anything. Same function under `residue`, so
+    `verify` counts exactly what `apply` would rewrite (CARD-11).
+    """
+    if not resolved or not anchors:
+        return text, 0
+    tok_rx = re.compile(NBL + r"(" + "|".join(re.escape(t) for t in sorted(resolved, key=len, reverse=True)) + r")" + NBR, re.IGNORECASE)
+    anchor_rx = re.compile(NBL + r"(?:" + "|".join(re.escape(a) for a in sorted(anchors, key=len, reverse=True)) + r")" + NBR)
+    n = 0
+    out: list[str] = []
+    prev_licensed = False
+    pos = 0
+    for m in list(_SENTENCE_SPLIT_RX.finditer(text)) + [None]:
+        end = len(text) if m is None else m.start()
+        seg = text[pos:end]
+        licensed = anchor_rx.search(seg) is not None
+        if licensed or prev_licensed:
+
+            def _repl(mm: re.Match) -> str:
+                nonlocal n
+                tok = mm.group(1)
+                if not tok[0].isupper() or _inside_hex_run(mm.string, mm.start(), mm.end()):
+                    return tok
+                n += 1
+                return tok if count_only else _preserve_case(resolved[tok.lower()], tok)
+
+            seg = tok_rx.sub(_repl, seg)
+        out.append(seg)
+        if m is not None:
+            out.append(m.group(0))
+            pos = m.end()
+        prev_licensed = licensed
+    return "".join(out), n
 
 
 def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -> tuple[re.Pattern | None, dict, list[str]]:
@@ -1408,6 +1506,7 @@ class _Passes:
         self.given_rx, self.given, self.given_deferred = _given_name_regex(mapping, _nonpersonal_tokens(idents))
         self.concat_rx, self.concat, self.concat_dropped = _concatenated_regex(mapping)
         self.adjacent_rx, self.adjacent, self.adjacent_dropped = _adjacent_alias_regex(mapping)
+        self.comention, self.comention_anchors = _comention_words(mapping, _nonpersonal_tokens(idents))
         lits = _protected_literals(idents)
         self.protected = lits
         self.protect_rx = re.compile("|".join(re.escape(s) for s in lits)) if lits else None
@@ -1436,7 +1535,7 @@ class _Passes:
         return out
 
     def rewrite(self, text: str, suffix: str) -> tuple[str, dict[str, int], set[str]]:
-        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0}
+        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0, "comention": 0}
         text, held = self._mask(text)
 
         # Order is load-bearing, most precise pass first. A whole-string JSON
@@ -1547,6 +1646,12 @@ class _Passes:
 
             text = self.adjacent_rx.sub(_adjacent_repl, text)
 
+        # After adjacent: a declined given token still standing in a sentence
+        # that names an alias is the other person in the frame (D-04).
+        text, n_co = _comention_pass(text, self.comention, self.comention_anchors)
+        if n_co:
+            counts["comention"] += n_co
+
         return self._unmask(text, held), counts, unresolved
 
     def rewrite_path(self, rel: str) -> str:
@@ -1600,6 +1705,9 @@ class _Passes:
             found["concat"] = n
         if self.adjacent_rx is not None and (n := visible(self.adjacent_rx)):
             found["adjacent"] = n
+        _same, n_co = _comention_pass(text, self.comention, self.comention_anchors, count_only=True)
+        if n_co:
+            found["comention"] = n_co
         return found
 
 
@@ -2154,7 +2262,7 @@ def cmd_apply(args) -> int:
     out_of_scope: list[tuple[str, dict[str, int]]] = []
     unscannable: list[tuple[str, str]] = []
     symlink_residue: list[tuple[str, dict[str, int]]] = []
-    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0}
+    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0, "comention": 0}
     all_unresolved: set[str] = set()
 
     for path, in_scope in files:

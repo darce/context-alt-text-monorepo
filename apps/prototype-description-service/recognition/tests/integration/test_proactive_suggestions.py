@@ -818,7 +818,7 @@ async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(
 
 @pytest.mark.asyncio
 async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_clusters(db_session, tenant) -> None:
-    """Later-batch unlabeled cards should infer known labels (Laura/Sable/Jen-style), including low confidence."""
+    """Later-batch unlabeled cards should infer known labels (Sable/Jen-style), including low confidence."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     member_repo = cluster_service.assignment_writer.member_repository

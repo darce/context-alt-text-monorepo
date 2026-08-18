@@ -3,7 +3,7 @@ cate_blanchett 5
 emma_watson 5
 rihanna 5
 audrey_hepburn 5
-sylvan_johansson 5
+scarlett_johansson 5
 faye_dunaway 5
 keanu_reeves 5
 christian_bale 5

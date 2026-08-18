@@ -87,8 +87,8 @@ Recorded so a hash change forces a re-derivation pass, not a merge. `golden150-d
 | Path | sha256 |
 | --- | --- |
 | `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` | `a47d8d4fc9babebdc5dc7402dc0fbc1f32f6d0a722e3aed9bca42fba30d8f7c2` |
-| `benchmarks/manifests/corpus-manifest-v3.json` | `252fb88c0cb3099e515c2454fe9fb62f206d443a6092509351e435f29c87eaaf` |
-| `benchmarks/manifests/golden150-draft-20260723.json` | `95fe759ef1fadc3a9f4a66f94b5c1b4cdedf8f362ca90d5df646d8a87ab5c3b6` |
+| `benchmarks/manifests/corpus-manifest-v3.json` | `fbd9d5b7ae546b6f364b8e1dcdd07f9c6ece0411034905636886446919b5cd9d` |
+| `benchmarks/manifests/golden150-draft-20260723.json` | `0dbc909e900ea6a50665c2a64fae6003a237cba9062e6860dc4dd3ebd531a73f` |
 
 ## corpus-manifest-v3r freeze (Slice 1)
 
@@ -98,8 +98,8 @@ Per **[AUDIT-08]**: any later interval or claim that consumes v3r is conditional
 
 | Path | sha256 | Role |
 | --- | --- | --- |
-| `benchmarks/manifests/corpus-manifest-v3.json` | `252fb88c0cb3099e515c2454fe9fb62f206d443a6092509351e435f29c87eaaf` | measurement source (unchanged) |
-| `benchmarks/manifests/corpus-manifest-v3r-20260814.json` | `45a76c367ab3cf44418e304f9d6743ab5e2c08232f9708c7ec9197949ab14c16` | Slice 1 remediated freeze |
+| `benchmarks/manifests/corpus-manifest-v3.json` | `fbd9d5b7ae546b6f364b8e1dcdd07f9c6ece0411034905636886446919b5cd9d` | measurement source (unchanged) |
+| `benchmarks/manifests/corpus-manifest-v3r-20260814.json` | `8959ac0b54dfea90849a91e9b6331d742f1f27dc4d30ef0aa14d1667b645f396` | Slice 1 remediated freeze |
 
 Identity-appearance counts shift by the 8 dropped claims in every v3r consumer: identities **137 → 130** (seven identities had no remaining appearance; Audrey Hepburn remains via media 16), unlabeled images **108 → 116**, `flags.identity_from_filename_only` **8 → 0**. Image entries and boxes were not deleted.
 

@@ -843,20 +843,20 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Slate Willow crouches under glacier ice, wearing a white Black Diamond helmet with a headlamp, a dark fur-hooded parka, and crampon-fitted boots, looking toward the camera with a focused expression as her gloved hand rests on a wet rock, a DSLR camera hanging at her knee, surrounded by smooth, dark ice with striations illuminated by her headlamp.",
-        "alt_text_long": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Diamond helmet with a headlamp. Her fur-hooded parka is dark, and she has crampon-fitted boots. She looks toward the camera with a focused expression. Her gloved hand rests on a wet rock. The cave walls are smooth, dark ice with visible striations. A DSLR camera hangs at her knee. The lighting is dim, coming from her headlamp.",
+        "alt_text_draft": "Slate Willow crouches under glacier ice, wearing a white Black Bramble helmet with a headlamp, a dark fur-hooded parka, and crampon-fitted boots, looking toward the camera with a focused expression as her gloved hand rests on a wet rock, a DSLR camera hanging at her knee, surrounded by smooth, dark ice with striations illuminated by her headlamp.",
+        "alt_text_long": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Bramble helmet with a headlamp. Her fur-hooded parka is dark, and she has crampon-fitted boots. She looks toward the camera with a focused expression. Her gloved hand rests on a wet rock. The cave walls are smooth, dark ice with visible striations. A DSLR camera hangs at her knee. The lighting is dim, coming from her headlamp.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
           {
             "latency_s": 9.375,
             "pass": "caption",
-            "raw": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Diamond helmet with a headlamp. Her fur-hooded parka is dark, and she has crampon-fitted boots. She looks toward the camera with a focused expression. Her gloved hand rests on a wet rock. The cave walls are smooth, dark ice with visible striations. A DSLR camera hangs at her knee. The lighting is dim, coming from her headlamp."
+            "raw": "Slate Willow crouches under glacier ice with a camera. She wears a white Black Bramble helmet with a headlamp. Her fur-hooded parka is dark, and she has crampon-fitted boots. She looks toward the camera with a focused expression. Her gloved hand rests on a wet rock. The cave walls are smooth, dark ice with visible striations. A DSLR camera hangs at her knee. The lighting is dim, coming from her headlamp."
           },
           {
             "latency_s": 1.082,
             "pass": "compress_short",
-            "raw": "Slate Willow crouches under glacier ice, wearing a white Black Diamond helmet with a headlamp, a dark fur-hooded parka, and crampon-fitted boots, looking toward the camera with a focused expression as her gloved hand rests on a wet rock, a DSLR camera hanging at her knee, surrounded by smooth, dark ice with striations illuminated by her headlamp."
+            "raw": "Slate Willow crouches under glacier ice, wearing a white Black Bramble helmet with a headlamp, a dark fur-hooded parka, and crampon-fitted boots, looking toward the camera with a focused expression as her gloved hand rests on a wet rock, a DSLR camera hanging at her knee, surrounded by smooth, dark ice with striations illuminated by her headlamp."
           }
         ],
         "prompt_variant": "v2"

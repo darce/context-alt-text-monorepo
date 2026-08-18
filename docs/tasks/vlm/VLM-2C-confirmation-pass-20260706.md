@@ -21,7 +21,7 @@ Visual pass performed by agent (Claude Fable 5) against `mock_entities/` roster 
 | 29 | slate-party.jpg | 3 / 1 | Foreground Maria eating cake; background couple (man in beanie, red-haired woman). Phone-screen image of Maria correctly excluded as depicted. Delta 2 genuine strangers. |
 | 35 | rrw-mirror.jpg | 2 / 0 | One woman + her mirror reflection (reflection counted per rule). She matches no roster crop (dark-haired; not Muted Yarrow despite `rrw-` filename) → both faces non-roster. All-stranger scene. |
 | 37 | muted-group-party.jpg | 6 / 1 | Six party faces; one blonde consistent with Muted Yarrow crop. Remaining five match no roster crop. Delta 5 genuine strangers. |
-| 38 | muted-party.jpg | 2 / 1 | Two women on a couch: blonde matches Muted Yarrow crop (long blonde hair, brown eyes); dark-haired woman matches no roster crop (checked against Maria, Auburn, Cristina, Quiet — all clearly different). Wall photos/posters excluded as depicted. Delta 1 genuine stranger. |
+| 38 | muted-party.jpg | 2 / 1 | Two women on a couch: blonde matches Muted Yarrow crop (long blonde hair, brown eyes); dark-haired woman matches no roster crop (checked against Slate, Auburn, Tidal, Quiet — all clearly different). Wall photos/posters excluded as depicted. Delta 1 genuine stranger. |
 
 No delta is an unlabeled roster member or a depicted face; all six sit on `recognition_enabled: true` scenes. No `face_count` was changed by this pass.
 

@@ -221,7 +221,7 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame([], $GLOBALS['__ac_error_log']);
     }
 
-    public function testMapClusterListLogsWhenObservedBelowPreviewLimit(): void
+    public function testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit(): void
     {
         $GLOBALS['__ac_error_log'] = [];
 
@@ -247,6 +247,85 @@ class ClusterResponseMapperTest extends TestCase
         $log = \implode("\n", $GLOBALS['__ac_error_log']);
         $this->assertStringContainsString('cluster-shortfall', $log);
         $this->assertStringContainsString('projected=9 observed=2', $log);
+    }
+
+    /**
+     * R1-02: upward drift is also SoR. projected=2, observed=4, not a cap-hit
+     * truncation (projected is not greater than observed) → identity_count 4.
+     */
+    public function testMapClusterListReturnsObservedCountWhenObservedExceedsProjected(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-upward' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-upward',
+                    'identity_count' => 2,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertGreaterThanOrEqual(
+            count($payload[0]['sample_identities']),
+            $payload[0]['identity_count']
+        );
+        $this->assertSame(4, count($payload[0]['member_ids']));
+        $this->assertContains('cluster-upward', $this->mapper->requested_repair_cluster_ids());
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('projected=2 observed=4', $log);
+    }
+
+    /**
+     * R1-02: top-unlabeled must reconcile observed > projected the same way.
+     */
+    public function testMapTopUnlabeledReturnsObservedCountWhenObservedExceedsProjected(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-upward-top',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-upward-top' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertGreaterThanOrEqual(
+            count($payload[0]['representatives']),
+            $payload[0]['identity_count'],
+            'identity_count must be >= count(representatives)'
+        );
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-upward-top', $this->mapper->requested_repair_cluster_ids());
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('projected=2 observed=4', $log);
     }
 
     /**

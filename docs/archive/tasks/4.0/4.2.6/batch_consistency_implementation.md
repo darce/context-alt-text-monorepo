@@ -144,7 +144,7 @@ async def test_graph_discovery_matches_via_anchor_injection() -> None:
 
 1. **Reset DB**: Start fresh.
 2. **Batch 1 (50 images)**: Process and verify clusters.
-   - Example: `Ryann Wiseman` -> Cluster A (frontal reps).
+   - Example: `Muted Yarrow` -> Cluster A (frontal reps).
 3. **Batch 2 (60 images)**: Process remaining 106 images (including difficult angles).
    - Without Fix: `RepresentativeDiscovery` fails (sim < 0.85). `GraphDiscovery` creates new Cluster B.
    - With Fix: `GraphDiscovery` includes Cluster A reps. CW links `Profile Face` <-> `Frontal Rep`.

@@ -45,7 +45,7 @@ Timeout expectations:
   "payload": {
     "cluster_uuid": "d290f1ee-6c54-4b01-90e6-d701748f0851",
     "person_uuid": "a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
-    "person_name": "Tory Guzman"
+    "person_name": "Flaxen Yarrow"
   }
 }
 ```

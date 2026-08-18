@@ -276,7 +276,7 @@ async def test_get_top_unlabeled_excludes_clusters_with_accepted_member_suggesti
         IdentityCluster(
             id=None,
             tenant_id=tenant_id,
-            label="Maria Correonero",
+            label="Slate Willow",
             is_labeled=True,
             identity_count=10,
             created_at=datetime.now(tz=UTC),

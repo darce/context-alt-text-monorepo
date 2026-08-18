@@ -35,7 +35,7 @@ sequenceDiagram
 
     rect rgb(230, 255, 230)
     Note over User,Repo: Issue 2: Live Similarity on Curation
-    User->>UI: clicks "Move to: Talvi"
+    User->>UI: clicks "Move to: Sable"
     UI->>API: POST /clusters/reassign
     API->>Curation: assign_outlier_to_cluster()
     Curation->>Repo: get target cluster representatives

@@ -3,8 +3,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -16,7 +16,7 @@
           {
             "latency_s": 8.894,
             "pass": "ground_weave",
-            "raw": "Maria Correonero crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls."
+            "raw": "Slate Willow crouches inside a blue ice cave, looking toward the camera. She wears a white helmet with a headlamp, a black winter jacket with a fur-lined hood, and brown boots with orange crampons. Her long brown hair falls over her shoulders as she crouches on wet, rocky ground beneath dark, textured ice walls."
           }
         ],
         "prompt_variant": "v2"
@@ -31,8 +31,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Bea Burke takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower is visible in the background.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Hollow Pennant takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower is visible in the background.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -44,7 +44,7 @@
           {
             "latency_s": 2.79,
             "pass": "ground_weave",
-            "raw": "Bea Burke takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower is visible in the background."
+            "raw": "Hollow Pennant takes a mirror selfie in a bathroom, wearing a rhinestone \"Happy Birthday\" tiara and a teal crop top. She sticks her tongue out with wide eyes, making a playful face. Her long blonde hair falls over her shoulders, and she holds a glittery phone case in her hand. A white towel hangs on a rack behind her, and a shower is visible in the background."
           }
         ],
         "prompt_variant": "v2"
@@ -54,13 +54,13 @@
       "identities": [],
       "latency_s": 5.701,
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver stands on a rocky shore with her eyes closed, smiling as wind blows her hair across her face. She wears a black hooded jacket and a white running vest, her hood pulled up against the elements. Behind her, a pale lagoon stretches toward snow-dusted hills under a light blue sky. The scene feels calm and serene, with the wind shaping the moment.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom stands on a rocky shore with her eyes closed, smiling as wind blows her hair across her face. She wears a black hooded jacket and a white running vest, her hood pulled up against the elements. Behind her, a pale lagoon stretches toward snow-dusted hills under a light blue sky. The scene feels calm and serene, with the wind shaping the moment.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -72,7 +72,7 @@
           {
             "latency_s": 2.671,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver stands on a rocky shore with her eyes closed, smiling as wind blows her hair across her face. She wears a black hooded jacket and a white running vest, her hood pulled up against the elements. Behind her, a pale lagoon stretches toward snow-dusted hills under a light blue sky. The scene feels calm and serene, with the wind shaping the moment."
+            "raw": "Russet Fathom stands on a rocky shore with her eyes closed, smiling as wind blows her hair across her face. She wears a black hooded jacket and a white running vest, her hood pulled up against the elements. Behind her, a pale lagoon stretches toward snow-dusted hills under a light blue sky. The scene feels calm and serene, with the wind shaping the moment."
           }
         ],
         "prompt_variant": "v2"
@@ -87,8 +87,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The dimly lit bar behind her holds shelves of bottles and taps. Her right hand rests on the counter, and she wears a ring on her finger.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The dimly lit bar behind her holds shelves of bottles and taps. Her right hand rests on the counter, and she wears a ring on her finger.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -100,7 +100,7 @@
           {
             "latency_s": 8.404,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The dimly lit bar behind her holds shelves of bottles and taps. Her right hand rests on the counter, and she wears a ring on her finger."
+            "raw": "Russet Fathom leans on a wooden bar counter, looking at the camera. She wears a light-colored t-shirt with a dark graphic and has long brown hair. The dimly lit bar behind her holds shelves of bottles and taps. Her right hand rests on the counter, and she wears a ring on her finger."
           }
         ],
         "prompt_variant": "v2"
@@ -115,8 +115,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Erika Hansen Miller stands to the right, holding a phone and wearing a light-colored headband. Their reflections show other patrons in the background, including a person in a red shirt and another in a dark shirt, all under warm, dim lighting. The scene captures a casual, social moment in a bar.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Russet Fathom smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Muted Current stands to the right, holding a phone and wearing a light-colored headband. Their reflections show other patrons in the background, including a person in a red shirt and another in a dark shirt, all under warm, dim lighting. The scene captures a casual, social moment in a bar.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -128,7 +128,7 @@
           {
             "latency_s": 8.375,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Erika Hansen Miller stands to the right, holding a phone and wearing a light-colored headband. Their reflections show other patrons in the background, including a person in a red shirt and another in a dark shirt, all under warm, dim lighting. The scene captures a casual, social moment in a bar."
+            "raw": "Russet Fathom smiles widely in a mirror selfie, her long brown hair falling over her shoulders. Muted Current stands to the right, holding a phone and wearing a light-colored headband. Their reflections show other patrons in the background, including a person in a red shirt and another in a dark shirt, all under warm, dim lighting. The scene captures a casual, social moment in a bar."
           }
         ],
         "prompt_variant": "v2"
@@ -138,13 +138,13 @@
       "identities": [],
       "latency_s": 17.312,
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She holds the stems with one hand, her fingers reaching toward the camera. Her expression is playful and intimate, with one eye visible through the blooms.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She holds the stems with one hand, her fingers reaching toward the camera. Her expression is playful and intimate, with one eye visible through the blooms.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -156,7 +156,7 @@
           {
             "latency_s": 2.555,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She holds the stems with one hand, her fingers reaching toward the camera. Her expression is playful and intimate, with one eye visible through the blooms."
+            "raw": "Russet Fathom peeks through a bouquet of flowers, her face partially hidden by pink roses, white alstroemeria, and blue delphiniums. She holds the stems with one hand, her fingers reaching toward the camera. Her expression is playful and intimate, with one eye visible through the blooms."
           }
         ],
         "prompt_variant": "v2"
@@ -171,8 +171,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -184,7 +184,7 @@
           {
             "latency_s": 2.448,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair."
+            "raw": "Russet Fathom looks at the camera with long brown hair blowing across her face. She wears a yellow sweater over a pink shirt and a denim jacket. The sky behind her is a clear, deep blue. Sunlight illuminates her face and hair."
           }
         ],
         "prompt_variant": "v2"
@@ -199,8 +199,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -212,7 +212,7 @@
           {
             "latency_s": 5.385,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose."
+            "raw": "Russet Fathom holds a black rangefinder camera to her eye. She wears a red ribbed tank top over a blue bra, a gold watch, and a necklace with a pendant. Her brown hair is pulled back in a bun. She looks intently through the camera lens in a focused pose."
           }
         ],
         "prompt_variant": "v2"
@@ -227,8 +227,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -240,7 +240,7 @@
           {
             "latency_s": 4.796,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background."
+            "raw": "Russet Fathom holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red bra strap visible. Her expression is focused as she takes a mirror selfie in front of a white wall. A bookshelf is blurred in the background."
           }
         ],
         "prompt_variant": "v2"
@@ -255,8 +255,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver looks down in a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls loosely over her shoulder.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom looks down in a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls loosely over her shoulder.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -268,7 +268,7 @@
           {
             "latency_s": 2.069,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver looks down in a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls loosely over her shoulder."
+            "raw": "Russet Fathom looks down in a contemplative expression. She wears a blue shirt under intense purple-violet lighting. Her long hair falls loosely over her shoulder."
           }
         ],
         "prompt_variant": "v2"
@@ -283,8 +283,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -296,7 +296,7 @@
           {
             "latency_s": 4.584,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky."
+            "raw": "Russet Fathom runs mid-stride across a finish line in a winter race. She wears a teal beanie, sunglasses, a black neck gaiter, and a green long-sleeve shirt with matching leggings. A magenta layer is tied around her waist and a race bib numbered 1690 is pinned to her leg. Spectators behind a barrier watch as she crosses the pavement under a clear sky."
           }
         ],
         "prompt_variant": "v2"
@@ -311,8 +311,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused during early morning or late evening.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused during early morning or late evening.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -324,7 +324,7 @@
           {
             "latency_s": 1.726,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused during early morning or late evening."
+            "raw": "Russet Fathom runs on a paved road beside a rocky shoreline. She wears a pink cap, mirrored sunglasses, a green and black tank top, black shorts, and a white running vest with bib number 960. A man in a black cap and white pullover runs beside her with bib number 967. The scene is active and focused during early morning or late evening."
           }
         ],
         "prompt_variant": "v2"
@@ -339,8 +339,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nThe sun shines brightly behind her, creating lens flares against a clear blue sky.  \nA tall building is visible in the background through the tree branches.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nThe sun shines brightly behind her, creating lens flares against a clear blue sky.  \nA tall building is visible in the background through the tree branches.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -352,7 +352,7 @@
           {
             "latency_s": 2.837,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nThe sun shines brightly behind her, creating lens flares against a clear blue sky.  \nA tall building is visible in the background through the tree branches."
+            "raw": "Russet Fathom takes a selfie under a canopy of pink magnolia blossoms.  \nShe wears a grey cap, rose-tinted sunglasses, and a black jacket with \"BANDIT RUN\" on the collar.  \nThe sun shines brightly behind her, creating lens flares against a clear blue sky.  \nA tall building is visible in the background through the tree branches."
           }
         ],
         "prompt_variant": "v2"
@@ -367,8 +367,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a rooftop terrace.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with distant city towers on the horizon.  \nThe sun shines brightly behind the tree, casting a warm glow on her face.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a rooftop terrace.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with distant city towers on the horizon.  \nThe sun shines brightly behind the tree, casting a warm glow on her face.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -380,7 +380,7 @@
           {
             "latency_s": 2.661,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a rooftop terrace.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with distant city towers on the horizon.  \nThe sun shines brightly behind the tree, casting a warm glow on her face."
+            "raw": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a rooftop terrace.  \nShe touches her face with her hand, her long brown hair blowing in the wind.  \nA small tree stands beside her under a clear blue sky, with distant city towers on the horizon.  \nThe sun shines brightly behind the tree, casting a warm glow on her face."
           }
         ],
         "prompt_variant": "v2"
@@ -395,8 +395,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -408,7 +408,7 @@
           {
             "latency_s": 4.396,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere."
+            "raw": "Russet Fathom walks across a city street in a grainy black-and-white photo. She wears a long-sleeved top and flared pants, carrying a large shoulder bag and a watch. Her expression is neutral as she moves past a truck with beverage cans on its side. The scene has a gritty, hazy urban atmosphere."
           }
         ],
         "prompt_variant": "v2"
@@ -423,8 +423,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting, seen through a reflective surface with bokeh lights. The atmosphere is dreamy and vibrant, with colorful light reflections surrounding her.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Russet Fathom holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting, seen through a reflective surface with bokeh lights. The atmosphere is dreamy and vibrant, with colorful light reflections surrounding her.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -436,7 +436,7 @@
           {
             "latency_s": 0.914,
             "pass": "ground_weave",
-            "raw": "Caitlin Weaver holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting, seen through a reflective surface with bokeh lights. The atmosphere is dreamy and vibrant, with colorful light reflections surrounding her."
+            "raw": "Russet Fathom holds a camera in a dimly lit concert space. Her face appears blurred and glowing under pink stage lighting, seen through a reflective surface with bokeh lights. The atmosphere is dreamy and vibrant, with colorful light reflections surrounding her."
           }
         ],
         "prompt_variant": "v2"
@@ -451,8 +451,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Cristina Quintana sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, Kirstie Mccarrel wears a black and white checkered dress and holds a cup, her dark hair falling over her shoulder. The three sit together in front of a gray cinder block wall with a painted mural, holding plastic cups in a dimly lit, moody setting.",
-        "injected_distractor": "Kirstie Mccarrel",
+        "alt_text_draft": "Tidal Harbor sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, Auburn Current wears a black and white checkered dress and holds a cup, her dark hair falling over her shoulder. The three sit together in front of a gray cinder block wall with a painted mural, holding plastic cups in a dimly lit, moody setting.",
+        "injected_distractor": "Auburn Current",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -464,7 +464,7 @@
           {
             "latency_s": 2.102,
             "pass": "ground_weave",
-            "raw": "Cristina Quintana sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, Kirstie Mccarrel wears a black and white checkered dress and holds a cup, her dark hair falling over her shoulder. The three sit together in front of a gray cinder block wall with a painted mural, holding plastic cups in a dimly lit, moody setting."
+            "raw": "Tidal Harbor sits on the left with dark hair in a high bun, wearing a green bikini top and a pink mesh cover-up, her face painted with tear-like makeup and tattoos visible on her chest and arm. In the center, a person wears a white fluffy sheep hat with pink ears, a pink long-sleeved crop top, and holds a plastic cup. On the right, Auburn Current wears a black and white checkered dress and holds a cup, her dark hair falling over her shoulder. The three sit together in front of a gray cinder block wall with a painted mural, holding plastic cups in a dimly lit, moody setting."
           }
         ],
         "prompt_variant": "v2"
@@ -474,13 +474,13 @@
       "identities": [],
       "latency_s": 4.354,
       "media_id": 17,
-      "path": "mock_images/cristina-1.jpg"
+      "path": "mock_images/tidal-1.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ellyn Heald poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Gilded Cypress poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -492,7 +492,7 @@
           {
             "latency_s": 4.194,
             "pass": "ground_weave",
-            "raw": "Ellyn Heald poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her."
+            "raw": "Gilded Cypress poses in a kitchen with gold leaf on her face and chest. She wears red lipstick and gold drop earrings, her brown hair in an updo. White cabinets and a refrigerator are visible behind her."
           }
         ],
         "prompt_variant": "v2"
@@ -507,8 +507,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Kirstie Mccarrel and Ryann Wiseman pose together at a birthday party. Kirstie wears a silver tiara, a sparkly silver dress, and a \"BIRTHDAY PRINCESS\" sash. Ryann wears glasses, a black dress, and a gold headband. They stand in front of a balloon arch of purple, gold, and teal balloons.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Auburn Current and Muted Yarrow pose together at a birthday party. Auburn wears a silver tiara, a sparkly silver dress, and a \"BIRTHDAY PRINCESS\" sash. Muted wears glasses, a black dress, and a gold headband. They stand in front of a balloon arch of purple, gold, and teal balloons.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -520,7 +520,7 @@
           {
             "latency_s": 2.562,
             "pass": "ground_weave",
-            "raw": "Kirstie Mccarrel and Ryann Wiseman pose together at a birthday party. Kirstie wears a silver tiara, a sparkly silver dress, and a \"BIRTHDAY PRINCESS\" sash. Ryann wears glasses, a black dress, and a gold headband. They stand in front of a balloon arch of purple, gold, and teal balloons."
+            "raw": "Auburn Current and Muted Yarrow pose together at a birthday party. Auburn wears a silver tiara, a sparkly silver dress, and a \"BIRTHDAY PRINCESS\" sash. Muted wears glasses, a black dress, and a gold headband. They stand in front of a balloon arch of purple, gold, and teal balloons."
           }
         ],
         "prompt_variant": "v2"
@@ -535,8 +535,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Kirstie Mccarrel kneels on a wooden floor hugging a blue merle Australian Shepherd. She wears a cream sweater and smiles at the camera. The dog sits in front of a marble fireplace with a black and gold insert.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Auburn Current kneels on a wooden floor hugging a blue merle Australian Shepherd. She wears a cream sweater and smiles at the camera. The dog sits in front of a marble fireplace with a black and gold insert.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -548,7 +548,7 @@
           {
             "latency_s": 8.444,
             "pass": "ground_weave",
-            "raw": "Kirstie Mccarrel kneels on a wooden floor hugging a blue merle Australian Shepherd. She wears a cream sweater and smiles at the camera. The dog sits in front of a marble fireplace with a black and gold insert."
+            "raw": "Auburn Current kneels on a wooden floor hugging a blue merle Australian Shepherd. She wears a cream sweater and smiles at the camera. The dog sits in front of a marble fireplace with a black and gold insert."
           }
         ],
         "prompt_variant": "v2"
@@ -558,13 +558,13 @@
       "identities": [],
       "latency_s": 16.86,
       "media_id": 20,
-      "path": "mock_images/kirstie-1.jpeg"
+      "path": "mock_images/auburn-1.jpeg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Kirstie Mccarrel, wears a pink bucket hat and a white and black striped top with tattoos on her arm. A man in a black cap and sunglasses sits at the helm in the background. The boat floats on calm water under a hazy sky.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Auburn Current, wears a pink bucket hat and a white and black striped top with tattoos on her arm. A man in a black cap and sunglasses sits at the helm in the background. The boat floats on calm water under a hazy sky.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -576,7 +576,7 @@
           {
             "latency_s": 2.685,
             "pass": "ground_weave",
-            "raw": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Kirstie Mccarrel, wears a pink bucket hat and a white and black striped top with tattoos on her arm. A man in a black cap and sunglasses sits at the helm in the background. The boat floats on calm water under a hazy sky."
+            "raw": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and denim shorts, while the woman on the right, identified as Auburn Current, wears a pink bucket hat and a white and black striped top with tattoos on her arm. A man in a black cap and sunglasses sits at the helm in the background. The boat floats on calm water under a hazy sky."
           }
         ],
         "prompt_variant": "v2"
@@ -586,13 +586,13 @@
       "identities": [],
       "latency_s": 5.801,
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg"
+      "path": "mock_images/auburn-boat.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Kirstie Mccarrel and Daniel Arce lie side by side on a colorful beach towel. Kirstie wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight.",
-        "injected_distractor": "Liam Maloney",
+        "alt_text_draft": "Auburn Current and Daniel Arce lie side by side on a colorful beach towel. Auburn wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight.",
+        "injected_distractor": "Linen Kestrel",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -604,7 +604,7 @@
           {
             "latency_s": 8.477,
             "pass": "ground_weave",
-            "raw": "Kirstie Mccarrel and Daniel Arce lie side by side on a colorful beach towel. Kirstie wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight."
+            "raw": "Auburn Current and Daniel Arce lie side by side on a colorful beach towel. Auburn wears a tan baseball cap with a white NY logo, sunglasses, and a black bikini top. Daniel wears dark sunglasses and has graying hair and a beard. They are taking a selfie in bright sunlight."
           }
         ],
         "prompt_variant": "v2"
@@ -614,13 +614,13 @@
       "identities": [],
       "latency_s": 17.115,
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Kirstie Mccarrel floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she glides underwater near the shallow water sign. The pool has a metal handrail and pale green water.",
-        "injected_distractor": "Ryann Wiseman",
+        "alt_text_draft": "Auburn Current floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she glides underwater near the shallow water sign. The pool has a metal handrail and pale green water.",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -632,7 +632,7 @@
           {
             "latency_s": 8.419,
             "pass": "ground_weave",
-            "raw": "Kirstie Mccarrel floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she glides underwater near the shallow water sign. The pool has a metal handrail and pale green water."
+            "raw": "Auburn Current floats on her back in a tiled indoor pool. She wears a black swimsuit with a pattern and has a tattoo on her left arm. Her blonde hair is tied in a bun as she glides underwater near the shallow water sign. The pool has a metal handrail and pale green water."
           }
         ],
         "prompt_variant": "v2"
@@ -642,12 +642,12 @@
       "identities": [],
       "latency_s": 17.142,
       "media_id": 24,
-      "path": "mock_images/kirstie-pool.jpg"
+      "path": "mock_images/auburn-pool.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Liam Maloney lies on his back, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His bald head rests against a patterned pillow in a dimly lit room. The high-contrast black-and-white image creates an intimate, contemplative mood.",
+        "alt_text_draft": "Linen Kestrel lies on his back, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His bald head rests against a patterned pillow in a dimly lit room. The high-contrast black-and-white image creates an intimate, contemplative mood.",
         "injected_distractor": "Daniel Arce",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -660,7 +660,7 @@
           {
             "latency_s": 8.215,
             "pass": "ground_weave",
-            "raw": "Liam Maloney lies on his back, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His bald head rests against a patterned pillow in a dimly lit room. The high-contrast black-and-white image creates an intimate, contemplative mood."
+            "raw": "Linen Kestrel lies on his back, looking up at the camera. He wears round black-rimmed glasses and a dark shirt. His bald head rests against a patterned pillow in a dimly lit room. The high-contrast black-and-white image creates an intimate, contemplative mood."
           }
         ],
         "prompt_variant": "v2"
@@ -670,12 +670,12 @@
       "identities": [],
       "latency_s": 16.225,
       "media_id": 25,
-      "path": "mock_images/liam-maloney-2.jpg"
+      "path": "mock_images/linen-kestrel-2.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Liam Maloney takes a selfie in a kitchen. He wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses. Behind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet.",
+        "alt_text_draft": "Linen Kestrel takes a selfie in a kitchen. He wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses. Behind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet.",
         "injected_distractor": "Daniel Arce",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
@@ -688,7 +688,7 @@
           {
             "latency_s": 8.45,
             "pass": "ground_weave",
-            "raw": "Liam Maloney takes a selfie in a kitchen. He wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses. Behind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet."
+            "raw": "Linen Kestrel takes a selfie in a kitchen. He wears a black t-shirt with a yellow and white baseball-themed skull design, a green and pink baseball cap, and black-rimmed glasses. Behind him, a white shelving unit holds kitchenware, a stainless steel refrigerator stands against a brick wall, and a checkered floor extends beneath his feet."
           }
         ],
         "prompt_variant": "v2"
@@ -698,13 +698,13 @@
       "identities": [],
       "latency_s": 17.018,
       "media_id": 26,
-      "path": "mock_images/liam-maloney-home.jpg"
+      "path": "mock_images/linen-kestrel-home.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "A portrait painting of a dark-haired man in muted greys hangs in a gold frame on a white wall. The man has a somber expression and wears a jacket with pockets. The artwork is signed \"TAM\" in the lower right corner.",
-        "injected_distractor": "Liam Maloney",
+        "injected_distractor": "Linen Kestrel",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -726,13 +726,13 @@
       "identities": [],
       "latency_s": 3.552,
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero takes a selfie with three friends at a formal dinner. The woman on the front left wears a red sequined dress and red lipstick. The woman in the front center wears a silver sequined dress and a pearl necklace. The woman in the back center wears a gold sequined dress. The woman on the front right wears a white spaghetti strap dress and red lipstick. They sit at a table with a white tablecloth in an ornate gilded dining room with blue velvet curtains. The atmosphere is elegant and celebratory.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow takes a selfie with three friends at a formal dinner. The woman on the front left wears a red sequined dress and red lipstick. The woman in the front center wears a silver sequined dress and a pearl necklace. The woman in the back center wears a gold sequined dress. The woman on the front right wears a white spaghetti strap dress and red lipstick. They sit at a table with a white tablecloth in an ornate gilded dining room with blue velvet curtains. The atmosphere is elegant and celebratory.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -744,7 +744,7 @@
           {
             "latency_s": 2.099,
             "pass": "ground_weave",
-            "raw": "Maria Correonero takes a selfie with three friends at a formal dinner. The woman on the front left wears a red sequined dress and red lipstick. The woman in the front center wears a silver sequined dress and a pearl necklace. The woman in the back center wears a gold sequined dress. The woman on the front right wears a white spaghetti strap dress and red lipstick. They sit at a table with a white tablecloth in an ornate gilded dining room with blue velvet curtains. The atmosphere is elegant and celebratory."
+            "raw": "Slate Willow takes a selfie with three friends at a formal dinner. The woman on the front left wears a red sequined dress and red lipstick. The woman in the front center wears a silver sequined dress and a pearl necklace. The woman in the back center wears a gold sequined dress. The woman on the front right wears a white spaghetti strap dress and red lipstick. They sit at a table with a white tablecloth in an ornate gilded dining room with blue velvet curtains. The atmosphere is elegant and celebratory."
           }
         ],
         "prompt_variant": "v2"
@@ -754,13 +754,13 @@
       "identities": [],
       "latency_s": 4.478,
       "media_id": 28,
-      "path": "mock_images/maria-cocktail.jpg"
+      "path": "mock_images/slate-cocktail.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero bites into a slice of red and white striped cake.  \nShe holds a smartphone in her other hand, capturing her reflection on the screen.  \nIn the background, a couple embraces near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with a refrigerator visible to the right.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow bites into a slice of red and white striped cake.  \nShe holds a smartphone in her other hand, capturing her reflection on the screen.  \nIn the background, a couple embraces near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with a refrigerator visible to the right.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -772,7 +772,7 @@
           {
             "latency_s": 2.146,
             "pass": "ground_weave",
-            "raw": "Maria Correonero bites into a slice of red and white striped cake.  \nShe holds a smartphone in her other hand, capturing her reflection on the screen.  \nIn the background, a couple embraces near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with a refrigerator visible to the right."
+            "raw": "Slate Willow bites into a slice of red and white striped cake.  \nShe holds a smartphone in her other hand, capturing her reflection on the screen.  \nIn the background, a couple embraces near a shelf and a round mirror.  \nThe room has a casual, intimate atmosphere with a refrigerator visible to the right."
           }
         ],
         "prompt_variant": "v2"
@@ -782,13 +782,13 @@
       "identities": [],
       "latency_s": 4.589,
       "media_id": 29,
-      "path": "mock_images/maria-party.jpg"
+      "path": "mock_images/slate-party.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and sunlit, with a decorative tile border visible.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and sunlit, with a decorative tile border visible.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -800,7 +800,7 @@
           {
             "latency_s": 2.526,
             "pass": "ground_weave",
-            "raw": "Maria Correonero sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and sunlit, with a decorative tile border visible."
+            "raw": "Slate Willow sits on a rose-gold glitter mermaid-tail float in a blue pool. She wears a red and navy bikini and smiles while making a peace sign with her right hand. The float has \"SUNNY LIFE\" printed on its side. The pool water is clear and sunlit, with a decorative tile border visible."
           }
         ],
         "prompt_variant": "v2"
@@ -810,13 +810,13 @@
       "identities": [],
       "latency_s": 5.087,
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero holds a geometric puzzle toy over her right eye. She wears dark lipstick and is bathed in blue-and-teal light. Her hand stretches a cord attached to the device across her face. The translucent surface behind her adds a layered, futuristic effect.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow holds a geometric puzzle toy over her right eye. She wears dark lipstick and is bathed in blue-and-teal light. Her hand stretches a cord attached to the device across her face. The translucent surface behind her adds a layered, futuristic effect.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -828,7 +828,7 @@
           {
             "latency_s": 1.967,
             "pass": "ground_weave",
-            "raw": "Maria Correonero holds a geometric puzzle toy over her right eye. She wears dark lipstick and is bathed in blue-and-teal light. Her hand stretches a cord attached to the device across her face. The translucent surface behind her adds a layered, futuristic effect."
+            "raw": "Slate Willow holds a geometric puzzle toy over her right eye. She wears dark lipstick and is bathed in blue-and-teal light. Her hand stretches a cord attached to the device across her face. The translucent surface behind her adds a layered, futuristic effect."
           }
         ],
         "prompt_variant": "v2"
@@ -843,8 +843,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero crouches on rocky ground inside a dark ice cave. She wears a white Black Diamond helmet with a headlamp, a black fur-hooded jacket, and brown boots with orange crampons. Her camera rests at her knee as she looks toward the camera. The cave walls are smooth and dark, with wet rock and ice surrounding her.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow crouches on rocky ground inside a dark ice cave. She wears a white Black Diamond helmet with a headlamp, a black fur-hooded jacket, and brown boots with orange crampons. Her camera rests at her knee as she looks toward the camera. The cave walls are smooth and dark, with wet rock and ice surrounding her.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -856,7 +856,7 @@
           {
             "latency_s": 9.447,
             "pass": "ground_weave",
-            "raw": "Maria Correonero crouches on rocky ground inside a dark ice cave. She wears a white Black Diamond helmet with a headlamp, a black fur-hooded jacket, and brown boots with orange crampons. Her camera rests at her knee as she looks toward the camera. The cave walls are smooth and dark, with wet rock and ice surrounding her."
+            "raw": "Slate Willow crouches on rocky ground inside a dark ice cave. She wears a white Black Diamond helmet with a headlamp, a black fur-hooded jacket, and brown boots with orange crampons. Her camera rests at her knee as she looks toward the camera. The cave walls are smooth and dark, with wet rock and ice surrounding her."
           }
         ],
         "prompt_variant": "v2"
@@ -871,8 +871,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal structure is torn and exposed, set against a barren, grey landscape.",
-        "injected_distractor": "Caitlin Weaver",
+        "alt_text_draft": "Slate Willow crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal structure is torn and exposed, set against a barren, grey landscape.",
+        "injected_distractor": "Russet Fathom",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -884,7 +884,7 @@
           {
             "latency_s": 8.881,
             "pass": "ground_weave",
-            "raw": "Maria Correonero crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal structure is torn and exposed, set against a barren, grey landscape."
+            "raw": "Slate Willow crouches inside the damaged fuselage of a wrecked aircraft. She wears a dark coat with a fur-trimmed hood and looks toward the camera. The aircraft's metal structure is torn and exposed, set against a barren, grey landscape."
           }
         ],
         "prompt_variant": "v2"
@@ -900,7 +900,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "A black dog wearing a collar stitched with Machiavelli stands on a leash at the end of a narrow alley. The dog faces down the lane between brick townhouses with garage doors, looking toward a sunset glowing orange behind distant trees. The sky is soft pink and pale blue, and the alley is quiet and still.",
-        "injected_distractor": "Ryann Wiseman",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -928,7 +928,7 @@
       "describe": {
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with long dark hair kisses her reflection in a mirror. She crouches on a white vanity in a bathroom with green patterned wallpaper and a gold-framed shower. She wears a light blue dress and white knee-high boots. The scene feels intimate and surreal.",
-        "injected_distractor": "Ryann Wiseman",
+        "injected_distractor": "Muted Yarrow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -955,8 +955,8 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ryann Wiseman holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow.",
-        "injected_distractor": "Kirstie Mccarrel",
+        "alt_text_draft": "Muted Yarrow holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow.",
+        "injected_distractor": "Auburn Current",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -968,7 +968,7 @@
           {
             "latency_s": 4.428,
             "pass": "ground_weave",
-            "raw": "Ryann Wiseman holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow."
+            "raw": "Muted Yarrow holds a salt-rimmed margarita in a pink-lit room. She leans against a radiator in a black backless top and sheer patterned skirt. A Pink Panther poster and a gold-framed mirror hang on the brick wall behind her. The atmosphere is intimate and moody under the pink glow."
           }
         ],
         "prompt_variant": "v2"
@@ -978,13 +978,13 @@
       "identities": [],
       "latency_s": 8.951,
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ryann Wiseman raises a drink while dancing with five friends in matching pink satin pajamas. The women smile and celebrate in front of a pink and silver foil curtain. A large silver number 2 balloon floats behind them, and a lamp with a warm glow illuminates the festive scene.",
-        "injected_distractor": "Bea Burke",
+        "alt_text_draft": "Muted Yarrow raises a drink while dancing with five friends in matching pink satin pajamas. The women smile and celebrate in front of a pink and silver foil curtain. A large silver number 2 balloon floats behind them, and a lamp with a warm glow illuminates the festive scene.",
+        "injected_distractor": "Hollow Pennant",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -996,7 +996,7 @@
           {
             "latency_s": 1.74,
             "pass": "ground_weave",
-            "raw": "Ryann Wiseman raises a drink while dancing with five friends in matching pink satin pajamas. The women smile and celebrate in front of a pink and silver foil curtain. A large silver number 2 balloon floats behind them, and a lamp with a warm glow illuminates the festive scene."
+            "raw": "Muted Yarrow raises a drink while dancing with five friends in matching pink satin pajamas. The women smile and celebrate in front of a pink and silver foil curtain. A large silver number 2 balloon floats behind them, and a lamp with a warm glow illuminates the festive scene."
           }
         ],
         "prompt_variant": "v2"
@@ -1006,13 +1006,13 @@
       "identities": [],
       "latency_s": 4.621,
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ryann Wiseman and Maria Correonero pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out.",
-        "injected_distractor": "Maria Correonero",
+        "alt_text_draft": "Muted Yarrow and Slate Willow pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out.",
+        "injected_distractor": "Slate Willow",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -1024,7 +1024,7 @@
           {
             "latency_s": 4.931,
             "pass": "ground_weave",
-            "raw": "Ryann Wiseman and Maria Correonero pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out."
+            "raw": "Muted Yarrow and Slate Willow pose together on a couch.  \nRyann wears a white lace top, a white skirt, and long white lace gloves while Maria wears a black top with pink trim and a white feather boa.  \nThey sit beneath a red clock and framed photos on a wall, both wearing pearl necklaces.  \nRyann looks at the camera with a soft expression while Maria makes a playful face with her tongue out."
           }
         ],
         "prompt_variant": "v2"
@@ -1034,7 +1034,7 @@
       "identities": [],
       "latency_s": 10.163,
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg"
+      "path": "mock_images/muted-party.jpg"
     }
   ],
   "kind": "run_record",

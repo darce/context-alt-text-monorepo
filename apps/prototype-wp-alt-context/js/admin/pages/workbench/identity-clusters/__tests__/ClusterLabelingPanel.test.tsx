@@ -67,7 +67,7 @@ const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'so
 
 const duplicateClusterMatch = {
   id: 'target-cluster-id',
-  label: 'Maria Correonero',
+  label: 'Slate Willow',
   is_auto_label: false,
   identity_count: 10,
   member_ids: [],
@@ -101,7 +101,7 @@ describe('ClusterLabelingPanel', () => {
       source_id: 'source-cluster-id',
       source_label: null,
       target_id: 'target-cluster-id',
-      target_label: 'Maria Correonero',
+      target_label: 'Slate Willow',
       identities_moved: 5,
       moved_identity_ids: ['id-1'],
       target_identity_count: 10,
@@ -147,21 +147,21 @@ describe('ClusterLabelingPanel', () => {
     renderPanel(onLabel);
 
     // Selecting a cluster option primes the guard (INT-07 outcome sample on the same surface).
-    await selectOrCreateName('Maria Correonero');
+    await selectOrCreateName('Slate Willow');
 
     expect(
-      await screen.findByText('A name matching "Maria Correonero" already exists. Choose how to proceed.'),
+      await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Merge target: cluster "Maria Correonero" \(10 members\)/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Merge into cluster "Maria Correonero"' })).toBeInTheDocument();
+    expect(screen.getByText(/Merge target: cluster "Slate Willow" \(10 members\)/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge into cluster "Slate Willow"' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rename anyway' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Merge into cluster "Maria Correonero"' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Merge into cluster "Slate Willow"' }));
 
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'target-cluster-id', 'Maria Correonero');
+      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'target-cluster-id', 'Slate Willow');
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
@@ -477,7 +477,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Coral Osborne');
+    await selectOrCreateName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -489,7 +489,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Coral Osborne');
+    await selectOrCreateName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -505,7 +505,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Coral Osborne');
+    await selectOrCreateName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -517,7 +517,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Maria Correonero');
+    await selectOrCreateName('Slate Willow');
 
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
@@ -531,8 +531,8 @@ describe('ClusterLabelingPanel', () => {
     const searchInput = screen.getByPlaceholderText('Search people...');
     expect(searchInput).toBeEnabled();
     await userEvent.clear(searchInput);
-    await userEvent.type(searchInput, 'Maria Correonero Jr');
-    expect(searchInput).toHaveValue('Maria Correonero Jr');
+    await userEvent.type(searchInput, 'Slate Willow Jr');
+    expect(searchInput).toHaveValue('Slate Willow Jr');
   });
 
   it('keeps input editable while save is pending', async () => {
@@ -546,7 +546,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Coral Osborne');
+    await selectOrCreateName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
@@ -633,7 +633,7 @@ describe('ClusterLabelingPanel', () => {
       </QueryClientProvider>,
     );
 
-    await selectOrCreateName('Maria Correonero');
+    await selectOrCreateName('Slate Willow');
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
     rerender(
@@ -665,7 +665,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Name' }));
     const search = screen.getByPlaceholderText('Search people...');
     await user.clear(search);
-    await user.type(search, 'Maria Correonero');
+    await user.type(search, 'Slate Willow');
     // Create free-text path (no option select) so local collisions stay empty until remote.
     const createButton = screen.queryByRole('button', { name: /Create "/i });
     if (createButton) {
@@ -674,7 +674,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
-      await screen.findByText('A name matching "Maria Correonero" already exists. Choose how to proceed.'),
+      await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
@@ -1037,7 +1037,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Name' }));
     const search = screen.getByPlaceholderText('Search people...');
     await user.clear(search);
-    await user.type(search, 'Maria Correonero');
+    await user.type(search, 'Slate Willow');
     // Wait for labeled clusters query to populate collisions
     await waitFor(() => expect(listRecognitionClusters).toHaveBeenCalled());
     // Escape/close list and save typed value
@@ -1045,9 +1045,9 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
-      await screen.findByText('A name matching "Maria Correonero" already exists. Choose how to proceed.'),
+      await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Merge into cluster "Maria Correonero"' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge into cluster "Slate Willow"' })).toBeInTheDocument();
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });
 });

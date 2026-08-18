@@ -3,7 +3,7 @@
   "annotation_mode": "roster_only",
   "roster": [
     "Ada Example",
-    "Bea Example"
+    "Quiet Example"
   ],
   "entries": [
     {
@@ -52,16 +52,16 @@
       }
     },
     {
-      "path": "fixtures/bea_example_102.jpg",
+      "path": "fixtures/quiet_example_102.jpg",
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "media_id": 102,
       "face_count": 1,
       "present_identities": [
-        "Bea Example"
+        "Quiet Example"
       ],
-      "base_caption": "Bea looks at the camera.",
+      "base_caption": "Quiet looks at the camera.",
       "must_right": [
-        "Bea Example"
+        "Quiet Example"
       ],
       "easy_wrong": [],
       "policy": {
@@ -73,7 +73,7 @@
           "y": 0.4,
           "w": 0.2,
           "h": 0.3,
-          "name": "Bea Example",
+          "name": "Quiet Example",
           "source": "operator",
           "lineage": {
             "labeler_id": "legacy-import",

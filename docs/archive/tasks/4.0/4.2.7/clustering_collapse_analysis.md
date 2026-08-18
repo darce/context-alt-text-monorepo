@@ -43,11 +43,11 @@ The batch then ran as a **cold start** (0 clusters, 0 reps) through `ClusterServ
 
 ## Evidence of Fragmentation
 
-User performed **~180 manual merges** afterward, mostly to `Ryann Wiseman` cluster:
+User performed **~180 manual merges** afterward, mostly to `Muted Yarrow` cluster:
 
 ```
-[curation] MERGED ... target_cluster=a0bbe3be-... (Ryann Wiseman)
-[curation] MERGED ... target_cluster=a0bbe3be-... (Ryann Wiseman)
+[curation] MERGED ... target_cluster=a0bbe3be-... (Muted Yarrow)
+[curation] MERGED ... target_cluster=a0bbe3be-... (Muted Yarrow)
 ... (repeated 150+ times)
 ```
 

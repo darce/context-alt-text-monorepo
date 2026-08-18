@@ -190,7 +190,7 @@ def _tiny_manifest(n: int, tmp_path: Path) -> GoldenManifest:
         e["sha256"] = f"{i:02x}" * 32
     return GoldenManifest.model_validate(
         {"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries}
+            "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries}
     )
 
 

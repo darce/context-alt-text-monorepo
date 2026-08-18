@@ -85,14 +85,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.1923,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -122,14 +122,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "long": {
         "context_duplication_ratio": 0.1045,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Bea Burke"
+          "Hollow Pennant"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -144,7 +144,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/bea-nye.jpg",
+      "path": "mock_images/quiet-nye.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1389,
       "sentence_count": 1,
@@ -159,14 +159,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.0959,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -196,14 +196,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1167,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -233,16 +233,16 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "long": {
         "context_duplication_ratio": 0.0674,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver",
-          "Erika Hansen Miller"
+          "Russet Fathom",
+          "Muted Current"
         ],
         "meta_framing_hits": [
           "the image"
@@ -259,7 +259,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1333,
       "sentence_count": 1,
@@ -274,14 +274,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1449,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -311,14 +311,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1609,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -348,14 +348,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1467,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -385,14 +385,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1622,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -422,14 +422,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.058,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -459,14 +459,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1642,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -496,14 +496,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.0617,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -533,14 +533,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1475,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -570,14 +570,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.1538,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [
           "the image"
@@ -609,14 +609,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.092,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [
           "the image"
@@ -648,14 +648,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "long": {
         "context_duplication_ratio": 0.0625,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "meta_framing_hits": [
           "the image"
@@ -687,14 +687,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Cristina Quintana"
+        "Tidal Harbor"
       ],
       "long": {
         "context_duplication_ratio": 0.1154,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Cristina Quintana"
+          "Tidal Harbor"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -709,7 +709,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/cristina-1.jpg",
+      "path": "mock_images/tidal-1.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2182,
       "sentence_count": 1,
@@ -724,14 +724,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "long": {
         "context_duplication_ratio": 0.0896,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Ellyn Heald"
+          "Gilded Cypress"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -761,14 +761,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "long": {
         "context_duplication_ratio": 0.046,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -798,14 +798,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "long": {
         "context_duplication_ratio": 0.2121,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -820,7 +820,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-1.jpeg",
+      "path": "mock_images/auburn-1.jpeg",
       "policy_violation": false,
       "repetition_ratio": 0.087,
       "sentence_count": 1,
@@ -835,14 +835,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "long": {
         "context_duplication_ratio": 0.0946,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -857,7 +857,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-boat.jpg",
+      "path": "mock_images/auburn-boat.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2979,
       "sentence_count": 1,
@@ -873,7 +873,7 @@
       "hallucinated_names": [],
       "inserted_identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "long": {
         "context_duplication_ratio": 0.1013,
@@ -881,7 +881,7 @@
         "hallucinated_names": [],
         "inserted_identities": [
           "Daniel Arce",
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -896,7 +896,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.3023,
       "sentence_count": 1,
@@ -911,14 +911,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "long": {
         "context_duplication_ratio": 0.1831,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -933,7 +933,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-pool.jpg",
+      "path": "mock_images/auburn-pool.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2258,
       "sentence_count": 1,
@@ -948,14 +948,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "long": {
         "context_duplication_ratio": 0.1406,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Liam Maloney"
+          "Linen Kestrel"
         ],
         "meta_framing_hits": [
           "the image"
@@ -972,7 +972,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/liam-maloney-2.jpg",
+      "path": "mock_images/linen-kestrel-2.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1538,
       "sentence_count": 1,
@@ -987,14 +987,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "long": {
         "context_duplication_ratio": 0.0811,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Liam Maloney"
+          "Linen Kestrel"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1009,7 +1009,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/liam-maloney-home.jpg",
+      "path": "mock_images/linen-kestrel-home.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1915,
       "sentence_count": 1,
@@ -1042,7 +1042,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": null,
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2439,
       "sentence_count": 1,
@@ -1057,14 +1057,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.2237,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1079,7 +1079,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/maria-cocktail.jpg",
+      "path": "mock_images/slate-cocktail.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.4328,
       "sentence_count": 1,
@@ -1094,14 +1094,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.0825,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1116,7 +1116,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/maria-party.jpg",
+      "path": "mock_images/slate-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1212,
       "sentence_count": 1,
@@ -1131,14 +1131,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.1205,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1153,7 +1153,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1892,
       "sentence_count": 1,
@@ -1168,14 +1168,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.0753,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1205,14 +1205,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.1268,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1242,14 +1242,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "long": {
         "context_duplication_ratio": 0.0533,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1345,14 +1345,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "long": {
         "context_duplication_ratio": 0.1692,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1367,7 +1367,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-bar.jpg",
+      "path": "mock_images/muted-bar.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1667,
       "sentence_count": 1,
@@ -1382,14 +1382,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "long": {
         "context_duplication_ratio": 0.0882,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1404,7 +1404,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2321,
       "sentence_count": 1,
@@ -1419,14 +1419,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "long": {
         "context_duplication_ratio": 0.0795,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -1441,7 +1441,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-party.jpg",
+      "path": "mock_images/muted-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2667,
       "sentence_count": 1,

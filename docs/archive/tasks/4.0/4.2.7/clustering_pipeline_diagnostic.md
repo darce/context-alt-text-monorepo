@@ -36,7 +36,7 @@ Request failed (405): {"detail":"Method Not Allowed"}
 ### 3. [ISSUE] `recompute_representatives()` Not Implemented
 
 **Status**: Method doesn't exist on `AssignmentWriter`  
-**Result**: Merges don't update representatives, causing Ryann Wiseman issue
+**Result**: Merges don't update representatives, causing Muted Yarrow issue
 
 ---
 

@@ -129,9 +129,9 @@ Four slices, each producing fixtures plus proof. Draft mechanically with `draft_
 
 Changes:
 
-- Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`. **Drop `mock_images/kirstie-boat_detected.jpg`**: `draft_labels` iterates all 38 `mock_images` files with no exclusion and re-introduces this detection-annotated near-duplicate that VLM-2A deliberately removed (`seed/README.md:20`); keep the corpus at 37 usable scenes.
+- Regenerate the draft via `draft_labels.generate_draft_manifest(fixtures_dir)`; reconcile against current `golden.json`. **Drop `mock_images/auburn-boat_detected.jpg`**: `draft_labels` iterates all 38 `mock_images` files with no exclusion and re-introduces this detection-annotated near-duplicate that VLM-2A deliberately removed (`seed/README.md:20`); keep the corpus at 37 usable scenes.
 - Operator pass: confirm identities, set `face_count` incl. non-roster strangers (per `seed/README.md` counting rule).
-- **Stranger designation is an explicit Slice-1 step — do not inherit one silently.** Six entries already carry `face_count > len(present_identities)` from the VLM-2A face-count pass (e.g. `ccqw-erika.jpg`: 4 faces / 2 identities), but none is designated as THE stranger fixture. During the labeling pass, confirm ≥1 of these deltas is a genuine non-roster human face (not an unlabeled roster member or a depicted face) on a `recognition_enabled=true` scene, and record it as the stranger entry. If the pass surfaces zero genuine strangers, add a scene that has one rather than manufacturing the condition on a roster-only image.
+- **Stranger designation is an explicit Slice-1 step — do not inherit one silently.** Six entries already carry `face_count > len(present_identities)` from the VLM-2A face-count pass (e.g. `ccqw-candid.jpg`: 4 faces / 2 identities), but none is designated as THE stranger fixture. During the labeling pass, confirm ≥1 of these deltas is a genuine non-roster human face (not an unlabeled roster member or a depicted face) on a `recognition_enabled=true` scene, and record it as the stranger entry. If the pass surfaces zero genuine strangers, add a scene that has one rather than manufacturing the condition on a roster-only image.
 - **Never fabricate `face_count`.** Derive every `face_count` (and therefore every `stranger_faces = face_count - len(present_identities)` delta) directly from the operator confirmation pass counting each visible face region per the `seed/README.md` rule. Do not back-fill a number to force a stranger delta.
 - Refresh `sha256` for any changed/added entry.
 
@@ -205,18 +205,18 @@ Shape:
   "scenes": {
     "5": {
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "face_centers": [
         { "center": [0.31, 0.42] },
         { "center": [0.68, 0.39] }
       ],
       "phrase_boxes": [
-        { "phrase": "Caitlin Weaver",       "box": [0.20, 0.25, 0.45, 0.72] },
-        { "phrase": "Erika Hansen Miller",   "box": [0.55, 0.22, 0.82, 0.70] }
+        { "phrase": "Russet Fathom",       "box": [0.20, 0.25, 0.45, 0.72] },
+        { "phrase": "Muted Current",   "box": [0.55, 0.22, 0.82, 0.70] }
       ],
       "expected_containment": [
-        { "face_center": [0.31, 0.42], "resolved_identity": "Caitlin Weaver" },
-        { "face_center": [0.68, 0.39], "resolved_identity": "Erika Hansen Miller" }
+        { "face_center": [0.31, 0.42], "resolved_identity": "Russet Fathom" },
+        { "face_center": [0.68, 0.39], "resolved_identity": "Muted Current" }
       ]
     },
     "<stranger_media_id>": {
@@ -242,23 +242,23 @@ Shape:
 
 ### Worked golden-entry example (authoring template)
 
-The following is ONE fully worked entry showing the shape every `golden.json` entry must reach in Slice 2. It uses a **real corpus scene** (`ccqw-erika.jpg`, `media_id 5`). The `context_pack`/`base_caption`/rubric text below is an **illustrative authoring sample** to fix the format; `present_identities` and `face_count` are set by the Slice-1 operator confirmation pass, not by this template.
+The following is ONE fully worked entry showing the shape every `golden.json` entry must reach in Slice 2. It uses a **real corpus scene** (`ccqw-candid.jpg`, `media_id 5`). The `context_pack`/`base_caption`/rubric text below is an **illustrative authoring sample** to fix the format; `present_identities` and `face_count` are set by the Slice-1 operator confirmation pass, not by this template.
 
 ```json
 {
-  "path": "mock_images/ccqw-erika.jpg",
+  "path": "mock_images/ccqw-candid.jpg",
   "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
   "media_id": 5,
   "face_count": 4,
-  "present_identities": ["Caitlin Weaver", "Erika Hansen Miller"],
+  "present_identities": ["Russet Fathom", "Muted Current"],
   "context_pack": {
-    "title": "Caitlin Weaver and Erika Hansen Miller in Antarctica",
-    "caption": "Caitlin Weaver and Erika Hansen Miller on the expedition deck.",
-    "description": "Two travelers, Caitlin Weaver and Erika Hansen Miller, bundled in parkas during an Antarctic cruise."
+    "title": "Russet Fathom and Muted Current in Antarctica",
+    "caption": "Russet Fathom and Muted Current on the expedition deck.",
+    "description": "Two travelers, Russet Fathom and Muted Current, bundled in parkas during an Antarctic cruise."
   },
-  "base_caption": "Caitlin Weaver and Erika Hansen Miller stand together in heavy parkas on a ship deck with grey water behind them.",
-  "must_right": ["Caitlin Weaver", "Erika Hansen Miller"],
-  "easy_wrong": ["Bea Burke", "Ryann Wiseman"],
+  "base_caption": "Russet Fathom and Muted Current stand together in heavy parkas on a ship deck with grey water behind them.",
+  "must_right": ["Russet Fathom", "Muted Current"],
+  "easy_wrong": ["Hollow Pennant", "Muted Yarrow"],
   "policy": { "recognition_enabled": true }
 }
 ```

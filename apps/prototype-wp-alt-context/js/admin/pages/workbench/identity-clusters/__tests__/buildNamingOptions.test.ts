@@ -180,15 +180,15 @@ describe('buildNamingOptions', () => {
     const { options, collisionsByLabel } = buildNamingOptions({
       rosterEntries: [],
       labelMatches: [
-        { id: 'self', label: 'Emilie', identity_count: 2 },
-        { id: 'other', label: 'Emilie Archive', identity_count: 1 },
+        { id: 'self', label: 'thistle', identity_count: 2 },
+        { id: 'other', label: 'thistle Archive', identity_count: 1 },
       ],
       excludeClusterId: 'self',
       limit: null,
     });
 
-    expect(options.map((option) => option.label)).toEqual(['Emilie Archive']);
-    expect(findCollisionsForLabel(collisionsByLabel, 'Emilie', 'self')).toHaveLength(0);
+    expect(options.map((option) => option.label)).toEqual(['thistle Archive']);
+    expect(findCollisionsForLabel(collisionsByLabel, 'thistle', 'self')).toHaveLength(0);
   });
 
   it('uniqueClusterCollisionTarget is null when no unique cluster target exists', () => {

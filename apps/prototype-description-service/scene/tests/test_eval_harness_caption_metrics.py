@@ -203,8 +203,8 @@ def test_meta_framing_detected_on_7b_winner_output():
     # Verbatim closer from the committed 7b winning caption — the defect the
     # saturated benchmark could not see.
     scores = score_caption(
-        "Caitlin Weaver stands on a rocky shore. The scene captures a moment during her 2023 research residency.",
-        **_entry(present_identities=["Caitlin Weaver"], must_right=["Caitlin Weaver"]),
+        "Russet Fathom stands on a rocky shore. The scene captures a moment during her 2023 research residency.",
+        **_entry(present_identities=["Russet Fathom"], must_right=["Russet Fathom"]),
     )
     assert "the scene captures" in scores.meta_framing_hits
     assert "captures a moment" in scores.meta_framing_hits
@@ -217,10 +217,10 @@ def test_meta_framing_clean_caption_has_no_hits():
 
 
 def test_context_duplication_high_when_caption_restates_context():
-    context = "Caitlin Weaver on the Antarctic peninsula during her 2023 research residency."
+    context = "Russet Fathom on the Antarctic peninsula during her 2023 research residency."
     scores = score_caption(
-        "Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.",
-        **_entry(present_identities=["Caitlin Weaver"], must_right=[]),
+        "Russet Fathom on the Antarctic peninsula during her 2023 research residency.",
+        **_entry(present_identities=["Russet Fathom"], must_right=[]),
         context_text=context,
     )
     assert scores.context_duplication_ratio == pytest.approx(1.0)
@@ -290,17 +290,17 @@ def test_wrong_name_image_rate():
 
 def test_first_name_only_mention_trips_trap():  # B-01 (high)
     scores = score_caption(
-        "Alice Example and Ryann relax by a lake.",
-        **_entry(easy_wrong=["Ryann Wiseman"]),
+        "Alice Example and Muted relax by a lake.",
+        **_entry(easy_wrong=["Muted Yarrow"]),
     )
-    assert scores.wrong_name_hits == ["Ryann Wiseman"]
+    assert scores.wrong_name_hits == ["Muted Yarrow"]
     assert scores.gated_score == 0.0
 
 
 def test_shared_surname_with_present_identity_does_not_trip_trap():  # B-01 guard
     scores = score_caption(
-        "Caitlin Weaver stands on the shore.",
-        **_entry(present_identities=["Caitlin Weaver"], must_right=["Caitlin Weaver"], easy_wrong=["Ryann Weaver"]),
+        "Russet Fathom stands on the shore.",
+        **_entry(present_identities=["Russet Fathom"], must_right=["Russet Fathom"], easy_wrong=["Muted Weaver"]),
     )
     assert scores.wrong_name_hits == []
     assert scores.gated_score == 1.0

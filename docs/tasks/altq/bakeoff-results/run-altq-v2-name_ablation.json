@@ -3,7 +3,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person crouches on wet rocks inside a blue ice cave. She wears a white climbing helmet with a headlamp and a black parka with a fur-lined hood. Her brown boots have orange crampons attached, and a camera hangs from her shoulder. She looks toward the camera with a focused expression beneath the glowing blue ice.",
@@ -21,7 +21,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Bea Burke"
+          "Hollow Pennant"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a bathroom takes a mirror selfie wearing a rhinestone \"Happy Birthday\" tiara. She sticks her tongue out while holding a glittery phone case. She wears a teal crop top and white pants, with long blonde hair and a gray scrunchie on her wrist.",
@@ -34,12 +34,12 @@
       "identities": [],
       "latency_s": 2.658,
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person in a black hooded rain shell and white running vest stands on a rocky shore with eyes closed, smiling into the wind. Their light brown hair blows across their face as they stand before a pale lagoon. Snow-dusted hills rise in the background under a pale blue sky.",
@@ -57,7 +57,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with long brown hair leans on a wooden bar counter, resting her arms on the surface. She wears a cream-colored graphic t-shirt and looks toward the camera with a neutral expression. Behind her, a back bar holds bottles and taps under dim lighting. A black wristband and a ring are visible on her left hand.",
@@ -75,8 +75,8 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver",
-          "Erika Hansen Miller"
+          "Russet Fathom",
+          "Muted Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with long hair smiles widely, her face upside down in the frame. A man with short hair sits beside her, looking down at a phone in his hands. Warm light glows from a vertical fixture and a frosted lamp, casting a golden hue over the scene. A mirror behind them reflects other patrons in the dimly lit bar.",
@@ -89,12 +89,12 @@
       "identities": [],
       "latency_s": 8.794,
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person peeks through a bouquet of flowers, one eye visible between pink roses, white alstroemeria, and blue delphiniums. Their hand reaches forward toward the camera, fingers slightly curled. The flowers partially obscure their face, creating a playful, intimate framing. Green stems and leaves fill the space around their hand and face.",
@@ -112,7 +112,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person stands under a deep blue sky, long brown hair blowing across their face. They wear a mustard-yellow scarf, a denim jacket, and a pink sweater. Sunlight highlights strands of hair falling over their eyes.",
@@ -130,7 +130,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman holds a black rangefinder camera to her cheek. She wears a red ribbed halter top with a blue strap underneath. A black leather camera strap hangs around her neck. She has a gold watch on her left wrist and a small earring in her left ear.",
@@ -148,7 +148,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman holds a black rangefinder camera to her right eye with both hands. She has brown hair pulled back and wears a blue top with a red necklace. Her expression is focused as she looks through the viewfinder. A bookshelf is visible in the blurred background.",
@@ -166,7 +166,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person in a blue jacket gazes downward under saturated purple-violet light.  \nTheir loose hair falls over one shoulder as they look away from the camera.  \nThe room glows with intense neon purple, casting a cool hue across their face.  \nTheir expression is calm and contemplative, with eyes slightly lowered.",
@@ -184,7 +184,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A runner in a teal beanie and green running outfit leaps mid-stride across a finish line. She wears sunglasses and a black neck gaiter, with a magenta layer tied around her waist. Her race bib number 169 is pinned to her leg. Spectators stand behind a barricade in the background.",
@@ -202,10 +202,10 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin runs on a coastal road during a marathon, wearing a pink cap, mirrored sunglasses, and a white race vest. She has a race bib with the number 960 and a green patterned tank top. A man in a white long-sleeve shirt and black shorts runs beside her, also wearing a race bib. The two runners move along a paved road with a rocky shoreline in the background.",
+        "alt_text_draft": "Russet runs on a coastal road during a marathon, wearing a pink cap, mirrored sunglasses, and a white race vest. She has a race bib with the number 960 and a green patterned tank top. A man in a white long-sleeve shirt and black shorts runs beside her, also wearing a race bib. The two runners move along a paved road with a rocky shoreline in the background.",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "prompt_variant": "v2"
@@ -220,7 +220,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person smiles beneath a canopy of pink magnolia blossoms.  \nThey wear a grey cap, rose-tinted sunglasses, and a dark zip-up jacket.  \nSunlight glows behind them, casting lens flares across the frame.  \nTheir long brown hair is pulled into low pigtails.",
@@ -238,7 +238,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person in dark sunglasses and a cream hoodie smiles on a rooftop, their long hair blowing in the wind. Sunlight glints off their hand as they touch their face, with a small tree and distant city towers visible under a clear blue sky.",
@@ -256,7 +256,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman walks on a city sidewalk, carrying a shoulder bag. She wears a long-sleeved top and flared pants, her left hand resting on her hip. A watch is visible on her left wrist. The image is grainy and underexposed, with a beverage truck in the background.",
@@ -274,7 +274,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Caitlin Weaver"
+          "Russet Fathom"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Someone's face glows out of focus behind netting and bokeh lights, washed in pink concert lighting.  \nThe person's eyes are half-closed, their expression calm and absorbed.  \nFingers grip a camera above their head, capturing the moment.  \nPink and white lights blur into soft circles around the edges of the frame.",
@@ -292,7 +292,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Cristina Quintana"
+          "Tidal Harbor"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a pink fishnet top and green halter top sits with two friends at a party. She wears a pink headband and has tears painted on her face, with a tattoo of a crying mask on her chest. In the center, a woman wears a white fluffy sheep hat with pink ears and a pink crop top. To the right, a woman in a black and white checkered dress holds a plastic cup. All three hold drinks and pose against a grey brick wall.",
@@ -305,12 +305,12 @@
       "identities": [],
       "latency_s": 1.589,
       "media_id": 17,
-      "path": "mock_images/cristina-1.jpg"
+      "path": "mock_images/tidal-1.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Ellyn Heald"
+          "Gilded Cypress"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with brown hair pinned up wears gold leaf flakes across her face, shoulders, and chest. She has bold red lipstick and gold drop earrings with pearl accents. She stands in a kitchen with white cabinets and a refrigerator in the background.",
@@ -328,7 +328,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a silver sequined dress wears a \"Birthday Princess\" sash and a tiara, smiling with her eyes closed. She leans her head on the shoulder of another woman in a black dress who wears glasses and a gold headband. They stand in front of a balloon arch of purple, green, and gold balloons, with a round mirror and Mardi Gras beads visible in the background.",
@@ -346,7 +346,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman kneels on a wood floor hugging a blue merle Australian Shepherd in front of a marble fireplace. She wears a cream sweater and smiles at the camera. The dog has white and black fur with brown eyes and a pink tongue. A brass fireplace insert and stone hearth are visible behind them.",
@@ -359,12 +359,12 @@
       "identities": [],
       "latency_s": 8.289,
       "media_id": 20,
-      "path": "mock_images/kirstie-1.jpeg"
+      "path": "mock_images/auburn-1.jpeg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Two women sit on the bow of a motorboat, smiling at the camera. The woman on the left wears a red tank top and sunglasses, while the woman on the right wears a pink bucket hat and a striped top. She has a tattoo on her left forearm. A man in a black cap sits at the helm behind them. The boat floats on calm water under a hazy sky.",
@@ -377,13 +377,13 @@
       "identities": [],
       "latency_s": 2.499,
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg"
+      "path": "mock_images/auburn-boat.jpg"
     },
     {
       "describe": {
         "ablated_names": [
           "Daniel Arce",
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a tan Yankees cap and sunglasses lies on a beach towel next to a man with gray hair and sunglasses. She wears a black bikini top and has tattoos on her left arm. They rest on a blue and purple checkered towel under bright sunlight.",
@@ -396,12 +396,12 @@
       "identities": [],
       "latency_s": 8.017,
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Kirstie Mccarrel"
+          "Auburn Current"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman floats on her back in a tiled indoor pool. She wears a black swimsuit and has blonde hair tied back. Her right arm rests along her side, revealing a tattoo on her forearm. The pool's edge displays \"SHALLOW WATER\" in reverse lettering.",
@@ -414,12 +414,12 @@
       "identities": [],
       "latency_s": 8.321,
       "media_id": 24,
-      "path": "mock_images/kirstie-pool.jpg"
+      "path": "mock_images/auburn-pool.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Liam Maloney"
+          "Linen Kestrel"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A bald man lies back against a patterned pillow, looking up at the camera. He wears round black-rimmed glasses that reflect the light. His face is illuminated in high contrast against the dark background. He has a faint smile on his lips.",
@@ -432,12 +432,12 @@
       "identities": [],
       "latency_s": 7.881,
       "media_id": 25,
-      "path": "mock_images/liam-maloney-2.jpg"
+      "path": "mock_images/linen-kestrel-2.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Liam Maloney"
+          "Linen Kestrel"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A man takes a selfie in a kitchen, wearing a faded baseball cap and wire-rimmed glasses. He wears a black t-shirt with a yellow and white Pittsburgh Pirates logo over a Grateful Dead skull design. Behind him, a white shelving unit holds kitchenware and a yellow Rockwell drill, while a stainless steel refrigerator stands to his right. The floor has a black and white checkered tile pattern.",
@@ -450,7 +450,7 @@
       "identities": [],
       "latency_s": 8.503,
       "media_id": 26,
-      "path": "mock_images/liam-maloney-home.jpg"
+      "path": "mock_images/linen-kestrel-home.jpg"
     },
     {
       "describe": {
@@ -466,12 +466,12 @@
       "identities": [],
       "latency_s": 1.674,
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Someone in a white slip dress and red lipstick takes a selfie with three friends at a formal dinner.  \nThe women wear sequined and embellished evening dresses in red, silver, and gold.  \nThey sit at a set table with white linens and silverware in an ornate gilded dining room.  \nThe woman on the left wears a red sequined dress and a gold pendant necklace.",
@@ -484,12 +484,12 @@
       "identities": [],
       "latency_s": 1.621,
       "media_id": 28,
-      "path": "mock_images/maria-cocktail.jpg"
+      "path": "mock_images/slate-cocktail.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Someone bites into a slice of red and white striped cake.  \nShe wears a sparkly dark top and holds the cake with her right hand.  \nA phone on a selfie stick captures her in the foreground.  \nIn the background, a couple embraces near a mirrored disco ball.",
@@ -502,12 +502,12 @@
       "identities": [],
       "latency_s": 1.823,
       "media_id": 29,
-      "path": "mock_images/maria-party.jpg"
+      "path": "mock_images/slate-party.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a red-and-navy bikini floats on a rose-gold glitter mermaid-tail float in a sunlit pool. She smiles broadly and flashes a peace sign with her right hand. Her left hand rests on the edge of the float. The pool water is clear and turquoise, with a decorative tile border visible at the edge.",
@@ -520,12 +520,12 @@
       "identities": [],
       "latency_s": 2.297,
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with dark lipstick holds a geometric puzzle toy over her right eye. She grips a cord attached to the toy with her right hand. The scene is bathed in blue and teal light, casting a cool glow on her face. Her left eye is visible and focused forward.",
@@ -543,7 +543,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A person crouches inside a glacial ice cave. She wears a white Black Diamond helmet with a headlamp, a fur-hooded parka, and crampon-fitted boots. Her camera rests at her knee as she looks toward the viewer. The cave walls are smooth, dark ice with a wet, reflective surface.",
@@ -561,7 +561,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Maria Correonero"
+          "Slate Willow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman in a dark coat with a fur-lined hood crouches at the entrance of a wrecked airplane. She looks toward the camera with a slight smile, her long brown hair falling over her shoulders. The aircraft's metal fuselage is torn and rusted, revealing a gray, barren landscape beyond.",
@@ -611,7 +611,7 @@
     {
       "describe": {
         "ablated_names": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "A woman with long blonde hair stands in a pink-lit room, holding a salt-rimmed margarita. She wears a black backless top and a sheer patterned skirt, leaning against a marble table. A Pink Panther poster hangs on the wall beside a lit candle, and a gold-framed mirror reflects her image. An ornate radiator stands behind her.",
@@ -624,12 +624,12 @@
       "identities": [],
       "latency_s": 4.307,
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Someone dances with five friends in matching pink satin pajamas, raising a drink.  \nThey stand before a shimmering pink foil curtain with a silver number two balloon.  \nA lamp with a warm glow sits in the foreground, casting light on their smiling faces.  \nThe group appears joyful and celebratory in the dimly lit room.",
@@ -642,12 +642,12 @@
       "identities": [],
       "latency_s": 1.605,
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
         "ablated_names": [
-          "Ryann Wiseman"
+          "Muted Yarrow"
         ],
         "adapter": "bakeoff",
         "alt_text_draft": "Two women sit closely on a couch, posing for the camera. The woman on the left wears a white lace bralette, a pearl choker, and long white lace gloves, while the woman on the right wears a black corset with pink trim, a white feather boa, and a black glove. They both wear pearl necklaces and look directly at the camera with playful expressions. A red clock and framed photos hang on the wall behind them.",
@@ -660,7 +660,7 @@
       "identities": [],
       "latency_s": 4.491,
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg"
+      "path": "mock_images/muted-party.jpg"
     }
   ],
   "kind": "run_record",

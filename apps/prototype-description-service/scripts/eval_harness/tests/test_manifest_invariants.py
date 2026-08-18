@@ -27,9 +27,9 @@ MISSING_PROVENANCE = FIXTURES / "missing_provenance.json"
 
 # golden150 unprovenanced rows (re-verified on sha256 4ae541dc…).
 GOLDEN150_UNPROVENANCED_PATHS = (
-    "personal/alicia_graff_375.jpg",
-    "personal/barbara_fransen_438.jpg",
-    "personal/erika_lind_484.jpg",
+    "personal/opaline_beacon_375.jpg",
+    "personal/quiet_fathom_438.jpg",
+    "personal/saffron_falcon_484.jpg",
     "personal/unlabeled_0603.jpg",
     "personal/unlabeled_0633.jpg",
     "personal/unlabeled_0648.png",
@@ -76,7 +76,7 @@ def test_missing_provenance_key_raises_manifest_error() -> None:
     with pytest.raises(ManifestError, match="provenance is required") as exc_info:
         load_manifest(str(MISSING_PROVENANCE))
     message = str(exc_info.value)
-    assert "fixtures/bea_example_102.jpg" in message
+    assert "fixtures/quiet_example_102.jpg" in message
     assert "media_id=102" in message
     # The provenanced sibling must not be blamed.
     assert "fixtures/ada_example_101.jpg" not in message
@@ -137,7 +137,7 @@ def test_aggregate_missing_provenance_names_every_path(tmp_path: Path) -> None:
         load_manifest(str(path))
     message = str(exc_info.value)
     assert "fixtures/ada_example_101.jpg" in message
-    assert "fixtures/bea_example_102.jpg" in message
+    assert "fixtures/quiet_example_102.jpg" in message
     assert "2 entries" in message
 
 
@@ -339,7 +339,7 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                     },
                     {
                         "media_id": 102,
-                        "path": "fixtures/bea_example_102.jpg",
+                        "path": "fixtures/quiet_example_102.jpg",
                         "describe": {"alt_text_draft": "Bea Example.", "visual_facts": {"objects": []}},
                         "identities": ["Bea Example"],
                         "face_count": 1,

@@ -1,18 +1,18 @@
-# Ryann Wiseman Matching Failure Analysis
+# Muted Yarrow Matching Failure Analysis
 
-Investigation of why Ryann Wiseman cluster fails while Hillary Sampliner works.
+Investigation of why Muted Yarrow cluster fails while Russet Ridgeway works.
 
 ## Root Cause: Insufficient Representatives
 
 | Cluster | Members | Representatives | Works? |
 |---------|---------|-----------------|--------|
-| **Ryann Wiseman** | **195** | **1** | [ ] |
-| Krista Fisher | 31 | 1 | WARNING |
-| Hillary Sampliner | 23 | 10 | [x] |
+| **Muted Yarrow** | **195** | **1** | [ ] |
+| Onyx Marsh | 31 | 1 | WARNING |
+| Russet Ridgeway | 23 | 10 | [x] |
 | Mairin Taylor | 15 | 10 | [x] |
 | Kay Bertrand | 8 | 8 | [x] |
 
-**The problem**: Ryann Wiseman has 195 members from manual merges but only **1 representative embedding**. This single representative cannot match the diverse face variations across all merged clusters.
+**The problem**: Muted Yarrow has 195 members from manual merges but only **1 representative embedding**. This single representative cannot match the diverse face variations across all merged clusters.
 
 ---
 
@@ -27,7 +27,7 @@ Investigation of why Ryann Wiseman cluster fails while Hillary Sampliner works.
 
 ```
 [RepresentativeDiscovery] NO MATCH: identity f80be588-...
-  best_cluster=a0bbe3be-... (Ryann Wiseman)
+  best_cluster=a0bbe3be-... (Muted Yarrow)
   best_sim=0.4838 (threshold=0.85)
 ```
 
@@ -35,13 +35,13 @@ Similarity of 0.48 is far below 0.85 threshold.
 
 ---
 
-## Why Hillary Sampliner Works
+## Why Russet Ridgeway Works
 
-Hillary Sampliner (db1ca158-...) has **10 representatives** covering diverse face angles. When new faces arrive, at least one representative matches well.
+Russet Ridgeway (db1ca158-...) has **10 representatives** covering diverse face angles. When new faces arrive, at least one representative matches well.
 
 ```
-[clustering] ACCEPTED identity=404e5e2e-... cluster=db1ca158-... (Hillary Sampliner)
-[clustering] ACCEPTED identity=00ddb8dc-... cluster=db1ca158-... (Hillary Sampliner)
+[clustering] ACCEPTED identity=404e5e2e-... cluster=db1ca158-... (Russet Ridgeway)
+[clustering] ACCEPTED identity=00ddb8dc-... cluster=db1ca158-... (Russet Ridgeway)
 ... (10 total accepted)
 ```
 

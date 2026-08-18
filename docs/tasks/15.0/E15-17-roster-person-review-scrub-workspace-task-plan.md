@@ -48,7 +48,7 @@ Build the person-first roster review workspace that sits on top of the ADR-009/E
 
 ## Target Outcome
 
-The default Roster route shows a review queue strip and a person workspace. A curated Tory Guzman cluster becomes one Tory Guzman person row with supporting clusters and face instances. Operators can scrub all instances, choose representative faces, accept/reject/split/flag hard examples, and deep-link to a person, face, or unresolved cluster.
+The default Roster route shows a review queue strip and a person workspace. A curated Flaxen Yarrow cluster becomes one Flaxen Yarrow person row with supporting clusters and face instances. Operators can scrub all instances, choose representative faces, accept/reject/split/flag hard examples, and deep-link to a person, face, or unresolved cluster.
 
 ## Context Loading
 
@@ -158,7 +158,7 @@ Changes:
 
 Proof:
 
-- Vitest proves duplicate Tory Guzman clusters render as one person with multiple evidence clusters.
+- Vitest proves duplicate Flaxen Yarrow clusters render as one person with multiple evidence clusters.
 
 ### Slice 3: Face Scrubber and Selection Controls
 
@@ -237,6 +237,6 @@ Proof:
 ## Success Criteria
 
 - [x] The default Roster route is person-first after projection data exists. _`RosterPage.tsx` computes `defaultWorkspaceRoute` from projection entries; `RosterPage.workspace.test.tsx` covers workspace routing._
-- [ ] A curated Tory Guzman cluster appears as one person with all supporting face evidence.
+- [ ] A curated Flaxen Yarrow cluster appears as one person with all supporting face evidence.
 - [ ] Operators can scrub, select, and act on face instances from one surface.
 - [x] Raw cluster evidence remains available without being the primary identity model. _`PersonWorkspacePanel` keeps assigned-cluster evidence inside the person context while legacy cluster routes remain available during the migration._

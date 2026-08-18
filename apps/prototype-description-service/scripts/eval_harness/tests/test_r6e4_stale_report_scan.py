@@ -100,7 +100,7 @@ def _leftover_ident() -> dict:
         "macro_precision": None,
         "macro_recall": 0.0,
         "per_identity": {
-            "Caitlin Weaver": {
+            "Russet Fathom": {
                 "precision": None,
                 "recall": 0.0,
                 "tp": 0,

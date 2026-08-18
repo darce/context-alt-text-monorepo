@@ -25,7 +25,7 @@ def test_e15_13_fixture_docs_do_not_require_named_entity_examples() -> None:
         repo_root / "docs" / "specs" / "recognition-roster-curation-loop-spec.md",
     ]
     banned_literals = [
-        "Tory Guzman",
+        "Flaxen Yarrow",
         "4f7236f5-55ed-4b55-8eae-51e5b7d256f4",
         "cluster-e22d355c86504443896d9bd73c54b80e",
     ]

@@ -9,15 +9,15 @@ import { readWpRestContext } from '../fixtures/wp-rest';
 /**
  * E19-4a S5: context-diff demo evidence on LocalWP.
  *
- * Same image (attachment 200, `maria-pool.jpg`, golden scene 30), one confirmed
- * roster identity (Maria Correonero), naming agreement on. Captures the
+ * Same image (attachment 200, `slate-pool.jpg`, golden scene 30), one confirmed
+ * roster identity (Slate Willow), naming agreement on. Captures the
  * generic vs identity-named preview drafts plus naming provenance from the
  * WordPress describe proxy, and the cache-hit parity of the named draft.
  * Draft-only: `_wp_attachment_image_alt` is never written (E19-2 owns writes).
  */
 
 const MEDIA_ID = Number(process.env.ACX_E2E_DEMO_MEDIA_ID ?? '200');
-const EXPECTED_NAME = process.env.ACX_E2E_DEMO_IDENTITY ?? 'Maria Correonero';
+const EXPECTED_NAME = process.env.ACX_E2E_DEMO_IDENTITY ?? 'Slate Willow';
 
 interface DescribeResponse {
   cached: boolean;
@@ -98,9 +98,9 @@ test('E19-4a named-preview context diff on LocalWP', async ({ page, baseURL }, t
     slice: 'S5 LocalWP demo evidence',
     captured_at: new Date().toISOString(),
     media_id: MEDIA_ID,
-    image: 'maria-pool.jpg (golden scene 30)',
+    image: 'slate-pool.jpg (golden scene 30)',
     seeding_note:
-      'Confirmed identity seeded directly into the local backend DB (cluster "Maria Correonero", user_confirmed, roster-linked) — stands in for operator curation; local stack has no face-recognition extra installed.',
+      'Confirmed identity seeded directly into the local backend DB (cluster "Slate Willow", user_confirmed, roster-linked) — stands in for operator curation; local stack has no face-recognition extra installed.',
     adapter: 'seeded (no phrase grounding → positional fallback mode)',
     generic_draft: first.generic_draft,
     named_draft: first.named_draft,

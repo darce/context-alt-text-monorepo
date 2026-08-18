@@ -5,10 +5,10 @@
       "actual_visible": true,
       "expected_decision": "dropped",
       "expected_visible": false,
-      "fact_label": "Liam Maloney",
+      "fact_label": "Linen Kestrel",
       "fact_source": "identity",
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "reason": "decision_or_visible_mismatch"
     },
     {
@@ -16,7 +16,7 @@
       "actual_visible": true,
       "expected_decision": "dropped",
       "expected_visible": false,
-      "fact_label": "Maria Correonero",
+      "fact_label": "Slate Willow",
       "fact_source": "identity",
       "media_id": 33,
       "path": "mock_images/mcm-planecrash.jpg",

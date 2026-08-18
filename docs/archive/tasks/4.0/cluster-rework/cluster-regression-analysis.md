@@ -14,12 +14,12 @@
 - **Prototype 4.0 implementation** (`apps/prototype-description-service`):
   - `IdentityScanService` saves raw embeddings per media item but never reuses them for future scans.
   - `IdentityClusteringService` only clusters **within the last scan batch** (whatever `cluster_identities()` sees in `identity_scan_jobs.media_ids`). We do not fetch the full unclustered corpus nor do we compute similarities against prior clusters.
-  - The SPA shows cluster IDs, but each scan ends up creating disjoint “cluster-xxxxxxx” groups instead of reusing the same label (Ryann Wiseman being split across 7 clusters is a symptom).
+  - The SPA shows cluster IDs, but each scan ends up creating disjoint “cluster-xxxxxxx” groups instead of reusing the same label (Muted Yarrow being split across 7 clusters is a symptom).
 
 ## 2. Root Cause
 
 1. **No persistent centroid / similarity search**  
-   - The new service never queries existing clusters when deciding where to put a fresh embedding. `_find_similar_identities()` only compares the detections *within the current unclustered set*. That means scan A clusters Ryann’s first photo, but scan B has zero knowledge of scan A’s embeddings.
+   - The new service never queries existing clusters when deciding where to put a fresh embedding. `_find_similar_identities()` only compares the detections *within the current unclustered set*. That means scan A clusters Muted’s first photo, but scan B has zero knowledge of scan A’s embeddings.
 
 2. **Clustering scope limited to current batch**  
    - `cluster_identities()` filters on `~membership_exists` for the current tenant, but we only call it immediately after `scan_identities()` with the latest job’s IDs. Prior jobs already have a membership, so no clustering rerun will ever add new faces to earlier clusters.

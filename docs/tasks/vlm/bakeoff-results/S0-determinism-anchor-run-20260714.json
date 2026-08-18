@@ -100,7 +100,7 @@
       "identities": [],
       "latency_s": 0.071,
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
@@ -149,7 +149,7 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "latency_s": 0.053,
       "media_id": 3,
@@ -255,7 +255,7 @@
       "identities": [],
       "latency_s": 0.295,
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
@@ -866,7 +866,7 @@
       "identities": [],
       "latency_s": 0.06,
       "media_id": 17,
-      "path": "mock_images/cristina-1.jpg"
+      "path": "mock_images/tidal-1.jpg"
     },
     {
       "describe": {
@@ -915,7 +915,7 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "latency_s": 0.055,
       "media_id": 18,
@@ -968,7 +968,7 @@
       "error": null,
       "face_count": 2,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "latency_s": 0.06,
       "media_id": 19,
@@ -1021,11 +1021,11 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "latency_s": 0.399,
       "media_id": 20,
-      "path": "mock_images/kirstie-1.jpeg"
+      "path": "mock_images/auburn-1.jpeg"
     },
     {
       "describe": {
@@ -1074,11 +1074,11 @@
       "error": null,
       "face_count": 3,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "latency_s": 0.055,
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg"
+      "path": "mock_images/auburn-boat.jpg"
     },
     {
       "describe": {
@@ -1129,7 +1129,7 @@
       "identities": [],
       "latency_s": 0.157,
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
@@ -1181,7 +1181,7 @@
       "identities": [],
       "latency_s": 0.167,
       "media_id": 24,
-      "path": "mock_images/kirstie-pool.jpg"
+      "path": "mock_images/auburn-pool.jpg"
     },
     {
       "describe": {
@@ -1229,11 +1229,11 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "latency_s": 0.081,
       "media_id": 25,
-      "path": "mock_images/liam-maloney-2.jpg"
+      "path": "mock_images/linen-kestrel-2.jpg"
     },
     {
       "describe": {
@@ -1282,11 +1282,11 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "latency_s": 0.131,
       "media_id": 26,
-      "path": "mock_images/liam-maloney-home.jpg"
+      "path": "mock_images/linen-kestrel-home.jpg"
     },
     {
       "describe": {
@@ -1338,7 +1338,7 @@
       "identities": [],
       "latency_s": 0.054,
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
@@ -1386,11 +1386,11 @@
       "error": null,
       "face_count": 5,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "latency_s": 0.055,
       "media_id": 28,
-      "path": "mock_images/maria-cocktail.jpg"
+      "path": "mock_images/slate-cocktail.jpg"
     },
     {
       "describe": {
@@ -1439,11 +1439,11 @@
       "error": null,
       "face_count": 4,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "latency_s": 0.052,
       "media_id": 29,
-      "path": "mock_images/maria-party.jpg"
+      "path": "mock_images/slate-party.jpg"
     },
     {
       "describe": {
@@ -1491,11 +1491,11 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "latency_s": 0.06,
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
@@ -1645,7 +1645,7 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "latency_s": 0.318,
       "media_id": 33,
@@ -1801,11 +1801,11 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "latency_s": 0.054,
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
@@ -1856,7 +1856,7 @@
       "identities": [],
       "latency_s": 0.055,
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
@@ -1908,7 +1908,7 @@
       "identities": [],
       "latency_s": 0.076,
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg"
+      "path": "mock_images/muted-party.jpg"
     }
   ],
   "kind": "run_record",

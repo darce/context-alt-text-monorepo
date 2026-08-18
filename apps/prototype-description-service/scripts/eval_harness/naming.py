@@ -19,11 +19,11 @@ _VARIANT_SUFFIX = re.compile(r"-\d+$")
 
 
 def entity_slug(filename: str) -> str:
-    """``entity-bea-burke-2.jpg`` -> ``bea-burke`` (strip prefix + variant suffix)."""
+    """``entity-hollow-pennant-2.jpg`` -> ``hollow-pennant`` (strip prefix + variant suffix)."""
     stem = Path(filename).stem.removeprefix("entity-")
     return _VARIANT_SUFFIX.sub("", stem)
 
 
 def display_name(slug: str) -> str:
-    """``bea-burke`` -> ``Bea Burke`` (roster display form)."""
+    """``hollow-pennant`` -> ``Hollow Pennant`` (roster display form)."""
     return " ".join(part.capitalize() for part in slug.split("-"))

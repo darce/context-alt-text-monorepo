@@ -146,7 +146,7 @@ SELECT label, identity_count, curriculum_t, maturity
 FROM identity_clusters ORDER BY identity_count DESC;
 
 -- Top clusters:
-Tory Guzman    | 10 | 0 | MATURE
+Flaxen Yarrow    | 10 | 0 | MATURE
 (NULL)         |  6 | 0 | MATURE
 (NULL)         |  3 | 0 | CONFIRMED
 (NULL)         |  3 | 0 | CONFIRMED
@@ -240,7 +240,7 @@ SELECT COUNT(*) FROM identity_clusters;  -- 26
 
 -- By label
 SELECT label, COUNT(*) FROM identity_clusters GROUP BY label;
--- NULL: 25, 'Tory Guzman': 1
+-- NULL: 25, 'Flaxen Yarrow': 1
 
 -- Members
 SELECT COUNT(*) FROM identity_members;  -- 41

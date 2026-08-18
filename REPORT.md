@@ -85,4 +85,4 @@ Close 4-FE review findings. `.lane/BRIEF.md` was missing; R1 ids synthesized fro
 - `87350a87a3f341d10140b06cbbb2a66f257d99b5` `fix(roster): UXW2-4-FE-R1 drawer shell, honest CTA, leftover jargon`
 - `7091f711930193f20a7040284eb24d0d3aec1081` `fix(workbench): UXW2-4-FE-R1 review URL owner and face-group copy`
 
-HEAD: 1fdfc8f7bcbc9b484fe14090da9a619dd8d20f83
+HEAD: b71e8aa58943c1baa252de7b03e8540509891027 (report tree); code `87350a8` + `7091f71`.

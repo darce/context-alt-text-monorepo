@@ -32,7 +32,7 @@
     "probe_face_count": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of probe representatives (or member-fallback faces) used in the comparison."
+      "description": "Number of dim-compatible probe representatives (or member-fallback faces) used in ranking. Three empties: no usable probe → probe_face_count 0, reference_face_count 0, quality_flag low_quality; empty labelled roster → probe_face_count > 0, reference_face_count 0, quality_flag ok, candidates []; low-quality probe → bands capped at possible."
     },
     "reference_face_count": {
       "type": "integer",

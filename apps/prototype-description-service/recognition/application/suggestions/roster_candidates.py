@@ -176,21 +176,33 @@ async def list_roster_candidates(
     )
     computed_at = datetime.now(tz=UTC)
     model_id = probe_model or ""
-    quality_flag = _quality_flag_from_samples(probe_qualities, inference_settings)
 
-    if not probe_embeddings or probe_model is None:
+    usable_probes: list[np.ndarray] = []
+    usable_qualities: list[tuple[float | None, float | None, float | None]] = []
+    if probe_embeddings:
+        probe_dim = _vector_dim(probe_embeddings[0])
+        aligned = list(probe_qualities) + [(None, None, None)] * max(
+            0, len(probe_embeddings) - len(probe_qualities)
+        )
+        for vec, sample in zip(probe_embeddings, aligned, strict=False):
+            if probe_dim > 0 and _vector_dim(vec) == probe_dim:
+                usable_probes.append(vec)
+                usable_qualities.append(sample)
+    quality_flag = _quality_flag_from_samples(usable_qualities, inference_settings)
+
+    if not usable_probes or probe_model is None:
         return RosterCandidatesResult(
             model_id=model_id,
             embedding_model=model_id,
             computed_at=computed_at,
-            probe_face_count=len(probe_embeddings),
+            probe_face_count=len(usable_probes),
             reference_face_count=0,
-            quality_flag=quality_flag,
+            quality_flag=quality_flag if usable_probes else QualityFlag.LOW_QUALITY,
             thresholds=thresholds,
             candidates=[],
         )
 
-    probe_dim = _vector_dim(probe_embeddings[0])
+    probe_dim = _vector_dim(usable_probes[0])
     labeled = await cluster_repository.get_labeled_with_representatives(str(tenant_id))
     reps_by_cluster: dict[str, list[np.ndarray]] = {}
     labels_by_cluster: dict[str, str] = {}
@@ -215,9 +227,7 @@ async def list_roster_candidates(
     reference_face_count = sum(len(vecs) for vecs in reps_by_cluster.values())
     search = SimilaritySearch(inference_settings)
     best_by_cluster: dict[str, float] = {}
-    for probe_vec in probe_embeddings:
-        if _vector_dim(probe_vec) != probe_dim:
-            continue
+    for probe_vec in usable_probes:
         for match in search.find_all_matches(
             probe_vec, reps_by_cluster, min_similarity=_MIN_RANK_SIMILARITY
         ):
@@ -239,7 +249,7 @@ async def list_roster_candidates(
         model_id=str(probe_model),
         embedding_model=str(probe_model),
         computed_at=computed_at,
-        probe_face_count=len(probe_embeddings),
+        probe_face_count=len(usable_probes),
         reference_face_count=reference_face_count,
         quality_flag=quality_flag,
         thresholds=thresholds,

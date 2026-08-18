@@ -227,6 +227,7 @@ async def test_empty_roster_returns_empty_candidates_not_error() -> None:
     assert result.model_id == same_model
     assert result.probe_face_count == 1
     assert result.reference_face_count == 0
+    assert result.quality_flag is QualityFlag.OK
 
 
 @pytest.mark.asyncio
@@ -651,3 +652,35 @@ async def test_dimension_mismatched_reps_are_skipped() -> None:
     ids = [row.cluster_id for row in result.candidates]
     assert ok_id in ids
     assert mismatch_id not in ids
+
+
+@pytest.mark.asyncio
+async def test_probe_face_count_equals_dim_filtered_length() -> None:
+    """R2-06: mixed-dim probe count is the filtered length used for ranking."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[
+            _normalize(np.array([1.0, 0.0, 0.0])),
+            _normalize(np.ones(8)),
+            _normalize(np.array([0.0, 1.0, 0.0])),
+        ],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99), (1.0, 1.0, 0.99), (1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    assert result.probe_face_count == 2
+    assert result.candidates

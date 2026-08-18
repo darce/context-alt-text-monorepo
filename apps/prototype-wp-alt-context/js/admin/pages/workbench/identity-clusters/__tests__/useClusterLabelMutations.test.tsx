@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
+import type { PendingNameSuggestionsResponse, TopUnlabeledClustersResponse } from '../../../../api/recognition/types';
 import { useClusterLabelMutations } from '../useClusterLabelMutations';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
@@ -147,5 +149,118 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     const page = queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey);
     expect(page?.items.map((item) => item.suggestionId)).toEqual(['sug-other']);
+  });
+
+  it('R1-25: rename drops the labelled group from namePending and topUnlabeled', async () => {
+    vi.mocked(recognitionApi.updateClusterLabel).mockResolvedValue({
+      cluster_id: 'source-c',
+      label: 'Renamed',
+    } as never);
+    const { result, invalidateQueries, queryClient } = renderLabelMutations();
+    const nameKey = queryKeys.suggestions.namePending();
+    const topKey = queryKeys.clusters.topUnlabeled('t');
+    queryClient.setQueryData<PendingNameSuggestionsResponse>(nameKey, {
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'source-c',
+          suggested_name: 'Alex',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-2',
+          cluster_id: 'other',
+          suggested_name: 'Other',
+          confidence_score: 0.8,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
+      clusters: [
+        {
+          id: 'source-c',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'other',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    result.current.rename('Renamed');
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(nameKey)?.suggestions.map((row) => row.id),
+    ).toEqual(['name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((row) => row.id),
+    ).toEqual(['other']);
+  });
+
+  it('R1-25: merge drops result.source_id from topUnlabeled', async () => {
+    const { result, invalidateQueries, queryClient } = renderLabelMutations();
+    const topKey = queryKeys.clusters.topUnlabeled('t');
+    queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
+      clusters: [
+        {
+          id: 'source-c',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'target-c',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    result.current.merge('target-c', 'Target');
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((row) => row.id),
+    ).toEqual(['target-c']);
   });
 });

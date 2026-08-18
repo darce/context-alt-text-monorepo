@@ -1108,6 +1108,138 @@ def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -
     return re.compile(NBL + r"(" + alt + r")" + NBR, re.IGNORECASE), resolved, sorted(deferred)
 
 
+# Optional middle initial between a real-name token and an alias token of
+# the same identity: `Rose K. quarry`, `Rose K quarry`, or `Rose quarry`.
+# Letter-only anchors — the same narrowing the short concat tier uses —
+# so a digit/`@`/`/` neighbour still matches and an in-word collision
+# does not. Built from the alias map, never the wordlist (BR-27).
+# IGNORECASE is not cosmetic here: under it `[A-Za-z]` also matches the
+# characters that case-fold into ASCII letters -- U+017F LATIN SMALL LETTER
+# LONG S and U+212A KELVIN SIGN among them. The match pattern carries the
+# flag, so this re-parse of the matched text must carry it too. Without it
+# the two disagree, `rewrite()` declines a span that `residue()` counts, and
+# `verify` reports residue `apply` can never clear (PRIV-1-BR-30).
+_ADJACENT_PARSE = re.compile(
+    r"^([A-Za-z]+)((?:[ \t]+[A-Za-z]\.?)?)([ \t]+)([A-Za-z]+)$", re.IGNORECASE
+)
+
+
+def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple[dict, ...]]:
+    """Real-name token sitting next to an alias token of the same identity.
+
+    The given-name pass excludes dictionary words on purpose — rewriting
+    them would corrupt unrelated English. That exclusion is correct in
+    isolation. What it ignores is the neighbour: `Rose quarry`, where
+    `quarry` is a surname this scrub itself minted, is not ordinary
+    English. The adjacency is an identity match, not a heuristic.
+
+    Both halves come from the alias map. The builder never reads the
+    wordlist: if it did, editing a word out of the exclusion list would
+    drop the pair while the exposed surface stayed on disk — measurement
+    derived from the thing being changed (CARD-08 / BR-19).
+
+    A pair is emitted only when the leading token is a real-name token
+    of identity X with a positional alias, and the adjacent token is a
+    *different-index* alias token of the same X. Same-index pairing
+    would turn `Rose cobalt` into `Cobalt cobalt`. A pair that two
+    identities resolve to different replacements is refused, not
+    guessed. One-letter leading tokens are refused and counted: letter
+    anchors cannot separate `a quarry` from the English article.
+
+    Whatever is still not admitted is returned as ``dropped``, each
+    with a reason. Callers print that list. A floor that ``continue``s
+    is a measurement the checker inherits.
+    """
+    collected: dict[tuple[str, str], set[str]] = {}
+    dropped: list[dict] = []
+    no_alias: list[int] = []
+
+    for entry in mapping["entries"]:
+        real = [t for t in re.split(r"[^A-Za-z]+", entry.get("real_name", "")) if t]
+        alias = [t for t in re.split(r"[^A-Za-z]+", entry.get("alias", "")) if t]
+        if not real:
+            dropped.append({"reason": "empty name; no adjacent pair exists", "tokens": 0})
+            continue
+        if not alias:
+            no_alias.append(len(real))
+            continue
+
+        before = len(dropped)
+        contributed = False
+        for i, token in enumerate(real):
+            if len(token) < 2:
+                dropped.append(
+                    {
+                        "reason": (
+                            "single-letter token; letter-anchor cannot "
+                            "separate it from the English article"
+                        ),
+                        "tokens": len(real),
+                    }
+                )
+                continue
+            if i >= len(alias):
+                dropped.append({"reason": "no positional alias token", "tokens": len(real)})
+                continue
+            replacement = alias[i]
+            for j, adj in enumerate(alias):
+                if j == i or adj.lower() == token.lower():
+                    continue
+                # `.lower()`, not `.casefold()`: these come from the map, and
+                # `re.split(r"[^A-Za-z]+")` above has already dropped every
+                # non-ASCII letter, so the two are identical here and no
+                # mutant can tell them apart. The document side is different
+                # and does need casefold -- see `_adjacent_repl` (BR-30).
+                collected.setdefault((token.lower(), adj.lower()), set()).add(replacement)
+                contributed = True
+        if not contributed and len(dropped) == before:
+            dropped.append({"reason": "no distinct alias neighbour", "tokens": len(real)})
+
+    if no_alias:
+        raise SystemExit(
+            f"{len(no_alias)} entries (name lengths {sorted(no_alias)}) have no alias "
+            "tokens, so an adjacent real+alias pair cannot be rewritten. Fix the alias "
+            "map; skipping them would make `verify` blind to exactly those names."
+        )
+
+    pairs: dict[tuple[str, str], str] = {}
+    for key, replacements in collected.items():
+        if len(replacements) != 1:
+            dropped.append({"reason": "pair maps to >1 identity", "tokens": 2})
+            continue
+        pairs[key] = next(iter(replacements))
+
+    if not pairs:
+        return None, {}, tuple(dropped)
+
+    alts: list[str] = []
+    for lead, adj in sorted(pairs, key=lambda k: (len(k[0]) + len(k[1]), len(k[0])), reverse=True):
+        alts.append(re.escape(lead) + r"(?:[ \t]+[A-Za-z]\.?)?[ \t]+" + re.escape(adj))
+    rx = re.compile(
+        _CONCAT_LETTER_NBL + r"(?:" + "|".join(alts) + r")" + _CONCAT_LETTER_NBR,
+        re.IGNORECASE,
+    )
+    return rx, pairs, tuple(dropped)
+
+
+def _adjacent_exclusion_line(dropped: tuple[dict, ...] | list[dict]) -> str:
+    """One printed measurement of what the adjacent-pair builder refused.
+
+    Always a complete sentence, including the zero case. Names are not
+    included — one of the ambiguous stems is itself a roster given name,
+    and a message that echoes what it refused would publish the thing
+    the scrub removed. The caller may print this on `apply` and `verify`.
+    """
+    n = len(dropped)
+    if n == 0:
+        return "adjacent exclusions: 0 dropped"
+    by_reason: dict[str, int] = {}
+    for item in dropped:
+        by_reason[item["reason"]] = by_reason.get(item["reason"], 0) + 1
+    detail = "; ".join(f"{count}× {reason}" for reason, count in sorted(by_reason.items()))
+    return f"adjacent exclusions: {n} dropped ({detail})"
+
+
 class _Passes:
     """Every substitution pass, built once and reused by apply *and* verify.
 
@@ -1133,12 +1265,13 @@ class _Passes:
         self.token_index = _token_index(mapping)
         self.given_rx, self.given, self.given_deferred = _given_name_regex(mapping, _nonpersonal_tokens(idents))
         self.concat_rx, self.concat, self.concat_dropped = _concatenated_regex(mapping)
+        self.adjacent_rx, self.adjacent, self.adjacent_dropped = _adjacent_alias_regex(mapping)
         lits = _protected_literals(idents)
         self.protected = lits
         self.protect_rx = re.compile("|".join(re.escape(s) for s in lits)) if lits else None
 
     def _mask(self, text: str) -> tuple[str, list[str]]:
-        """Hide every non-personal identity's own strings from all six passes."""
+        """Hide every non-personal identity's own strings from every rewrite pass."""
         if self.protect_rx is None:
             return text, []
         held: list[str] = []
@@ -1161,7 +1294,7 @@ class _Passes:
         return out
 
     def rewrite(self, text: str, suffix: str) -> tuple[str, dict[str, int], set[str]]:
-        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0}
+        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0}
         text, held = self._mask(text)
 
         # Order is load-bearing, most precise pass first. A whole-string JSON
@@ -1230,6 +1363,49 @@ class _Passes:
 
             text = self.given_rx.sub(_given_repl, text)
 
+        # After given-name: a unique real surname has become the minted
+        # noun, so a leftover dictionary given name now sits next to an
+        # alias token of the same identity. Residue also runs this pass
+        # on the mixed form already on disk (BR-27).
+        if self.adjacent_rx is not None:
+
+            def _adjacent_repl(m: re.Match) -> str:
+                if _inside_hex_run(m.string, m.start(), m.end()):
+                    return m.group(0)
+                parsed = _ADJACENT_PARSE.match(m.group(0))
+                replacement = None
+                if parsed is not None:
+                    lead, mid, sep, adj = parsed.groups()
+                    replacement = self.adjacent.get((lead.casefold(), adj.casefold()))
+                if replacement is None:
+                    # Unreachable by construction: the pattern is built from
+                    # these exact pairs and the re-parse now shares its flags.
+                    # Reaching it means the two have drifted apart, and the
+                    # failure mode is silent -- `rewrite()` would leave a span
+                    # that `residue()` still counts, so `verify` could never
+                    # go clean and no counter would say why. Raise instead of
+                    # returning the span unchanged. The message reports the
+                    # non-ASCII codepoints only, never the token (BR-30).
+                    odd = sorted({f"U+{ord(c):04X}" for c in m.group(0) if ord(c) > 127})
+                    raise SystemExit(
+                        "adjacent pass matched a span it cannot re-parse or look up "
+                        f"(length {len(m.group(0))}"
+                        + (f", non-ASCII {', '.join(odd)}" if odd else "")
+                        + "). The match pattern and _ADJACENT_PARSE have drifted; "
+                        "skipping it would leave residue that `verify` counts and "
+                        "`apply` can never clear."
+                    )
+                counts["adjacent"] += 1
+                if lead.isupper():
+                    word = replacement.upper()
+                elif lead.islower():
+                    word = replacement.lower()
+                else:
+                    word = replacement
+                return word + mid + sep + adj
+
+            text = self.adjacent_rx.sub(_adjacent_repl, text)
+
         return self._unmask(text, held), counts, unresolved
 
     def rewrite_path(self, rel: str) -> str:
@@ -1281,6 +1457,8 @@ class _Passes:
             found["given"] = n
         if self.concat_rx is not None and (n := visible(self.concat_rx)):
             found["concat"] = n
+        if self.adjacent_rx is not None and (n := visible(self.adjacent_rx)):
+            found["adjacent"] = n
         return found
 
 
@@ -1484,7 +1662,7 @@ def cmd_apply(args) -> int:
     out_of_scope: list[tuple[str, dict[str, int]]] = []
     unscannable: list[tuple[str, str]] = []
     symlink_residue: list[tuple[str, dict[str, int]]] = []
-    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0}
+    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0, "adjacent": 0}
     all_unresolved: set[str] = set()
 
     for path, in_scope in files:
@@ -1556,6 +1734,7 @@ def cmd_apply(args) -> int:
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
+    print(f"  {_adjacent_exclusion_line(passes.adjacent_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(len(all_unresolved))}")
     if out_of_scope:
@@ -1622,6 +1801,7 @@ def cmd_verify(args) -> int:
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
+    print(f"  {_adjacent_exclusion_line(passes.adjacent_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(sum(h.get('media_ambiguous', 0) for _rel, h in residue))}")
     print(

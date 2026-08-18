@@ -187,7 +187,10 @@ describe('TopClusterCard', () => {
       />,
     );
 
-    expect(screen.getByText('3 faces in cluster')).toBeInTheDocument();
+    const meta = screen.getByText('3 faces');
+    expect(meta).toBeInTheDocument();
+    expect(meta.textContent).toBe('3 faces');
+    expect(meta.textContent).not.toMatch(/cluster/i);
     const renderedFaces = screen.getAllByAltText(FACE_ALT);
     expect(renderedFaces).toHaveLength(representatives.length);
     for (const face of renderedFaces) {
@@ -197,16 +200,35 @@ describe('TopClusterCard', () => {
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
-  // UXW2-2 (B5): the count text derives from what the grid renders. When
-  // identity_count exceeds the rendered representatives, the remainder is
-  // reported as "+N more" (ClusterPreview +N pattern) instead of claiming
-  // faces that have no tile.
-  it('counts rendered faces and reports unrendered members as "+N more"', () => {
+  // UXW2-2-R1-19 / R1-30: group size is the counted number; thumbs described separately.
+  it('reports group size and shown thumbs for a >4-member group', () => {
+    const representatives = [1, 2, 3, 4, 5].map((n) =>
+      buildRepresentative({ id: `rep-${n}`, thumb_url: `${FACE_THUMB_URL}?n=${n}` }),
+    );
     render(
       <TopClusterCard
         cluster={buildCluster({
           suggested_label: null,
-          identity_count: 3,
+          identity_count: 12,
+          representatives,
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('4 of 12 faces shown');
+    expect(meta?.textContent).not.toMatch(/cluster|\(loaded\)/i);
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(4);
+  });
+
+  // UXW2-2-R1-19: suggested-label path shows one thumb but still names the group size.
+  it('reports group size on the suggested-label path instead of "1 face (+N more)"', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: 'Slate Willow',
+          identity_count: 12,
           representatives: [
             buildRepresentative({ id: 'rep-1', thumb_url: `${FACE_THUMB_URL}?n=1` }),
             buildRepresentative({ id: 'rep-2', thumb_url: `${FACE_THUMB_URL}?n=2` }),
@@ -216,14 +238,54 @@ describe('TopClusterCard', () => {
       />,
     );
 
-    expect(screen.getByText(/2 faces in cluster/)).toBeInTheDocument();
-    expect(screen.getByText(/\+1 more/)).toBeInTheDocument();
-    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(2);
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('1 of 12 faces shown');
+    expect(meta?.textContent).not.toMatch(/0 faces|\+11 more|cluster/i);
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(1);
   });
 
-  // UXW2-2 (B5): a representative without a usable image must not render as a
-  // blank tile — the missing state keeps its visible label at every cell size.
-  it('keeps the missing-state visible label at cellSize 39 and cellSize 80', () => {
+  // UXW2-2-R1-19: never render "0 faces (+N more)" when representatives are empty.
+  it('names the group size when there are no representatives', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 5,
+          representatives: [],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('5 faces');
+    expect(meta?.textContent).not.toMatch(/0 faces|\+5 more|cluster/i);
+  });
+
+  // UXW2-2-R1-20: image-less reps are not "shown" faces — they fold into the remainder.
+  it('does not count image-less representatives as shown faces', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 3,
+          representatives: [
+            buildRepresentative({ id: 'rep-1' }),
+            buildRepresentative({ id: 'rep-2' }),
+            buildRepresentative({ id: 'rep-3' }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('3 faces');
+    expect(meta?.textContent).not.toMatch(/3 faces in cluster|0 faces|\+3 more/i);
+  });
+
+  // UXW2-2-R1-27: restore E21-20 — 39px cells hide the overflow missing-state label.
+  it('hides the missing-state label at 39px cells and shows it at 80px', () => {
     const twoMissingReps = [
       buildRepresentative({ id: 'rep-1' }),
       buildRepresentative({ id: 'rep-2' }),
@@ -243,10 +305,7 @@ describe('TopClusterCard', () => {
     expect(smallCells).toHaveLength(2);
     smallCells.forEach((cell) => {
       expect(cell).toHaveStyle({ width: '39px', height: '39px' });
-      expect(cell).not.toHaveClass('acx-durable-face-thumb--hide-missing-label');
-      const fallbackLabel = cell.querySelector('.acx-durable-face-thumb__fallback-label');
-      expect(fallbackLabel).toHaveTextContent('No image');
-      expect(fallbackLabel).toBeVisible();
+      expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
     });
     unmount();
 

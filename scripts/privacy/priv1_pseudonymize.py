@@ -865,14 +865,17 @@ def _token_index(mapping: dict) -> dict[str, list[tuple[str, str, int]]]:
     return index
 
 
-def _media_stem_pass(text: str, index: dict) -> tuple[str, int, set[str]]:
+def _media_stem_pass(
+    text: str, index: dict, family: dict[str, str]
+) -> tuple[str, int, set[str]]:
     """Rewrite name tokens inside image filenames only.
 
     Scoped to the filename stem so ordinary prose is untouched: `coral` is a
     dress in a caption and a surname in a roster, and only the filename context
     is safe to decide. Each stem votes for the identity it shares the most
-    tokens with; a lone token that maps to more than one identity is left alone
-    and reported rather than guessed at.
+    tokens with. A lone token that maps to more than one identity is rewritten
+    with the shared family word when one exists (BR-29); otherwise it is left
+    alone and reported rather than guessed at.
     """
     count = 0
     unresolved: set[str] = set()
@@ -907,10 +910,17 @@ def _media_stem_pass(text: str, index: dict) -> tuple[str, int, set[str]]:
                 continue
             words = {w for ident, w, _s in options if ident in winners}
             if len(words) != 1:
-                unresolved.add(part.lower())
-                rebuilt.append(part)
-                continue
-            word = words.pop()
+                shared = family.get(part.lower())
+                if shared is None:
+                    # Genuinely no replacement: not a shared family token,
+                    # or the builder declined it. Keep unresolved's meaning
+                    # rather than emptying it by definition (CARD-08).
+                    unresolved.add(part.lower())
+                    rebuilt.append(part)
+                    continue
+                word = shared
+            else:
+                word = words.pop()
             rebuilt.append(word.upper() if part.isupper() else word.lower() if part.islower() else word)
             changed = True
         if not changed:
@@ -1014,6 +1024,58 @@ def _family_words(by_token: dict[str, set[str]]) -> dict[str, str]:
         h = int(_hash("family#" + token)[:12], 16)
         out[token] = _NOUN[h % len(_NOUN)]
     return out
+
+
+def _ambiguous_family_words(index: dict) -> tuple[dict[str, str], tuple[dict, ...]]:
+    """One shared replacement per token carried by two or more identities.
+
+    Built over `_token_index`, not over the given-name `by_token`. The
+    given-name builder drops dictionary words before `_family_words` ever
+    sees them, which is why a shared surname that is also ordinary English
+    had no repair path in a filename stem (BR-29). Reuses `_family_words`
+    so a token that is ambiguous in both places gets the same noun.
+
+    A token two identities share but that already has one positional alias
+    word is declined, not reminted: media-stem already has a unique
+    replacement. Whatever is declined is returned as ``dropped``, each
+    with a reason, never the token. Callers print that list, including
+    the zero case.
+    """
+    by_token: dict[str, set[str]] = {}
+    dropped: list[dict] = []
+    for token, options in sorted(index.items()):
+        idents = {ident for ident, _w, _s in options}
+        if len(idents) < 2:
+            continue
+        aliases = {w for _ident, w, _s in options}
+        if len(aliases) <= 1:
+            dropped.append(
+                {
+                    "reason": "shared token already has one alias word",
+                    "identities": len(idents),
+                }
+            )
+            continue
+        by_token[token] = aliases
+    return _family_words(by_token), tuple(dropped)
+
+
+def _ambiguous_family_exclusion_line(dropped: tuple[dict, ...] | list[dict]) -> str:
+    """One printed measurement of what the stem-family builder refused.
+
+    Always a complete sentence, including the zero case. Names are not
+    included — one roster token is itself a media stem, and a message
+    that echoes what it refused would publish the thing the scrub
+    removed. The caller may print this on `apply` and `verify`.
+    """
+    n = len(dropped)
+    if n == 0:
+        return "ambiguous family exclusions: 0 dropped"
+    by_reason: dict[str, int] = {}
+    for item in dropped:
+        by_reason[item["reason"]] = by_reason.get(item["reason"], 0) + 1
+    detail = "; ".join(f"{count}× {reason}" for reason, count in sorted(by_reason.items()))
+    return f"ambiguous family exclusions: {n} dropped ({detail})"
 
 
 @lru_cache(maxsize=1)
@@ -1263,6 +1325,7 @@ class _Passes:
         self.quoted_rx, self.singles = _quoted_exact_regex(mapping)
         self.slug_rx, self.leaky = _slug_regex(mapping)
         self.token_index = _token_index(mapping)
+        self.ambiguous_family, self.ambiguous_family_dropped = _ambiguous_family_words(self.token_index)
         self.given_rx, self.given, self.given_deferred = _given_name_regex(mapping, _nonpersonal_tokens(idents))
         self.concat_rx, self.concat, self.concat_dropped = _concatenated_regex(mapping)
         self.adjacent_rx, self.adjacent, self.adjacent_dropped = _adjacent_alias_regex(mapping)
@@ -1345,7 +1408,7 @@ class _Passes:
             text, n_name = _substitute(text, self.name_rx, self.by_key)
         counts["name"] = n_name
 
-        text, n_media, unresolved = _media_stem_pass(text, self.token_index)
+        text, n_media, unresolved = _media_stem_pass(text, self.token_index, self.ambiguous_family)
         counts["media"] = n_media
 
         # Unlike the single-token pass this one emits exactly one bare word, so it
@@ -1444,14 +1507,14 @@ class _Passes:
             found["slug"] = n
         if self.quoted_rx is not None and suffix == ".json" and (n := len(self.quoted_rx.findall(text))):
             found["single"] = n
-        _out, n_media, unresolved = _media_stem_pass(text, self.token_index)
+        _out, n_media, unresolved = _media_stem_pass(text, self.token_index, self.ambiguous_family)
         if n_media:
             found["media"] = n_media
         if unresolved:
-            # Ambiguous stems are not rewritten, but they are residue: a
-            # dictionary-word token that maps to two identities is skipped
-            # here and never reaches `_family_words`. Counting the skip
-            # moves the gap into verify's exit code (BR-15).
+            # Stems the family backstop still cannot rewrite. A skip
+            # with no replacement is residue; counting it keeps verify's
+            # exit honest rather than emptying unresolved by definition
+            # (BR-15, CARD-08).
             found["media_ambiguous"] = len(unresolved)
         if self.given_rx is not None and (n := visible(self.given_rx)):
             found["given"] = n
@@ -1735,6 +1798,7 @@ def cmd_apply(args) -> int:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
     print(f"  {_adjacent_exclusion_line(passes.adjacent_dropped)}")
+    print(f"  {_ambiguous_family_exclusion_line(passes.ambiguous_family_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(len(all_unresolved))}")
     if out_of_scope:
@@ -1802,6 +1866,7 @@ def cmd_verify(args) -> int:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
     print(f"  {_adjacent_exclusion_line(passes.adjacent_dropped)}")
+    print(f"  {_ambiguous_family_exclusion_line(passes.ambiguous_family_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(sum(h.get('media_ambiguous', 0) for _rel, h in residue))}")
     print(

@@ -6,11 +6,12 @@
  * cluster-panel / media / review-surface contexts, and the sibling panels.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QUEUE_ACTION, useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
 
 import {
   fetchPendingMergeSuggestions,
@@ -202,6 +203,28 @@ const mountScanTab = (url: string) => {
 
 const locSearch = (): string => screen.getByTestId('loc').textContent ?? '';
 
+/** Minimal real `p` writer (second useWorkbenchFilters instance = WorkbenchMediaProvider). */
+const DualSearchParamWriter = (): React.JSX.Element => {
+  const queue = useWorkbenchFilters();
+  const media = useWorkbenchFilters();
+  const loc = useLocation();
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          queue.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+          queue.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: 1 });
+          media.setCurrentPage(2);
+        }}
+      >
+        collide
+      </button>
+      <output data-testid="loc">{loc.search}</output>
+    </div>
+  );
+};
+
 describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
   beforeEach(() => {
     window.AltContextAdmin = {
@@ -300,12 +323,51 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
     expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('deep link rq=merge.all.1 mounts with chip pressed and second merge card', async () => {
+  it('deep link rq=merge.all.1 survives Prev (kind) and Strong chip (band stays merge)', async () => {
+    const user = userEvent.setup();
     mountScanTab('/?rq=merge.all.1');
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
     });
     expect(await screen.findByText('2 of 2')).toBeInTheDocument();
-    expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Previous review item' }));
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=merge.all.0');
+    });
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=merge.strong');
+    });
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('page-clamp p writer from a second hook instance does not drop pending rq (R1-01)', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<DualSearchParamWriter />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('collide').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.1');
+    expect(screen.getByTestId('loc').textContent).toContain('p=2');
+  });
+
+  it('oversized rq index clamps to last visible assignment card (R1-03)', async () => {
+    mountScanTab('/?rq=assignment.all.9');
+    await screen.findByText(/Is this/);
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=assignment.all.1');
+    });
+    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WORKBENCH_MEDIA_STATUSES, type WorkbenchMediaStatus } from '../api/workbenchMediaApi';
 import {
@@ -43,6 +43,7 @@ export const QUEUE_ACTION = {
   SET_INDEX: 'set_index',
   CLEAR_FILTERS: 'clear_filters',
   CLAMP_INDEX: 'clamp_index',
+  STEP_INDEX: 'step_index',
 } as const;
 
 export type QueueAction =
@@ -50,7 +51,15 @@ export type QueueAction =
   | { type: typeof QUEUE_ACTION.SET_BAND; band: ReviewQueueBandParam }
   | { type: typeof QUEUE_ACTION.SET_INDEX; index: number }
   | { type: typeof QUEUE_ACTION.CLAMP_INDEX; index: number }
+  | { type: typeof QUEUE_ACTION.STEP_INDEX; delta: number; length: number }
   | { type: typeof QUEUE_ACTION.CLEAR_FILTERS };
+
+const sanitizeIndex = (index: number): number => {
+  if (!Number.isFinite(index)) {
+    return 0;
+  }
+  return Math.max(0, Math.trunc(index));
+};
 
 const QUEUE_ACTION_HANDLERS: {
   readonly [T in QueueAction['type']]: (
@@ -60,8 +69,17 @@ const QUEUE_ACTION_HANDLERS: {
 } = {
   [QUEUE_ACTION.SET_KIND]: (state, action) => ({ ...state, kind: action.kind, index: 0 }),
   [QUEUE_ACTION.SET_BAND]: (state, action) => ({ ...state, band: action.band, index: 0 }),
-  [QUEUE_ACTION.SET_INDEX]: (state, action) => ({ ...state, index: action.index }),
-  [QUEUE_ACTION.CLAMP_INDEX]: (state, action) => ({ ...state, index: Math.max(0, action.index) }),
+  [QUEUE_ACTION.SET_INDEX]: (state, action) => ({ ...state, index: sanitizeIndex(action.index) }),
+  [QUEUE_ACTION.CLAMP_INDEX]: (state, action) => ({ ...state, index: sanitizeIndex(action.index) }),
+  [QUEUE_ACTION.STEP_INDEX]: (state, action) => {
+    const length = Number.isFinite(action.length) ? Math.max(0, Math.trunc(action.length)) : 0;
+    if (length <= 0) {
+      return { ...state, index: 0 };
+    }
+    const delta = Number.isFinite(action.delta) ? Math.trunc(action.delta) : 0;
+    const clamped = Math.min(sanitizeIndex(state.index), length - 1);
+    return { ...state, index: Math.min(Math.max(0, clamped + delta), length - 1) };
+  },
   [QUEUE_ACTION.CLEAR_FILTERS]: () => ({ ...DEFAULT_QUEUE_STATE }),
 };
 
@@ -71,6 +89,70 @@ export const reduceQueueAction = (state: WorkbenchQueueState, action: QueueActio
     a: QueueAction,
   ) => WorkbenchQueueState;
   return handler(state, action);
+};
+
+/**
+ * Shared across every `useWorkbenchFilters` instance (ScanTabContent +
+ * WorkbenchMediaProvider). Per-hook refs lose same-commit p/rq writes
+ * because react-router's updater reads the render snapshot (R1-01).
+ */
+type PendingSearchWrites = {
+  rq?: WorkbenchQueueState;
+  p?: number;
+};
+
+let pendingSearchWrites: PendingSearchWrites = {};
+
+/** Test-only: isolate module-level write-through between cases (TEST-07). */
+export const resetPendingSearchWritesForTests = (): void => {
+  pendingSearchWrites = {};
+};
+
+const applyPendingSearchWrites = (prev: URLSearchParams): URLSearchParams => {
+  const next = new URLSearchParams(prev);
+  if (pendingSearchWrites.rq !== undefined) {
+    const serialized = serializeQueueState(pendingSearchWrites.rq);
+    if (serialized === null) {
+      next.delete('rq');
+    } else {
+      next.set('rq', serialized);
+    }
+  }
+  if (pendingSearchWrites.p !== undefined) {
+    next.set('p', String(pendingSearchWrites.p));
+  }
+  return next;
+};
+
+const reconcilePendingSearchWrites = (searchParams: URLSearchParams): void => {
+  if (
+    pendingSearchWrites.rq !== undefined &&
+    serializeQueueState(pendingSearchWrites.rq) === searchParams.get('rq')
+  ) {
+    delete pendingSearchWrites.rq;
+  }
+  if (pendingSearchWrites.p !== undefined) {
+    const urlP = searchParams.get('p');
+    if (urlP === String(pendingSearchWrites.p) || (pendingSearchWrites.p === 1 && urlP === null)) {
+      delete pendingSearchWrites.p;
+    }
+  }
+};
+
+type SearchParamsWriter = (
+  nextInit: URLSearchParams | ((prev: URLSearchParams) => URLSearchParams),
+  navigateOpts?: { replace?: boolean },
+) => void;
+
+const commitSearchParams = (
+  setSearchParams: SearchParamsWriter,
+  mutate: (next: URLSearchParams) => void,
+): void => {
+  setSearchParams((prev) => {
+    const next = applyPendingSearchWrites(prev);
+    mutate(next);
+    return next;
+  }, { replace: true });
 };
 
 export const useWorkbenchFilters = () => {
@@ -89,53 +171,52 @@ export const useWorkbenchFilters = () => {
   // E21-5: review-queue position/filter/band (rq=<kind>.<band>.<index>).
   const queueState = useMemo(() => parseQueueState(searchParams.get('rq')), [searchParams]);
 
+  useEffect(() => {
+    reconcilePendingSearchWrites(searchParams);
+  }, [searchParams]);
+
+  const writePage = useCallback(
+    (page: number): void => {
+      pendingSearchWrites.p = page;
+      commitSearchParams(setSearchParams, (next) => {
+        next.set('p', page.toString());
+      });
+    },
+    [setSearchParams],
+  );
+
   const handleSearchChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const s = event.target.value;
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (s) {
-            next.set('s', s);
-          } else {
-            next.delete('s');
-          }
-          next.set('p', '1');
-          return next;
-        },
-        { replace: true },
-      );
+      pendingSearchWrites.p = 1;
+      commitSearchParams(setSearchParams, (next) => {
+        if (s) {
+          next.set('s', s);
+        } else {
+          next.delete('s');
+        }
+        next.set('p', '1');
+      });
     },
     [setSearchParams],
   );
 
   const handleStatusChange = useCallback(
     (status: WorkbenchMediaStatus) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set('status', status);
-          next.set('p', '1');
-          return next;
-        },
-        { replace: true },
-      );
+      pendingSearchWrites.p = 1;
+      commitSearchParams(setSearchParams, (next) => {
+        next.set('status', status);
+        next.set('p', '1');
+      });
     },
     [setSearchParams],
   );
 
   const setCurrentPage = useCallback(
     (page: number) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set('p', page.toString());
-          return next;
-        },
-        { replace: true },
-      );
+      writePage(page);
     },
-    [setSearchParams],
+    [writePage],
   );
 
   const setPerPage = useCallback(
@@ -144,72 +225,36 @@ export const useWorkbenchFilters = () => {
         return;
       }
 
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set('perPage', nextPerPage.toString());
-          next.set('p', '1');
-          return next;
-        },
-        { replace: true },
-      );
+      pendingSearchWrites.p = 1;
+      commitSearchParams(setSearchParams, (next) => {
+        next.set('perPage', nextPerPage.toString());
+        next.set('p', '1');
+      });
     },
     [setSearchParams],
   );
-
-  // RLSE-06 defence: react-router's functional setSearchParams updater reads the
-  // RENDER snapshot, so two writes in one tick both see the pre-click URL and the
-  // last wins. Write-through the last dispatched queue state so any stray
-  // same-tick second dispatch merges against it, never against a stale snapshot.
-  const pendingQueueRef = useRef<WorkbenchQueueState | null>(null);
-  useEffect(() => {
-    pendingQueueRef.current = null;
-  }, [searchParams]);
 
   const writeQueueState = useCallback(
     (nextState: WorkbenchQueueState): void => {
-      pendingQueueRef.current = nextState;
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          const serialized = serializeQueueState(nextState);
-          if (serialized === null) {
-            next.delete('rq');
-          } else {
-            next.set('rq', serialized);
-          }
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
-  /**
-   * Merge partial queue state into `rq=` without clobbering unrelated params
-   * (coexists with tab/panel/s/p/status writers).
-   */
-  const setQueueState = useCallback(
-    (partial: Partial<WorkbenchQueueState>) => {
-      const base = pendingQueueRef.current ?? queueState;
-      writeQueueState({
-        kind: partial.kind ?? base.kind,
-        band: partial.band ?? base.band,
-        index: partial.index ?? base.index,
+      pendingSearchWrites.rq = nextState;
+      commitSearchParams(setSearchParams, (next) => {
+        const serialized = serializeQueueState(nextState);
+        if (serialized === null) {
+          next.delete('rq');
+        } else {
+          next.set('rq', serialized);
+        }
       });
     },
-    [queueState, writeQueueState],
+    [setSearchParams],
   );
 
   const dispatchQueue = useCallback(
     (action: QueueAction): void => {
-      writeQueueState(reduceQueueAction(pendingQueueRef.current ?? queueState, action));
+      writeQueueState(reduceQueueAction(pendingSearchWrites.rq ?? queueState, action));
     },
     [queueState, writeQueueState],
   );
-
-  const getQueueState = useCallback((): WorkbenchQueueState => queueState, [queueState]);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
 
@@ -224,8 +269,6 @@ export const useWorkbenchFilters = () => {
     handleStatusChange,
     normalizedSearch,
     queueState,
-    getQueueState,
-    setQueueState,
     dispatchQueue,
   } as const;
 };

@@ -43,8 +43,6 @@ import {
   intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
-  nextQueueIndex,
-  prevQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_DRAIN_MESSAGE,
@@ -131,10 +129,26 @@ export interface ReviewQueueProps {
   /** Controlled queue index (lifted — survives panel unmount). */
   index: number;
   onIndexChange: (index: number) => void;
-  /** Controlled kind filter from URL. */
+  /**
+   * Absolute clamp after queue length is known. Parent MUST dispatch
+   * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
+   */
+  onClampIndex: (index: number) => void;
+  /**
+   * Relative next/prev. Parent MUST reduce `STEP_INDEX {delta, length}`
+   * against pending queue state so two taps before re-render advance by 2.
+   */
+  onStepIndex: (delta: number, length: number) => void;
+  /**
+   * Controlled kind filter from URL.
+   * Parent MUST reset index to 0 on kind change (reducer SET_KIND does this).
+   */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
-  /** Controlled band filter from URL (`rq=` band enum). */
+  /**
+   * Controlled band filter from URL (`rq=` band enum).
+   * Parent MUST reset index to 0 on band change (reducer SET_BAND does this).
+   */
   band: ReviewQueueBandParam;
   onBandChange: (band: ReviewQueueBandParam) => void;
   /**
@@ -259,7 +273,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   function ReviewQueue(
     {
       index,
-      onIndexChange,
+      onIndexChange: _onIndexChange,
+      onClampIndex,
+      onStepIndex,
       kind,
       onKindChange,
       band,
@@ -451,17 +467,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // assignment+merge resolve must not wipe a restored rq= index.
     const queueSettled = findings.queueSettled;
 
-    // Clamp restored/oversized index back to parent (PR-54).
+    // Clamp restored/oversized index back to parent (PR-54 / R1-03).
     React.useEffect(() => {
       if (!queueSettled) {
         return;
       }
       if (length > 0 && index !== safeIndex) {
-        onIndexChange(safeIndex);
+        onClampIndex(safeIndex);
       } else if (length === 0 && index !== 0) {
-        onIndexChange(0);
+        onClampIndex(0);
       }
-    }, [index, safeIndex, length, onIndexChange, queueSettled]);
+    }, [index, safeIndex, length, onClampIndex, queueSettled]);
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;
@@ -555,10 +571,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
 
+    const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+
     // Card transition announce + post-removal focus placement.
     React.useEffect(() => {
+      const recoveredFromFilteredEmpty = prevFilteredEmptyRef.current && !filteredEmptyWithWork;
+      prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
-        if (previousItemKeyRef.current !== null) {
+        if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
           setLiveMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
@@ -753,13 +773,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const handlePrev = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(prevQueueIndex(safeIndex, length));
+        onStepIndex(-1, length);
       });
     };
 
     const handleNext = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(nextQueueIndex(safeIndex, length));
+        onStepIndex(1, length);
       });
     };
 
@@ -1280,7 +1300,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   <button
                     type="button"
                     className="button"
-                    onClick={onClearFilters}
+                    onClick={() => {
+                      navigateAfterFlush(() => {
+                        pendingFocusAfterRemovalRef.current = true;
+                        onClearFilters();
+                      });
+                    }}
                   >
                     {__('Clear filters', 'alt-context')}
                   </button>

@@ -97,6 +97,20 @@ export const ScanTabContent = (): React.JSX.Element => {
     [dispatchQueue],
   );
 
+  const handleClampIndex = React.useCallback(
+    (nextIndex: number): void => {
+      dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: nextIndex });
+    },
+    [dispatchQueue],
+  );
+
+  const handleStepIndex = React.useCallback(
+    (delta: number, length: number): void => {
+      dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta, length });
+    },
+    [dispatchQueue],
+  );
+
   const handleKindChange = React.useCallback(
     (nextKind: ReviewQueueKindParam): void => {
       dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: nextKind });
@@ -208,6 +222,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 ref={reviewQueueRef}
                 index={queueState.index}
                 onIndexChange={handleIndexChange}
+                onClampIndex={handleClampIndex}
+                onStepIndex={handleStepIndex}
                 kind={queueState.kind}
                 onKindChange={handleKindChange}
                 band={queueState.band}

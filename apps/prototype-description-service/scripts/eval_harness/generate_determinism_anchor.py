@@ -159,10 +159,7 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "media_id": _TRAP_MEDIA_ID,
         "path": _TRAP_PATH,
         "kind": "VLM6-R2-G-01_mixed_y_order_degraded",
-        "trips": (
-            "labeled_y_missing_images always-0 freeze blindness "
-            "(VLM6-R2-G-01 residual / wG3 caption corpus)"
-        ),
+        "trips": ("labeled_y_missing_images always-0 freeze blindness (VLM6-R2-G-01 residual / wG3 caption corpus)"),
         "note": (
             "named box missing y alongside sibling named box with y; order_degraded "
             "observable so the caption freeze counter cannot stay at structural 0. "
@@ -173,10 +170,7 @@ _CORPUS_TRAPS: list[dict[str, Any]] = [
         "media_id": _POS_TRAP_MEDIA_ID,
         "path": _POS_TRAP_PATH,
         "kind": "VLM6-R2-G-02_centre_x_tie_positional",
-        "trips": (
-            "positional_images always-0 freeze blindness "
-            "(VLM6-R2-G-02; no centre-x-tie image)"
-        ),
+        "trips": ("positional_images always-0 freeze blindness (VLM6-R2-G-02; no centre-x-tie image)"),
         "note": (
             "two named boxes share centre x with distinct y so a correct (x,y,name) "
             "key is distinguishable from a y-reversed or y-blind key. Without this "
@@ -529,6 +523,7 @@ def write_anchor(
     # image material + scoring; never opens real fixture bytes (module docstring: no GOLDEN_IMAGES_DIR).
     base = load_manifest(
         str(manifest_path),
+        metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason="caption-anchor generator mints synthetic images from metadata; fixture bytes never opened",
     )
@@ -554,6 +549,7 @@ def write_anchor(
         # Load through the real loader so sha matches score-time computation (rg-015).
         manifest = load_manifest(
             str(tmp_dir / man_name),
+            metadata_only=True,
             skip_hash_verification=True,
             hash_skip_reason="caption-anchor reloads the synthetic temp manifest so score-time SHA matches",
         )
@@ -739,15 +735,9 @@ def main(argv: list[str] | None = None) -> int:
     # matches promote_atomic.validate_live_head_sha without verify_git=.
     live_head = validate_live_head_sha(args.live_head_sha)
     if live_head is not None and args.pin:
-        raise SystemExit(
-            "--live-head-sha requires --no-pin (pin mode nulls contract head_sha; "
-            "RV2-05 / S4-04)"
-        )
+        raise SystemExit("--live-head-sha requires --no-pin (pin mode nulls contract head_sha; RV2-05 / S4-04)")
     if args.live_started_at is not None and args.pin:
-        raise SystemExit(
-            "--live-started-at requires --no-pin (pin mode nulls contract started_at; "
-            "RV2-05 / S4-04)"
-        )
+        raise SystemExit("--live-started-at requires --no-pin (pin mode nulls contract started_at; RV2-05 / S4-04)")
 
     run_path, report_json_path, report_md_path, manifest_sha = write_anchor(
         manifest_path=args.manifest,

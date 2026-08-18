@@ -468,8 +468,7 @@ def build_synthetic_face_manifest() -> dict[str, Any]:
                     "license": "public_domain",
                     "publishable": True,
                     "note": (
-                        emb_note
-                        + "; TRAP VLM6-R2-G-01 mixed-y order_degraded "
+                        emb_note + "; TRAP VLM6-R2-G-01 mixed-y order_degraded "
                         "(labeled_y_missing_images freeze observability)"
                     ),
                 },
@@ -703,11 +702,7 @@ def compute_coverage_gaps(report: dict[str, Any]) -> list[str]:
     # Detection is vacuous only when no face was compared (tp+fp+fn==0), not when
     # a perfect detector posts fp=0 / fn=0 (VLM6-B-05).
     detection = report.get("detection") or {}
-    det_n = (
-        int(detection.get("tp") or 0)
-        + int(detection.get("fp") or 0)
-        + int(detection.get("fn") or 0)
-    )
+    det_n = int(detection.get("tp") or 0) + int(detection.get("fp") or 0) + int(detection.get("fn") or 0)
     if det_n == 0:
         gaps.append("detection")
 
@@ -818,6 +813,7 @@ def write_face_anchor(
         # Metadata-only: synthetic anchor has no image files; scoring uses roster/face_count/tags only.
         manifest = load_manifest(
             str(tmp_dir / man_name),
+            metadata_only=True,
             skip_hash_verification=True,
             hash_skip_reason="face-anchor generator scores a synthetic roster-only manifest; no image files exist",
         )
@@ -845,7 +841,9 @@ def write_face_anchor(
         validate_coverage_gaps(final_report, declared=gaps)
         # Ensure the scored report also carries the declared list.
         final_report.setdefault("provenance", {})["coverage_gaps"] = gaps
-        json_doc = _dumps(final_report) if "coverage_gaps" not in json.loads(json_doc).get("provenance", {}) else json_doc
+        json_doc = (
+            _dumps(final_report) if "coverage_gaps" not in json.loads(json_doc).get("provenance", {}) else json_doc
+        )
         # Re-serialize if we had to stamp gaps onto the report.
         if (json.loads(json_doc).get("provenance") or {}).get("coverage_gaps") != gaps:
             final_report["provenance"]["coverage_gaps"] = gaps

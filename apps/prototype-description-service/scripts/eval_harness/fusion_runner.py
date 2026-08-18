@@ -703,9 +703,7 @@ def manifest_entries_as_dicts(manifest: GoldenManifest) -> list[dict[str, Any]]:
     widen a ``roster_only`` stamp to exhaustive.
     """
     mode = (
-        manifest.annotation_mode.value
-        if hasattr(manifest.annotation_mode, "value")
-        else str(manifest.annotation_mode)
+        manifest.annotation_mode.value if hasattr(manifest.annotation_mode, "value") else str(manifest.annotation_mode)
     )
     projected: list[dict[str, Any]] = []
     for entry in manifest.entries:
@@ -725,9 +723,7 @@ def _head_sha() -> str | None:
     (RV2-06 / HARM-03 / rg-015).
     """
     try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return None
     if not out or out == "0" * 40:
@@ -782,6 +778,7 @@ def main(argv: list[str] | None = None) -> int:
         # never opens fixture image files — skip hash verification (VLM6-R2-05 / OBS-04).
         manifest = load_manifest(
             args.manifest,
+            metadata_only=True,
             skip_hash_verification=True,
             hash_skip_reason="fusion runner synthesizes image bytes from pins; fixture files never opened",
         )

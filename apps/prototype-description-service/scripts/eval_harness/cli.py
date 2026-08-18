@@ -299,8 +299,7 @@ def _fold_evidence_gates_into_verdict(scored: dict[str, Any], record: Mapping[st
     first_msg: str | None = None
     if record.get("aborted"):
         first_msg = (
-            f"{SCORE_GATE_PREFIX_ABORTED_RECORD} run-record is aborted "
-            "(partial evidence only); refusing to certify"
+            f"{SCORE_GATE_PREFIX_ABORTED_RECORD} run-record is aborted (partial evidence only); refusing to certify"
         )
         reasons.append("aborted-record: run was aborted before completion")
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
@@ -694,13 +693,9 @@ def _extract_identities(
         confirmed.append(_identity_row_from_wire(row, name=name, bbox=bbox))
     order_w = float(image_width) if image_width is not None else 1.0
     order_h = float(image_height) if image_height is not None else 1.0
-    identities = sort_identity_rows_by_normalized_centre(
-        confirmed, image_width=order_w, image_height=order_h
-    )
+    identities = sort_identity_rows_by_normalized_centre(confirmed, image_width=order_w, image_height=order_h)
     has_unpositioned = any(bool(r.get("unpositioned")) for r in identities)
-    ordering_source = (
-        IdentityOrdering.DEGRADED.value if has_unpositioned else IdentityOrdering.POSITIONAL.value
-    )
+    ordering_source = IdentityOrdering.DEGRADED.value if has_unpositioned else IdentityOrdering.POSITIONAL.value
     return identities, face_count, ordering_source
 
 
@@ -820,8 +815,7 @@ def _parse_allow_refused_metric(raw: str) -> str:
     except ValueError:
         names = ", ".join(member.value for member in RefusedMetric)
         raise argparse.ArgumentTypeError(
-            f"{raw!r} is not a refused metric; expected one of: {names} "
-            "(bare --allow-refused names every metric)"
+            f"{raw!r} is not a refused metric; expected one of: {names} (bare --allow-refused names every metric)"
         ) from None
 
 
@@ -851,9 +845,7 @@ def collect_refused_metrics(scored: Mapping[str, Any]) -> dict[str, str]:
         refused[RefusedMetric.DETECTION.value] = str(detection.get("invariant") or "unknown")
     identification = faces.get("identification") if isinstance(faces, Mapping) else None
     if isinstance(identification, Mapping) and identification.get("refused"):
-        refused[RefusedMetric.IDENTIFICATION.value] = str(
-            identification.get("invariant") or "unknown"
-        )
+        refused[RefusedMetric.IDENTIFICATION.value] = str(identification.get("invariant") or "unknown")
     slices = scored.get("slices")
     if isinstance(slices, Mapping):
         for key in (
@@ -1387,7 +1379,12 @@ def _check_score_determinism_cross_process(
     # operator parameters (not the build_reports defaults).
     record = json.loads(resolved_record.read_text())
     # Metadata-only: build_reports reads rubrics/roster/policy, never opens image bytes.
-    manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(resolved_manifest),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=_SCORE_HASH_SKIP_REASON,
+    )
     # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04 / FIR-11-S2-01) —
     # GoldenEntry forbids a per-entry annotation_mode field, so model_dump()
     # always omits it; without this fill, detection unconditionally refuses
@@ -1427,7 +1424,9 @@ def _check_score_determinism_cross_process(
         "rec_path=Path(sys.argv[1]); "
         "rec=json.loads(rec_path.read_text()); "
         # Metadata-only: child re-score never opens image bytes (must_right/roster only).
-        "man=load_manifest(sys.argv[2],skip_hash_verification=True); "
+        "man=load_manifest(sys.argv[2],skip_hash_verification=True,"
+        "hash_skip_reason='score child re-score never opens image bytes',"
+        "metadata_only=True); "
         "rg=sys.argv[3]; "
         "aud=Audience(sys.argv[4]); "
         # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04) in the child
@@ -1556,7 +1555,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     record = json.loads(record_path.read_text())
     # Metadata-only: score_run_record/build_reports use must_right/easy_wrong/roster/policy;
     # image bytes already live in the run-record and are never re-opened here.
-    manifest = load_manifest(args.manifest, skip_hash_verification=True)
+    manifest = load_manifest(
+        args.manifest,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=_SCORE_HASH_SKIP_REASON,
+    )
     # Fill document annotation_mode only when the dump has no stamp.
     # Unconditional assign clobbers a real per-entry stamp (S2R6E-04).
     # No explicit kwarg — the stamp is the only score-time source
@@ -1621,9 +1625,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         # normal determinism path.
         schema_exit = _fold_schema_errors_into_verdict(scored)
         evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
-        relabel_exit = _fold_manifest_drift_into_verdict(
-            scored, allow_manifest_relabel=allow_manifest_relabel
-        )
+        relabel_exit = _fold_manifest_drift_into_verdict(scored, allow_manifest_relabel=allow_manifest_relabel)
         degraded = schema_exit is not None or evidence_exit is not None or relabel_exit is not None
         if degraded:
             # Schema-degraded docs may lack hard keys the MD renderer expects;
@@ -1651,9 +1653,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         )
         schema_exit = _fold_schema_errors_into_verdict(scored)
         evidence_exit = _fold_evidence_gates_into_verdict(scored, record)
-        relabel_exit = _fold_manifest_drift_into_verdict(
-            scored, allow_manifest_relabel=allow_manifest_relabel
-        )
+        relabel_exit = _fold_manifest_drift_into_verdict(scored, allow_manifest_relabel=allow_manifest_relabel)
         degraded = schema_exit is not None or evidence_exit is not None or relabel_exit is not None
         local_json, local_md = _serialize_score_docs(scored, tolerate_renderer_error=degraded)
         if is_public:
@@ -1672,9 +1672,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         public_scored = json.loads(public_json)
         public_scored["verdict"] = dict(scored.get("verdict") or {})
         public_degraded = (scored.get("verdict") or {}).get("verdict") == ScoreVerdict.FAIL.value
-        public_json, public_md = _serialize_score_docs(
-            public_scored, tolerate_renderer_error=public_degraded
-        )
+        public_json, public_md = _serialize_score_docs(public_scored, tolerate_renderer_error=public_degraded)
     # VLM6-E-05: do not write beside a committed freeze by default; refuse
     # overwrite of any existing report without an explicit opt-in.
     base = _score_report_base(record_path)
@@ -1705,10 +1703,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if det.get("refused"):
         det_bit = f"detection=REFUSED({det.get('invariant')})"
     else:
-        det_bit = (
-            f"detection_p={det.get('precision')} "
-            f"detection_r={det.get('recall')}"
-        )
+        det_bit = f"detection_p={det.get('precision')} detection_r={det.get('recall')}"
     ident = scored["faces"]["identification"]
     if ident.get("refused"):
         id_bit = f"identification=REFUSED({ident.get('invariant')})"
@@ -1960,11 +1955,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             detection_block = (scored.get("faces") or {}).get("detection") or {}
             detection_refused = bool(detection_block.get("refused"))
             reasons = [
-                r
-                for r in reasons
-                if not _is_identification_restatement_reason(
-                    r, detection_refused=detection_refused
-                )
+                r for r in reasons if not _is_identification_restatement_reason(r, detection_refused=detection_refused)
             ]
         if reasons:
             reason_hint = "; ".join(reasons[:3])
@@ -1973,10 +1964,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
                 f"verdict={ScoreVerdict.NOT_READY.value} "
                 f"({reason_hint}; not adoption-eligible; see {json_path})"
             )
-    raise_if_unconsented_refusals(
-        scored, getattr(args, "allow_refused", None), command="score"
-    )
-
+    raise_if_unconsented_refusals(scored, getattr(args, "allow_refused", None), command="score")
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -2017,9 +2005,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             )
     if gate_failures:
         summary = "; ".join(gate_failures)
-        sys.exit(
-            f"{SCORE_GATE_PREFIX_RUN_SUMMARY} {len(gate_failures)} record(s): {summary}"
-        )
+        sys.exit(f"{SCORE_GATE_PREFIX_RUN_SUMMARY} {len(gate_failures)} record(s): {summary}")
 
 
 def _cmd_seed_roster(args: argparse.Namespace) -> None:
@@ -2221,7 +2207,12 @@ def _check_face_determinism_cross_process(
     record = json.loads(resolved_record.read_text())
     # Metadata-only: face score uses face_count/tags/boxes from record + manifest fields;
     # never opens image files (embeddings already in the face run-record).
-    manifest = load_manifest(str(resolved_manifest), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(resolved_manifest),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=_FACE_SCORE_HASH_SKIP_REASON,
+    )
     manifest_sha = _manifest_sha(manifest)
     base_json, base_md = _face_score_once(record, manifest, score_manifest_sha256=manifest_sha, public=public)
 
@@ -2235,7 +2226,9 @@ def _check_face_determinism_cross_process(
         "from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record; "
         "rec=json.loads(open(sys.argv[1]).read()); "
         # Metadata-only: child face re-score never opens image bytes.
-        "man=load_manifest(sys.argv[2],skip_hash_verification=True); "
+        "man=load_manifest(sys.argv[2],skip_hash_verification=True,"
+        "hash_skip_reason='face child re-score never opens image bytes',"
+        "metadata_only=True); "
         "pub=sys.argv[3]=='1'; "
         "sp,rp=occlusion_inputs_from_record(rec,man); "
         "j,m=build_face_reports(rec,man,score_manifest_sha256=_manifest_sha(man),"
@@ -2277,7 +2270,12 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         validate_face_run_record(record)
     # Metadata-only: score_face_run_record / build_face_reports use tags, face_count,
     # present_identities, and record-side embeddings — never open image bytes.
-    manifest = load_manifest(args.manifest, skip_hash_verification=True)
+    manifest = load_manifest(
+        args.manifest,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=_FACE_SCORE_HASH_SKIP_REASON,
+    )
     manifest_sha = _manifest_sha(manifest)
     public = bool(getattr(args, "public", False))
     allow_overwrite_report = bool(getattr(args, "allow_overwrite_report", False))
@@ -2320,13 +2318,11 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         scored = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written "
-            f"face report {json_path}: {exc}"
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written face report {json_path}: {exc}"
         )
     if not isinstance(scored, dict):
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} written face report is not "
-            f"a JSON object (see {json_path})"
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} written face report is not a JSON object (see {json_path})"
         )
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     failed = int((scored.get("counts") or {}).get("failed") or 0)
@@ -2363,8 +2359,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         )
     if failed > 0:
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} score-face: {failed} item(s) not "
-            f"scored (see failures[] in {json_path})"
+            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} score-face: {failed} item(s) not scored (see failures[] in {json_path})"
         )
     # fx8 / gx1 / EVAL-13: under --freeze-certification exit = scoring-path
     # byte-stability after integrity gates above have passed.
@@ -2376,9 +2371,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
             "(integrity gates enforced above; not an adoption softener)"
         )
         return
-    raise_if_unconsented_refusals(
-        scored, getattr(args, "allow_refused", None), command="score-face"
-    )
+    raise_if_unconsented_refusals(scored, getattr(args, "allow_refused", None), command="score-face")
 
 
 # Adoption meet-or-beat metric tables (VLM6-E-01 / A-03 / EVAL-23).
@@ -2529,9 +2522,7 @@ def _compare_vacuous_categories(doc: Mapping[str, Any], *, role: str) -> list[st
         elif label == "identity_ordering":
             out.append(f"{role}:identity_ordering (positional_images=0; order metric non-observable)")
         elif label == "fabricated_fact":
-            out.append(
-                f"{role}:fabricated_fact (no trap denominator or rate=None; images_with_traps={traps})"
-            )
+            out.append(f"{role}:fabricated_fact (no trap denominator or rate=None; images_with_traps={traps})")
         else:
             out.append(f"{role}:{label} (None — category not observed)")
     return out
@@ -2594,9 +2585,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         )
     # fail is still comparable for regression reporting; other statuses block.
     if c_verdict not in _COMPARE_ADOPTION_ELIGIBLE_VERDICTS and c_verdict != ScoreVerdict.FAIL.value:
-        sys.exit(
-            f"compare adoption gate: candidate verdict={c_verdict!r} is not adoption-comparable"
-        )
+        sys.exit(f"compare adoption gate: candidate verdict={c_verdict!r} is not adoption-comparable")
 
     # --- harness-37 / Golden-100 readiness (VLM6-A-03 / EVAL-04) ---
     if _compare_harness_anchor_size(baseline) or _compare_harness_anchor_size(candidate):
@@ -2676,6 +2665,8 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
 
 
 _SPLIT_HASH_SKIP_REASON = "split seal pins sha256 metadata; image bytes never opened"
+_SCORE_HASH_SKIP_REASON = "caption score uses must_right/roster/policy; image bytes already in the run-record"
+_FACE_SCORE_HASH_SKIP_REASON = "face score uses tags/face_count/record embeddings; image files never opened"
 _DEFAULT_HELD_OUT_FRACTION = 0.5
 
 

@@ -21,24 +21,26 @@ from scripts.eval_harness.cli import (
     _check_score_determinism_cross_process,
     _determinism_artifact_dir,
     _manifest_sha,
+    main,
 )
 from scripts.eval_harness.generate_determinism_anchor import (
     _CORPUS_TRAPS,
-    _coverage_gaps,
     _DEFAULT_MANIFEST_STEM,
     _DEFAULT_STEM,
     _POS_TRAP_MEDIA_ID,
     _TRAP_MEDIA_ID,
+    _coverage_gaps,
     build_caption_anchor_manifest,
     build_run_record,
     write_anchor,
 )
+from scripts.eval_harness.generate_face_determinism_anchor import write_face_anchor
 from scripts.eval_harness.manifest import (
+    METRIC_BACKING_SLICE_THRESHOLD,
+    SHIPPED_CORPUS_COVERAGE_GAPS,
     AnnotationMode,
     FaceBox,
     GoldenManifest,
-    METRIC_BACKING_SLICE_THRESHOLD,
-    SHIPPED_CORPUS_COVERAGE_GAPS,
     compute_corpus_coverage_gaps,
     legacy_import_lineage,
     load_manifest,
@@ -93,9 +95,7 @@ def _oracle_predicted_face_count(*, face_count: int, seed_index: int) -> int:
     return count
 
 
-def _oracle_predicted_identity_names(
-    *, present_identities: list[str], seed_index: int
-) -> list[str]:
+def _oracle_predicted_identity_names(*, present_identities: list[str], seed_index: int) -> list[str]:
     """Independent reimplementation of the generator's identity seed rules."""
     names = list(present_identities)
     if names and seed_index % 5 == 0:
@@ -174,9 +174,7 @@ def _seeded_deviation_oracle(manifest: GoldenManifest) -> dict[str, int | float]
     det_tp = det_fp = det_fn = 0
     wrong_name_count = 0
     for index, entry in enumerate(manifest.entries):
-        pred_faces = _oracle_predicted_face_count(
-            face_count=int(entry.face_count), seed_index=index
-        )
+        pred_faces = _oracle_predicted_face_count(face_count=int(entry.face_count), seed_index=index)
         labeled_faces = int(entry.face_count)
         det_tp += min(pred_faces, labeled_faces)
         det_fp += max(pred_faces - labeled_faces, 0)
@@ -212,16 +210,13 @@ def _assert_scored_matches_oracle(scored: dict, oracle: dict[str, int | float]) 
     wrong_names = list(ident.get("wrong_names") or [])
 
     assert int(det["fn"]) >= int(oracle["det_fn"]), (
-        f"detection fn={det['fn']} below oracle lower bound {oracle['det_fn']} "
-        "(scorer may be GT-echoing; VLM6-S4-01)"
+        f"detection fn={det['fn']} below oracle lower bound {oracle['det_fn']} (scorer may be GT-echoing; VLM6-S4-01)"
     )
     assert int(det["fp"]) >= int(oracle["det_fp"]), (
-        f"detection fp={det['fp']} below oracle lower bound {oracle['det_fp']} "
-        "(scorer may be GT-echoing; VLM6-S4-01)"
+        f"detection fp={det['fp']} below oracle lower bound {oracle['det_fp']} (scorer may be GT-echoing; VLM6-S4-01)"
     )
     assert len(wrong_names) >= int(oracle["wrong_name_count"]), (
-        f"wrong_names={len(wrong_names)} below oracle lower bound "
-        f"{oracle['wrong_name_count']} (VLM6-S4-01)"
+        f"wrong_names={len(wrong_names)} below oracle lower bound {oracle['wrong_name_count']} (VLM6-S4-01)"
     )
     assert det["precision"] is not None and float(det["precision"]) < 1.0, (
         f"detection precision={det['precision']} must be strictly below 1.0 "
@@ -265,7 +260,14 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     man_path = tmp_path / _MAN.name
     assert man_path.is_file(), "write_anchor must promote the caption-anchor manifest"
     # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
-    expected_sha = _manifest_sha(load_manifest(str(_MAN), skip_hash_verification=True))
+    expected_sha = _manifest_sha(
+        load_manifest(
+            str(_MAN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
+    )
     assert manifest_sha == expected_sha
     assert manifest_sha.startswith("51e9456b")  # VLM6-DELTA-09 v3 regen
     assert man_path.read_bytes() == _MAN.read_bytes()
@@ -279,7 +281,12 @@ def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed(
     record = json.loads(_RUN.read_text())
     # Metadata-only: provenance sha check against freeze man; never opens image bytes.
     assert record["provenance"]["manifest_sha256"] == _manifest_sha(
-        load_manifest(str(_MAN), skip_hash_verification=True)
+        load_manifest(
+            str(_MAN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
     )
     assert len(record["items"]) == 39  # golden 37 + G-01 media 39 + G-02 media 40
     assert any(int(i["media_id"]) == _TRAP_MEDIA_ID for i in record["items"])
@@ -334,12 +341,22 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     assert before != "CORRUPTED_FOR_TEST_15"
 
 
-def test_expect_report_matches_committed_freeze_green(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("empty_golden", [False, True])
+def test_expect_report_matches_committed_freeze_green(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, empty_golden: bool
+) -> None:
     """Clean --expect-report against the committed freeze still exits green (discrimination).
 
     Post-wI1 regen the expect-report path re-scores the wG3 man+run and must
     match the committed report bytes (and pinned digests) exactly.
+
+    empty_golden=True is VLM6-RV3-Q4-01: an existing-but-empty GOLDEN_IMAGES_DIR
+    must not turn this metadata-only freeze red.
     """
+    if empty_golden:
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
     run_copy = tmp_path / _RUN.name
     run_copy.write_bytes(_RUN.read_bytes())
     # Copy freeze into tmp so we never risk writing beside committed artifacts.
@@ -409,7 +426,12 @@ def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
     still below the slice threshold, not a certified sampling frame (EVAL-03).
     Other registry fields stay 0/39. golden.json itself remains 0/37 face_boxes.
     """
-    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     gaps = compute_corpus_coverage_gaps(manifest.entries)
     assert set(gaps) == set(SHIPPED_CORPUS_COVERAGE_GAPS)
     assert "demographic_cohort" in gaps  # VLM6-C-02: registry-driven
@@ -428,7 +450,12 @@ def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
         assert "0/39" in info["reason"]
     assert "right-names-on-wrong-faces" in gaps["face_boxes"]["reason"]
     # Seed golden stays structurally blind (shared fixture not bent).
-    golden = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    golden = load_manifest(
+        str(_GOLDEN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     g_gaps = compute_corpus_coverage_gaps(golden.entries)
     assert g_gaps["face_boxes"]["populated"] == 0
     assert g_gaps["face_boxes"]["total"] == 37
@@ -441,7 +468,12 @@ def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VL
     re-validation) and asserted the key disappeared — locking the wrong boolean
     behaviour. A 1/N population stays below the slice threshold.
     """
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_GOLDEN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     gaps = _coverage_gaps(manifest.entries)
     assert gaps["face_boxes"]["pi_zero"] is True
 
@@ -467,11 +499,14 @@ def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VL
 
 def test_coverage_gaps_meet_threshold_when_fully_populated():  # VLM6-C-01 discrimination
     """Only at/above the slice threshold does below_threshold flip false."""
-    manifest = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_GOLDEN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     box = FaceBox(x=0.4, y=0.4, w=0.2, h=0.2, source="iptc")
-    entries = [
-        e.model_copy(update={"face_boxes": [box]}) for e in manifest.entries
-    ]
+    entries = [e.model_copy(update={"face_boxes": [box]}) for e in manifest.entries]
     gaps = compute_corpus_coverage_gaps(entries)
     assert gaps["face_boxes"]["populated"] == 37
     assert gaps["face_boxes"]["below_threshold"] is False
@@ -488,7 +523,14 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
     corpus — never from freeze digests, never from generator private helpers
     (RV3-01 / TEST-15).
     """
-    manifest = _boxed_exhaustive_manifest(load_manifest(str(_GOLDEN), skip_hash_verification=True))
+    manifest = _boxed_exhaustive_manifest(
+        load_manifest(
+            str(_GOLDEN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
+    )
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -520,9 +562,7 @@ def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / 
 
     # Independent seed predicates themselves must be able to go red vs pure echo.
     entry0 = manifest.entries[0]
-    pred0 = _oracle_predicted_face_count(
-        face_count=int(entry0.face_count), seed_index=0
-    )
+    pred0 = _oracle_predicted_face_count(face_count=int(entry0.face_count), seed_index=0)
     assert pred0 != entry0.face_count or entry0.face_count == 0
     if entry0.present_identities:
         names0 = set(
@@ -564,7 +604,14 @@ def test_exaggerated_record_mutant_goes_red_against_independent_oracle():  # RV3
     wrong_names=4}. Real scorer on that input yields det≈{tp:11,fp:0,fn:46}
     with many wrong_names — the control that proves independence.
     """
-    manifest = _boxed_exhaustive_manifest(load_manifest(str(_GOLDEN), skip_hash_verification=True))
+    manifest = _boxed_exhaustive_manifest(
+        load_manifest(
+            str(_GOLDEN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
+    )
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -607,7 +654,12 @@ def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
     remains under-sampled in coverage_gaps (2 < threshold 5). Other registry
     fields stay refused.
     """
-    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     record = build_run_record(
         manifest,
         fixture_revision="0" * 40,
@@ -621,7 +673,12 @@ def test_generator_stamps_metric_backing_refusals():  # VLM6-C-07
         assert field in refusals
         assert "vacuous" in refusals[field] or "0/" in refusals[field]
     # Golden-alone path still refuses face_boxes (shared seed untouched).
-    golden = load_manifest(str(_GOLDEN), skip_hash_verification=True)
+    golden = load_manifest(
+        str(_GOLDEN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     g_record = build_run_record(
         golden,
         fixture_revision="0" * 40,
@@ -659,7 +716,12 @@ def test_caption_anchor_corpus_includes_mixed_y_order_degraded_trap() -> None:
     from scripts.eval_harness.face_metrics import labeled_order, named_box_name
 
     raw = build_caption_anchor_manifest(
-        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+        load_manifest(
+            str(_GOLDEN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
     )
     record = json.loads(_RUN.read_text())
     run_ids = {int(i["media_id"]) for i in record["items"]}
@@ -684,11 +746,15 @@ def test_caption_anchor_corpus_includes_mixed_y_order_degraded_trap() -> None:
             assert lo.y_missing_count >= 1
             mixed += 1
     assert mixed >= 1, (
-        "need ≥1 image with named box missing y + sibling named box with y "
-        "(VLM6-R2-G-01 caption freeze observability)"
+        "need ≥1 image with named box missing y + sibling named box with y (VLM6-R2-G-01 caption freeze observability)"
     )
     # Committed freeze man must carry the same trap (not only the builder).
-    committed = load_manifest(str(_MAN), skip_hash_verification=True)
+    committed = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     assert any(int(e.media_id) == _TRAP_MEDIA_ID for e in committed.entries)
 
 
@@ -706,7 +772,12 @@ def test_caption_anchor_corpus_includes_centre_x_tie_positional_trap() -> None:
     )
 
     raw = build_caption_anchor_manifest(
-        load_manifest(str(_GOLDEN), skip_hash_verification=True)
+        load_manifest(
+            str(_GOLDEN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
     )
     ties = 0
     for entry in raw["entries"]:
@@ -729,7 +800,12 @@ def test_caption_anchor_corpus_includes_centre_x_tie_positional_trap() -> None:
         assert lo.names == [_NAME_POS_TOP, _NAME_POS_BOTTOM]
         ties += 1
     assert ties == 1
-    committed = load_manifest(str(_MAN), skip_hash_verification=True)
+    committed = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     assert any(int(e.media_id) == _POS_TRAP_MEDIA_ID for e in committed.entries)
 
 
@@ -750,7 +826,12 @@ def test_y_reversed_labeled_order_goes_red_on_extended_caption_corpus(
     from scripts.eval_harness import report as report_mod
     from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
 
-    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     record = json.loads(_RUN.read_text())
     entries = [e.model_dump() for e in manifest.entries]
     roster = sorted(set(manifest.roster))
@@ -811,10 +892,15 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(
     live vs mutated aggregation on the extended man+run only — it does not
     compare to the committed report digest (regen stage).
     """
-    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
     from scripts.eval_harness import report as report_mod
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
 
-    manifest = load_manifest(str(_MAN), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_MAN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     record = json.loads(_RUN.read_text())
     entries = [e.model_dump() for e in manifest.entries]
     roster = sorted(set(manifest.roster))
@@ -843,9 +929,7 @@ def test_labeled_y_missing_constant_zero_goes_red_on_extended_caption_corpus(
     def _blind_constant_zero(face_boxes):  # type: ignore[no-untyped-def]
         """Regression shape: strip order_degraded (constant-0 counter)."""
         result = real_lo(face_boxes)
-        return LabeledOrderResult(
-            names=result.names, y_missing_count=0, order_degraded=False
-        )
+        return LabeledOrderResult(names=result.names, y_missing_count=0, order_degraded=False)
 
     monkeypatch.setattr(report_mod, "labeled_order", _blind_constant_zero)
     blind = score_run_record(
@@ -886,3 +970,83 @@ def test_corpus_traps_disclose_deliberate_caption_trap_media() -> None:
     t40 = by_id[_POS_TRAP_MEDIA_ID]
     assert "VLM6-R2-G-02" in str(t40.get("kind") or "")
     assert "positional_images" in str(t40.get("trips") or "")
+
+
+def test_cli_score_s2a_freeze_ignores_empty_golden_images_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """VLM6-RV3-Q4-01: ``score --freeze-certification`` on the committed S2A pair.
+
+    Existing-but-empty GOLDEN_IMAGES_DIR (fresh eval box) must exit 0.
+    Mutation: removing metadata_only=True from _cmd_score / freeze helper
+    fails with ManifestError: image file missing.
+    """
+    from scripts.eval_harness import cli as cli_mod
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(cli_mod, "OUT_DIR", out)
+    monkeypatch.chdir(tmp_path)
+    rc = main(
+        [
+            "score",
+            "--manifest",
+            str(_MAN),
+            "--run-record",
+            str(_RUN),
+            "--check-determinism",
+            "--expect-report",
+            str(_REPORT_JSON),
+            "--rubric-gate",
+            "skip",
+            "--freeze-certification",
+        ]
+    )
+    assert rc is None
+    out_text = capsys.readouterr().out.lower()
+    assert "freeze-certification" in out_text
+
+
+def test_write_anchor_ignores_empty_golden_images_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """VLM6-RV3-Q4-01: caption-anchor generator never opens fixture bytes.
+
+    Mutation: removing metadata_only=True from write_anchor load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    run_path, report_json, report_md, manifest_sha = write_anchor(
+        manifest_path=_GOLDEN,
+        out_dir=tmp_path / "out",
+        stem="cap-q4",
+        manifest_stem="cap-q4-man",
+    )
+    assert run_path.is_file()
+    assert report_json.is_file()
+    assert report_md.is_file()
+    assert manifest_sha
+
+
+def test_write_face_anchor_ignores_empty_golden_images_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """VLM6-RV3-Q4-01: face-anchor generator scores a synthetic roster; no image files.
+
+    Mutation: removing metadata_only=True from write_face_anchor load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    man_path, run_path, report_json, report_md, manifest_sha = write_face_anchor(
+        out_dir=tmp_path / "out",
+        stem="face-q4",
+        manifest_stem="face-q4-man",
+    )
+    assert man_path.is_file()
+    assert run_path.is_file()
+    assert report_json.is_file()
+    assert report_md.is_file()
+    assert manifest_sha

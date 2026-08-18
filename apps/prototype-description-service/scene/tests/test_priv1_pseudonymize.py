@@ -1878,3 +1878,414 @@ def test_unparseable_adjacent_span_reports_non_ascii_codepoints(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         passes.rewrite("Roſe quarry sat down", ".md")
     assert "U+017F" in str(excinfo.value)
+
+
+# --- digest pin record, PRIV-1-BR-32 --------------------------------------
+#
+# `_repin_digests` only runs inside `apply` and its baseline is computed
+# in-run. `verify` never looked at pins. An out-of-band rewrite left every
+# pin of that file stale, with nothing to detect it against. Invented
+# paths only (`nylphra`, `qorvex`, `veldrun`) — not plausible English
+# names, and not a roster token paired with a minted alias.
+
+
+_PIN_SCHEMA = "priv1-digest-pins/1"
+_PIN_REL = "apps/nylphra/emitter.py"
+_PIN_NOTE = "docs/qorvex-note.md"
+
+
+def _pin_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _pin_record(*pairs: tuple[str, str]) -> dict:
+    return {
+        "schema": _PIN_SCHEMA,
+        "pins": [{"path": rel, "sha256": digest} for rel, digest in pairs],
+    }
+
+
+def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record: dict | None):
+    """Minimal private store + roster so `cmd_verify` can run.
+
+    `DECLARED_UNSCANNABLE` and `FREE_TEXT_REDACTIONS` are emptied: both
+    fail closed against files this fixture does not own.
+    """
+    repo = tmp_path / "repo"
+    private = tmp_path / "private"
+    repo.mkdir()
+    private.mkdir()
+    roster = repo / "roster.json"
+    roster.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
+                    {"bucket": "celebs", "name": "Marlow Vensk", "slug": "marlow_vensk"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pz, "REPO", repo)
+    monkeypatch.setattr(pz, "ROSTER", roster)
+    monkeypatch.setattr(pz, "PRIVATE", private)
+    monkeypatch.setattr(pz, "ALIAS_MAP", private / "priv1-alias-map.json")
+    monkeypatch.setattr(pz, "MINT_KEY", private / "priv1-mint-key")
+    monkeypatch.setattr(pz, "DECLARED_UNSCANNABLE", {})
+    monkeypatch.setattr(pz, "FREE_TEXT_REDACTIONS", ())
+    pz.MINT_KEY.write_text(("t" * 64) + "\n", encoding="utf-8")
+    mapping = {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": pz._key_fingerprint(),
+        "entries": [
+            {
+                "real_name": "Zyllora Elm",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "zyllora-elm",
+                "tokens": 2,
+            }
+        ],
+        "wordlist": pz._wordlist_record(),
+    }
+    pz.ALIAS_MAP.write_text(json.dumps(mapping) + "\n", encoding="utf-8")
+    tracked = []
+    for rel, body in files.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        tracked.append((path, True))
+    monkeypatch.setattr(pz, "_tracked_files", lambda: tracked)
+    if record is not None:
+        (private / "priv1-digest-pins.json").write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        )
+    pz._nonpersonal_identities.cache_clear()
+    return repo, private
+
+
+def test_out_of_band_rewrite_of_a_recorded_path_is_stale(tmp_path, monkeypatch):
+    # The finding, at the helper. Rewrite the pinned file without
+    # `_repin_digests`. The record still holds the published digest.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    path = tmp_path / _PIN_REL
+    path.parent.mkdir(parents=True)
+    path.write_text("payload-one\n", encoding="utf-8")
+    pinned = pz._sha_file(path)
+    path.write_text("payload-two-out-of-band\n", encoding="utf-8")
+    live = pz._sha_file(path)
+    assert live != pinned
+    stale, missing = pz._check_published_pins(_pin_record((_PIN_REL, pinned)))
+    assert missing == []
+    assert stale == [(_PIN_REL, pinned, live)]
+
+
+def test_matching_recorded_digest_is_not_stale(tmp_path, monkeypatch):
+    # Pair for the finding test: a checker that always returns stale
+    # would satisfy that one alone.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    path = tmp_path / _PIN_REL
+    path.parent.mkdir(parents=True)
+    path.write_text("payload-one\n", encoding="utf-8")
+    pinned = pz._sha_file(path)
+    stale, missing = pz._check_published_pins(_pin_record((_PIN_REL, pinned)))
+    assert stale == [] and missing == []
+
+
+def test_recorded_path_that_is_gone_is_missing_not_ok(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    pinned = "ab" * 32
+    stale, missing = pz._check_published_pins(_pin_record(("docs/veldrun-gone.md", pinned)))
+    assert stale == []
+    assert missing == [("docs/veldrun-gone.md", pinned)]
+
+
+def test_pin_check_line_reports_zero_as_a_measurement():
+    empty = pz._pin_check_line(0, 0, 0)
+    assert empty == "digest pins: 0 published; 0 stale; 0 missing"
+    one = pz._pin_check_line(4, 1, 2)
+    assert one == "digest pins: 4 published; 1 stale; 2 missing"
+    assert "nylphra" not in one and "Zyllora" not in one
+
+
+def test_stale_and_missing_pin_lines_are_path_and_digest_only():
+    pinned = "aa" * 32
+    live = "bb" * 32
+    stale = pz._stale_pin_line(_PIN_REL, pinned, live)
+    missing = pz._missing_pin_line("docs/veldrun-gone.md", pinned)
+    assert stale == f"STALE-PIN {_PIN_REL} pinned {pinned[:12]}.. found {live[:12]}.."
+    assert missing == f"MISSING-PIN docs/veldrun-gone.md pinned {pinned[:12]}.. (path gone)"
+    assert "Zyllora" not in stale and "Zyllora" not in missing
+    assert "Amber" not in stale and "Falcon" not in missing
+
+
+def test_pin_record_absent_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "PRIVATE", tmp_path)
+    with pytest.raises(SystemExit, match="not found") as exc:
+        pz._load_pin_record()
+    assert "all pins fine" in str(exc.value) or "publish" in str(exc.value).lower()
+
+
+def test_pin_record_missing_pins_key_is_refused():
+    # Vacuous-pass mutant: defaulting a missing `pins` to [] then
+    # reporting 0 stale. An empty list is a measured zero; a missing
+    # key is not an empty list (rg-008).
+    with pytest.raises(SystemExit, match="pins"):
+        pz._validate_pin_record({"schema": _PIN_SCHEMA})
+    with pytest.raises(SystemExit, match="pins"):
+        pz._check_published_pins({"schema": _PIN_SCHEMA})
+
+
+def test_pin_record_wrong_schema_is_refused():
+    with pytest.raises(SystemExit, match="schema"):
+        pz._validate_pin_record({"schema": "priv1-digest-pins/0", "pins": []})
+
+
+def test_pin_record_entry_missing_required_key_is_refused():
+    with pytest.raises(SystemExit, match="sha256"):
+        pz._validate_pin_record(
+            {"schema": _PIN_SCHEMA, "pins": [{"path": _PIN_REL}]}
+        )
+    with pytest.raises(SystemExit, match="path"):
+        pz._validate_pin_record(
+            {"schema": _PIN_SCHEMA, "pins": [{"sha256": "ab" * 32}]}
+        )
+
+
+def test_pin_record_rejects_a_non_digest_and_a_duplicate_path():
+    with pytest.raises(SystemExit, match="sha256"):
+        pz._validate_pin_record(
+            {"schema": _PIN_SCHEMA, "pins": [{"path": _PIN_REL, "sha256": "nope"}]}
+        )
+    with pytest.raises(SystemExit, match="duplicate"):
+        pz._validate_pin_record(
+            {
+                "schema": _PIN_SCHEMA,
+                "pins": [
+                    {"path": _PIN_REL, "sha256": "ab" * 32},
+                    {"path": _PIN_REL, "sha256": "cd" * 32},
+                ],
+            }
+        )
+
+
+def test_empty_pin_record_is_a_measured_zero():
+    # Empty `pins` is valid only as a written record of "nothing
+    # published". It must still produce the zero line, not skip the
+    # measurement.
+    stale, missing = pz._check_published_pins(_pin_record())
+    assert stale == [] and missing == []
+    assert pz._pin_check_line(0, 0, 0) == "digest pins: 0 published; 0 stale; 0 missing"
+
+
+def test_live_pin_targets_finds_a_current_digest_literal(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(f"sha256: {digest}\n", encoding="utf-8")
+    published = {
+        _PIN_REL: digest,
+        _PIN_NOTE: pz._sha_file(note),
+    }
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    assert found == {_PIN_REL: digest}
+
+
+def test_live_pin_targets_does_not_guess_an_unmatched_digest(tmp_path, monkeypatch):
+    # A 64-hex literal that is not any published file's current digest
+    # is not a pin we know. Recording it would be the always-on alarm
+    # the brief refused.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(f"sha256: {'cd' * 32}\n", encoding="utf-8")
+    published = {_PIN_REL: pz._sha_file(data), _PIN_NOTE: pz._sha_file(note)}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    assert found == {}
+
+
+def test_live_pin_targets_skips_out_of_scope_and_empty_published(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    note = tmp_path / "literature" / "qorvex.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(digest, encoding="utf-8")
+    published = {_PIN_REL: digest}
+    found = pz._live_pin_targets(published, [(data, True), (note, False)])
+    assert found == {}
+    assert pz._live_pin_targets({}, [(data, True)]) == {}
+
+
+def test_persist_published_pins_is_a_noop_on_dry_run(tmp_path, monkeypatch):
+    private = tmp_path / "private"
+    private.mkdir()
+    monkeypatch.setattr(pz, "PRIVATE", private)
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(digest, encoding="utf-8")
+    published = {_PIN_REL: digest, _PIN_NOTE: pz._sha_file(note)}
+    files = [(data, True), (note, True)]
+    assert pz._persist_published_pins(published, files, dry_run=True) is None
+    assert not (private / "priv1-digest-pins.json").exists()
+
+
+def test_persist_published_pins_writes_on_wet_run(tmp_path, monkeypatch):
+    private = tmp_path / "private"
+    private.mkdir()
+    monkeypatch.setattr(pz, "PRIVATE", private)
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(digest, encoding="utf-8")
+    published = {_PIN_REL: digest, _PIN_NOTE: pz._sha_file(note)}
+    files = [(data, True), (note, True)]
+    record = pz._persist_published_pins(published, files, dry_run=False)
+    assert record["schema"] == _PIN_SCHEMA
+    assert record["pins"] == [{"path": _PIN_REL, "sha256": digest}]
+    loaded = pz._load_pin_record()
+    assert loaded == record
+
+
+def test_merge_keeps_a_recorded_path_that_is_no_longer_live(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "PRIVATE", tmp_path)
+    previous = _pin_record((_PIN_REL, "aa" * 32))
+    (tmp_path / "priv1-digest-pins.json").write_text(json.dumps(previous) + "\n")
+    merged = pz._merge_pin_record({_PIN_NOTE: "bb" * 32})
+    by_path = {e["path"]: e["sha256"] for e in merged["pins"]}
+    assert by_path[_PIN_REL] == "aa" * 32
+    assert by_path[_PIN_NOTE] == "bb" * 32
+
+
+def test_verify_stays_green_when_recorded_digest_matches(tmp_path, monkeypatch, capsys):
+    # Fixture lock: cmd_verify must be able to return 0 on a clean
+    # tree with a matching pin. A stale-pin test that always-raises
+    # would pass without this.
+    body = "payload-one\n"
+    pinned = _pin_digest(body)
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body, _PIN_NOTE: f"sha256: {pinned}\n"},
+        record=_pin_record((_PIN_REL, pinned)),
+    )
+    try:
+        rc = pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "digest pins: 1 published; 0 stale; 0 missing" in out
+    assert "STALE-PIN" not in out
+    assert "Zyllora" not in out
+
+
+def test_verify_exits_nonzero_on_a_stale_pin(tmp_path, monkeypatch, capsys):
+    # The finding, at `verify`. Same tree as the lock above, then the
+    # pinned file is rewritten out of band. Unfixed verify does not
+    # look at the record and returns 0.
+    body = "payload-one\n"
+    pinned = _pin_digest(body)
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body, _PIN_NOTE: f"sha256: {pinned}\n"},
+        record=_pin_record((_PIN_REL, pinned)),
+    )
+    (repo / _PIN_REL).write_text("payload-two-out-of-band\n", encoding="utf-8")
+    live = pz._sha_file(repo / _PIN_REL)
+    try:
+        rc = pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert f"STALE-PIN {_PIN_REL} pinned {pinned[:12]}.. found {live[:12]}.." in out
+    assert "digest pins: 1 published; 1 stale; 0 missing" in out
+    assert "Zyllora" not in out
+
+
+def test_verify_exits_nonzero_on_a_missing_recorded_path(tmp_path, monkeypatch, capsys):
+    body = "payload-one\n"
+    pinned = _pin_digest(body)
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_NOTE: "no pin here\n"},
+        record=_pin_record(("docs/veldrun-gone.md", pinned)),
+    )
+    try:
+        rc = pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "MISSING-PIN docs/veldrun-gone.md pinned " + pinned[:12] in out
+    assert "digest pins: 1 published; 0 stale; 1 missing" in out
+
+
+def test_verify_refuses_a_missing_pin_record(tmp_path, monkeypatch):
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: "payload-one\n"},
+        record=None,
+    )
+    try:
+        with pytest.raises(SystemExit, match="not found"):
+            pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+
+
+def test_apply_and_verify_both_emit_digest_pin_measurements():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
+    assert "_persist_published_pins" in apply_src
+    assert "_pin_check_line" in apply_src
+    assert "_load_pin_record" in verify_src
+    assert "_check_published_pins" in verify_src
+    assert "_pin_check_line" in verify_src
+    # Exit must include the pin findings. A printed note with a zero
+    # exit is the BR-15 shape.
+    assert "stale_pins" in verify_src or "missing_pins" in verify_src
+    ret_line = [ln for ln in verify_src.splitlines() if ln.strip().startswith("return ")][-1]
+    assert "stale_pins" in ret_line or "missing_pins" in ret_line
+
+
+def test_plan_does_not_write_a_pin_record():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    plan_src = src[src.index("def cmd_plan(") : src.index("FREE_TEXT_REDACTIONS")]
+    assert "_persist_published_pins" not in plan_src
+    assert "_merge_pin_record" not in plan_src
+    assert "_write_pin_record" not in plan_src
+
+
+def test_apply_does_not_persist_under_the_dry_run_name():
+    # The persist call must pass the dry-run flag through. A wet-only
+    # call that ignored dry-run would write a record claiming pins
+    # were published when nothing was.
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    assert "_persist_published_pins(" in apply_src
+    assert "args.dry_run" in apply_src[apply_src.index("_persist_published_pins(") :]

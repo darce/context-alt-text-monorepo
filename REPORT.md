@@ -38,7 +38,7 @@ Close R1-06, R1-14, and R2-01..10. TDD. PHP people-grain collapse. Probe-level q
 | R2-08 | `8953ee64447f2838256d37a7933ab409a7e9d335` `fix(recognition): UXW2-5-R2-08 get_by_id fake returns fused_low representatives` | `test_quality_does_not_read_get_by_id_representatives` | quality from `probe.representatives` → LOW_QUALITY |
 | R2-09 | `1cd5835ee6aa48f64a739edb736551d0c00c84a8` `fix(recognition): UXW2-5-R2-09 rank order is not insertion order; empty roster has a probe` | ranking exact `[strong, possible]`; empty-roster probe reps | drop-sort: insertion order ≠ rank order |
 | R2-10 | `cd27813b3ca27b1c3cdc99ef6cd75e22b30f23ed` `fix(api): UXW2-5-R2-10 validate_callback returns invalid_top_k WP_Error` | `testDispatchRosterCandidatesInvalidTopKUsesSpecificError` | bool-false dispatch → `rest_invalid_param` |
-| R1-14 | HEAD (this commit) `docs: UXW2-5-R2-01 UXW2-5-R1-14 REPORT` | `git cat-file -e` loop after commit | n/a |
+| R1-14 | `56c7b6fe7106b76dc50ce93f9e1389b56d4e7653` `docs: UXW2-5-R2-01 UXW2-5-R1-14 REPORT` | `git cat-file -e` loop after commit | n/a |
 | R2-01 | same as R1-14 | this file | n/a |
 
 ## Files
@@ -129,4 +129,4 @@ Delete the second `### GET /recognition/clusters/{cluster_id}/roster-candidates`
 
 ## HEAD
 
-`HEAD` after this commit. Follow-up pins the 40-char SHA.
+lane SHA (non-portable): `56c7b6fe7106b76dc50ce93f9e1389b56d4e7653` — `docs: UXW2-5-R2-01 UXW2-5-R1-14 REPORT`

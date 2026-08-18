@@ -329,7 +329,13 @@ def test_score_rows_delta_goes_red_when_candidate_worse_than_zero_rule(
     from scripts.eval_harness.manifest import load_manifest
 
     golden = Path(__file__).resolve().parent / "seed" / "golden.json"
-    manifest = load_manifest(str(golden), skip_hash_verification=True)
+    # Metadata-only: this test only reads labels/roster; never opens image bytes.
+    manifest = load_manifest(
+        str(golden),
+        skip_hash_verification=True,
+        hash_skip_reason="describe_baseline rubric tests read labels/roster only; image bytes never opened",
+        metadata_only=True,
+    )
     # Pick an entry with present identities and a non-empty roster of others.
     entry = next(e for e in manifest.entries if e.present_identities and e.must_right)
     other = next(n for n in manifest.roster if n not in entry.present_identities)
@@ -374,7 +380,13 @@ def test_write_report_includes_rubric_delta(tmp_path, monkeypatch):  # VLM6-C-06
     from scripts.eval_harness.manifest import load_manifest
 
     golden = Path(__file__).resolve().parent / "seed" / "golden.json"
-    entry = load_manifest(str(golden), skip_hash_verification=True).entries[0]
+    # Metadata-only: this test only needs media_id/path for a JSONL row.
+    entry = load_manifest(
+        str(golden),
+        skip_hash_verification=True,
+        hash_skip_reason="describe_baseline report test reads media_id/path only; image bytes never opened",
+        metadata_only=True,
+    ).entries[0]
     paths["jsonl"].write_text(
         json.dumps(
             {
@@ -396,3 +408,19 @@ def test_write_report_includes_rubric_delta(tmp_path, monkeypatch):  # VLM6-C-06
     assert report["summary"]["rubric_delta"]["status"] == "ok"
     md = paths["report_md"].read_text()
     assert "rubric Δ" in md
+
+
+def test_score_rows_against_golden_ignores_empty_golden_images_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VLM6-RV4-Q4-01 / OBS-04: rubric scorer is metadata-only; empty GOLDEN_IMAGES_DIR must not raise.
+
+    Mutation: dropping metadata_only=True from score_rows_against_golden.load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty-golden"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    result = db.score_rows_against_golden([{"media_id": 1, "describe": {"alt_text_draft": "x"}}])
+    assert result["status"] in {"ok", "undefined"}
+    assert isinstance(result["matched"], int)

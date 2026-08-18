@@ -404,7 +404,6 @@ class RosterCandidateResponse(BaseModel):
     name: str
     similarity: float
     band: Literal["strong", "possible", "none"]
-    quality_flag: Literal["ok", "low_quality"]
 
     @field_validator("cluster_id")
     @classmethod
@@ -418,7 +417,9 @@ class RosterCandidatesResponse(BaseModel):
     model_id: str
     embedding_model: str
     computed_at: datetime
+    probe_face_count: int
     reference_face_count: int
+    quality_flag: Literal["ok", "low_quality", "occluded"]
     thresholds: RosterCandidateThresholdsResponse
     candidates: list[RosterCandidateResponse] = Field(default_factory=list)
 

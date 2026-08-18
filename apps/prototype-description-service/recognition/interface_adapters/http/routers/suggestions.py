@@ -141,7 +141,9 @@ async def get_roster_candidates(
         model_id=result.model_id,
         embedding_model=result.embedding_model,
         computed_at=result.computed_at,
+        probe_face_count=result.probe_face_count,
         reference_face_count=result.reference_face_count,
+        quality_flag=result.quality_flag.value,
         thresholds=RosterCandidateThresholdsResponse(
             suggestion_floor=result.thresholds.suggestion_floor,
             suggestion_ceiling=result.thresholds.suggestion_ceiling,
@@ -153,7 +155,6 @@ async def get_roster_candidates(
                 name=row.name,
                 similarity=row.similarity,
                 band=row.band.value,
-                quality_flag=row.quality_flag.value,
             )
             for row in result.candidates
         ],

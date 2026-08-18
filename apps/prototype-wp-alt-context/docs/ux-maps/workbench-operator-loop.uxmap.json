@@ -108,6 +108,20 @@
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "empty", "loading"]
+        },
+        {
+          "id": "z-review-suggestions-header",
+          "label": "Review Suggestions queue header / count",
+          "role": "status",
+          "states": ["default", "loading", "empty", "error", "filtered"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx"
+        },
+        {
+          "id": "z-review-suggestions-group-card",
+          "label": "Top-of-queue group card",
+          "role": "ai_review",
+          "states": ["default", "loading", "empty", "error", "filtered"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx"
         }
       ]
     },

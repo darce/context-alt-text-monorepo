@@ -702,6 +702,8 @@ def draw_eval_split(
     if not isinstance(partition_provenance, str) or not partition_provenance.strip():
         raise ValueError("partition_provenance is required and must be a non-empty string")
     held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
+    spanning = _identities_spanning_both_halves(held_out, train)
+    status = SplitDisjointnessStatus.VERIFIED.value if not spanning else SplitDisjointnessStatus.PROVISIONAL.value
     artifact = {
         "schema_version": SUPPORTED_SPLIT_SCHEMA_VERSION,
         "seed": seed,
@@ -715,9 +717,9 @@ def draw_eval_split(
         "held_out": _half_payload(held_out),
         "train": _half_payload(train),
         "disjointness": {
-            "status": SplitDisjointnessStatus.PROVISIONAL.value,
+            "status": status,
             "partition_provenance": partition_provenance,
-            "identities_spanning_both_halves": _identities_spanning_both_halves(held_out, train),
+            "identities_spanning_both_halves": spanning,
             "note": SPLIT_DISJOINTNESS_NOTE,
         },
     }
@@ -769,7 +771,9 @@ def verify_eval_split(
 
     if not _is_iso8601_timestamp(artifact.get("draw_timestamp")):
         violations.append(f"draw_timestamp is not a non-empty ISO-8601 timestamp: {artifact.get('draw_timestamp')!r}")
-    if expected_draw_timestamp is not None and artifact.get("draw_timestamp") != expected_draw_timestamp:
+    if expected_draw_timestamp is None:
+        violations.append("expected_draw_timestamp is required (EVAL-10 fail-closed)")
+    elif artifact.get("draw_timestamp") != expected_draw_timestamp:
         violations.append(
             f"draw_timestamp mismatch: recorded={artifact.get('draw_timestamp')!r} expected={expected_draw_timestamp!r}"
         )
@@ -781,7 +785,9 @@ def verify_eval_split(
         or not all(isinstance(note, str) and note.strip() for note in exposure)
     ):
         violations.append(f"pre_split_exposure must be a non-empty list of non-empty strings: {exposure!r}")
-    if expected_pre_split_exposure is not None and exposure != expected_pre_split_exposure:
+    if expected_pre_split_exposure is None:
+        violations.append("expected_pre_split_exposure is required (EVAL-10 fail-closed)")
+    elif exposure != expected_pre_split_exposure:
         violations.append(
             f"pre_split_exposure mismatch: recorded={exposure!r} expected={expected_pre_split_exposure!r}"
         )
@@ -790,14 +796,18 @@ def verify_eval_split(
     if not isinstance(seed, str) or not seed:
         violations.append(f"missing or invalid seed: {seed!r}")
         seed = None
-    if expected_seed is not None and seed != expected_seed:
+    if expected_seed is None:
+        violations.append("expected_seed is required (EVAL-10 fail-closed)")
+    elif seed != expected_seed:
         violations.append(f"seed mismatch: recorded={seed!r} expected={expected_seed!r}")
 
     fraction = artifact.get("held_out_fraction")
     if not _is_numeric_fraction(fraction):
         violations.append(f"missing or invalid held_out_fraction: {fraction!r}")
         fraction = None
-    elif expected_held_out_fraction is not None and float(fraction) != float(expected_held_out_fraction):
+    if expected_held_out_fraction is None:
+        violations.append("expected_held_out_fraction is required (EVAL-10 fail-closed)")
+    elif fraction is not None and float(fraction) != float(expected_held_out_fraction):
         violations.append(f"held_out_fraction mismatch: recorded={fraction!r} expected={expected_held_out_fraction!r}")
 
     source = artifact.get("source_manifest")
@@ -826,7 +836,9 @@ def verify_eval_split(
     provenance = disjointness.get("partition_provenance")
     if not isinstance(provenance, str) or not provenance.strip():
         violations.append(f"partition_provenance missing or empty: {provenance!r}")
-    if expected_partition_provenance is not None and provenance != expected_partition_provenance:
+    if expected_partition_provenance is None:
+        violations.append("expected_partition_provenance is required (EVAL-10 fail-closed)")
+    elif provenance != expected_partition_provenance:
         violations.append(
             f"partition_provenance mismatch: recorded={provenance!r} expected={expected_partition_provenance!r}"
         )

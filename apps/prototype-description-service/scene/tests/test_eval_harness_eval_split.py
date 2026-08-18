@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from scripts.eval_harness.cli import main
-from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.manifest import AnnotationMode, EntryPolicy, GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.strata import (
     SPLIT_DISJOINTNESS_NOTE,
     SplitDisjointnessStatus,
@@ -120,9 +121,23 @@ def test_draw_eval_split_partitions_golden_without_overlap():
     assert artifact["disjointness"]["identities_spanning_both_halves"] == sorted(held_identities & train_identities)
 
 
+def _committed_expected(**overrides):
+    kwargs = {
+        "source_manifest_sha256": hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest(),
+        "expected_seed": _DRAW_SEED,
+        "expected_held_out_fraction": 0.5,
+        "expected_draw_timestamp": _DRAW_TIMESTAMP,
+        "expected_partition_provenance": _PARTITION_PROVENANCE,
+        "expected_source_manifest_path": "scene/tests/seed/golden.json",
+        "expected_pre_split_exposure": list(_EXPOSURE_NOTES),
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
 def test_pin_committed_sealed_eval_split():
     artifact = json.loads(_SEALED_SPLIT.read_text())
-    assert verify_eval_split(artifact, _load_golden()) == []
+    assert verify_eval_split(artifact, _load_golden(), **_committed_expected()) == []
     assert artifact["held_out"]["media_ids"] == _SEALED_HELD_OUT_MEDIA_IDS
     assert artifact["seed"] == _DRAW_SEED
     assert artifact["draw_timestamp"] == _DRAW_TIMESTAMP
@@ -165,9 +180,11 @@ def _check_cli_args(out: Path, **overrides) -> list[str]:
         "seed": _DRAW_SEED,
         "draw_timestamp": _DRAW_TIMESTAMP,
         "partition_provenance": _PARTITION_PROVENANCE,
+        "held_out_fraction": "0.5",
+        "exposure_notes": list(_EXPOSURE_NOTES),
     }
     args.update(overrides)
-    return [
+    argv = [
         "draw-eval-split",
         "--manifest",
         args["manifest"],
@@ -176,11 +193,89 @@ def _check_cli_args(out: Path, **overrides) -> list[str]:
         "--check",
         "--seed",
         args["seed"],
+        "--held-out-fraction",
+        str(args["held_out_fraction"]),
         "--draw-timestamp",
         args["draw_timestamp"],
         "--partition-provenance",
         args["partition_provenance"],
     ]
+    for note in args["exposure_notes"]:
+        argv.extend(["--exposure-note", note])
+    return argv
+
+
+def _fixture_expected(**overrides):
+    kwargs = {
+        "source_manifest_sha256": "a" * 64,
+        "expected_seed": _DRAW_SEED,
+        "expected_held_out_fraction": 0.5,
+        "expected_draw_timestamp": _DRAW_TIMESTAMP,
+        "expected_partition_provenance": _PARTITION_PROVENANCE,
+        "expected_source_manifest_path": "scene/tests/seed/golden.json",
+        "expected_pre_split_exposure": ["fixture exposure"],
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _alice_bob_manifest() -> GoldenManifest:
+    """Two-entry identity-disjoint corpus (Q1-03)."""
+    return GoldenManifest(
+        manifest_version=3,
+        annotation_mode=AnnotationMode.ROSTER_ONLY,
+        roster=["Alice", "Bob"],
+        entries=[
+            GoldenEntry(
+                path="alice.jpg",
+                sha256="a" * 64,
+                media_id=1,
+                face_count=1,
+                present_identities=["Alice"],
+                must_right=["Alice"],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=False),
+            ),
+            GoldenEntry(
+                path="bob.jpg",
+                sha256="b" * 64,
+                media_id=2,
+                face_count=1,
+                present_identities=["Bob"],
+                must_right=["Bob"],
+                easy_wrong=[],
+                policy=EntryPolicy(recognition_enabled=False),
+            ),
+        ],
+    )
+
+
+def _draw_alice_bob(**overrides):
+    kwargs = {
+        "seed": "alice-bob-seed",
+        "held_out_fraction": 0.5,
+        "draw_timestamp": _DRAW_TIMESTAMP,
+        "source_manifest_path": "alice-bob.json",
+        "source_manifest_sha256": "c" * 64,
+        "pre_split_exposure": ["fixture exposure"],
+        "partition_provenance": "synthetic two-entry Alice/Bob",
+    }
+    kwargs.update(overrides)
+    return draw_eval_split(_alice_bob_manifest(), **kwargs)
+
+
+def _alice_bob_expected(**overrides):
+    kwargs = {
+        "source_manifest_sha256": "c" * 64,
+        "expected_seed": "alice-bob-seed",
+        "expected_held_out_fraction": 0.5,
+        "expected_draw_timestamp": _DRAW_TIMESTAMP,
+        "expected_partition_provenance": "synthetic two-entry Alice/Bob",
+        "expected_source_manifest_path": "alice-bob.json",
+        "expected_pre_split_exposure": ["fixture exposure"],
+    }
+    kwargs.update(overrides)
+    return kwargs
 
 
 def test_cli_check_exits_0_on_committed_artifact():
@@ -200,10 +295,14 @@ def test_cli_draw_without_force_exits_3_on_existing_out(tmp_path):
                 str(out),
                 "--seed",
                 _DRAW_SEED,
+                "--held-out-fraction",
+                "0.5",
                 "--draw-timestamp",
                 _DRAW_TIMESTAMP,
                 "--partition-provenance",
                 _PARTITION_PROVENANCE,
+                "--exposure-note",
+                "fixture exposure",
             ]
         )
     assert excinfo.value.code == 3
@@ -227,6 +326,8 @@ def test_cli_held_out_fraction_bounds_exit_2(tmp_path, fraction, capsys):
                 _PARTITION_PROVENANCE,
                 "--held-out-fraction",
                 fraction,
+                "--exposure-note",
+                "fixture exposure",
             ]
         )
     assert excinfo.value.code == 2
@@ -524,7 +625,7 @@ def test_cli_bare_check_without_required_flags_exits_2():
 
 def test_committed_artifact_verifies_clean():
     artifact = json.loads(_SEALED_SPLIT.read_text())
-    assert verify_eval_split(artifact, _load_golden()) == []
+    assert verify_eval_split(artifact, _load_golden(), **_committed_expected()) == []
     assert artifact["disjointness"]["note"] == SPLIT_DISJOINTNESS_NOTE
 
 
@@ -636,3 +737,222 @@ def test_verify_resealed_unknown_exposure_inventory_key_is_named():
     _reseal(artifact)
     violations = verify_eval_split(artifact, _load_golden())
     assert any("unknown exposure_inventory key" in message for message in violations), violations
+
+
+def test_draw_disjoint_alice_bob_is_verified_and_round_trips():
+    # VLM6-RV4-Q1-03: identity-disjoint draw must be verified, then verify returns [].
+    artifact = _draw_alice_bob()
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.VERIFIED.value
+    assert verify_eval_split(artifact, _alice_bob_manifest(), **_alice_bob_expected()) == []
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.0])
+def test_draw_verify_closed_fraction_round_trip(fraction):
+    # VLM6-RV4-Q1-03: 0.0/1.0 empty one half; span is empty; draw/verify are inverses.
+    artifact = _draw_alice_bob(held_out_fraction=fraction)
+    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.VERIFIED.value
+    assert (
+        verify_eval_split(
+            artifact,
+            _alice_bob_manifest(),
+            **_alice_bob_expected(expected_held_out_fraction=fraction),
+        )
+        == []
+    )
+
+
+def test_verify_provisional_empty_span_is_named():
+    # MUT[delete_provisional_empty_span]: disjoint draw flipped to provisional.
+    artifact = _draw_alice_bob()
+    artifact["disjointness"]["status"] = SplitDisjointnessStatus.PROVISIONAL.value
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _alice_bob_manifest(), **_alice_bob_expected())
+    assert any(
+        "disjointness.status provisional but identities_spanning_both_halves is empty" in message
+        for message in violations
+    ), violations
+
+
+def test_verify_none_expected_seed_is_named_violation():
+    # VLM6-W3-RV-02 / Q1-04: library must fail-closed when expected_seed is omitted.
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(expected_seed=None))
+    assert any("expected_seed" in message for message in violations), violations
+
+
+def test_verify_none_expected_fraction_is_named_violation():
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(expected_held_out_fraction=None))
+    assert any("expected_held_out_fraction" in message for message in violations), violations
+
+
+def test_verify_none_expected_draw_timestamp_is_named_violation():
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(expected_draw_timestamp=None))
+    assert any("expected_draw_timestamp" in message for message in violations), violations
+
+
+def test_verify_none_expected_partition_provenance_is_named_violation():
+    violations = verify_eval_split(
+        _draw_golden(), _load_golden(), **_fixture_expected(expected_partition_provenance=None)
+    )
+    assert any("expected_partition_provenance" in message for message in violations), violations
+
+
+def test_verify_none_expected_pre_split_exposure_is_named_violation():
+    violations = verify_eval_split(
+        _draw_golden(), _load_golden(), **_fixture_expected(expected_pre_split_exposure=None)
+    )
+    assert any("expected_pre_split_exposure" in message for message in violations), violations
+
+
+def test_verify_expected_seed_mismatch_names_seed():
+    # MUT[delete_expected_seed]: artifact seed is honest; only expected-equality kills.
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(expected_seed="attacker-seed"))
+    assert any("seed mismatch" in message for message in violations), violations
+
+
+def test_verify_expected_fraction_mismatch_names_fraction():
+    # MUT[delete_expected_fraction]: artifact fraction is honest; only expected-equality kills.
+    violations = verify_eval_split(_draw_golden(), _load_golden(), **_fixture_expected(expected_held_out_fraction=0.3))
+    assert any("held_out_fraction mismatch" in message for message in violations), violations
+
+
+def test_verify_seedless_both_ids_names_both_halves():
+    # MUT[delete_both_ids]: drop seed so membership recompute cannot mask the check.
+    artifact = _draw_golden()
+    del artifact["seed"]
+    shared = artifact["held_out"]["media_ids"][0]
+    artifact["train"]["media_ids"].append(shared)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("media_id in both halves" in message for message in violations), violations
+
+
+def test_verify_seedless_both_shas_names_both_halves():
+    # MUT[delete_both_shas]
+    artifact = _draw_golden()
+    del artifact["seed"]
+    shared = artifact["held_out"]["sha256"][0]
+    artifact["train"]["sha256"].append(shared)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("sha256 in both halves" in message for message in violations), violations
+
+
+def test_verify_seedless_neither_ids_names_neither_half():
+    # MUT[delete_neither_ids]
+    artifact = _draw_golden()
+    del artifact["seed"]
+    dropped = artifact["held_out"]["media_ids"].pop(0)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("media_id in manifest but in neither half" in message for message in violations), violations
+    assert any(str(dropped) in message for message in violations), violations
+
+
+def test_verify_seedless_extra_ids_names_not_in_manifest():
+    # MUT[delete_extra_ids]: phantom must name 'not in manifest', not membership mismatch.
+    artifact = _draw_golden()
+    del artifact["seed"]
+    artifact["held_out"]["media_ids"].append(99999)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("held_out media_id not in manifest" in message for message in violations), violations
+    assert not any("membership mismatch" in message for message in violations), violations
+
+
+def test_verify_seedless_extra_shas_names_not_in_manifest():
+    # MUT[delete_extra_shas]
+    artifact = _draw_golden()
+    del artifact["seed"]
+    artifact["held_out"]["sha256"].append("f" * 64)
+    violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
+    assert any("held_out sha256 not in manifest" in message for message in violations), violations
+
+
+def test_cli_check_missing_held_out_fraction_exits_2():
+    argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(_SEALED_SPLIT),
+        "--check",
+        "--seed",
+        _DRAW_SEED,
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-note",
+        _EXPOSURE_NOTES[0],
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+
+
+def test_cli_check_missing_exposure_notes_exits_2():
+    argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(_SEALED_SPLIT),
+        "--check",
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+
+
+def test_cli_check_attacker_seed_reseal_exits_1(tmp_path, capsys):
+    # VLM6-RV4-Q1-04: remembership under other-seed; default --seed is the committed seed.
+    source_sha = hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest()
+    artifact = _draw_golden(
+        seed="other-seed",
+        source_manifest_sha256=source_sha,
+        pre_split_exposure=list(_EXPOSURE_NOTES),
+    )
+    out = tmp_path / "split.json"
+    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "seed mismatch" in captured.err
+
+
+def test_cli_check_resealed_fraction_03_exits_1(tmp_path, capsys):
+    # VLM6-RV4-Q1-02: 0.3 remembership checked against required committed 0.5.
+    source_sha = hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest()
+    artifact = _draw_golden(
+        held_out_fraction=0.3,
+        source_manifest_sha256=source_sha,
+        pre_split_exposure=list(_EXPOSURE_NOTES),
+    )
+    out = tmp_path / "split.json"
+    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "held_out_fraction" in captured.err
+
+
+def test_cli_check_resealed_exposure_rewrite_exits_1(tmp_path, capsys):
+    # VLM6-RV4-Q1-01: resealed ["no prior exposure"] vs committed notes.
+    artifact = json.loads(_SEALED_SPLIT.read_text())
+    artifact["pre_split_exposure"] = ["no prior exposure"]
+    _reseal(artifact)
+    out = tmp_path / "split.json"
+    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "pre_split_exposure" in captured.err

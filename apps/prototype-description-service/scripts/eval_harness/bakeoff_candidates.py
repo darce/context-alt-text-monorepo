@@ -37,7 +37,23 @@ QWEN_GENERATION_PAIR: dict[str, tuple[str, float]] = {
 }
 # Recipe fields that must match across the pair for the comparison to be
 # like-for-like. ``gguf`` differs by construction (different artifact).
-QWEN_PAIR_SHARED_RECIPE_FIELDS = ("stack", "ctx_size", "image_max_tokens", "parallel", "extra_flags", "mmproj")
+# ``min_runtime_build`` / ``min_runtime_build_is_lower_bound`` decide which
+# llama.cpp build is legal; a missing floor on one leg is not a generation
+# delta, it is a preflight-policy delta.
+QWEN_PAIR_SHARED_RECIPE_FIELDS = (
+    "stack",
+    "ctx_size",
+    "image_max_tokens",
+    "parallel",
+    "extra_flags",
+    "mmproj",
+    "min_runtime_build",
+    "min_runtime_build_is_lower_bound",
+)
+# Entry-level workload fields (not on ServingRecipe) that also decide the
+# system prompt and whether /no_think is appended. Sealed separately so a
+# recipe-only walk cannot claim the pair is like-for-like.
+QWEN_PAIR_SHARED_ENTRY_FIELDS = ("prompt_template", "reasoning_tuned")
 _SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 _TODO_RE = re.compile(r"TODO|<TODO", re.IGNORECASE)
 _LLAMA_CPP_BUILD_RE = re.compile(r"^b\d+$")
@@ -341,6 +357,17 @@ def _assert_qwen_generation_pair(registry: BakeoffCandidateRegistry) -> None:
                     f"Qwen generation pair recipe drift on {field!r}: "
                     f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
                     "The pair must share a recipe or the speed/token delta is unattributable."
+                )
+    for field in QWEN_PAIR_SHARED_ENTRY_FIELDS:
+        expected = getattr(reference, field)
+        for row in others:
+            actual = getattr(row, field)
+            if actual != expected:
+                raise RegistryError(
+                    f"Qwen generation pair entry drift on {field!r}: "
+                    f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
+                    "The pair must share prompt and reasoning settings or the "
+                    "delta is unattributable."
                 )
 
 

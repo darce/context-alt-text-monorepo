@@ -423,12 +423,15 @@ def _stamp_pipeline_provenance(
     dual_length: bool,
     face_gate: bool,
     eval_mode: str,
+    instance_shape: str | None = None,
 ) -> None:
     """Stamp the pipeline config into run-record provenance (attribution, as --eval-mode).
 
     ``prompt_variant`` is always stamped; boolean pipeline flags and a
     non-standard ``eval_mode`` are stamped only when active so pre-Slice-2
-    records and standard runs keep their existing shape (additive schema)."""
+    records and standard runs keep their existing shape (additive schema).
+    ``instance_shape`` is operator-supplied and stamped verbatim; absent means
+    absent — the harness never infers a host (rg-015)."""
     provenance["prompt_variant"] = prompt_variant
     if two_pass:
         provenance["two_pass"] = True
@@ -438,6 +441,8 @@ def _stamp_pipeline_provenance(
         provenance["face_gate"] = True
     if eval_mode != "standard":
         provenance["eval_mode"] = eval_mode
+    if instance_shape is not None:
+        provenance["instance_shape"] = instance_shape
 
 
 class BakeoffClient(RemoteSceneClient):
@@ -617,6 +622,7 @@ class BakeoffClient(RemoteSceneClient):
             **stamps,
             "alt_text_draft": caption,
             "passes": passes,
+            "tokens": _sum_usage(passes),
         }
 
     def _transformed_context(
@@ -998,7 +1004,9 @@ def _extract_usage(payload: dict[str, Any]) -> dict[str, int] | None:
 
     Never derived from the text: a token count guessed from characters would
     read as measured in the bake-off report (rg-015). Absent usage is reported
-    as absent so the roll-up can say so.
+    as absent so the roll-up can say so. Negative counts and totals that do
+    not equal prompt + completion are rejected wholesale — a half-trusted
+    block would corrupt the quality-vs-tokens axis.
     """
     usage = payload.get("usage")
     if not isinstance(usage, dict):
@@ -1006,9 +1014,11 @@ def _extract_usage(payload: dict[str, Any]) -> dict[str, int] | None:
     out: dict[str, int] = {}
     for field in _USAGE_FIELDS:
         value = usage.get(field)
-        if isinstance(value, bool) or not isinstance(value, int):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             return None
         out[field] = value
+    if out["total_tokens"] != out["prompt_tokens"] + out["completion_tokens"]:
+        return None
     return out
 
 
@@ -1016,19 +1026,24 @@ def _sum_usage(passes: list[dict[str, Any]]) -> dict[str, Any]:
     """Roll per-pass usage up to a per-image total.
 
     ``complete`` is False when any pass is missing usage, so a partial sum is
-    never read as the image's real cost.
+    never read as the image's real cost. When no pass carried usage the three
+    count fields are ``None`` (not 0) so a consumer that reads ``total_tokens``
+    without also reading ``complete`` cannot score the leg as free.
     """
-    totals = dict.fromkeys(_USAGE_FIELDS, 0)
+    totals: dict[str, int] = dict.fromkeys(_USAGE_FIELDS, 0)
     missing = 0
+    present = 0
     for entry in passes:
         usage = entry.get("usage")
         if not isinstance(usage, dict):
             missing += 1
             continue
+        present += 1
         for field in _USAGE_FIELDS:
             totals[field] += usage[field]
+    counts: dict[str, int | None] = dict.fromkeys(_USAGE_FIELDS, None) if present == 0 else totals
     return {
-        **totals,
+        **counts,
         "model_calls": len(passes),
         "passes_missing_usage": missing,
         "complete": bool(passes) and missing == 0,
@@ -1124,6 +1139,15 @@ def build_parser() -> argparse.ArgumentParser:
             "ALTQ-1 Slice 3 replay: re-run an existing --two-pass run record's committed pass-1 facts "
             "through the pass-2 weave TEXT-ONLY (no image part) against this endpoint — the CPU synthesis "
             "cell. GOLDEN_IMAGES_DIR is not required; incompatible with --two-pass/--dual-length."
+        ),
+    )
+    parser.add_argument(
+        "--instance-shape",
+        default=None,
+        help=(
+            "operator-supplied machine shape for cost attribution (e.g. gpu.a10, gpu.a1.flex). "
+            "Stamped verbatim onto run-record provenance; omitted when unset. The harness never "
+            "guesses or infers a host."
         ),
     )
     return parser
@@ -1244,6 +1268,7 @@ def main(argv: list[str] | None = None) -> None:
             dual_length=args.dual_length,
             face_gate=args.face_gate,
             eval_mode=args.eval_mode,
+            instance_shape=args.instance_shape,
         )
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
         sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
@@ -1257,6 +1282,7 @@ def main(argv: list[str] | None = None) -> None:
         dual_length=args.dual_length,
         face_gate=args.face_gate,
         eval_mode=args.eval_mode,
+        instance_shape=args.instance_shape,
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)

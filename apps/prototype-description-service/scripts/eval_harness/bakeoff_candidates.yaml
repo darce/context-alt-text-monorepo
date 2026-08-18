@@ -5,8 +5,10 @@
 # gemma-4-12b.
 # VLM6-S2A-02: qwen36-27b runs alongside qwen38-27b as a generation pair.
 # Qwen3.7 has no open weights, so 3.6 is the previous open generation. Both
-# rows carry the same quant and the same serving recipe so the quality / speed
-# / token-usage delta is attributable to the generation, not the recipe.
+# rows carry the same quant, the same serving recipe, and the same workload
+# fields (prompt_template, reasoning_tuned, min_runtime_build,
+# min_runtime_build_is_lower_bound) so the quality / speed / token-usage
+# delta is attributable to the generation, not the recipe.
 schema: acx-bakeoff-candidates/v1
 task_ref: VLM-6
 hardware_target:

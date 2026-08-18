@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tomllib
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,40 @@ from scripts.eval_harness.bakeoff_candidates import (
 )
 
 REGISTRY_PATH = default_registry_path()
+
+# Test-owned sealed sets. Parametrizing over these — not the production
+# constants — is what gives TEST-15 kill power: dropping a name from
+# QWEN_PAIR_SHARED_RECIPE_FIELDS / QWEN_PAIR_SHARED_ENTRY_FIELDS leaves the
+# corresponding drift case in the suite. The equality tests below then also
+# fail, so a tuple shrink cannot silently delete its own mutant.
+_SEALED_RECIPE_FIELDS = (
+    "stack",
+    "ctx_size",
+    "image_max_tokens",
+    "parallel",
+    "extra_flags",
+    "mmproj",
+    "min_runtime_build",
+    "min_runtime_build_is_lower_bound",
+)
+_RECIPE_DRIFT_VALUES: dict[str, Any] = {
+    "stack": "vllm",
+    "ctx_size": 4096,
+    "image_max_tokens": 1,
+    "parallel": 8,
+    "extra_flags": ["--no-think", "--mutated"],
+    "mmproj": "mmproj-mutated.gguf",
+    "min_runtime_build": "b9999",
+    "min_runtime_build_is_lower_bound": False,
+}
+_SEALED_ENTRY_FIELDS = (
+    "prompt_template",
+    "reasoning_tuned",
+)
+_ENTRY_DRIFT_VALUES: dict[str, Any] = {
+    "prompt_template": "v2",
+    "reasoning_tuned": False,
+}
 
 
 @pytest.fixture(scope="module")
@@ -84,20 +119,76 @@ def test_qwen_generation_pair_rows_present(registry) -> None:
     assert by_id[QWEN36_ROW_ID].repo == "unsloth/Qwen3.6-27B-GGUF"
 
 
-def test_qwen_generation_pair_shares_serving_recipe(registry) -> None:
-    by_id = {e.id: e for e in registry.entries}
-    a = by_id[QWEN38_ROW_ID].recipe
-    b = by_id[QWEN36_ROW_ID].recipe
-    for field in QWEN_PAIR_SHARED_RECIPE_FIELDS:
-        assert getattr(a, field) == getattr(b, field), field
+def test_qwen_pair_shared_recipe_fields_are_exactly_the_sealed_set() -> None:
+    assert QWEN_PAIR_SHARED_RECIPE_FIELDS == _SEALED_RECIPE_FIELDS
+    assert set(_RECIPE_DRIFT_VALUES) == set(_SEALED_RECIPE_FIELDS)
 
 
-def test_qwen_pair_recipe_drift_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> None:
+def test_qwen_pair_shared_entry_fields_are_exactly_the_sealed_set() -> None:
+    # getattr so this file still collects against an unfixed module that has
+    # not grown QWEN_PAIR_SHARED_ENTRY_FIELDS yet (TEST-06).
+    from scripts.eval_harness import bakeoff_candidates as bakeoff_mod
+
+    actual = getattr(bakeoff_mod, "QWEN_PAIR_SHARED_ENTRY_FIELDS", ())
+    assert actual == _SEALED_ENTRY_FIELDS
+    assert set(_ENTRY_DRIFT_VALUES) == set(_SEALED_ENTRY_FIELDS)
+
+
+def _qwen_row(payload: dict[str, Any], row_id: str) -> dict[str, Any]:
+    return next(entry for entry in payload["entries"] if entry["id"] == row_id)
+
+
+def _apply_recipe_drift(payload: dict[str, Any], field: str, value: Any) -> None:
+    """Mutate qwen36 so only ``field`` differs, without tripping schema first."""
+    qwen36 = _qwen_row(payload, QWEN36_ROW_ID)
+    if field == "stack":
+        # Build pins are stack-specific. Neutralize both legs so the pair
+        # invariant — not ``_min_runtime_build_matches_stack`` — is the killer.
+        for row in (_qwen_row(payload, QWEN36_ROW_ID), _qwen_row(payload, QWEN38_ROW_ID)):
+            row["recipe"]["min_runtime_build"] = None
+            row["recipe"].pop("min_runtime_build_is_lower_bound", None)
+    qwen36["recipe"][field] = value
+
+
+@pytest.mark.parametrize("field", _SEALED_RECIPE_FIELDS)
+def test_qwen_pair_recipe_drift_fails(
+    field: str, tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
     payload = deepcopy(raw_registry)
-    row = next(e for e in payload["entries"] if e["id"] == QWEN36_ROW_ID)
-    row["recipe"]["ctx_size"] = 4096
-    with pytest.raises(RegistryError, match="recipe drift on 'ctx_size'"):
+    _apply_recipe_drift(payload, field, _RECIPE_DRIFT_VALUES[field])
+    with pytest.raises(RegistryError, match=f"recipe drift on {field!r}"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+@pytest.mark.parametrize("field", _SEALED_ENTRY_FIELDS)
+def test_qwen_pair_entry_drift_fails(
+    field: str, tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    _qwen_row(payload, QWEN36_ROW_ID)[field] = _ENTRY_DRIFT_VALUES[field]
+    with pytest.raises(RegistryError, match=f"entry drift on {field!r}"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_qwen_pair_omitted_min_runtime_build_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    row = _qwen_row(payload, QWEN36_ROW_ID)
+    del row["recipe"]["min_runtime_build"]
+    row["recipe"].pop("min_runtime_build_is_lower_bound", None)
+    with pytest.raises(RegistryError, match="recipe drift on 'min_runtime_build'"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_dev_extra_declares_huggingface_hub() -> None:
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    names = {
+        req.split(">=", 1)[0].split("==", 1)[0].split("<", 1)[0].split("[", 1)[0].strip()
+        for req in data["project"]["optional-dependencies"]["dev"]
+    }
+    assert "huggingface_hub" in names
 
 
 def test_losing_the_previous_generation_row_fails(

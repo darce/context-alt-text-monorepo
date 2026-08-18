@@ -85,6 +85,11 @@ dev = [
     "types-PyYAML",
     "types-Pillow",
     "types-networkx",
+    # Required by bakeoff_candidates --verify-revisions (HfApi.list_repo_files).
+    # The default load path stays offline; this extra only makes the opt-in
+    # flag installable. Pins match the huggingface_hub already locked via the
+    # vlm extra (transformers).
+    "huggingface_hub>=0.36.0,<1.0.0",
 ]
 # InsightFace for FIR-5 bake-off legs and the FIR-4 dark-default prod image
 # (Dockerfile installs .[bench] so the incumbent path stays available until FIR-6).

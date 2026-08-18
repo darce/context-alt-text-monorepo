@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import mimetypes
@@ -43,6 +44,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +52,12 @@ from typing import Any
 
 import httpx
 
+from .bench_capture import (
+    CaptureStatus,
+    VramSampler,
+    collect_item_latencies,
+    summarize_latencies,
+)
 from .cli import (
     DEFAULT_KEEP,
     DEFAULT_STALL_LIMIT,
@@ -62,7 +70,7 @@ from .cli import (
     prune_out_dir,
 )
 from .face_metrics import named_box_name
-from .manifest import GoldenManifest, ManifestError, load_manifest
+from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
 from .report import EVAL_MODES
 from .schema import SCHEMA, DocKind
@@ -396,6 +404,7 @@ def _apply_face_gate(
             suppressed.append(n)
     pack, _ = _ablate_names(context_pack, suppressed)
     if eligible:
+
         def _box_for(roster_name: str) -> dict[str, Any]:
             key = _face_gate_norm_key(roster_name)
             if key is None or key not in matched:
@@ -1055,6 +1064,81 @@ def _safe_model_slug(model_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model_id).strip("_") or "model"
 
 
+def _nonneg_int_arg(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return value
+
+
+def _nonneg_float_arg(raw: str) -> float:
+    value = float(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return value
+
+
+def _gpu_sampling_disabled() -> dict[str, Any]:
+    return {
+        "source": "nvidia-smi",
+        "status": CaptureStatus.UNAVAILABLE,
+        "peak_used_mb": None,
+        "total_mb": None,
+        "samples": 0,
+        "reason": "sampling disabled",
+    }
+
+
+def _run_warmup(
+    client: BakeoffClient,
+    manifest: GoldenManifest,
+    images_dir: str,
+    requests: int,
+) -> dict[str, Any]:
+    """Re-send the first manifest image's prompt ``requests`` times; discard results."""
+    if requests <= 0 or not images_dir or not manifest.entries:
+        return {"requests": 0, "elapsed_s": 0.0}
+    first = manifest.entries[0]
+    image_path = _resolve_image(Path(images_dir), first.path)
+    if image_path is None:
+        return {"requests": 0, "elapsed_s": 0.0}
+    image_bytes = image_path.read_bytes()
+    context_pack = first.context_pack.model_dump(exclude_none=True)
+    started = time.monotonic()
+    sent = 0
+    for _ in range(requests):
+        with contextlib.suppress(Exception):
+            client.describe(
+                image_bytes=image_bytes,
+                filename=image_path.name,
+                media_id=first.media_id,
+                context_pack=context_pack,
+            )
+        sent += 1
+    return {"requests": sent, "elapsed_s": round(time.monotonic() - started, 3)}
+
+
+def _stamp_timing_and_gpu(
+    record: dict[str, Any],
+    *,
+    warmup: Mapping[str, Any],
+    cold_load_s: float | None,
+    gpu: Mapping[str, Any],
+) -> None:
+    latencies = collect_item_latencies(record)
+    items = record.get("items")
+    n_items = len(items) if isinstance(items, list) else 0
+    record["timing"] = {
+        "open_loop": True,
+        "concurrency": 1,
+        "per_item": summarize_latencies(latencies),
+        "items_without_latency": n_items - len(latencies),
+        "warmup": dict(warmup),
+        "cold_load_s": cold_load_s,
+    }
+    record["gpu"] = dict(gpu)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bakeoff",
@@ -1150,6 +1234,24 @@ def build_parser() -> argparse.ArgumentParser:
             "guesses or infers a host."
         ),
     )
+    parser.add_argument(
+        "--warmup",
+        type=_nonneg_int_arg,
+        default=1,
+        help="discarded first-image requests before scored items (default 1; 0 disables)",
+    )
+    parser.add_argument(
+        "--cold-load-s",
+        type=float,
+        default=None,
+        help="serve-to-ready seconds measured by bakeoff_runner; omitted/null when not passed",
+    )
+    parser.add_argument(
+        "--vram-sample-interval-s",
+        type=_nonneg_float_arg,
+        default=1.0,
+        help="nvidia-smi sample interval (default 1.0; 0 disables sampling)",
+    )
     return parser
 
 
@@ -1238,7 +1340,19 @@ def main(argv: list[str] | None = None) -> None:
     except OSError as exc:
         sys.exit(f"run-record parent directory is not writable ({record_path.parent}): {exc}")
 
+    sampler: VramSampler | None = None
+    gpu_block: dict[str, Any] | None
+    if args.vram_sample_interval_s == 0:
+        gpu_block = _gpu_sampling_disabled()
+    else:
+        gpu_block = None
+        sampler = VramSampler(interval_s=args.vram_sample_interval_s)
+        sampler.start()
+
+    warmup = {"requests": 0, "elapsed_s": 0.0}
+    record: dict[str, Any] | None = None
     try:
+        warmup = _run_warmup(client, manifest, images_dir, args.warmup)
         if source_record is not None:
             record = weave_bench_run_record(
                 source_record,
@@ -1274,10 +1388,23 @@ def main(argv: list[str] | None = None) -> None:
             eval_mode=args.eval_mode,
             instance_shape=args.instance_shape,
         )
+        if sampler is not None and gpu_block is None:
+            gpu_block = sampler.stop()
+        _stamp_timing_and_gpu(
+            exc.partial_record,
+            warmup=warmup,
+            cold_load_s=args.cold_load_s,
+            gpu=gpu_block or _gpu_sampling_disabled(),
+        )
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
         sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
     finally:
         client.close()
+        if sampler is not None and gpu_block is None:
+            gpu_block = sampler.stop()
+
+    if record is None:
+        sys.exit("bakeoff produced no run record")
 
     _stamp_pipeline_provenance(
         record["provenance"],
@@ -1287,6 +1414,12 @@ def main(argv: list[str] | None = None) -> None:
         face_gate=args.face_gate,
         eval_mode=args.eval_mode,
         instance_shape=args.instance_shape,
+    )
+    _stamp_timing_and_gpu(
+        record,
+        warmup=warmup,
+        cold_load_s=args.cold_load_s,
+        gpu=gpu_block or _gpu_sampling_disabled(),
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)

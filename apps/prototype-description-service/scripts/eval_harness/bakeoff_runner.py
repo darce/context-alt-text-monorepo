@@ -136,6 +136,22 @@ def build_plans(
     return plans
 
 
+def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
+    """Lines for a ready candidate: cold-load stamp, bakeoff run, VRAM sanity."""
+    run_line = f"{shlex.join(plan.run_argv)} --cold-load-s \"${{_cold}}\""
+    return [
+        "  # warm-up: bakeoff --warmup runs inside the run argv; this shell does not send extra requests",
+        '  _cold=$(python -c "import time;print(round(time.time()-$_t0,3))")',
+        f"  if ! {run_line}; then",
+        f'    echo "candidate {plan.candidate_id} fetch FAILED" >&2',
+        "    _fail=$((_fail + 1))",
+        "  fi",
+        "  if command -v nvidia-smi >/dev/null 2>&1; then",
+        '    echo "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)" >&2',
+        "  fi",
+    ]
+
+
 def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, str]) -> str:
     """Return a ``set -euo pipefail`` bash script for the planned bake-off.
 
@@ -170,6 +186,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append(f"# download: {hint}")
         lines.append("_total=$((_total + 1))")
         lines.extend(_emit_runtime_build_preflight(plan))
+        lines.append("_t0=$(date +%s.%N)")
         lines.append(f"{shlex.join(plan.serve_argv)} &")
         lines.append("_serve_pid=$!")
         lines.append("_ready=0")
@@ -185,10 +202,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append(f'  echo "candidate {plan.candidate_id} never became ready" >&2')
         lines.append("  _fail=$((_fail + 1))")
         lines.append("else")
-        lines.append(f"  if ! {shlex.join(plan.run_argv)}; then")
-        lines.append(f'    echo "candidate {plan.candidate_id} fetch FAILED" >&2')
-        lines.append("    _fail=$((_fail + 1))")
-        lines.append("  fi")
+        lines.extend(_emit_ready_run_lines(plan))
         lines.append("fi")
         lines.append('kill "${_serve_pid}" 2>/dev/null || true')
         lines.append('wait "${_serve_pid}" 2>/dev/null || true')

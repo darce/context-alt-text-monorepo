@@ -513,7 +513,7 @@ def _assert_runtime_build_preflight(
     assert _PREFLIGHT_CAPTURE in script
     for cid in floored_ids:
         assert f"candidate {cid}" in script
-        assert f"required " in script
+        assert "required " in script
         block_at = script.find(f"# preflight: {cid} requires llama.cpp")
         assert block_at != -1, cid
         next_serve = script.find("llama-server --host", block_at)
@@ -593,3 +593,27 @@ def test_sealed_qwen_pair_emit_shell_has_lower_bound_preflight() -> None:
         floored_ids=["qwen38-27b", "qwen36-27b"],
         lower_bound_ids=["qwen38-27b", "qwen36-27b"],
     )
+
+
+def test_emit_shell_stamps_cold_load_and_leaves_warmup_to_bakeoff() -> None:
+    script = emit_shell(build_plans(_sample_registry(), **_PLAN_KW), incumbent_runs={})
+    assert "_t0=$(date +%s.%N)" in script
+    assert '_cold=$(python -c "import time;print(round(time.time()-$_t0,3))")' in script
+    assert '--cold-load-s "${_cold}"' in script
+    assert "# warm-up:" in script
+    assert "bakeoff --warmup" in script
+    assert "this shell does not send extra requests" in script
+    assert "_t0=$(date +%s.%N)" in script.split("llama-server --host")[0] or script.index(
+        "_t0=$(date +%s.%N)"
+    ) < script.index("llama-server --host")
+
+
+def test_emit_shell_echoes_nvidia_smi_sanity_after_run() -> None:
+    script = emit_shell(build_plans(_registry([_entry("alpha")]), **_PLAN_KW), incumbent_runs={})
+    assert "command -v nvidia-smi" in script
+    assert "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits" in script
+    run_at = script.find('--cold-load-s "${_cold}"')
+    smi_at = script.find("nvidia-smi --query-gpu=memory.used", run_at)
+    kill_at = script.find('kill "${_serve_pid}"', smi_at)
+    assert run_at != -1 and smi_at != -1 and kill_at != -1
+    assert run_at < smi_at < kill_at

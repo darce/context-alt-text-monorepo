@@ -31,6 +31,17 @@ python scripts/privacy/priv1_pseudonymize.py verify   # re-scan for residue
 `apply` also supports `--dry-run`, `--top N`, and `--no-reorder`; `verify`
 supports `--show-out-of-scope`.
 
+All three commands need a word list, used to decide which roster tokens are
+ordinary English and must be left alone. It defaults to `/usr/share/dict/words`
+and is overridden with `$PRIV1_WORDLIST`. A missing, unreadable or empty list is
+a hard failure, never a silent empty exclusion set (rg-008) — an empty set makes
+every dictionary-word given name eligible for rewriting, which on this corpus
+would have rewritten 10,662 occurrences of one ordinary 4-letter word across 689
+files, `Makefile` and `pyproject.toml` among them. `plan` records the list's
+path, sha256 and word count in the alias map, and `apply` and `verify` both
+refuse to run against a list whose digest has moved since. Both print the
+measurement on every run.
+
 ## The key
 
 Aliases are minted deterministically as `HMAC-SHA256(secret_key, name)` →
@@ -110,10 +121,11 @@ Three classes are deliberately left in place, and none is a residue claim:
   across 689 files (`Makefile`, `Dockerfile`, `pyproject.toml`, module names).
   Those occurrences are the ordinary word, not references to a subject. The
   fourth single-token identity is covered by the given-name pass and was
-  rewritten. **Caveat:** the dictionary is `/usr/share/dict/words`, an untracked
-  host file that the builder degrades to an empty set when absent — so this row
-  is host-dependent and not reproducible from the repo alone (PRIV-1-BR-26,
-  open).
+  rewritten. This row is reproducible: the word list behind it is pinned by
+  sha256 in the alias map and both commands fail closed when it drifts. It was
+  not always so — the loader used to degrade to an empty set on a host without
+  `/usr/share/dict/words`, which is most CI images and containers, making the
+  number an accident of the machine that ran it (PRIV-1-BR-26).
 - 1 in-scope file is undecodable and declared, not skipped: an OOXML strategy
   brief whose single roster-token hit is a cited author surname in a
   bibliography entry. It is listed in `DECLARED_UNSCANNABLE` with that
@@ -150,6 +162,22 @@ roster on every run rather than pinned here where it would rot.
   case: it was a *defensible* guard, correctly reasoned in its own docstring,
   and still wrong — because it was enforced by `continue` instead of by
   anchoring. Guard by narrowing the match, not by removing the entry.
+- A guard that only runs at mint time has never seen the artifact that shipped.
+  `_assert_vocab_disjoint_from_roster` refuses to mint a pseudonym word that is
+  also a real name token — but it landed one commit *after* the map had been
+  minted and applied, so it never ran against the state on disk, and it never
+  could: it reads the roster, which `apply` has since pseudonymized. One
+  collision was already live, invisible to everything. `verify` could not see it
+  (a minted alias is by construction not residue) and `plan` refused to re-run
+  (the roster now looks pseudonymized). `_assert_map_vocab_disjoint` re-tests the
+  invariant against the shipped map, from `apply` and `verify`, and compares real
+  name tokens against *live alias tokens* rather than against the vocabulary — so
+  that editing the offending word out of `_ADJ` cannot silence it while the
+  minted alias carrying that word stays on disk. The first draft of that guard
+  did key off the vocabulary and reported clean over a still-colliding map.
+  Retiring a vocabulary word is a *replacement* at a fixed index, never a
+  deletion: the minter hashes into the list, so a length change re-mints
+  everybody. Replacing in place left the other 89 aliases byte-identical.
 - An entry that cannot be rewritten raises instead of being skipped. A `continue`
   in a builder is indistinguishable, at the output, from a name that was never
   there.

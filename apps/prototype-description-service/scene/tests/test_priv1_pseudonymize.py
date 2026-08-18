@@ -1125,3 +1125,73 @@ def test_double_encoded_percent_20_is_left_alone():
     assert out == text
     assert counts["name"] == 0
     assert passes.residue(text, ".md") == {}
+
+
+# --- PRIV-1-BR-28: the %20 separator class must not backtrack exponentially ---
+
+
+_REDOS_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Ryanne Wistmoor",
+            "alias": "Marbled Quarry",
+            "alias_slug": "marbled_quarry",
+            "original_slug": "ryanne_wistmoor",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        }
+    ]
+}
+
+
+def test_multi_token_separator_has_no_nested_quantifier():
+    """A run of ordinary whitespace after a name prefix must not hang the scan.
+
+    The first `%20` fix wrote the separator as `(?:[\\s_\\-]+|%20)+` -- a `+`
+    inside an alternation under another `+`. For a run of N separator characters
+    that ultimately fails to match, the engine can partition those N characters
+    into `[\\s_\\-]+` groups in 2**(N-1) ways and tries all of them. Measured
+    growth was 4x per two characters: 0.8ms at 14 spaces, 249ms at 22. A JSON
+    manifest indents far past that, which is why `verify` stopped terminating on
+    a corpus it had scanned in two minutes the day before.
+
+    Each iteration of the corrected class consumes either exactly one separator
+    character or exactly the three characters of `%20`, and no string can be
+    split both ways, so the parse is unique and the scan is linear.
+
+    This is asserted on the pattern text rather than on elapsed time. A timing
+    assertion cannot fail here: `re.search` runs in C and does not yield to the
+    interpreter, so the pathological pattern does not run slowly under a
+    deadline -- it never returns, and the test hangs instead of going red. A
+    guard that hangs reports nothing (CARD-07). The out-of-process bound below
+    is the behavioural half; this is the half that names the defect.
+    """
+    regex, _by_key = pz._multi_token_regex(_REDOS_MAPPING)
+    assert "(?:[\\s_\\-]|%20)+" in regex.pattern
+    assert "+|%20)+" not in regex.pattern
+
+
+def test_multi_token_separator_terminates_on_a_hostile_separator_run():
+    # The behavioural half, run out-of-process because the failure mode is
+    # non-termination: at 64 separator characters the nested-quantifier form
+    # needs on the order of 2**63 steps, so any wall clock a healthy machine can
+    # meet separates the two by an astronomical margin and cannot flake.
+    import subprocess
+    import sys
+
+    probe = (
+        "import importlib.util,json,sys\n"
+        f"spec=importlib.util.spec_from_file_location('pz', {str(_SCRIPT)!r})\n"
+        "m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        f"r,_=m._multi_token_regex(json.loads({json.dumps(json.dumps(_REDOS_MAPPING))}))\n"
+        "sys.exit(0 if r.search('Ryanne' + ' '*64 + '!') is None else 3)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], timeout=60, capture_output=True)
+    assert done.returncode == 0, done.stderr.decode()
+
+
+def test_percent_encoded_separator_still_matches_after_the_redos_fix():
+    # The de-nesting must not cost the behaviour BR-21 added.
+    regex, _by_key = pz._multi_token_regex(_REDOS_MAPPING)
+    for form in ("Ryanne%20Wistmoor", "Ryanne Wistmoor", "Ryanne_Wistmoor", "Ryanne%20 Wistmoor"):
+        assert regex.search(form) is not None, form

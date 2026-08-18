@@ -133,7 +133,10 @@ class ServingRecipe(BaseModel):
     extra_flags: list[str] = Field(default_factory=list)
     gguf: str | None = None
     mmproj: str | None = None
-    mmproj_gb: float | None = None
+    mmproj_gb: float | None = Field(
+        default=None,
+        description="Pinned mmproj size in decimal GB (1 GB = 1e9 bytes); HF/registry convention.",
+    )
     min_runtime_build: str | None = None
     min_runtime_build_is_lower_bound: bool = False
 
@@ -174,7 +177,9 @@ class CandidateEntry(BaseModel):
     revision: str
     quant: str
     artifact: str
-    artifact_gb: float
+    artifact_gb: float = Field(
+        description="Pinned GGUF size in decimal GB (1 GB = 1e9 bytes); HF/registry convention.",
+    )
     license: str
     prompt_template: str
     tiers: list[BakeoffTier]

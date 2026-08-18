@@ -203,7 +203,7 @@ def check_disk_budget(
     usage_fn = disk_usage if disk_usage is not None else shutil.disk_usage
     missing = [job for job in jobs if not already_present(job)]
     required_gb = sum(job.size_gb for job in missing) + margin
-    free_gb = float(usage_fn(_existing_path(models_dir)).free) / float(1024**3)
+    free_gb = float(usage_fn(_existing_path(models_dir)).free) / BYTES_PER_GB
     budget = DiskBudget(required_gb=required_gb, free_gb=free_gb, ok=required_gb <= free_gb)
     if not budget.ok:
         raise DiskBudgetError(budget.required_gb, budget.free_gb)

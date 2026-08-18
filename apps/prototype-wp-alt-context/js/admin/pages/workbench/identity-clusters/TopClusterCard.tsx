@@ -108,7 +108,13 @@ export const TopClusterCard = ({
   const columnCount = reps.length <= 1 ? 1 : 2;
   const rowCount = reps.length <= 2 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
-  const hideMissingLabel = columnCount > 1;
+  // UXW2-2 (B5): a rep without a usable image renders the missing state WITH
+  // its visible label at every cell size — never a blank tile (PRINCIPLES §11).
+  const hideMissingLabel = false;
+  // UXW2-2 (B5): the count describes rendered faces; members without a tile
+  // fold into "+N more" (ClusterPreview +N pattern) instead of inflating the count.
+  const renderedFaceCount = reps.length;
+  const moreFaceCount = Math.max(0, faceCount - renderedFaceCount);
   const gridHeight = cellSize * rowCount + gapPx * (rowCount - 1);
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
@@ -193,7 +199,17 @@ export const TopClusterCard = ({
           )}
         </p>
         <p className="acx-top-cluster-card__meta">
-          {sprintf(_n('%d face in cluster', '%d faces in cluster', faceCount, 'alt-context'), faceCount)}
+          {sprintf(
+            _n('%d face in cluster', '%d faces in cluster', renderedFaceCount, 'alt-context'),
+            renderedFaceCount,
+          )}
+          {moreFaceCount > 0
+            ? ` ${sprintf(
+                /* translators: %d: faces not shown as thumbnails */
+                __('(+%d more)', 'alt-context'),
+                moreFaceCount,
+              )}`
+            : ''}
         </p>
       </div>
 

@@ -116,6 +116,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
   zeroEvidenceClusterCount: 0,
+  repairPending: overrides.repairPending ?? (overrides.zeroEvidenceClusterCount ?? 0) > 0,
   topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
@@ -843,6 +844,7 @@ describe('WorkbenchFindingsPanel', () => {
         topUnlabeledClusters: [],
         topUnlabeledTotal: 0,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -903,6 +905,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 1,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -961,6 +964,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 1,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1147,6 +1151,23 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).
+  it('R2-12: Resync mounts on envelope repair_pending without zero-evidence rows', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 5, total: 5 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 0,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.queryByText('All caught up — no items need review')).not.toBeInTheDocument();
+  });
+
   it('S2: aggregate repair row renders with the gated cluster count', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
@@ -1213,6 +1234,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1282,6 +1304,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1371,6 +1394,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,

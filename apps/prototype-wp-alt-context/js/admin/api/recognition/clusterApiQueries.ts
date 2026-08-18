@@ -22,6 +22,7 @@ interface TopUnlabeledClustersResponsePayload {
   limit?: number | null;
   total?: number | null;
   truncated?: boolean | null;
+  repair_pending?: boolean | null;
   singleton_count?: number | null;
   has_clusters?: boolean | null;
   data_source?: string | null;
@@ -161,6 +162,7 @@ export const fetchTopUnlabeledClusters = async (
     limit: requireTopUnlabeledNumber(payload.limit, 'limit'),
     total: requireTopUnlabeledNumber(payload.total, 'total'),
     truncated: requireTopUnlabeledBoolean(payload.truncated, 'truncated'),
+    repair_pending: payload.repair_pending === true,
     singleton_count: singletonCount,
     has_clusters: hasClusters,
     data_source: dataSource,

@@ -30,6 +30,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -558,7 +559,6 @@ SPLIT_DISJOINTNESS_NOTE = (
     "their images were split by content hash — acceptable for description eval, "
     "must be resolved (move to train) before any face-identification eval uses held_out"
 )
-SPLIT_PARTITION_PROVENANCE = "pre-audit, buffalo-derived merge-only"
 
 
 class SplitHalf(StrEnum):
@@ -566,6 +566,13 @@ class SplitHalf(StrEnum):
 
     HELD_OUT = "held_out"
     TRAIN = "train"
+
+
+class SplitDisjointnessStatus(StrEnum):
+    """Identity-disjointness claim on a sealed split (sr-007)."""
+
+    PROVISIONAL = "provisional"
+    VERIFIED = "verified"
 
 
 def assign_split(sha256: str, *, seed: str, held_out_fraction: float) -> SplitHalf:
@@ -603,6 +610,33 @@ def _partition_entries(manifest, *, seed: str, held_out_fraction: float) -> tupl
     return held_out, train
 
 
+def _exposure_inventory(manifest) -> dict:
+    """Machine-derived pre-split exposure counts (MLDATA-09). Never hand-authored."""
+    empty_ids = sorted(entry.media_id for entry in manifest.entries if not entry.present_identities)
+    return {
+        "entries": len(manifest.entries),
+        "with_present_identities": sum(1 for entry in manifest.entries if entry.present_identities),
+        "with_face_boxes": sum(1 for entry in manifest.entries if entry.face_boxes),
+        "with_must_right": sum(1 for entry in manifest.entries if entry.must_right),
+        "annotation_mode": str(manifest.annotation_mode),
+        "empty_identity_media_ids": empty_ids,
+    }
+
+
+def _is_numeric_fraction(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_iso8601_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
 def draw_eval_split(
     manifest,
     *,
@@ -612,8 +646,11 @@ def draw_eval_split(
     source_manifest_path: str,
     source_manifest_sha256: str,
     pre_split_exposure: list[str],
+    partition_provenance: str,
 ) -> dict:
     """Freeze a sealed eval split derived from image content hashes."""
+    if not isinstance(partition_provenance, str) or not partition_provenance.strip():
+        raise ValueError("partition_provenance is required and must be a non-empty string")
     held_out, train = _partition_entries(manifest, seed=seed, held_out_fraction=held_out_fraction)
     return {
         "schema_version": SUPPORTED_SPLIT_SCHEMA_VERSION,
@@ -624,28 +661,94 @@ def draw_eval_split(
         "protection": SPLIT_PROTECTION,
         "source_manifest": {"path": source_manifest_path, "sha256": source_manifest_sha256},
         "pre_split_exposure": list(pre_split_exposure),
+        "exposure_inventory": _exposure_inventory(manifest),
         "held_out": _half_payload(held_out),
         "train": _half_payload(train),
         "disjointness": {
-            "status": "provisional",
-            "partition_provenance": SPLIT_PARTITION_PROVENANCE,
+            "status": SplitDisjointnessStatus.PROVISIONAL.value,
+            "partition_provenance": partition_provenance,
             "identities_spanning_both_halves": _identities_spanning_both_halves(held_out, train),
             "note": SPLIT_DISJOINTNESS_NOTE,
         },
     }
 
 
-def verify_eval_split(artifact: dict, manifest) -> list[str]:
-    """Recompute every entry's half; return human-readable violations (empty = OK)."""
+def verify_eval_split(
+    artifact: dict,
+    manifest,
+    *,
+    source_manifest_sha256: str | None = None,
+    expected_seed: str | None = None,
+    expected_held_out_fraction: float | None = None,
+    expected_draw_timestamp: str | None = None,
+    expected_partition_provenance: str | None = None,
+) -> list[str]:
+    """Recompute the expected artifact; return human-readable violations (empty = OK)."""
     violations: list[str] = []
     schema_version = artifact.get("schema_version")
     if schema_version != SUPPORTED_SPLIT_SCHEMA_VERSION:
         violations.append(f"unsupported schema_version: {schema_version!r}")
     if artifact.get("assignment_rule") != ASSIGNMENT_RULE:
         violations.append(f"unsupported assignment_rule: {artifact.get('assignment_rule')!r}")
+    if artifact.get("protection") != SPLIT_PROTECTION:
+        violations.append(f"protection mismatch: {artifact.get('protection')!r}")
+
+    if not _is_iso8601_timestamp(artifact.get("draw_timestamp")):
+        violations.append(f"draw_timestamp is not a non-empty ISO-8601 timestamp: {artifact.get('draw_timestamp')!r}")
+    if expected_draw_timestamp is not None and artifact.get("draw_timestamp") != expected_draw_timestamp:
+        violations.append(
+            f"draw_timestamp mismatch: recorded={artifact.get('draw_timestamp')!r} expected={expected_draw_timestamp!r}"
+        )
+
+    exposure = artifact.get("pre_split_exposure")
+    if not isinstance(exposure, list) or not exposure or not all(isinstance(note, str) and note for note in exposure):
+        violations.append(f"pre_split_exposure must be a non-empty list of non-empty strings: {exposure!r}")
+
+    seed = artifact.get("seed")
+    if not isinstance(seed, str) or not seed:
+        violations.append(f"missing or invalid seed: {seed!r}")
+        seed = None
+    if expected_seed is not None and seed != expected_seed:
+        violations.append(f"seed mismatch: recorded={seed!r} expected={expected_seed!r}")
+
+    fraction = artifact.get("held_out_fraction")
+    if not _is_numeric_fraction(fraction):
+        violations.append(f"missing or invalid held_out_fraction: {fraction!r}")
+        fraction = None
+    elif expected_held_out_fraction is not None and float(fraction) != float(expected_held_out_fraction):
+        violations.append(f"held_out_fraction mismatch: recorded={fraction!r} expected={expected_held_out_fraction!r}")
+
+    source = artifact.get("source_manifest")
+    source = source if isinstance(source, dict) else {}
+    if not source.get("path"):
+        violations.append(f"source_manifest.path missing or empty: {source.get('path')!r}")
+    recorded_source_sha = source.get("sha256")
+    if not isinstance(recorded_source_sha, str) or len(recorded_source_sha) != 64:
+        violations.append(f"source_manifest.sha256 missing or not 64 hex chars: {recorded_source_sha!r}")
+    elif source_manifest_sha256 is not None and recorded_source_sha != source_manifest_sha256:
+        violations.append(
+            f"source_manifest.sha256 mismatch: recorded={recorded_source_sha} recomputed={source_manifest_sha256}"
+        )
+
+    disjointness = artifact.get("disjointness")
+    disjointness = disjointness if isinstance(disjointness, dict) else {}
+    status = disjointness.get("status")
+    try:
+        SplitDisjointnessStatus(status)
+    except ValueError:
+        violations.append(f"invalid disjointness.status: {status!r}")
+    provenance = disjointness.get("partition_provenance")
+    if not isinstance(provenance, str) or not provenance.strip():
+        violations.append(f"partition_provenance missing or empty: {provenance!r}")
+    if expected_partition_provenance is not None and provenance != expected_partition_provenance:
+        violations.append(
+            f"partition_provenance mismatch: recorded={provenance!r} expected={expected_partition_provenance!r}"
+        )
 
     held = artifact.get("held_out") or {}
     train = artifact.get("train") or {}
+    held = held if isinstance(held, dict) else {}
+    train = train if isinstance(train, dict) else {}
     held_ids = set(held.get("media_ids") or [])
     train_ids = set(train.get("media_ids") or [])
     held_shas = set(held.get("sha256") or [])
@@ -659,30 +762,45 @@ def verify_eval_split(artifact: dict, manifest) -> list[str]:
         violations.append(f"sha256 in both halves: {both_shas}")
 
     manifest_ids = {entry.media_id for entry in manifest.entries}
+    manifest_shas = {entry.sha256 for entry in manifest.entries}
     neither = sorted(manifest_ids - held_ids - train_ids)
     if neither:
         violations.append(f"media_id in manifest but in neither half: {neither}")
+    for half_name, recorded in (("held_out", held), ("train", train)):
+        extra_ids = sorted(set(recorded.get("media_ids") or []) - manifest_ids)
+        if extra_ids:
+            violations.append(f"{half_name} media_id not in manifest: {extra_ids}")
+        extra_shas = sorted(set(recorded.get("sha256") or []) - manifest_shas)
+        if extra_shas:
+            violations.append(f"{half_name} sha256 not in manifest: {extra_shas}")
 
-    seed = artifact.get("seed")
-    fraction = artifact.get("held_out_fraction")
-    if isinstance(seed, str) and isinstance(fraction, (int, float)) and not isinstance(fraction, bool):
-        expected_held, expected_train = _partition_entries(manifest, seed=seed, held_out_fraction=float(fraction))
-        expected_held_ids = {entry.media_id for entry in expected_held}
-        expected_train_ids = {entry.media_id for entry in expected_train}
-        for media_id in sorted(expected_held_ids - held_ids):
-            violations.append(f"membership mismatch: media_id {media_id} recomputes held_out but is not in held_out")
-        for media_id in sorted(expected_train_ids - train_ids):
-            violations.append(f"membership mismatch: media_id {media_id} recomputes train but is not in train")
-        for media_id in sorted((held_ids - expected_held_ids) & manifest_ids):
-            violations.append(f"membership mismatch: media_id {media_id} is in held_out but recomputes train")
-        for media_id in sorted((train_ids - expected_train_ids) & manifest_ids):
-            violations.append(f"membership mismatch: media_id {media_id} is in train but recomputes held_out")
-        expected_span = _identities_spanning_both_halves(expected_held, expected_train)
-        recorded_span = list((artifact.get("disjointness") or {}).get("identities_spanning_both_halves") or [])
-        if recorded_span != expected_span:
-            violations.append(
-                f"identities_spanning_both_halves drifted: recorded={recorded_span} recomputed={expected_span}"
-            )
+    # Fail closed: missing/invalid seed or fraction IS a violation; never skip
+    # HMAC membership recompute when they are valid (EVAL-07).
+    if seed is None or fraction is None:
+        return violations
+
+    expected_held, expected_train = _partition_entries(manifest, seed=seed, held_out_fraction=float(fraction))
+    expected_halves = {"held_out": _half_payload(expected_held), "train": _half_payload(expected_train)}
+    recorded_halves = {"held_out": held, "train": train}
+    for half_name, expected in expected_halves.items():
+        recorded = recorded_halves[half_name]
+        for field in ("media_ids", "sha256", "identities"):
+            recorded_list = list(recorded.get(field) or [])
+            if recorded_list != expected[field]:
+                label = "membership mismatch" if field == "media_ids" else f"{half_name}.{field} mismatch"
+                violations.append(f"{label}: recorded={recorded_list} expected={expected[field]}")
+
+    expected_span = _identities_spanning_both_halves(expected_held, expected_train)
+    recorded_span = list(disjointness.get("identities_spanning_both_halves") or [])
+    if recorded_span != expected_span:
+        violations.append(
+            f"identities_spanning_both_halves drifted: recorded={recorded_span} recomputed={expected_span}"
+        )
+
+    expected_inventory = _exposure_inventory(manifest)
+    recorded_inventory = artifact.get("exposure_inventory")
+    if recorded_inventory != expected_inventory:
+        violations.append(f"exposure_inventory mismatch: recorded={recorded_inventory} recomputed={expected_inventory}")
     return violations
 
 

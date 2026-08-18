@@ -9,10 +9,22 @@
       "Ryann Wiseman"
     ],
     "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
-    "partition_provenance": "pre-audit, buffalo-derived merge-only",
+    "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
     "status": "provisional"
   },
   "draw_timestamp": "2026-08-18T00:00:00Z",
+  "exposure_inventory": {
+    "annotation_mode": "roster_only",
+    "empty_identity_media_ids": [
+      27,
+      34,
+      35
+    ],
+    "entries": 37,
+    "with_face_boxes": 0,
+    "with_must_right": 34,
+    "with_present_identities": 34
+  },
   "held_out": {
     "identities": [
       "Bea Burke",
@@ -71,7 +83,7 @@
   },
   "held_out_fraction": 0.5,
   "pre_split_exposure": [
-    "golden.json v3 (37 entries) fully curated pre-split: all 37 entries were human-labelled (present_identities, face_boxes, must_right/easy_wrong) before this draw; their held_out half is model-held-out but NOT selection-held-out",
+    "golden.json v3 (37 entries) curated pre-split: present_identities non-empty on 34/37 (empty: media_id 27,34,35), face_boxes=0/37, must_right=34/37, annotation_mode=roster_only; held_out half is model-held-out but NOT selection-held-out",
     "curation tenant 4ddf8f36 (LocalWP :10018) live with clustered uploads pre-draw",
     "determinism-anchor runs S0/S2A (bakeoff-results/) scored the 37 pre-split"
   ],

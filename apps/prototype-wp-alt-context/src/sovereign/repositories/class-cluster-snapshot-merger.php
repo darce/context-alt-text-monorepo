@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/class-cluster-curation-writer.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
 
@@ -115,7 +116,7 @@ class ClusterSnapshotMerger {
 				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
 				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
-					label = IF(is_user_confirmed = 1, label, VALUES(label)),
+					label = IF(is_user_confirmed = 1, label, IF(label IS NULL AND person_id IS NULL, label, VALUES(label))),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
@@ -163,41 +164,56 @@ class ClusterSnapshotMerger {
 	}
 
 	/**
-	 * Bind a person for each batch cluster whose label is human and person_id is null.
+	 * Bind a person from the STORED label after upsert (skip null/empty/reserved).
 	 *
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
 	private function backfill_persons_for_human_labels( string $tenant_id, array $clusters ): void {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'update' ) ) {
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_row' ) ) {
 			return;
 		}
 
 		$resolver = new PersonResolutionService();
+		$writer   = new ClusterCurationWriter( $this->table_name );
 		foreach ( $clusters as $cluster ) {
 			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
-			$label        = $this->normalize_label( $cluster );
-			if ( '' === $cluster_uuid || '' === $label || $this->is_reserved_label_shape( $label ) ) {
+			if ( '' === $cluster_uuid ) {
 				continue;
 			}
 
-			$person_id_sql = $this->prepare_query(
-				'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			$stored_sql = $this->prepare_query(
+				'SELECT label, person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
 				array(
 					$this->table_name,
 					$cluster_uuid,
 					$tenant_id,
 				)
 			);
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$existing_person_id = is_string( $person_id_sql ) ? $wpdb->get_var( $person_id_sql ) : null;
-			if ( is_numeric( $existing_person_id ) && (int) $existing_person_id > 0 ) {
+			if ( ! is_string( $stored_sql ) || '' === $stored_sql ) {
 				continue;
 			}
 
-			$resolved = $resolver->resolve_or_create(
-				$label,
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$stored = $wpdb->get_row( $stored_sql, ARRAY_A );
+			if ( ! is_array( $stored ) ) {
+				continue;
+			}
+
+			if ( is_numeric( $stored['person_id'] ?? null ) && (int) $stored['person_id'] > 0 ) {
+				continue;
+			}
+
+			$stored_label = trim( (string) ( $stored['label'] ?? '' ) );
+			if ( '' === $stored_label || $this->is_reserved_label_shape( $stored_label ) ) {
+				continue;
+			}
+
+			$resolved = $resolver->resolve_for_automatic_bind(
+				$stored_label,
+				$tenant_id,
+				$cluster_uuid,
 				static function (): bool {
 					return true;
 				}
@@ -206,16 +222,7 @@ class ClusterSnapshotMerger {
 				continue;
 			}
 
-			$wpdb->update(
-				$this->table_name,
-				array(
-					'person_id'  => $resolved['person_id'],
-					'updated_at' => gmdate( 'Y-m-d H:i:s' ),
-				),
-				array( 'cluster_uuid' => $cluster_uuid ),
-				array( '%d', '%s' ),
-				array( '%s' )
-			);
+			$writer->bind_person_to_cluster( $cluster_uuid, (int) $resolved['person_id'], false );
 		}
 	}
 

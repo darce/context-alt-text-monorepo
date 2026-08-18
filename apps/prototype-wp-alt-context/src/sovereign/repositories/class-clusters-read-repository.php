@@ -242,19 +242,23 @@ class ClustersReadRepository {
 				WHERE c.tenant_id = %s
 					AND c.is_user_confirmed = 0
 					AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
-					AND c.identity_count >= 2
 					AND (
 						SELECT COUNT(*)
 						FROM %i m
 						WHERE m.cluster_uuid = c.cluster_uuid
 					) >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
-				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
+				ORDER BY (
+						SELECT COUNT(*)
+						FROM %i m
+						WHERE m.cluster_uuid = c.cluster_uuid
+					) DESC, c.updated_at DESC, c.cluster_uuid ASC
 				LIMIT %d",
 				array(
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$members_table,
 					$members_table,
 					$normalized_limit,
 				)
@@ -284,17 +288,23 @@ class ClustersReadRepository {
 			return 0;
 		}
 
+		$members_table = $this->resolve_identity_members_table_name();
 		$sql = $this->prepare_projection_read_query(
 			"SELECT COUNT(*)
 			FROM %i c
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
 				AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
-				AND c.identity_count <= 1
+				AND (
+					SELECT COUNT(*)
+					FROM %i m
+					WHERE m.cluster_uuid = c.cluster_uuid
+				) <= 1
 				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')",
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
+				$members_table,
 			)
 		);
 

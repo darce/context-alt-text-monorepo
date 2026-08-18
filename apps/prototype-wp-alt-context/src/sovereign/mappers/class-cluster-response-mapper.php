@@ -21,6 +21,8 @@ class ClusterResponseMapper {
 	/** @var list<string> */
 	private array $requested_repair_cluster_ids = array();
 
+	private int $dropped_cluster_count = 0;
+
 	/**
 	 * Cluster UUIDs whose identity_count was rewritten from a non-truncated
 	 * member shortfall. Callers schedule a bounded targeted repair.
@@ -29,6 +31,10 @@ class ClusterResponseMapper {
 	 */
 	public function requested_repair_cluster_ids(): array {
 		return $this->requested_repair_cluster_ids;
+	}
+
+	public function dropped_cluster_count(): int {
+		return $this->dropped_cluster_count;
 	}
 
 	/**
@@ -41,6 +47,7 @@ class ClusterResponseMapper {
 	 */
 	public function map_cluster_list( array $cluster_rows, array $members_by_cluster, ?int $preview_limit = null ): array {
 		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -67,6 +74,7 @@ class ClusterResponseMapper {
 	 */
 	public function map_cluster_detail( array $cluster_row, array $member_rows, ?int $preview_limit = null ): array {
 		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		return $this->map_cluster_summary( $cluster_row, $member_rows, true, $preview_limit );
 	}
 
@@ -95,6 +103,7 @@ class ClusterResponseMapper {
 	 */
 	public function map_top_unlabeled_clusters( array $cluster_rows, array $members_by_cluster, string $tenant_id, ?int $preview_limit = null ): array {
 		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -116,8 +125,9 @@ class ClusterResponseMapper {
 			$identity_count   = $this->resolve_identity_count( $row, $members, $members_loaded, $preview_limit );
 			$preview_members  = $this->slice_members_to_preview( $members, $preview_limit );
 
-			// Queue invariant: never serve a memberless row when members were loaded (R1-03).
-			if ( $members_loaded && array() === $preview_members ) {
+			// Queue invariant: never serve a <2-member row when members were loaded (R1-03 / R2-08).
+			if ( $members_loaded && count( $preview_members ) < 2 ) {
+				++$this->dropped_cluster_count;
 				continue;
 			}
 
@@ -279,32 +289,37 @@ class ClusterResponseMapper {
 			$projected_count = max( 0, (int) $cluster_row['identity_count'] );
 			$observed_count  = count( $member_rows );
 			if ( $members_loaded && $projected_count !== $observed_count ) {
+				$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
 				// Cap-hit: a cap+1 fetch returning more than the cap is
 				// truncation. observed == cap is exact (R1-12).
-				$is_expected_truncation = null !== $preview_limit
+				$is_truncated = null !== $preview_limit
 					&& $preview_limit > 0
-					&& $observed_count > $preview_limit
-					&& $projected_count > $preview_limit;
+					&& $observed_count > $preview_limit;
 
-				if ( ! $is_expected_truncation ) {
-					$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
-					Telemetry::log_line(
-						sprintf(
-							'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
-							$cluster_id,
-							$projected_count,
-							$observed_count
-						)
-					);
-					// Non-truncated drift in either direction, including a
-					// total member wipe (observed=0). Members are SoR (REF-09).
-					if ( $observed_count !== $projected_count ) {
-						if ( '' !== $cluster_id ) {
-							$this->requested_repair_cluster_ids[] = $cluster_id;
-						}
-						return $observed_count;
+				if ( $is_truncated ) {
+					// Stale-low projected during truncation: observed is a
+					// lower bound, not an exact count (R2-07). Republish the
+					// projected column and request repair.
+					if ( $projected_count <= $preview_limit && '' !== $cluster_id ) {
+						$this->requested_repair_cluster_ids[] = $cluster_id;
 					}
+					return $projected_count;
 				}
+
+				Telemetry::log_line(
+					sprintf(
+						'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
+						$cluster_id,
+						$projected_count,
+						$observed_count
+					)
+				);
+				// Non-truncated drift in either direction, including a
+				// total member wipe (observed=0). Members are SoR (REF-09).
+				if ( '' !== $cluster_id ) {
+					$this->requested_repair_cluster_ids[] = $cluster_id;
+				}
+				return $observed_count;
 			}
 
 			return $projected_count;

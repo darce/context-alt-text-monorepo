@@ -28,7 +28,7 @@ class ClusterResponseMapperTest extends TestCase
             [
                 'cluster_uuid' => 'cluster-top',
                 'label' => '',
-                'identity_count' => 1,
+                'identity_count' => 2,
                 'is_user_confirmed' => 0,
             ],
         ];
@@ -40,6 +40,10 @@ class ClusterResponseMapperTest extends TestCase
                     'attachment_id' => 99,
                     'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
                     'is_pinned' => 1,
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
                 ],
             ],
         ];
@@ -474,6 +478,68 @@ class ClusterResponseMapperTest extends TestCase
     }
 
     /**
+     * R2-07: observed==cap+1 with stale-low projected must not publish
+     * observed 5 as an exact count. Republish the projected column and request repair.
+     */
+    public function testMapTopUnlabeledDoesNotPublishTruncatedObservedAsExactWhenProjectedIsStaleLow(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-trunc',
+                    'label' => '',
+                    'identity_count' => 4,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-trunc' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-stale-trunc', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
+     * R2-08: SQL excludes <2 members; mapper must drop a 1-member non-truncated row.
+     */
+    public function testMapTopUnlabeledDropsSingleObservedMemberWhenNotCapTruncated(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-singleton',
+                    'label' => '',
+                    'identity_count' => 1,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-singleton' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(0, $payload);
+        $this->assertSame(1, $this->mapper->dropped_cluster_count());
+    }
+
+    /**
      * R1-13: non-positive preview_limit is not a truncation cap (null-default
      * and 0 both publish observed).
      */
@@ -576,6 +642,10 @@ class ClusterResponseMapperTest extends TestCase
                     'attachment_id' => 99,
                     'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
                 ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
             ],
         ];
 
@@ -606,6 +676,10 @@ class ClusterResponseMapperTest extends TestCase
                     'thumb_path' => 'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin',
                     'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
                 ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
             ],
         ];
 
@@ -635,6 +709,10 @@ class ClusterResponseMapperTest extends TestCase
                     'attachment_id' => 6731,
                     'thumb_path' => '/recognition/face-thumbs/job-y/6731?x=1&y=2&width=30&height=40',
                     'bbox_json' => '{"pixels":{"x":1,"y":2,"width":30,"height":40}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
                 ],
             ],
         ];
@@ -713,6 +791,10 @@ class ClusterResponseMapperTest extends TestCase
                     'attachment_id' => 99,
                     'thumb_path' => '/recognition/face-thumbs/job-y/99?x=1&y=2&width=30&height=40',
                 ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
             ],
         ];
 
@@ -741,6 +823,10 @@ class ClusterResponseMapperTest extends TestCase
                     'identity_uuid' => 'identity-99',
                     'attachment_id' => 99,
                     'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
                 ],
             ],
         ];

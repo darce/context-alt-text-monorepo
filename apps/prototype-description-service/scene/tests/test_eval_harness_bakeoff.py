@@ -133,7 +133,7 @@ def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> Non
 # --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---
 
 
-def _chat_transport(captured: list[dict], content: str = "A caption naming Caitlin Weaver.") -> httpx.MockTransport:
+def _chat_transport(captured: list[dict], content: str = "A caption naming Russet Fathom.") -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         captured.append({"path": request.url.path, "payload": payload})
@@ -143,7 +143,7 @@ def _chat_transport(captured: list[dict], content: str = "A caption naming Caitl
 
 
 def _client(
-    captured: list[dict], *, no_think: bool = False, content: str = "A caption naming Caitlin Weaver."
+    captured: list[dict], *, no_think: bool = False, content: str = "A caption naming Russet Fathom."
 ) -> BakeoffClient:
     return BakeoffClient(
         base_url="http://candidate.test:8080",
@@ -165,8 +165,8 @@ def _describe(client: BakeoffClient, context_pack: dict) -> dict:
 
 def test_describe_returns_scoreable_shape() -> None:
     captured: list[dict] = []
-    describe = _describe(_client(captured), {"caption": "Caitlin Weaver in Antarctica."})
-    assert describe["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    describe = _describe(_client(captured), {"caption": "Russet Fathom in Antarctica."})
+    assert describe["alt_text_draft"] == "A caption naming Russet Fathom."
     assert describe["adapter"] == "bakeoff"
     assert describe["model_id"] == "qwen3-vl-4b-instruct"
     assert describe["model_version"] == "Q4_K_M"
@@ -176,12 +176,12 @@ def test_context_pack_names_render_into_prompt_verbatim() -> None:
     captured: list[dict] = []
     pack = {
         "title": "Antarctica expedition",
-        "caption": "Caitlin Weaver on the peninsula.",
-        "description": "Erika Hansen Miller took the photo.",
+        "caption": "Russet Fathom on the peninsula.",
+        "description": "Muted Current took the photo.",
     }
     _describe(_client(captured), pack)
     prompt_text = json.dumps(captured[0]["payload"])
-    for fragment in ("Caitlin Weaver", "Erika Hansen Miller", "Antarctica expedition"):
+    for fragment in ("Russet Fathom", "Muted Current", "Antarctica expedition"):
         assert fragment in prompt_text, f"injected context {fragment!r} never reached the candidate prompt"
 
 
@@ -199,7 +199,7 @@ def test_decoding_is_greedy_and_no_think_is_optional() -> None:
 
 def test_context_block_is_fenced_and_no_think_precedes_it() -> None:  # S6-04
     captured: list[dict] = []
-    pack = {"caption": "Caitlin Weaver\n- injected: spoof", "description": "multi\nline"}
+    pack = {"caption": "Russet Fathom\n- injected: spoof", "description": "multi\nline"}
     _describe(_client(captured, no_think=True), pack)
     user_text = captured[0]["payload"]["messages"][1]["content"][1]["text"]
     assert "<<<CONTEXT>>>" in user_text and "<<<END_CONTEXT>>>" in user_text
@@ -225,16 +225,16 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
         {
             "manifest_version": 3,
             "annotation_mode": "roster_only",
-            "roster": ["Caitlin Weaver"],
+            "roster": ["Russet Fathom"],
             "entries": [
                 {
                     "path": "img.jpg",
                     "sha256": "0" * 64,
                     "media_id": 7,
                     "face_count": 1,
-                    "present_identities": ["Caitlin Weaver"],
-                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
-                    "must_right": ["Caitlin Weaver"],
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
                     "provenance": {"source": "fixture", "license": "fixture"},
@@ -247,7 +247,7 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
     record = fetch_run_record(manifest, str(tmp_path), _client(captured), head_sha="deadbeef")
 
     assert record["items"][0]["error"] is None
-    assert record["items"][0]["describe"]["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    assert record["items"][0]["describe"]["alt_text_draft"] == "A caption naming Russet Fathom."
     assert record["provenance"]["base_url"] == "http://candidate.test:8080"
 
     entries = [e.model_dump() for e in manifest.entries]
@@ -277,9 +277,9 @@ def test_extract_caption_content_none_is_empty_error() -> None:
 
 def test_extract_caption_joins_content_parts_array() -> None:
     payload = {
-        "choices": [{"message": {"content": [{"type": "text", "text": "Caitlin"}, {"type": "text", "text": "Weaver"}]}}]
+        "choices": [{"message": {"content": [{"type": "text", "text": "Russet"}, {"type": "text", "text": "Fathom"}]}}]
     }
-    assert _extract_caption(payload) == "Caitlin Weaver"
+    assert _extract_caption(payload) == "Russet Fathom"
 
 
 def test_timeout_wires_through_to_httpx_client() -> None:
@@ -309,16 +309,16 @@ def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: P
         {
             "manifest_version": 3,
             "annotation_mode": "roster_only",
-            "roster": ["Caitlin Weaver"],
+            "roster": ["Russet Fathom"],
             "entries": [
                 {
                     "path": "img.jpg",
                     "sha256": "0" * 64,
                     "media_id": 7,
                     "face_count": 1,
-                    "present_identities": ["Caitlin Weaver"],
-                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
-                    "must_right": ["Caitlin Weaver"],
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
                     "provenance": {"source": "fixture", "license": "fixture"},
@@ -356,7 +356,7 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
             }
         )
     manifest = GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries})
+            "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries})
     client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
     try:
         with pytest.raises(BoundedStallError) as excinfo:
@@ -375,23 +375,23 @@ def test_ablate_names_replaces_word_boundary_case_insensitive() -> None:
 
     pack = {
         "title": "Antarctica expedition",
-        "caption": "CAITLIN WEAVER on the peninsula.",
-        "description": "Caitlin Weaver reached the peninsula. Caitlin Weavers' gear stayed aboard.",
+        "caption": "RUSSET FATHOM on the peninsula.",
+        "description": "Russet Fathom reached the peninsula. Russet Weavers' gear stayed aboard.",
     }
-    out, ablated = _ablate_names(pack, ["Caitlin Weaver"])
-    assert ablated == ["Caitlin Weaver"]
+    out, ablated = _ablate_names(pack, ["Russet Fathom"])
+    assert ablated == ["Russet Fathom"]
     assert out["caption"] == "someone on the peninsula."
     assert out["description"].startswith("someone reached the peninsula.")
-    # word boundary (S2-06): "Caitlin Weavers'" is a different token and must survive.
-    assert "Caitlin Weavers'" in out["description"]
-    assert "Caitlin Weaver reached" not in out["description"]
+    # word boundary (S2-06): "Russet Weavers'" is a different token and must survive.
+    assert "Russet Weavers'" in out["description"]
+    assert "Russet Fathom reached" not in out["description"]
     assert out["title"] == "Antarctica expedition"
 
 
 def test_ablate_names_reports_only_names_found() -> None:
     from scripts.eval_harness.bakeoff import _ablate_names
 
-    out, ablated = _ablate_names({"caption": "A quiet lake."}, ["Caitlin Weaver"])
+    out, ablated = _ablate_names({"caption": "A quiet lake."}, ["Russet Fathom"])
     assert ablated == []
     assert out == {"caption": "A quiet lake."}
 
@@ -425,20 +425,20 @@ def _eval_mode_client(captured: list[dict], mode: str, traits: dict) -> BakeoffC
 
 def test_name_ablation_mode_strips_names_from_prompt_and_stamps() -> None:
     captured: list[dict] = []
-    client = _eval_mode_client(captured, "name_ablation", {7: {"present": ["Caitlin Weaver"], "easy_wrong": []}})
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _eval_mode_client(captured, "name_ablation", {7: {"present": ["Russet Fathom"], "easy_wrong": []}})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     prompt_text = json.dumps(captured[0]["payload"])
-    assert "Caitlin Weaver" not in prompt_text
+    assert "Russet Fathom" not in prompt_text
     assert "someone" in prompt_text
-    assert describe["ablated_names"] == ["Caitlin Weaver"]
+    assert describe["ablated_names"] == ["Russet Fathom"]
 
 
 def test_context_distractor_mode_injects_and_stamps() -> None:
     captured: list[dict] = []
     client = _eval_mode_client(
-        captured, "context_distractor", {7: {"present": ["Caitlin Weaver"], "easy_wrong": ["Mallory Trap"]}}
+        captured, "context_distractor", {7: {"present": ["Russet Fathom"], "easy_wrong": ["Mallory Trap"]}}
     )
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     prompt_text = json.dumps(captured[0]["payload"])
     assert "Mallory Trap" in prompt_text
     assert "also_pictured" in prompt_text
@@ -454,10 +454,10 @@ def test_context_distractor_without_easy_wrong_stamps_nothing() -> None:
 
 def test_standard_mode_default_leaves_context_untouched() -> None:
     captured: list[dict] = []
-    describe = _describe(_client(captured), {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(_client(captured), {"caption": "Russet Fathom on the peninsula."})
     assert "ablated_names" not in describe
     assert "injected_distractor" not in describe
-    assert "Caitlin Weaver" in json.dumps(captured[0]["payload"])
+    assert "Russet Fathom" in json.dumps(captured[0]["payload"])
 
 
 def test_unknown_eval_mode_rejected_at_construction() -> None:

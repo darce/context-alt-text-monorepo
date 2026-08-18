@@ -2,25 +2,25 @@
   "manifest_version": 3,
   "annotation_mode": "roster_only",
   "roster": [
-    "Ellyn Heald",
-    "Hillary Sampliner",
-    "Laura Sampliner",
-    "Maria Correonero",
-    "Olivia Lee",
-    "Sarah Fairbank",
-    "Zoe Elefterin"
+    "Gilded Cypress",
+    "Russet Ridgeway",
+    "Sable Verity",
+    "Slate Willow",
+    "Sylvan Orchard",
+    "Opaline Tanner",
+    "Brisk Compass"
   ],
   "entries": [
     {
       "media_id": 610,
-      "path": "personal/zoe_elefterin_610.jpg",
+      "path": "personal/brisk_compass_610.jpg",
       "sha256": "7e172d0c4e8ccefae337e580bee3a4529c0e1aab5f7d5786848033d4562adad4",
       "face_count": 1,
       "present_identities": [
-        "Zoe Elefterin"
+        "Brisk Compass"
       ],
       "must_right": [
-        "Zoe Elefterin"
+        "Brisk Compass"
       ],
       "easy_wrong": [],
       "policy": {
@@ -32,7 +32,7 @@
           "y": 407.5,
           "w": 113.0,
           "h": 143.0,
-          "name": "Zoe Elefterin",
+          "name": "Brisk Compass",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -50,7 +50,7 @@
         }
       ],
       "context_pack": {
-        "people": "Zoe Elefterin"
+        "people": "Brisk Compass"
       },
       "provenance": {
         "source": "localwp",
@@ -60,14 +60,14 @@
     },
     {
       "media_id": 584,
-      "path": "personal/sarah_fairbank_584.jpg",
+      "path": "personal/opaline_tanner_584.jpg",
       "sha256": "e906537e673024c69da5588dbb63e201e08d9343076b84cb2a2145f14483b293",
       "face_count": 1,
       "present_identities": [
-        "Sarah Fairbank"
+        "Opaline Tanner"
       ],
       "must_right": [
-        "Sarah Fairbank"
+        "Opaline Tanner"
       ],
       "easy_wrong": [],
       "policy": {
@@ -79,7 +79,7 @@
           "y": 266.5,
           "w": 135.0,
           "h": 183.0,
-          "name": "Sarah Fairbank",
+          "name": "Opaline Tanner",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -97,7 +97,7 @@
         }
       ],
       "context_pack": {
-        "people": "Sarah Fairbank"
+        "people": "Opaline Tanner"
       },
       "provenance": {
         "source": "localwp",
@@ -107,14 +107,14 @@
     },
     {
       "media_id": 330,
-      "path": "personal/maria_correonero_330.jpg",
+      "path": "personal/slate_willow_330.jpg",
       "sha256": "e00a3ccd11fe1eba3d88ac09f8e807484884525d553cba6264e84d38ffc9e359",
       "face_count": 1,
       "present_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "must_right": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "easy_wrong": [],
       "policy": {
@@ -126,7 +126,7 @@
           "y": 211.0,
           "w": 69.0,
           "h": 94.0,
-          "name": "Maria Correonero",
+          "name": "Slate Willow",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -144,7 +144,7 @@
         }
       ],
       "context_pack": {
-        "people": "Maria Correonero"
+        "people": "Slate Willow"
       },
       "provenance": {
         "source": "localwp",
@@ -154,14 +154,14 @@
     },
     {
       "media_id": 212,
-      "path": "personal/olivia_lee_212.jpg",
+      "path": "personal/sylvan_orchard_212.jpg",
       "sha256": "7f4f7e11c879419a5d672f9ecc30d6f05fdcf210eafdd6e74cd9a8d8c10fdc41",
       "face_count": 3,
       "present_identities": [
-        "Olivia Lee"
+        "Sylvan Orchard"
       ],
       "must_right": [
-        "Olivia Lee"
+        "Sylvan Orchard"
       ],
       "easy_wrong": [],
       "policy": {
@@ -173,7 +173,7 @@
           "y": 1897.5,
           "w": 109.0,
           "h": 157.0,
-          "name": "Olivia Lee",
+          "name": "Sylvan Orchard",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -194,7 +194,7 @@
           "y": 1961.0,
           "w": 452.0,
           "h": 482.0,
-          "name": "Olivia Lee",
+          "name": "Sylvan Orchard",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -215,7 +215,7 @@
           "y": 1847.5,
           "w": 340.0,
           "h": 443.0,
-          "name": "Olivia Lee",
+          "name": "Sylvan Orchard",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -233,7 +233,7 @@
         }
       ],
       "context_pack": {
-        "people": "Olivia Lee"
+        "people": "Sylvan Orchard"
       },
       "provenance": {
         "source": "localwp",
@@ -243,16 +243,16 @@
     },
     {
       "media_id": 172,
-      "path": "personal/hillary_sampliner_172.jpg",
+      "path": "personal/russet_ridgeway_172.jpg",
       "sha256": "849ddad34de8f0b5a9348a071eb3e3c3efa37a8391ee8a6cb179cc322d77a5e6",
       "face_count": 2,
       "present_identities": [
-        "Hillary Sampliner",
-        "Laura Sampliner"
+        "Russet Ridgeway",
+        "Sable Verity"
       ],
       "must_right": [
-        "Hillary Sampliner",
-        "Laura Sampliner"
+        "Russet Ridgeway",
+        "Sable Verity"
       ],
       "easy_wrong": [],
       "policy": {
@@ -264,7 +264,7 @@
           "y": 375.0,
           "w": 47.0,
           "h": 64.0,
-          "name": "Laura Sampliner",
+          "name": "Sable Verity",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -285,7 +285,7 @@
           "y": 377.5,
           "w": 47.0,
           "h": 59.0,
-          "name": "Hillary Sampliner",
+          "name": "Russet Ridgeway",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -303,7 +303,7 @@
         }
       ],
       "context_pack": {
-        "people": "Hillary Sampliner, Laura Sampliner"
+        "people": "Russet Ridgeway, Sable Verity"
       },
       "provenance": {
         "source": "localwp",
@@ -313,14 +313,14 @@
     },
     {
       "media_id": 87,
-      "path": "personal/ellyn_heald_87.jpg",
+      "path": "personal/gilded_cypress_87.jpg",
       "sha256": "c9dd15c399458899c84d7b7c60c20437755c1c1d547541ebd5e177a3d3d046f0",
       "face_count": 1,
       "present_identities": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "must_right": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "easy_wrong": [],
       "policy": {
@@ -332,7 +332,7 @@
           "y": 250.0,
           "w": 188.0,
           "h": 270.0,
-          "name": "Ellyn Heald",
+          "name": "Gilded Cypress",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -350,7 +350,7 @@
         }
       ],
       "context_pack": {
-        "people": "Ellyn Heald"
+        "people": "Gilded Cypress"
       },
       "provenance": {
         "source": "localwp",

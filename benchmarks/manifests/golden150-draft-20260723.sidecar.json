@@ -11,7 +11,7 @@
     "box_convention": "FaceBox normalized CENTRE-point (x,y=centre, w,h fraction) per manifest.py docstring; detector pixel bboxes (top-left origin) from inventory converted against ORIGINAL inventory dims (scale-invariant on the aspect-preserving mirror); intersected with image bounds before normalization (see clamp_log; no faces dropped)",
     "box_source_mapping": "FaceBox.source is a free-form str in the schema (docstring says iptc|mwg but nothing validates or consumes it); TRUE provenance kept: 'detector' for DB-derived boxes, 'operator' for the 6 manual boxes. OPEN DECISION: remap to mwg if a downstream convention requires it.",
     "operator_name_canon": {
-      "Amberly": "Amberly Skay"
+      "Candid": "Candid Ridgeway"
     },
     "binding_rule": "operator positional bindings applied at bbox x-order index (verified against note x-coords for 251/388/418; 201/220/480 position labels consistent)",
     "slice_tag_mapping": "masked/sunglasses/occlusion_other/profile/low_res direct; blur_any->blur; occlusion_any|occlusion_partial_minor|occluded_missed_face without masked/sunglasses -> occlusion_other; informational flags sidecar-only; no similar_people flags in v6.1",
@@ -30,7 +30,7 @@
   "clamp_log": [
     {
       "media_id": 76,
-      "path": "personal/kirstie_mccarrel_76.jpg",
+      "path": "personal/auburn_current_76.jpg",
       "box_index": 0,
       "original_px": {
         "x": -65,
@@ -51,7 +51,7 @@
     },
     {
       "media_id": 84,
-      "path": "personal/ellyn_heald_84.jpeg",
+      "path": "personal/gilded_cypress_84.jpeg",
       "box_index": 0,
       "original_px": {
         "x": 452,
@@ -72,7 +72,7 @@
     },
     {
       "media_id": 133,
-      "path": "personal/emilie_chartrand_133.jpg",
+      "path": "personal/saffron_cypress_133.jpg",
       "box_index": 0,
       "original_px": {
         "x": 884,
@@ -93,7 +93,7 @@
     },
     {
       "media_id": 182,
-      "path": "personal/emilie_chartrand_182.jpg",
+      "path": "personal/saffron_cypress_182.jpg",
       "box_index": 0,
       "original_px": {
         "x": -105,
@@ -114,7 +114,7 @@
     },
     {
       "media_id": 198,
-      "path": "personal/caitlin_weaver_198.jpg",
+      "path": "personal/russet_fathom_198.jpg",
       "box_index": 5,
       "original_px": {
         "x": 2483,
@@ -135,7 +135,7 @@
     },
     {
       "media_id": 201,
-      "path": "personal/caitlin_weaver_201.jpg",
+      "path": "personal/russet_fathom_201.jpg",
       "box_index": 0,
       "original_px": {
         "x": 162,
@@ -156,7 +156,7 @@
     },
     {
       "media_id": 244,
-      "path": "personal/kelly_curran_244.jpg",
+      "path": "personal/ochre_harbor_244.jpg",
       "box_index": 0,
       "original_px": {
         "x": -22,
@@ -177,7 +177,7 @@
     },
     {
       "media_id": 244,
-      "path": "personal/kelly_curran_244.jpg",
+      "path": "personal/ochre_harbor_244.jpg",
       "box_index": 1,
       "original_px": {
         "x": -6,
@@ -198,7 +198,7 @@
     },
     {
       "media_id": 244,
-      "path": "personal/kelly_curran_244.jpg",
+      "path": "personal/ochre_harbor_244.jpg",
       "box_index": 2,
       "original_px": {
         "x": -2,
@@ -219,7 +219,7 @@
     },
     {
       "media_id": 244,
-      "path": "personal/kelly_curran_244.jpg",
+      "path": "personal/ochre_harbor_244.jpg",
       "box_index": 11,
       "original_px": {
         "x": 1029,
@@ -240,7 +240,7 @@
     },
     {
       "media_id": 276,
-      "path": "personal/maria_correonero_276.jpg",
+      "path": "personal/slate_willow_276.jpg",
       "box_index": 0,
       "original_px": {
         "x": 76,
@@ -261,7 +261,7 @@
     },
     {
       "media_id": 293,
-      "path": "personal/hanna_cowart_293.jpg",
+      "path": "personal/cobalt_beacon_293.jpg",
       "box_index": 0,
       "original_px": {
         "x": 419,
@@ -282,7 +282,7 @@
     },
     {
       "media_id": 336,
-      "path": "personal/maddie_pesavento_336.jpg",
+      "path": "personal/wicker_orchard_336.jpg",
       "box_index": 0,
       "original_px": {
         "x": 121,
@@ -303,7 +303,7 @@
     },
     {
       "media_id": 341,
-      "path": "personal/laura_sampliner_341.jpg",
+      "path": "personal/sable_verity_341.jpg",
       "box_index": 7,
       "original_px": {
         "x": 897,
@@ -324,7 +324,7 @@
     },
     {
       "media_id": 341,
-      "path": "personal/laura_sampliner_341.jpg",
+      "path": "personal/sable_verity_341.jpg",
       "box_index": 8,
       "original_px": {
         "x": 922,
@@ -345,7 +345,7 @@
     },
     {
       "media_id": 352,
-      "path": "personal/coral_osborne_352.jpg",
+      "path": "personal/pewter_hollow_352.jpg",
       "box_index": 0,
       "original_px": {
         "x": -19,
@@ -366,7 +366,7 @@
     },
     {
       "media_id": 359,
-      "path": "personal/laura_sampliner_359.jpg",
+      "path": "personal/sable_verity_359.jpg",
       "box_index": 0,
       "original_px": {
         "x": 280,
@@ -387,7 +387,7 @@
     },
     {
       "media_id": 362,
-      "path": "personal/maddie_pesavento_362.jpg",
+      "path": "personal/wicker_orchard_362.jpg",
       "box_index": 0,
       "original_px": {
         "x": -62,
@@ -408,7 +408,7 @@
     },
     {
       "media_id": 362,
-      "path": "personal/maddie_pesavento_362.jpg",
+      "path": "personal/wicker_orchard_362.jpg",
       "box_index": 3,
       "original_px": {
         "x": 1460,
@@ -429,7 +429,7 @@
     },
     {
       "media_id": 368,
-      "path": "personal/ashley_ruetenik_368.jpg",
+      "path": "personal/citrine_bramble_368.jpg",
       "box_index": 0,
       "original_px": {
         "x": 64,
@@ -450,7 +450,7 @@
     },
     {
       "media_id": 480,
-      "path": "personal/erika_hansen_miller_480.jpg",
+      "path": "personal/muted_current_480.jpg",
       "box_index": 4,
       "original_px": {
         "x": 775,
@@ -471,7 +471,7 @@
     },
     {
       "media_id": 549,
-      "path": "personal/maggie_hunter_549.jpg",
+      "path": "personal/saffron_orchard_549.jpg",
       "box_index": 1,
       "original_px": {
         "x": 143,
@@ -492,7 +492,7 @@
     },
     {
       "media_id": 550,
-      "path": "personal/maggie_hunter_550.jpg",
+      "path": "personal/saffron_orchard_550.jpg",
       "box_index": 3,
       "original_px": {
         "x": 459,
@@ -513,7 +513,7 @@
     },
     {
       "media_id": 590,
-      "path": "personal/sierra_tesanovic_590.jpg",
+      "path": "personal/sylvan_ridgeway_590.jpg",
       "box_index": 0,
       "original_px": {
         "x": 64,
@@ -544,26 +544,26 @@
   "celeb_provenance_skipped": [
     {
       "media_id": 418,
-      "path": "personal/georgia_kauten_418.jpeg",
-      "parsed_name": "X.In",
+      "path": "personal/verdant_verity_418.jpeg",
+      "parsed_name": "<redacted-filename-parse>",
       "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
     },
     {
       "media_id": 550,
-      "path": "personal/maggie_hunter_550.jpg",
-      "parsed_name": "Maggie Hunter Adrien Field",
+      "path": "personal/saffron_orchard_550.jpg",
+      "parsed_name": "<redacted-filename-parse>",
       "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
     },
     {
       "media_id": 551,
-      "path": "personal/maggie_hunter_551.jpg",
-      "parsed_name": "Stella Rankin Maggie Hunter Ari Cohen Kendra Seay",
+      "path": "personal/saffron_orchard_551.jpg",
+      "parsed_name": "<redacted-filename-parse>",
       "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
     },
     {
       "media_id": 557,
-      "path": "personal/micaela_carolan_557.jpeg",
-      "parsed_name": "Micaela-Sa",
+      "path": "personal/indigo_ridgeway_557.jpeg",
+      "parsed_name": "<redacted-filename-parse>",
       "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
     }
   ],
@@ -842,7 +842,7 @@
       }
     },
     "61": {
-      "path": "personal/bea_burke_61.jpg",
+      "path": "personal/hollow_pennant_61.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -865,7 +865,7 @@
       }
     },
     "62": {
-      "path": "personal/bea_burke_62.jpg",
+      "path": "personal/hollow_pennant_62.jpg",
       "informational_flags": [],
       "all_strata_flags": [
         "low_res"
@@ -879,14 +879,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "nsfw replacement: same-identity alternate (Bea Burke), screened, lowest media_id",
+      "why": "nsfw replacement: same-identity alternate (Hollow Pennant), screened, lowest media_id",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "63": {
-      "path": "personal/bea_burke_63.jpg",
+      "path": "personal/hollow_pennant_63.jpg",
       "informational_flags": [
         "policy_gate_designated",
         "twin_eligible"
@@ -919,7 +919,7 @@
       }
     },
     "73": {
-      "path": "personal/kirstie_mccarrel_73.jpg",
+      "path": "personal/auburn_current_73.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -931,14 +931,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kirstie McCarrel",
+      "why": "identity coverage: Auburn Current",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "76": {
-      "path": "personal/kirstie_mccarrel_76.jpg",
+      "path": "personal/auburn_current_76.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -950,14 +950,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kirstie McCarrel",
+      "why": "identity coverage: Auburn Current",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "84": {
-      "path": "personal/ellyn_heald_84.jpeg",
+      "path": "personal/gilded_cypress_84.jpeg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -988,7 +988,7 @@
       }
     },
     "93": {
-      "path": "personal/ellyn_heald_93.jpg",
+      "path": "personal/gilded_cypress_93.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -1024,7 +1024,7 @@
       }
     },
     "94": {
-      "path": "personal/ellyn_heald_94.jpg",
+      "path": "personal/gilded_cypress_94.jpg",
       "informational_flags": [
         "mirror",
         "occlusion_any"
@@ -1062,7 +1062,7 @@
       }
     },
     "104": {
-      "path": "personal/ellyn_heald_104.jpg",
+      "path": "personal/gilded_cypress_104.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -1083,14 +1083,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Ellyn Heald",
+      "why": "identity coverage: Gilded Cypress",
       "original_dims": {
         "width": 720,
         "height": 1280
       }
     },
     "118": {
-      "path": "personal/ellyn_heald_118.jpg",
+      "path": "personal/gilded_cypress_118.jpg",
       "informational_flags": [
         "occlusion_any",
         "profile_any"
@@ -1134,7 +1134,7 @@
       }
     },
     "128": {
-      "path": "personal/nelle_harwood_128.jpg",
+      "path": "personal/onyx_lantern_128.jpg",
       "informational_flags": [
         "occlusion_any",
         "profile_any"
@@ -1165,14 +1165,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Nelle Harwood",
+      "why": "identity coverage: Onyx Lantern",
       "original_dims": {
         "width": 1080,
         "height": 1277
       }
     },
     "133": {
-      "path": "personal/emilie_chartrand_133.jpg",
+      "path": "personal/saffron_cypress_133.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -1195,7 +1195,7 @@
       }
     },
     "140": {
-      "path": "personal/talvi_faustmann_140.jpg",
+      "path": "personal/sable_current_140.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -1226,7 +1226,7 @@
       }
     },
     "143": {
-      "path": "personal/talvi_faustmann_143.jpg",
+      "path": "personal/sable_current_143.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -1245,14 +1245,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Talvi Faustmann",
+      "why": "identity coverage: Sable Current",
       "original_dims": {
         "width": 1440,
         "height": 1801
       }
     },
     "144": {
-      "path": "personal/talvi_faustmann_144.jpg",
+      "path": "personal/sable_current_144.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -1271,14 +1271,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Talvi Faustmann",
+      "why": "identity coverage: Sable Current",
       "original_dims": {
         "width": 1440,
         "height": 1801
       }
     },
     "154": {
-      "path": "personal/maria_correonero_154.jpg",
+      "path": "personal/slate_willow_154.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -1298,14 +1298,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Michelle Cortese",
+      "why": "identity coverage: Plumb Tanner",
       "original_dims": {
         "width": 1080,
         "height": 1080
       }
     },
     "162": {
-      "path": "personal/maggie_hunter_162.jpg",
+      "path": "personal/saffron_orchard_162.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -1341,7 +1341,7 @@
       }
     },
     "178": {
-      "path": "personal/maggie_hunter_178.jpg",
+      "path": "personal/saffron_orchard_178.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -1377,7 +1377,7 @@
       }
     },
     "182": {
-      "path": "personal/emilie_chartrand_182.jpg",
+      "path": "personal/saffron_cypress_182.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -1389,14 +1389,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Emilie Chartrand",
+      "why": "identity coverage: Saffron Cypress",
       "original_dims": {
         "width": 720,
         "height": 1280
       }
     },
     "188": {
-      "path": "personal/hillary_sampliner_188.jpg",
+      "path": "personal/russet_ridgeway_188.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -1428,14 +1428,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Hillary Sampliner",
+      "why": "identity coverage: Russet Ridgeway",
       "original_dims": {
         "width": 604,
         "height": 453
       }
     },
     "190": {
-      "path": "personal/emilie_chartrand_190.jpg",
+      "path": "personal/saffron_cypress_190.jpg",
       "informational_flags": [
         "bw",
         "profile_any"
@@ -1459,14 +1459,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Emilie Chartrand",
+      "why": "identity coverage: Saffron Cypress",
       "original_dims": {
         "width": 512,
         "height": 512
       }
     },
     "191": {
-      "path": "personal/maggie_hunter_191.jpg",
+      "path": "personal/saffron_orchard_191.jpg",
       "informational_flags": [
         "policy_gate_designated",
         "twin_eligible"
@@ -1493,7 +1493,7 @@
       }
     },
     "192": {
-      "path": "personal/emilie_chartrand_192.jpg",
+      "path": "personal/saffron_cypress_192.jpg",
       "informational_flags": [
         "bw",
         "occlusion_any"
@@ -1522,14 +1522,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Emilie Chartrand",
+      "why": "identity coverage: Saffron Cypress",
       "original_dims": {
         "width": 899,
         "height": 1124
       }
     },
     "198": {
-      "path": "personal/caitlin_weaver_198.jpg",
+      "path": "personal/russet_fathom_198.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -1553,14 +1553,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Caitlin Weaver",
+      "why": "identity coverage: Russet Fathom",
       "original_dims": {
         "width": 2560,
         "height": 1920
       }
     },
     "201": {
-      "path": "personal/caitlin_weaver_201.jpg",
+      "path": "personal/russet_fathom_201.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -1593,7 +1593,7 @@
         ],
         "identity_annotations": [
           {
-            "name": "Erika Hansen Miller",
+            "name": "Muted Current",
             "position": "rightmost",
             "status": "bound",
             "face_index": 3,
@@ -1609,7 +1609,7 @@
       }
     },
     "214": {
-      "path": "personal/caitlin_weaver_214.jpg",
+      "path": "personal/russet_fathom_214.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -1638,14 +1638,14 @@
           "operator pass 2: colour image \u2014 b&w flag removed"
         ]
       },
-      "why": "identity coverage: Caitlin Weaver",
+      "why": "identity coverage: Russet Fathom",
       "original_dims": {
         "width": 1280,
         "height": 960
       }
     },
     "217": {
-      "path": "personal/addy_lee_217.jpg",
+      "path": "personal/wicker_fathom_217.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -1661,14 +1661,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Addy Lee",
+      "why": "identity coverage: Wicker Fathom",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "218": {
-      "path": "personal/addy_lee_218.jpg",
+      "path": "personal/wicker_fathom_218.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -1699,14 +1699,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Addy Lee",
+      "why": "identity coverage: Wicker Fathom",
       "original_dims": {
         "width": 1080,
         "height": 1439
       }
     },
     "220": {
-      "path": "personal/ashley_zelinskie_220.jpg",
+      "path": "personal/muted_fathom_220.jpg",
       "informational_flags": [
         "crowd",
         "crowd_group",
@@ -1734,7 +1734,7 @@
         "confirmations": [],
         "identity_annotations": [
           {
-            "name": "India Price",
+            "name": "Auburn Hollow",
             "position": "rightmost",
             "status": "bound",
             "face_index": 2
@@ -1742,14 +1742,14 @@
         ],
         "notes": []
       },
-      "why": "identity coverage: Ashley Zelinskie",
+      "why": "identity coverage: Muted Fathom",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "226": {
-      "path": "personal/hanna_cowart_226.jpg",
+      "path": "personal/cobalt_beacon_226.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text"
@@ -1784,7 +1784,7 @@
       }
     },
     "227": {
-      "path": "personal/zoe_elefterin_227.jpeg",
+      "path": "personal/brisk_compass_227.jpeg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -1807,14 +1807,14 @@
           "operator pass 2: no mirror at all \u2014 it's an archway; mirror flag removed"
         ]
       },
-      "why": "identity coverage: Zoe Elefterin",
+      "why": "identity coverage: Brisk Compass",
       "original_dims": {
         "width": 1440,
         "height": 1800
       }
     },
     "228": {
-      "path": "personal/hanna_cowart_228.jpg",
+      "path": "personal/cobalt_beacon_228.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -1844,20 +1844,20 @@
           {
             "kind": "not_occlusion",
             "family": "occlusion",
-            "note": "operator pass 5: Hanna Cowart's face is NOT occluded \u2014 the occlusion (hair over faces, hoods) belongs to the OTHER, unidentified girls. Occlusion flags are PER-FACE in truth; an image-level flag must be attributed to the named face to count for the named-occlusion floor (retired caption terms: hooded)"
+            "note": "operator pass 5: Cobalt Beacon's face is NOT occluded \u2014 the occlusion (hair over faces, hoods) belongs to the OTHER, unidentified girls. Occlusion flags are PER-FACE in truth; an image-level flag must be attributed to the named face to count for the named-occlusion floor (retired caption terms: hooded)"
           }
         ],
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Hanna Cowart",
+      "why": "identity coverage: Cobalt Beacon",
       "original_dims": {
         "width": 1080,
         "height": 1920
       }
     },
     "233": {
-      "path": "personal/hillary_sampliner_233.jpeg",
+      "path": "personal/russet_ridgeway_233.jpeg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -1891,14 +1891,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Hillary Sampliner",
+      "why": "identity coverage: Russet Ridgeway",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "237": {
-      "path": "personal/nelle_harwood_237.jpeg",
+      "path": "personal/onyx_lantern_237.jpeg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -1922,14 +1922,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "backfill for #428 (pass 3: policy-gate directive was mis-attributed; Amanda Row already covered) \u2014 twin-eligible clean base, under-covered identity first, lowest media_id",
+      "why": "backfill for #428 (pass 3: policy-gate directive was mis-attributed; Citrine Fathom already covered) \u2014 twin-eligible clean base, under-covered identity first, lowest media_id",
       "original_dims": {
         "width": 1179,
         "height": 2096
       }
     },
     "241": {
-      "path": "personal/nelle_harwood_241.jpg",
+      "path": "personal/onyx_lantern_241.jpg",
       "informational_flags": [
         "bw",
         "crowd_group",
@@ -1954,14 +1954,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Nelle Harwood",
+      "why": "identity coverage: Onyx Lantern",
       "original_dims": {
         "width": 1179,
         "height": 2096
       }
     },
     "244": {
-      "path": "personal/kelly_curran_244.jpg",
+      "path": "personal/ochre_harbor_244.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -1998,14 +1998,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kelly Curran",
+      "why": "identity coverage: Ochre Harbor",
       "original_dims": {
         "width": 1080,
         "height": 1203
       }
     },
     "245": {
-      "path": "personal/kelly_curran_245.jpg",
+      "path": "personal/ochre_harbor_245.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -2021,14 +2021,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kelly Curran",
+      "why": "identity coverage: Ochre Harbor",
       "original_dims": {
         "width": 1080,
         "height": 1241
       }
     },
     "246": {
-      "path": "personal/kelly_curran_246.jpg",
+      "path": "personal/ochre_harbor_246.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -2053,7 +2053,7 @@
       }
     },
     "251": {
-      "path": "personal/ryann_wiseman_251.jpg",
+      "path": "personal/muted_yarrow_251.jpg",
       "informational_flags": [
         "crowd",
         "crowd_group",
@@ -2083,7 +2083,7 @@
         "confirmations": [],
         "identity_annotations": [
           {
-            "name": "Ryann Wiseman",
+            "name": "Muted Yarrow",
             "status": "bound",
             "face_index": 2,
             "binding": "positional",
@@ -2091,17 +2091,17 @@
             "note": "operator pass 4: 3rd face from left (x-order idx 2, bbox x=107); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
           },
           {
-            "name": "Krista Fisher",
+            "name": "Onyx Marsh",
             "status": "bound",
             "face_index": 3,
             "binding": "positional",
             "operator_new_identity": true,
-            "note": "operator pass 4: immediately right of Ryann (x-order idx 3, bbox x=262, tiny 12x15px box); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
+            "note": "operator pass 4: immediately right of Muted (x-order idx 3, bbox x=262, tiny 12x15px box); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
           }
         ],
         "notes": [
-          "operator pass 4: Ryann Wiseman + Krista Fisher are NEW identities (no DB labels) \u2014 operator ground truth",
-          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Ryann Wiseman, Krista Fisher); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'kristaafisher' corroborates Krista Fisher; both names operator ground truth (pass 4 positional bindings). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
+          "operator pass 4: Muted Yarrow + Onyx Marsh are NEW identities (no DB labels) \u2014 operator ground truth",
+          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Muted Yarrow, Onyx Marsh); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'kristaafisher' corroborates Onyx Marsh; both names operator ground truth (pass 4 positional bindings). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
         ]
       },
       "why": "policy-negative: faces but no named identities",
@@ -2111,7 +2111,7 @@
       }
     },
     "254": {
-      "path": "personal/addy_lee_254.jpg",
+      "path": "personal/wicker_fathom_254.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2138,14 +2138,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Addy Lee",
+      "why": "identity coverage: Wicker Fathom",
       "original_dims": {
         "width": 1172,
         "height": 1172
       }
     },
     "256": {
-      "path": "personal/olivia_lee_256.jpg",
+      "path": "personal/sylvan_orchard_256.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2188,14 +2188,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Olivia Lee",
+      "why": "identity coverage: Sylvan Orchard",
       "original_dims": {
         "width": 1206,
         "height": 2144
       }
     },
     "258": {
-      "path": "personal/olivia_lee_258.jpg",
+      "path": "personal/sylvan_orchard_258.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -2224,14 +2224,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Olivia Lee",
+      "why": "identity coverage: Sylvan Orchard",
       "original_dims": {
         "width": 1440,
         "height": 1920
       }
     },
     "267": {
-      "path": "personal/talvi_faustmann_267.jpg",
+      "path": "personal/sable_current_267.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2274,7 +2274,7 @@
       }
     },
     "270": {
-      "path": "personal/coral_osborne_270.jpg",
+      "path": "personal/pewter_hollow_270.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2305,14 +2305,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Coral Osborne",
+      "why": "identity coverage: Pewter Hollow",
       "original_dims": {
         "width": 720,
         "height": 1280
       }
     },
     "271": {
-      "path": "personal/coral_osborne_271.jpg",
+      "path": "personal/pewter_hollow_271.jpg",
       "informational_flags": [
         "bw",
         "mirror_selfie_no_reflection",
@@ -2351,14 +2351,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Coral Osborne",
+      "why": "identity coverage: Pewter Hollow",
       "original_dims": {
         "width": 720,
         "height": 1280
       }
     },
     "275": {
-      "path": "personal/maria_correonero_275.jpg",
+      "path": "personal/slate_willow_275.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -2389,14 +2389,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maria Correonero \u00b7 operator pass 3: NOT nsfw \u2014 cleared",
+      "why": "identity coverage: Slate Willow \u00b7 operator pass 3: NOT nsfw \u2014 cleared",
       "original_dims": {
         "width": 750,
         "height": 1333
       }
     },
     "276": {
-      "path": "personal/maria_correonero_276.jpg",
+      "path": "personal/slate_willow_276.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2438,14 +2438,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "pass 5 backfill for #529 (operator NSFW cull): caption-confirmed occlusion alternate from the pool (gold mask, \u00d72 cross-model), under-covered identity first (Maria Correonero), lowest media_id",
+      "why": "pass 5 backfill for #529 (operator NSFW cull): caption-confirmed occlusion alternate from the pool (gold mask, \u00d72 cross-model), under-covered identity first (Slate Willow), lowest media_id",
       "original_dims": {
         "width": 480,
         "height": 853
       }
     },
     "278": {
-      "path": "personal/zoe_elefterin_278.jpeg",
+      "path": "personal/brisk_compass_278.jpeg",
       "informational_flags": [
         "bw",
         "profile_any"
@@ -2469,14 +2469,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Zoe Elefterin",
+      "why": "identity coverage: Brisk Compass",
       "original_dims": {
         "width": 1440,
         "height": 1438
       }
     },
     "284": {
-      "path": "personal/faith_coggin_284.jpg",
+      "path": "personal/ochre_ridgeway_284.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -2501,14 +2501,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Faith Coggin",
+      "why": "identity coverage: Ochre Ridgeway",
       "original_dims": {
         "width": 387,
         "height": 580
       }
     },
     "293": {
-      "path": "personal/hanna_cowart_293.jpg",
+      "path": "personal/cobalt_beacon_293.jpg",
       "informational_flags": [
         "occlusion_any",
         "profile_any"
@@ -2537,14 +2537,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Hanna Cowart",
+      "why": "identity coverage: Cobalt Beacon",
       "original_dims": {
         "width": 960,
         "height": 1280
       }
     },
     "294": {
-      "path": "personal/tory_guzman_294.jpg",
+      "path": "personal/flaxen_yarrow_294.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -2563,14 +2563,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Tory Guzman",
+      "why": "identity coverage: Flaxen Yarrow",
       "original_dims": {
         "width": 800,
         "height": 800
       }
     },
     "295": {
-      "path": "personal/laura_sampliner_295.jpg",
+      "path": "personal/sable_verity_295.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -2588,14 +2588,14 @@
           "operator pass 5: colour image, NOT b&w \u2014 flag removed (joins pass-2 b&w corrections)"
         ]
       },
-      "why": "nsfw replacement: same-identity alternate (Laura Sampliner), screened, lowest media_id",
+      "why": "nsfw replacement: same-identity alternate (Sable Verity), screened, lowest media_id",
       "original_dims": {
         "width": 612,
         "height": 612
       }
     },
     "305": {
-      "path": "personal/jenny_farman_305.jpg",
+      "path": "personal/onyx_beacon_305.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -2624,14 +2624,14 @@
           "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
         ]
       },
-      "why": "identity coverage: Jenny Farman",
+      "why": "identity coverage: Onyx Beacon",
       "original_dims": {
         "width": 960,
         "height": 960
       }
     },
     "306": {
-      "path": "personal/allyee_whaley_306.jpg",
+      "path": "personal/dappled_juniper_306.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -2661,14 +2661,14 @@
           "operator pass 2: colour image \u2014 b&w flag removed"
         ]
       },
-      "why": "identity coverage: Allyee Whaley",
+      "why": "identity coverage: Dappled Juniper",
       "original_dims": {
         "width": 640,
         "height": 640
       }
     },
     "308": {
-      "path": "personal/tory_guzman_308.jpg",
+      "path": "personal/flaxen_yarrow_308.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -2688,14 +2688,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Tory Guzman",
+      "why": "identity coverage: Flaxen Yarrow",
       "original_dims": {
         "width": 960,
         "height": 720
       }
     },
     "309": {
-      "path": "personal/rosalie_fransen_309.jpg",
+      "path": "personal/umber_willow_309.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2719,14 +2719,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "nsfw replacement: same-identity alternate (Rosalie Fransen), screened, lowest media_id",
+      "why": "nsfw replacement: same-identity alternate (Umber Willow), screened, lowest media_id",
       "original_dims": {
         "width": 612,
         "height": 612
       }
     },
     "318": {
-      "path": "personal/allyee_whaley_318.jpg",
+      "path": "personal/dappled_juniper_318.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -2749,7 +2749,7 @@
       }
     },
     "321": {
-      "path": "personal/kaitlin_till-landry_321.jpg",
+      "path": "personal/candid_orchard_321.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -2763,14 +2763,14 @@
           "operator: mirror-selfie without visible mirror reflection \u2014 mirror flag removed"
         ]
       },
-      "why": "identity coverage: Kaitlin Till-Landry \u00b7 operator: mirror-selfie without visible reflection \u2014 mirror flag removed",
+      "why": "identity coverage: Candid Orchard \u00b7 operator: mirror-selfie without visible reflection \u2014 mirror flag removed",
       "original_dims": {
         "width": 640,
         "height": 640
       }
     },
     "323": {
-      "path": "personal/laura_sampliner_323.jpg",
+      "path": "personal/sable_verity_323.jpg",
       "informational_flags": [
         "crowd",
         "crowd_group",
@@ -2818,7 +2818,7 @@
       }
     },
     "328": {
-      "path": "personal/hillary_sampliner_328.jpg",
+      "path": "personal/russet_ridgeway_328.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -2857,7 +2857,7 @@
       }
     },
     "334": {
-      "path": "personal/allyee_whaley_334.jpg",
+      "path": "personal/dappled_juniper_334.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -2884,14 +2884,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Allyee Whaley",
+      "why": "identity coverage: Dappled Juniper",
       "original_dims": {
         "width": 640,
         "height": 640
       }
     },
     "336": {
-      "path": "personal/maddie_pesavento_336.jpg",
+      "path": "personal/wicker_orchard_336.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -2910,14 +2910,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maddie Pesavento",
+      "why": "identity coverage: Wicker Orchard",
       "original_dims": {
         "width": 960,
         "height": 794
       }
     },
     "337": {
-      "path": "personal/maddie_pesavento_337.jpg",
+      "path": "personal/wicker_orchard_337.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -2940,7 +2940,7 @@
       }
     },
     "338": {
-      "path": "personal/amanda_row_338.jpg",
+      "path": "personal/citrine_fathom_338.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -2952,14 +2952,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Amanda Row",
+      "why": "identity coverage: Citrine Fathom",
       "original_dims": {
         "width": 960,
         "height": 720
       }
     },
     "339": {
-      "path": "personal/amanda_row_339.jpg",
+      "path": "personal/citrine_fathom_339.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -2978,14 +2978,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Amanda Row",
+      "why": "identity coverage: Citrine Fathom",
       "original_dims": {
         "width": 1536,
         "height": 2048
       }
     },
     "341": {
-      "path": "personal/laura_sampliner_341.jpg",
+      "path": "personal/sable_verity_341.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3017,14 +3017,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Laura Sampliner",
+      "why": "identity coverage: Sable Verity",
       "original_dims": {
         "width": 960,
         "height": 640
       }
     },
     "347": {
-      "path": "personal/ashley_ruetenik_347.jpg",
+      "path": "personal/citrine_bramble_347.jpg",
       "informational_flags": [
         "bw",
         "twin_eligible"
@@ -3046,14 +3046,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "nsfw replacement: same-identity alternate (Ashley Ruetenik), screened, lowest media_id",
+      "why": "nsfw replacement: same-identity alternate (Citrine Bramble), screened, lowest media_id",
       "original_dims": {
         "width": 1495,
         "height": 1478
       }
     },
     "352": {
-      "path": "personal/coral_osborne_352.jpg",
+      "path": "personal/pewter_hollow_352.jpg",
       "informational_flags": [
         "bw",
         "crowd_group",
@@ -3078,14 +3078,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Coral Osborne",
+      "why": "identity coverage: Pewter Hollow",
       "original_dims": {
         "width": 549,
         "height": 479
       }
     },
     "357": {
-      "path": "personal/self_357.jpg",
+      "path": "personal/indigo_357.jpg",
       "informational_flags": [
         "crowd",
         "crowd_group",
@@ -3121,7 +3121,7 @@
       }
     },
     "358": {
-      "path": "personal/allyee_whaley_358.jpg",
+      "path": "personal/dappled_juniper_358.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text"
@@ -3150,14 +3150,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Allyee Whaley",
+      "why": "identity coverage: Dappled Juniper",
       "original_dims": {
         "width": 1544,
         "height": 1024
       }
     },
     "359": {
-      "path": "personal/laura_sampliner_359.jpg",
+      "path": "personal/sable_verity_359.jpg",
       "informational_flags": [
         "bw",
         "twin_eligible"
@@ -3186,7 +3186,7 @@
       }
     },
     "361": {
-      "path": "personal/nelle_harwood_361.jpg",
+      "path": "personal/onyx_lantern_361.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3214,14 +3214,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Nelle Harwood",
+      "why": "identity coverage: Onyx Lantern",
       "original_dims": {
         "width": 720,
         "height": 960
       }
     },
     "362": {
-      "path": "personal/maddie_pesavento_362.jpg",
+      "path": "personal/wicker_orchard_362.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -3241,14 +3241,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maddie Pesavento",
+      "why": "identity coverage: Wicker Orchard",
       "original_dims": {
         "width": 2048,
         "height": 2048
       }
     },
     "363": {
-      "path": "personal/hillary_sampliner_363.jpg",
+      "path": "personal/russet_ridgeway_363.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3283,14 +3283,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Hillary Sampliner",
+      "why": "identity coverage: Russet Ridgeway",
       "original_dims": {
         "width": 720,
         "height": 480
       }
     },
     "365": {
-      "path": "personal/maddie_pesavento_365.jpg",
+      "path": "personal/wicker_orchard_365.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -3314,14 +3314,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maddie Pesavento",
+      "why": "identity coverage: Wicker Orchard",
       "original_dims": {
         "width": 720,
         "height": 480
       }
     },
     "367": {
-      "path": "personal/jenny_farman_367.jpg",
+      "path": "personal/onyx_beacon_367.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -3341,14 +3341,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Jenny Farman",
+      "why": "identity coverage: Onyx Beacon",
       "original_dims": {
         "width": 960,
         "height": 640
       }
     },
     "368": {
-      "path": "personal/ashley_ruetenik_368.jpg",
+      "path": "personal/citrine_bramble_368.jpg",
       "informational_flags": [
         "collage",
         "profile_any"
@@ -3373,14 +3373,14 @@
           "operator post-sweep: COLLAGE \u2014 joins 429/461/418 in that class; group/crowd flag removed (faces across collage panels are not a group shot, same rule as 429/461)"
         ]
       },
-      "why": "identity coverage: Ashley Ruetenik",
+      "why": "identity coverage: Citrine Bramble",
       "original_dims": {
         "width": 960,
         "height": 960
       }
     },
     "375": {
-      "path": "personal/alicia_graff_375.jpg",
+      "path": "personal/opaline_beacon_375.jpg",
       "informational_flags": [
         "zero_face"
       ],
@@ -3403,7 +3403,7 @@
       }
     },
     "383": {
-      "path": "personal/ashley_zelinskie_383.jpg",
+      "path": "personal/muted_fathom_383.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -3422,14 +3422,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Ashley Zelinskie",
+      "why": "identity coverage: Muted Fathom",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "387": {
-      "path": "personal/faith_coggin_387.jpeg",
+      "path": "personal/ochre_ridgeway_387.jpeg",
       "informational_flags": [
         "mirror",
         "occlusion_any"
@@ -3458,14 +3458,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "near-dupe replacement: same person (Faith Coggin), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
+      "why": "near-dupe replacement: same person (Ochre Ridgeway), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
       "original_dims": {
         "width": 1440,
         "height": 1800
       }
     },
     "388": {
-      "path": "personal/georgia_kauten_388.jpg",
+      "path": "personal/verdant_verity_388.jpg",
       "informational_flags": [
         "crowd",
         "crowd_group",
@@ -3508,7 +3508,7 @@
         ],
         "identity_annotations": [
           {
-            "name": "Georgia Kauten",
+            "name": "Verdant Verity",
             "position": "second_left",
             "status": "bound",
             "note": "operator pass 4: bound to 2nd-from-left box (x-order idx 1, bbox x=217) despite 12px x-gap to next box (x=229) \u2014 \u2713 operator (positional \u2014 confirm at curation)",
@@ -3519,7 +3519,7 @@
         ],
         "notes": [
           "operator: policy-gate suppression test \u2014 roster identity present, recognition_enabled=false, pipeline must output no names",
-          "operator pass 4: Georgia Kauten is a NEW identity (no DB label); canonical spelling 'Kauten' (variant 'Kaufman' seen once, recorded in corrections)",
+          "operator pass 4: Verdant Verity is a NEW identity (no DB label); canonical spelling 'Verity' (variant 'Kaufman' seen once, recorded in corrections)",
           "operator pass 5: policy-gate designation confirmed BY DESIGN \u2014 flag lives in manifest policy (recognition_enabled=false), not image content"
         ]
       },
@@ -3530,7 +3530,7 @@
       }
     },
     "398": {
-      "path": "personal/ashley_zelinskie_398.jpg",
+      "path": "personal/muted_fathom_398.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -3557,14 +3557,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Ashley Zelinskie",
+      "why": "identity coverage: Muted Fathom",
       "original_dims": {
         "width": 480,
         "height": 853
       }
     },
     "399": {
-      "path": "personal/hanna_cowart_399.jpg",
+      "path": "personal/cobalt_beacon_399.jpg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "profile_any"
@@ -3588,14 +3588,14 @@
           "operator pass 2: colour image \u2014 b&w flag removed"
         ]
       },
-      "why": "identity coverage: Hanna Cowart",
+      "why": "identity coverage: Cobalt Beacon",
       "original_dims": {
         "width": 480,
         "height": 853
       }
     },
     "407": {
-      "path": "personal/scarlett_rose_407.jpeg",
+      "path": "personal/sylvan_beacon_407.jpeg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3621,14 +3621,14 @@
           "operator post-sweep: COLLAGE \u2014 joins 429/461/418 in that class; group/crowd flag removed (faces across collage panels are not a group shot, same rule as 429/461)"
         ]
       },
-      "why": "identity coverage: Scarlett Rose",
+      "why": "identity coverage: Sylvan Beacon",
       "original_dims": {
         "width": 1170,
         "height": 2080
       }
     },
     "414": {
-      "path": "personal/olivia_lee_414.jpg",
+      "path": "personal/sylvan_orchard_414.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3673,14 +3673,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Olivia Lee",
+      "why": "identity coverage: Sylvan Orchard",
       "original_dims": {
         "width": 1206,
         "height": 2144
       }
     },
     "415": {
-      "path": "personal/bea_burke_415.jpg",
+      "path": "personal/hollow_pennant_415.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -3706,14 +3706,14 @@
           "operator post-sweep: COLLAGE-class \u2014 two polaroid pictures in one image (polaroid pair); geo group/crowd removed (panel-derived, not a group shot); no twin flag carried"
         ]
       },
-      "why": "identity coverage: Bea Burke \u2014 polaroid pair (collage-class, operator post-sweep)",
+      "why": "identity coverage: Hollow Pennant \u2014 polaroid pair (collage-class, operator post-sweep)",
       "original_dims": {
         "width": 1152,
         "height": 1539
       }
     },
     "416": {
-      "path": "personal/bea_burke_416.jpg",
+      "path": "personal/hollow_pennant_416.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -3732,14 +3732,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Bea Burke",
+      "why": "identity coverage: Hollow Pennant",
       "original_dims": {
         "width": 1200,
         "height": 1598
       }
     },
     "418": {
-      "path": "personal/georgia_kauten_418.jpeg",
+      "path": "personal/verdant_verity_418.jpeg",
       "informational_flags": [
         "collage",
         "policy_gate_designated",
@@ -3758,7 +3758,7 @@
         "confirmations": [],
         "identity_annotations": [
           {
-            "name": "Georgia Kauten",
+            "name": "Verdant Verity",
             "status": "bound",
             "face_index": 4,
             "binding": "positional",
@@ -3766,7 +3766,7 @@
             "note": "operator pass 4: collage top-left sub-image 3rd-from-left (bbox x=428, y=794); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
           },
           {
-            "name": "Georgia Kauten",
+            "name": "Verdant Verity",
             "status": "bound",
             "face_index": 5,
             "binding": "positional",
@@ -3775,21 +3775,21 @@
           }
         ],
         "notes": [
-          "operator pass 3: policy-gate suppression test relocated from #428 \u2014 roster identity Georgia Kauten present x2, recognition_enabled=false, pipeline must output no names",
-          "operator pass 4: binding corroborated \u2014 both bound boxes share detector cluster be55c368 with the #388 operator-bound Georgia Kauten box",
-          "operator pass 4: Georgia Kauten is a NEW identity (no DB label); canonical spelling 'Kauten' (variant 'Kaufman' seen once, recorded in corrections)",
+          "operator pass 3: policy-gate suppression test relocated from #428 \u2014 roster identity Verdant Verity present x2, recognition_enabled=false, pipeline must output no names",
+          "operator pass 4: binding corroborated \u2014 both bound boxes share detector cluster be55c368 with the #388 operator-bound Verdant Verity box",
+          "operator pass 4: Verdant Verity is a NEW identity (no DB label); canonical spelling 'Verity' (variant 'Kaufman' seen once, recorded in corrections)",
           "operator pass 5: policy-gate designation confirmed BY DESIGN \u2014 flag lives in manifest policy (recognition_enabled=false), not image content",
-          "operator post-sweep: collage flag CONFIRMED/SET (was implicit in the Georgia Kauten sub-image bindings); group/crowd removed per the collage rule (panels are not a group shot); policy-gate designation and both bound GK boxes intact"
+          "operator post-sweep: collage flag CONFIRMED/SET (was implicit in the Verdant Verity sub-image bindings); group/crowd removed per the collage rule (panels are not a group shot); policy-gate designation and both bound GK boxes intact"
         ]
       },
-      "why": "policy-gate suppression test (pass 3 relocation from #428): Georgia Kauten present x2 in collage, recognition_enabled=false \u2014 pipeline must output no names",
+      "why": "policy-gate suppression test (pass 3 relocation from #428): Verdant Verity present x2 in collage, recognition_enabled=false \u2014 pipeline must output no names",
       "original_dims": {
         "width": 1080,
         "height": 1920
       }
     },
     "422": {
-      "path": "personal/alora_lynn_422.jpg",
+      "path": "personal/russet_harbor_422.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -3821,7 +3821,7 @@
       }
     },
     "426": {
-      "path": "personal/amanda_row_426.jpg",
+      "path": "personal/citrine_fathom_426.jpg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "twin_eligible"
@@ -3841,14 +3841,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Amanda Row",
+      "why": "identity coverage: Citrine Fathom",
       "original_dims": {
         "width": 1536,
         "height": 2048
       }
     },
     "429": {
-      "path": "personal/amberly_skay_429.jpg",
+      "path": "personal/candid_ridgeway_429.jpg",
       "informational_flags": [
         "collage",
         "detector_miss",
@@ -3873,7 +3873,7 @@
         ],
         "identity_annotations": [
           {
-            "name": "Amberly Skay",
+            "name": "Candid Ridgeway",
             "status": "unbound",
             "kind": "detector_miss",
             "location": "middle-left cell of the 3x3 grid",
@@ -3887,14 +3887,14 @@
           "occlusion rescan: collage keeps BOTH the collage flag and caption-supported occlusion"
         ]
       },
-      "why": "identity coverage: Amberly Skay",
+      "why": "identity coverage: Candid Ridgeway",
       "original_dims": {
         "width": 1080,
         "height": 1080
       }
     },
     "430": {
-      "path": "personal/amberly_skay_430.jpg",
+      "path": "personal/candid_ridgeway_430.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -3910,14 +3910,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Amberly Skay",
+      "why": "identity coverage: Candid Ridgeway",
       "original_dims": {
         "width": 820,
         "height": 865
       }
     },
     "431": {
-      "path": "personal/amberly_skay_431.jpg",
+      "path": "personal/candid_ridgeway_431.jpg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "profile_any"
@@ -3940,14 +3940,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Amberly Skay",
+      "why": "identity coverage: Candid Ridgeway",
       "original_dims": {
         "width": 828,
         "height": 1472
       }
     },
     "438": {
-      "path": "personal/barbara_fransen_438.jpg",
+      "path": "personal/quiet_fathom_438.jpg",
       "informational_flags": [
         "screenshot",
         "thumbnail_grid",
@@ -3976,7 +3976,7 @@
       }
     },
     "453": {
-      "path": "personal/char_stiles_453.jpg",
+      "path": "personal/russet_lantern_453.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -3995,14 +3995,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Char Stiles",
+      "why": "identity coverage: Russet Lantern",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "454": {
-      "path": "personal/char_stiles_454.jpg",
+      "path": "personal/russet_lantern_454.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -4029,14 +4029,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Char Stiles",
+      "why": "identity coverage: Russet Lantern",
       "original_dims": {
         "width": 1080,
         "height": 720
       }
     },
     "455": {
-      "path": "personal/char_stiles_455.jpg",
+      "path": "personal/russet_lantern_455.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text"
@@ -4058,14 +4058,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Char Stiles",
+      "why": "identity coverage: Russet Lantern",
       "original_dims": {
         "width": 712,
         "height": 712
       }
     },
     "456": {
-      "path": "personal/chloe_lavender_456.jpeg",
+      "path": "personal/vellum_falcon_456.jpeg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "profile_any"
@@ -4088,14 +4088,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Chloe Lavender",
+      "why": "identity coverage: Vellum Falcon",
       "original_dims": {
         "width": 1170,
         "height": 2080
       }
     },
     "457": {
-      "path": "personal/chloe_lavender_457.jpg",
+      "path": "personal/vellum_falcon_457.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4107,14 +4107,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Chloe Lavender",
+      "why": "identity coverage: Vellum Falcon",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "458": {
-      "path": "personal/chloe_lavender_458.jpg",
+      "path": "personal/vellum_falcon_458.jpg",
       "informational_flags": [
         "mirror_selfie_no_reflection"
       ],
@@ -4132,14 +4132,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Chloe Lavender",
+      "why": "identity coverage: Vellum Falcon",
       "original_dims": {
         "width": 1080,
         "height": 1077
       }
     },
     "459": {
-      "path": "personal/clhoe_heath_459.jpg",
+      "path": "personal/candid_yarrow_459.jpg",
       "informational_flags": [
         "mirror"
       ],
@@ -4165,14 +4165,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Clhoe Heath",
+      "why": "identity coverage: Candid Yarrow",
       "original_dims": {
         "width": 1978,
         "height": 2560
       }
     },
     "460": {
-      "path": "personal/clhoe_heath_460.jpg",
+      "path": "personal/candid_yarrow_460.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -4191,14 +4191,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Clhoe Heath",
+      "why": "identity coverage: Candid Yarrow",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "463": {
-      "path": "personal/coral_osborne_463.jpg",
+      "path": "personal/pewter_hollow_463.jpg",
       "informational_flags": [
         "art",
         "twin_eligible"
@@ -4229,7 +4229,7 @@
       }
     },
     "480": {
-      "path": "personal/erika_hansen_miller_480.jpg",
+      "path": "personal/muted_current_480.jpg",
       "informational_flags": [
         "crowd_group",
         "detector_miss",
@@ -4255,14 +4255,14 @@
         "confirmations": [],
         "identity_annotations": [
           {
-            "name": "Erika Hansen Miller",
+            "name": "Muted Current",
             "position": "leftmost",
             "status": "bound",
             "face_index": 0
           }
         ],
         "notes": [
-          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Erika Hansen Miller); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'ohhelloitserika' corroborates Erika; name from the operator pass-1 annotation (bound to leftmost box). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
+          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Muted Current); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'ohhelloitserika' corroborates Candid; name from the operator pass-1 annotation (bound to leftmost box). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
         ]
       },
       "why": "policy-negative: faces but no named identities",
@@ -4272,7 +4272,7 @@
       }
     },
     "484": {
-      "path": "personal/erika_lind_484.jpg",
+      "path": "personal/saffron_falcon_484.jpg",
       "informational_flags": [
         "zero_face"
       ],
@@ -4295,7 +4295,7 @@
       }
     },
     "489": {
-      "path": "personal/faith_coggin_489.jpeg",
+      "path": "personal/ochre_ridgeway_489.jpeg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "twin_eligible"
@@ -4315,14 +4315,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "near-dupe replacement: same person (Faith Coggin), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
+      "why": "near-dupe replacement: same person (Ochre Ridgeway), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
       "original_dims": {
         "width": 1179,
         "height": 2096
       }
     },
     "492": {
-      "path": "personal/faith_windebank_492.jpg",
+      "path": "personal/sylvan_fathom_492.jpg",
       "informational_flags": [],
       "all_strata_flags": [
         "low_res"
@@ -4349,7 +4349,7 @@
       }
     },
     "493": {
-      "path": "personal/faith_windebank_493.jpg",
+      "path": "personal/sylvan_fathom_493.jpg",
       "informational_flags": [
         "accessory_glasses",
         "twin_eligible"
@@ -4375,14 +4375,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Faith Windebank",
+      "why": "identity coverage: Sylvan Fathom",
       "original_dims": {
         "width": 300,
         "height": 300
       }
     },
     "494": {
-      "path": "personal/faith_windebank_494.jpg",
+      "path": "personal/sylvan_fathom_494.jpg",
       "informational_flags": [
         "blur_any"
       ],
@@ -4406,14 +4406,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Faith Windebank",
+      "why": "identity coverage: Sylvan Fathom",
       "original_dims": {
         "width": 400,
         "height": 400
       }
     },
     "504": {
-      "path": "personal/ivy_bloom_504.jpg",
+      "path": "personal/plumb_ferry_504.jpg",
       "informational_flags": [
         "occlusion_any",
         "profile_any"
@@ -4442,14 +4442,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Ivy Bloom",
+      "why": "identity coverage: Plumb Ferry",
       "original_dims": {
         "width": 729,
         "height": 1024
       }
     },
     "505": {
-      "path": "personal/ivy_bloom_505.jpg",
+      "path": "personal/plumb_ferry_505.jpg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -4465,14 +4465,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Ivy Bloom",
+      "why": "identity coverage: Plumb Ferry",
       "original_dims": {
         "width": 1080,
         "height": 1919
       }
     },
     "512": {
-      "path": "personal/jenny_farman_512.jpg",
+      "path": "personal/onyx_beacon_512.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -4499,14 +4499,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Jenny Farman",
+      "why": "identity coverage: Onyx Beacon",
       "original_dims": {
         "width": 750,
         "height": 1333
       }
     },
     "513": {
-      "path": "personal/jess_hull_513.jpg",
+      "path": "personal/auburn_ridgeway_513.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4518,14 +4518,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Jess Hull",
+      "why": "identity coverage: Auburn Ridgeway",
       "original_dims": {
         "width": 1080,
         "height": 856
       }
     },
     "514": {
-      "path": "personal/jess_hull_514.jpg",
+      "path": "personal/auburn_ridgeway_514.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -4557,7 +4557,7 @@
       }
     },
     "515": {
-      "path": "personal/jess_hull_515.jpg",
+      "path": "personal/auburn_ridgeway_515.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -4589,7 +4589,7 @@
       }
     },
     "516": {
-      "path": "personal/jessica_tillson_516.jpg",
+      "path": "personal/muted_hollow_516.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4601,14 +4601,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Jessica Tillson",
+      "why": "identity coverage: Muted Hollow",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "518": {
-      "path": "personal/jessica_tillson_518.jpg",
+      "path": "personal/muted_hollow_518.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -4627,14 +4627,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Jessica Tillson",
+      "why": "identity coverage: Muted Hollow",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "531": {
-      "path": "personal/kris_benton_531.jpg",
+      "path": "personal/tidal_bramble_531.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4646,14 +4646,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kris Benton",
+      "why": "identity coverage: Tidal Bramble",
       "original_dims": {
         "width": 1080,
         "height": 1920
       }
     },
     "532": {
-      "path": "personal/kris_benton_532.jpg",
+      "path": "personal/tidal_bramble_532.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -4680,14 +4680,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kris Benton",
+      "why": "identity coverage: Tidal Bramble",
       "original_dims": {
         "width": 1080,
         "height": 1080
       }
     },
     "533": {
-      "path": "personal/kris_benton_533.jpg",
+      "path": "personal/tidal_bramble_533.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -4706,14 +4706,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kris Benton",
+      "why": "identity coverage: Tidal Bramble",
       "original_dims": {
         "width": 1080,
         "height": 1350
       }
     },
     "535": {
-      "path": "personal/kaitlin_till-landry_535.jpg",
+      "path": "personal/candid_orchard_535.jpg",
       "informational_flags": [
         "mirror_selfie_no_reflection",
         "occlusion_any"
@@ -4741,14 +4741,14 @@
           "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
         ]
       },
-      "why": "identity coverage: Kaitlin Till-Landry",
+      "why": "identity coverage: Candid Orchard",
       "original_dims": {
         "width": 750,
         "height": 1333
       }
     },
     "536": {
-      "path": "personal/micaela_carolan_536.jpg",
+      "path": "personal/indigo_ridgeway_536.jpg",
       "informational_flags": [
         "occlusion_any"
       ],
@@ -4775,14 +4775,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Micaela Carolan",
+      "why": "identity coverage: Indigo Ridgeway",
       "original_dims": {
         "width": 750,
         "height": 1333
       }
     },
     "549": {
-      "path": "personal/maggie_hunter_549.jpg",
+      "path": "personal/saffron_orchard_549.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -4806,14 +4806,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maggie Hunter",
+      "why": "identity coverage: Saffron Orchard",
       "original_dims": {
         "width": 500,
         "height": 332
       }
     },
     "550": {
-      "path": "personal/maggie_hunter_550.jpg",
+      "path": "personal/saffron_orchard_550.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -4834,14 +4834,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maggie Hunter",
+      "why": "identity coverage: Saffron Orchard",
       "original_dims": {
         "width": 500,
         "height": 335
       }
     },
     "551": {
-      "path": "personal/maggie_hunter_551.jpg",
+      "path": "personal/saffron_orchard_551.jpg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -4862,14 +4862,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Maggie Hunter",
+      "why": "identity coverage: Saffron Orchard",
       "original_dims": {
         "width": 500,
         "height": 332
       }
     },
     "554": {
-      "path": "personal/michelle_cortese_554.jpg",
+      "path": "personal/plumb_tanner_554.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4881,14 +4881,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Michelle Cortese",
+      "why": "identity coverage: Plumb Tanner",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "555": {
-      "path": "personal/micaela_carolan_555.jpeg",
+      "path": "personal/indigo_ridgeway_555.jpeg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -4920,14 +4920,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Micaela Carolan",
+      "why": "identity coverage: Indigo Ridgeway",
       "original_dims": {
         "width": 640,
         "height": 640
       }
     },
     "557": {
-      "path": "personal/micaela_carolan_557.jpeg",
+      "path": "personal/indigo_ridgeway_557.jpeg",
       "informational_flags": [
         "twin_eligible"
       ],
@@ -4943,14 +4943,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Micaela Carolan",
+      "why": "identity coverage: Indigo Ridgeway",
       "original_dims": {
         "width": 375,
         "height": 500
       }
     },
     "559": {
-      "path": "personal/michelle_cortese_559.jpg",
+      "path": "personal/plumb_tanner_559.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -4968,14 +4968,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Michelle Cortese",
+      "why": "identity coverage: Plumb Tanner",
       "original_dims": {
         "width": 750,
         "height": 1333
       }
     },
     "585": {
-      "path": "personal/scarlett_rose_585.jpg",
+      "path": "personal/sylvan_beacon_585.jpg",
       "informational_flags": [
         "eyes_closed"
       ],
@@ -4997,14 +4997,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Scarlett Rose",
+      "why": "identity coverage: Sylvan Beacon",
       "original_dims": {
         "width": 1350,
         "height": 1080
       }
     },
     "587": {
-      "path": "personal/scarlett_rose_587.jpg",
+      "path": "personal/sylvan_beacon_587.jpg",
       "informational_flags": [
         "occlusion_any",
         "profile_any"
@@ -5035,14 +5035,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Scarlett Rose",
+      "why": "identity coverage: Sylvan Beacon",
       "original_dims": {
         "width": 750,
         "height": 1334
       }
     },
     "589": {
-      "path": "personal/sierra_tesanovic_589.jpg",
+      "path": "personal/sylvan_ridgeway_589.jpg",
       "informational_flags": [
         "crowd_group",
         "group",
@@ -5079,14 +5079,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Sierra Tesanovic",
+      "why": "identity coverage: Sylvan Ridgeway",
       "original_dims": {
         "width": 1024,
         "height": 576
       }
     },
     "590": {
-      "path": "personal/sierra_tesanovic_590.jpg",
+      "path": "personal/sylvan_ridgeway_590.jpg",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -5098,14 +5098,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Sierra Tesanovic",
+      "why": "identity coverage: Sylvan Ridgeway",
       "original_dims": {
         "width": 1440,
         "height": 1440
       }
     },
     "595": {
-      "path": "personal/sara_nicole_prickett_595.png",
+      "path": "personal/auburn_lantern_595.png",
       "informational_flags": [
         "avatar_grid",
         "profile_any",
@@ -5132,7 +5132,7 @@
           "operator pass 3: NOT a crowd \u2014 Twitter profile screenshot with many small avatars; informational flag avatar_grid (tiny-face hard case, not group-shot semantics)"
         ]
       },
-      "why": "identity coverage: Talvi Faustmann",
+      "why": "identity coverage: Sable Current",
       "original_dims": {
         "width": 1980,
         "height": 1532
@@ -5190,7 +5190,7 @@
       }
     },
     "605": {
-      "path": "personal/kaitlin_till-landry_605.png",
+      "path": "personal/candid_orchard_605.png",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -5216,14 +5216,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Kaitlin Till-Landry",
+      "why": "identity coverage: Candid Orchard",
       "original_dims": {
         "width": 640,
         "height": 1136
       }
     },
     "611": {
-      "path": "personal/zoe_elefterin_611.jpeg",
+      "path": "personal/brisk_compass_611.jpeg",
       "informational_flags": [
         "crowd_group",
         "group"
@@ -5243,14 +5243,14 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Zoe Elefterin",
+      "why": "identity coverage: Brisk Compass",
       "original_dims": {
         "width": 1179,
         "height": 2096
       }
     },
     "616": {
-      "path": "personal/hillary_sampliner_616.jpg",
+      "path": "personal/russet_ridgeway_616.jpg",
       "informational_flags": [
         "blur_any",
         "blur_lowlight_text",
@@ -5293,7 +5293,7 @@
       }
     },
     "621": {
-      "path": "personal/kelly_curran_621.jpg",
+      "path": "personal/ochre_harbor_621.jpg",
       "informational_flags": [
         "profile_any"
       ],
@@ -5325,7 +5325,7 @@
       }
     },
     "629": {
-      "path": "personal/rosalie_fransen_629.png",
+      "path": "personal/umber_willow_629.png",
       "informational_flags": [],
       "all_strata_flags": [],
       "strata_provenance": {},
@@ -5337,7 +5337,7 @@
         "identity_annotations": [],
         "notes": []
       },
-      "why": "identity coverage: Rosalie Fransen",
+      "why": "identity coverage: Umber Willow",
       "original_dims": {
         "width": 750,
         "height": 1334

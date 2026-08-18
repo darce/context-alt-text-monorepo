@@ -44,7 +44,7 @@ graph TD
 
 ### Impact
 
-- **Data Quality**: Incorrect cluster assignments lead to "Ryann Wiseman split into 7 clusters" scenarios
+- **Data Quality**: Incorrect cluster assignments lead to "Muted Yarrow split into 7 clusters" scenarios
 - **User Trust**: Assisted face identification suggestions become unreliable
 - **Debugging Cost**: Manual SQL queries required to audit cluster quality
 - **Technical Debt**: Non-normalized vectors violate cosine similarity assumptions
@@ -993,7 +993,7 @@ alembic upgrade head
 
 ### Manual QA (2 scenarios)
 
-1. Run `compare_media_embeddings.py` on known problem identities (Ryann Wiseman case)
+1. Run `compare_media_embeddings.py` on known problem identities (Muted Yarrow case)
 2. Run `audit_cluster_quality.py` on production data before/after migration
 
 ---
@@ -1144,7 +1144,7 @@ sequenceDiagram
 - **Zero normalization violations**: `SELECT * FROM mv_identity_cluster_centroids WHERE abs(norm - 1.0) > 0.001` returns 0 rows
 - **Threshold enforcement**: No identity-member records with `similarity < clustering_threshold - 0.05`
 - **Audit clean**: `audit_cluster_quality.py` reports 0 violations across all clusters
-- **Regression resolved**: Re-test Ryann Wiseman case → confirms identities merge correctly at 0.6 threshold
+- **Regression resolved**: Re-test Muted Yarrow case → confirms identities merge correctly at 0.6 threshold
 
 ---
 

@@ -550,7 +550,7 @@ describe('IdentityClusterList', () => {
   });
 
   it('uses search to find cluster by label when saving to an existing label', async () => {
-    const existingCluster = { id: 'cluster-500', label: 'Erin McCleod', identity_count: 1 };
+    const existingCluster = { id: 'cluster-500', label: 'Hazel McCleod', identity_count: 1 };
     const matchDeferreds: Deferred<ClusterLabelMatch | null>[] = [];
     const findClusterByLabelRemote = vi.fn(() => {
       const deferred = createDeferred<ClusterLabelMatch | null>();
@@ -570,7 +570,7 @@ describe('IdentityClusterList', () => {
       source_id: 'cluster-1',
       source_label: 'Cluster 1',
       target_id: 'cluster-500',
-      target_label: 'Erin McCleod',
+      target_label: 'Hazel McCleod',
       identities_moved: 1,
       moved_identity_ids: ['identity-1'],
       target_identity_count: 2,
@@ -591,9 +591,9 @@ describe('IdentityClusterList', () => {
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
-      fireEvent.change(input, { target: { value: 'Erin McCleod' } });
+      fireEvent.change(input, { target: { value: 'Hazel McCleod' } });
     });
-    expect(input).toHaveValue('Erin McCleod');
+    expect(input).toHaveValue('Hazel McCleod');
 
     await actFlow(async () => {
       // Wait for debounce timer to trigger remote search
@@ -623,7 +623,7 @@ describe('IdentityClusterList', () => {
     // No merge modal expected since identityCount is 1 (< 5)
 
     await waitFor(() =>
-      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'cluster-500', 'Erin McCleod', expect.anything()),
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'cluster-500', 'Hazel McCleod', expect.anything()),
     );
   });
 
@@ -660,7 +660,7 @@ describe('IdentityClusterList', () => {
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
       await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Emilie Chartrand' } });
+      fireEvent.change(input, { target: { value: 'Saffron Cypress' } });
     });
 
     await actFlow(async () => {
@@ -674,7 +674,7 @@ describe('IdentityClusterList', () => {
       if (!matchDeferred) {
         throw new Error('Expected self-match deferred to be defined.');
       }
-      await resolveDeferred(matchDeferred, { id: 'cluster-1', label: 'Emilie Chartrand' });
+      await resolveDeferred(matchDeferred, { id: 'cluster-1', label: 'Saffron Cypress' });
     });
 
     await actFlow(async () => {
@@ -688,14 +688,14 @@ describe('IdentityClusterList', () => {
       if (!saveMatchDeferred) {
         throw new Error('Expected save-time self-match deferred to be defined.');
       }
-      await resolveDeferred(saveMatchDeferred, { id: 'cluster-1', label: 'Emilie Chartrand' });
+      await resolveDeferred(saveMatchDeferred, { id: 'cluster-1', label: 'Saffron Cypress' });
       await resolveSaveDeferred(updateDeferred, {});
     });
 
     await waitForEditClosed();
 
     await waitFor(() =>
-      expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'Emilie Chartrand', expect.anything()),
+      expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'Saffron Cypress', expect.anything()),
     );
     expect(api.mergeCluster).not.toHaveBeenCalled();
   });

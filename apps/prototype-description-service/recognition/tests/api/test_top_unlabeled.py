@@ -270,7 +270,7 @@ async def test_get_top_unlabeled_includes_suggested_label_fields(
     cluster_id = str(uuid.uuid4())
     fake_cluster_repository.seed(cluster_id, label=None, identity_count=4)
     cluster = fake_cluster_repository.clusters[cluster_id]
-    cluster.suggested_label = "Coral Osborne"
+    cluster.suggested_label = "Pewter Hollow"
     cluster.suggested_label_source = "similar_cluster"
     cluster.suggested_label_confidence = 0.93
     cluster.suggested_target_cluster_id = str(uuid.uuid4())
@@ -284,7 +284,7 @@ async def test_get_top_unlabeled_includes_suggested_label_fields(
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) == 1
-    assert body[0]["suggested_label"] == "Coral Osborne"
+    assert body[0]["suggested_label"] == "Pewter Hollow"
     assert body[0]["suggested_label_source"] == "similar_cluster"
     assert body[0]["suggested_label_confidence"] == 0.93
     assert body[0]["suggested_target_cluster_id"] == cluster.suggested_target_cluster_id

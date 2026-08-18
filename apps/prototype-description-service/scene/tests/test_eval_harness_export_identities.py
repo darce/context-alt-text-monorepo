@@ -70,9 +70,9 @@ def test_celeb_identity_from_filename_source():
 
 
 def test_personal_identity_from_xmp():
-    img = _iptc_xmp(("Maria Correonero", 0.3))
+    img = _iptc_xmp(("Slate Willow", 0.3))
     gt = identities_for_image(img, source="localwp", filename="whatever.jpg")
-    assert gt.present_identities == ["Maria Correonero"] and gt.face_count == 1
+    assert gt.present_identities == ["Slate Willow"] and gt.face_count == 1
 
 
 def test_stranger_source_has_no_identity_but_counts_faces():

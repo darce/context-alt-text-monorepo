@@ -212,10 +212,10 @@ def score_caption(
     # hallucination check); present identities are never counted against it.
     #
     # Trap matching is TOKEN-level (ALTQ-1-REV-B-01): a caption saying just
-    # "Ryann" must trip the "Ryann Wiseman" trap — full-name-only matching reads
+    # "Muted" must trip the "Muted Yarrow" trap — full-name-only matching reads
     # as perfect distractor resistance while the model names the wrong person.
     # Tokens shared with a present identity (family surname) are excluded so a
-    # correct "Caitlin Weaver" never trips a "Ryann Weaver" trap [GRPH-18].
+    # correct "Russet Fathom" never trips a "Muted Weaver" trap [GRPH-18].
     # Insertion credit above stays full-name (strict): credit requires the whole
     # name; a violation triggers on any distinctive fragment — asymmetric by
     # design, erring toward the gate.

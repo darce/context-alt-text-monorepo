@@ -328,7 +328,7 @@ describe('RosterEntriesTable', () => {
           representative_identity: {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
-            media_url: 'https://example.com/sarah-rep.jpg',
+            media_url: 'https://example.com/opaline-rep.jpg',
             bbox: null,
             similarity: 0.95,
           },
@@ -362,7 +362,7 @@ describe('RosterEntriesTable', () => {
           representative_identity: {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
-            media_url: 'https://example.com/sarah-rep.jpg',
+            media_url: 'https://example.com/opaline-rep.jpg',
             bbox: { x: 10, y: 20, width: 30, height: 40 },
             similarity: 0.95,
           },

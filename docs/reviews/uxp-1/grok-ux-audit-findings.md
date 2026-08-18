@@ -91,7 +91,7 @@ Collapse is driven by **findings presence**, not a dedicated “job completed”
 | Create guard | `class-api.php` `create_person` ~L495–520 | Exact-match `WHERE name = %s` → 409 if exists. |
 | Other ingress | Cluster commit / label paths can create or bind persons; collation may allow case variants; remote projection/sync can reintroduce rows if history diverged |
 
-**Answer:** UI groups by person id, not display label. Duplicate “Tory Guzman” rows imply **two person rows** (or projection rows), not a roster grouping bug that fails to collapse equals. No merge-on-display logic exists.
+**Answer:** UI groups by person id, not display label. Duplicate “Flaxen Yarrow” rows imply **two person rows** (or projection rows), not a roster grouping bug that fails to collapse equals. No merge-on-display logic exists.
 
 ### 10. Roster “Entries” vs “Clusters” tabs
 

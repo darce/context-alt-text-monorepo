@@ -372,7 +372,7 @@ def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
 _SEED_MANIFEST = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
 
 # Operator-designated stranger fixture (VLM-2C Slice 1 confirmation pass):
-# ryann-party.jpg — Ryann Wiseman + one genuine non-roster face on a
+# muted-party.jpg — Muted Yarrow + one genuine non-roster face on a
 # recognition-enabled scene (the mixed true-rejection case E19-4a consumes).
 _DESIGNATED_STRANGER_MEDIA_ID = 38
 
@@ -393,8 +393,8 @@ def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
         "missing or no longer carries a stranger delta"
     )
     entry = designated[0]
-    assert entry.path == "mock_images/ryann-party.jpg"
-    assert entry.present_identities == ["Ryann Wiseman"]
+    assert entry.path == "mock_images/muted-party.jpg"
+    assert entry.present_identities == ["Muted Yarrow"]
     assert entry.face_count - len(entry.present_identities) == 1
 
 
@@ -406,9 +406,9 @@ def test_seed_corpus_reconciles_with_fixture_scan():  # VLM-2C S1
 
     draft, _notes = generate_draft_manifest(images_dir)
     manifest = _load_seed_manifest()
-    # kirstie-boat_detected.jpg is a detection-annotated near-duplicate VLM-2A
+    # auburn-boat_detected.jpg is a detection-annotated near-duplicate VLM-2A
     # removed deliberately (seed/README.md); the draft scan re-introduces it.
-    excluded = {"mock_images/kirstie-boat_detected.jpg"}
+    excluded = {"mock_images/auburn-boat_detected.jpg"}
     draft_paths = {e["path"] for e in draft["entries"]}
     assert excluded <= draft_paths, (
         "excluded near-duplicate missing from fixture scan — exclusion is vacuous; "

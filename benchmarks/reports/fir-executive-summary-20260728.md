@@ -118,10 +118,10 @@ Occlusion is where InsightFace's replacement has to win, and it is the one place
 Four levers, in increasing cost:
 
 **(a) Body prior / person cascade — cheapest, no new weights.**
-Detect a *person* with the off-the-shelf cascade, then search for a face in the expected region above the torso instead of across the whole image. This collapses the search space in exactly the hard cases. The motivating case is real and in our corpus: `coral_osborne_271.jpg`, where only part of the left eye is visible and the rest of the face is behind a phone. **If D1 passes, this is the terminal deliverable — the plan explicitly says take the cascade and stop.**
+Detect a *person* with the off-the-shelf cascade, then search for a face in the expected region above the torso instead of across the whole image. This collapses the search space in exactly the hard cases. The motivating case is real and in our corpus: `pewter_hollow_271.jpg`, where only part of the left eye is visible and the rest of the face is behind a phone. **If D1 passes, this is the terminal deliverable — the plan explicitly says take the cascade and stop.**
 
 **(b) COCO keypoints 2017 as a hard-occlusion mining complement.**
-5 of 17 keypoints are facial (nose, eyes, ears). 26.1% clean licence = 30,836 images, 16,513 with a person, 33,193 head-bearing instances. Instances with labelled shoulders/hips but **all facial keypoints v=0** are candidate hard-occlusion positives — the `coral_osborne_271` case as *data*. **Trap:** 51.4% of person instances carry no facial keypoint at all, so keypoint-derived faces are **not** exhaustive ground truth. Tracked as D-05 / D-10 / T-07 (~3 eng-h).
+5 of 17 keypoints are facial (nose, eyes, ears). 26.1% clean licence = 30,836 images, 16,513 with a person, 33,193 head-bearing instances. Instances with labelled shoulders/hips but **all facial keypoints v=0** are candidate hard-occlusion positives — the `pewter_hollow_271` case as *data*. **Trap:** 51.4% of person instances carry no facial keypoint at all, so keypoint-derived faces are **not** exhaustive ground truth. Tracked as D-05 / D-10 / T-07 (~3 eng-h).
 
 **(c) SAM-based occluder compositing — synthetic degradation.**
 SAM segments occluders offline and composites controlled degradation onto clean faces. This supplies a *controlled* difficulty axis for training and ablation. It must **never** be used to define an occlusion stratum for evaluation — synthetic occlusion is not the thing we are measuring.

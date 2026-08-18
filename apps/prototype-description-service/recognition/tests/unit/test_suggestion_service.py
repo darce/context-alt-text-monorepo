@@ -98,7 +98,7 @@ async def test_create_persists_for_user_labeled_clusters() -> None:
     cluster_repo.get_by_id.return_value = IdentityCluster(
         id=cluster_id,
         tenant_id=tenant_id,
-        label="Ryann Wiseman",
+        label="Muted Yarrow",
         is_labeled=True,
         identity_count=10,
         user_confirmed=True,
@@ -225,7 +225,7 @@ async def test_list_pending_enriches_suggested_label_from_inference(monkeypatch:
 
     infer_mock = AsyncMock(
         return_value=SuggestedLabel(
-            label="Maria Correonero",
+            label="Slate Willow",
             source=SuggestedLabelSource.SIMILAR_CLUSTER,
             confidence=0.68,
         )
@@ -236,7 +236,7 @@ async def test_list_pending_enriches_suggested_label_from_inference(monkeypatch:
     pending = await service.list_pending(limit=25, offset=0)
 
     assert len(pending) == 1
-    assert pending[0].suggested_label == "Maria Correonero"
+    assert pending[0].suggested_label == "Slate Willow"
     assert pending[0].suggested_label_source == SuggestedLabelSource.SIMILAR_CLUSTER
     assert pending[0].suggested_label_confidence == 0.68
     infer_mock.assert_awaited_once()

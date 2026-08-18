@@ -3,19 +3,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
+        "alt_text_draft": "Slate Willow crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
+          "caption": "Slate Willow crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 1,
       "path": "mock_images/Brei\u00f0amerkurjo\u0308kull.jpg"
@@ -23,39 +23,39 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Bea Burke, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
+        "alt_text_draft": "Hollow Pennant, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Bea Burke, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
+          "caption": "Hollow Pennant, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her.",
+        "alt_text_draft": "Russet Fathom stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her.",
+          "caption": "Russet Fathom stands hooded in a black rain jacket over a white hydration vest, eyes closed and hair blowing across her face, on a rocky shore with a pale lagoon and snow-patched hills behind her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 3,
       "path": "mock_images/ccqw-antartica.jpg"
@@ -63,19 +63,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
+        "alt_text_draft": "Russet Fathom leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
+          "caption": "Russet Fathom leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 4,
       "path": "mock_images/ccqw-bar.jpg"
@@ -83,40 +83,40 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
+        "alt_text_draft": "Russet Fathom and Muted Current pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver and Erika Hansen Miller pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
+          "caption": "Russet Fathom and Muted Current pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 4,
       "identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera.",
+        "alt_text_draft": "Russet Fathom peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera.",
+          "caption": "Russet Fathom peeks through a bouquet of pink roses, white alstroemeria, and blue delphinium, one eye visible as she reaches a hand toward the camera.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 6,
       "path": "mock_images/ccqw-flowers.jpg"
@@ -124,19 +124,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face.",
+        "alt_text_draft": "Russet Fathom stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face.",
+          "caption": "Russet Fathom stands against a deep blue sky in a mustard scarf, denim jacket, and pink sweater, her long brown hair blowing across her face.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 7,
       "path": "mock_images/ccqw-hair.jpg"
@@ -144,19 +144,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck.",
+        "alt_text_draft": "Russet Fathom holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck.",
+          "caption": "Russet Fathom holds a black rangefinder camera up beside her face, wearing a red knit halter top and a black leather camera strap around her neck.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 8,
       "path": "mock_images/ccqw-occlusion-2.jpg"
@@ -164,19 +164,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame.",
+        "alt_text_draft": "Russet Fathom raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame.",
+          "caption": "Russet Fathom raises a black rangefinder camera to her eye with both hands, hair pulled back, standing before a white wall with stacked books at the edge of the frame.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 9,
       "path": "mock_images/ccqw-occlusion.jpg"
@@ -184,19 +184,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder.",
+        "alt_text_draft": "Russet Fathom looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder.",
+          "caption": "Russet Fathom looks down and to the side in saturated purple-violet light, wearing a blue jacket with loose hair over her shoulder.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 10,
       "path": "mock_images/ccqw-purple.jpg"
@@ -204,19 +204,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
+        "alt_text_draft": "Russet Fathom runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
+          "caption": "Russet Fathom runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 11,
       "path": "mock_images/ccqw-running-2.jpg"
@@ -224,19 +224,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her.",
+        "alt_text_draft": "Russet Fathom runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her.",
+          "caption": "Russet Fathom runs along a coastal road in a pink cap, mirrored sunglasses, and a white race vest with a bib, another runner keeping pace beside her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 2,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 12,
       "path": "mock_images/ccqw-running.jpg"
@@ -244,19 +244,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
+        "alt_text_draft": "Russet Fathom smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
+          "caption": "Russet Fathom smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 13,
       "path": "mock_images/ccqw-sunglasses-flowers.jpg"
@@ -264,19 +264,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
+        "alt_text_draft": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
+          "caption": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 14,
       "path": "mock_images/ccqw-sunglasses.jpg"
@@ -284,19 +284,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
+        "alt_text_draft": "Russet Fathom walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
+          "caption": "Russet Fathom walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 15,
       "path": "mock_images/ccqw-underexposed.jpg"
@@ -304,19 +304,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
+        "alt_text_draft": "Russet Fathom's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
+          "caption": "Russet Fathom's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 16,
       "path": "mock_images/ccqw.blurry.jpg"
@@ -324,39 +324,39 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, red drinks in hand.",
+        "alt_text_draft": "Tidal Harbor poses with two costumed friends against a grey brick wall at a party, red drinks in hand.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Cristina Quintana poses with two costumed friends against a grey brick wall at a party, red drinks in hand.",
+          "caption": "Tidal Harbor poses with two costumed friends against a grey brick wall at a party, red drinks in hand.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 3,
       "identities": [
-        "Cristina Quintana"
+        "Tidal Harbor"
       ],
       "media_id": 17,
-      "path": "mock_images/cristina-1.jpg"
+      "path": "mock_images/tidal-1.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ellyn Heald stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
+        "alt_text_draft": "Gilded Cypress stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ellyn Heald stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
+          "caption": "Gilded Cypress stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "media_id": 18,
       "path": "mock_images/example-ellynheald-goldleaf.jpeg"
@@ -364,19 +364,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Kirstie Mccarrel celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
+        "alt_text_draft": "Auburn Current celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Kirstie Mccarrel celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
+          "caption": "Auburn Current celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 2,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 19,
       "path": "mock_images/k.mcc-1.jpg"
@@ -384,52 +384,52 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Kirstie Mccarrel kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
+        "alt_text_draft": "Auburn Current kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Kirstie Mccarrel kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
+          "caption": "Auburn Current kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 20,
-      "path": "mock_images/kirstie-1.jpeg"
+      "path": "mock_images/auburn-1.jpeg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Kirstie Mccarrel sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
+        "alt_text_draft": "Auburn Current sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Kirstie Mccarrel sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
+          "caption": "Auburn Current sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 3,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg"
+      "path": "mock_images/auburn-boat.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Kirstie Mccarrel in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie.",
+        "alt_text_draft": "Auburn Current in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Kirstie Mccarrel in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie.",
+          "caption": "Auburn Current in a tan NY baseball cap and aviator sunglasses lies beside Daniel Arce in dark sunglasses on blue checkered beach towels in an overhead beach selfie.",
           "objects": []
         }
       },
@@ -437,70 +437,70 @@
       "face_count": 2,
       "identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
+        "alt_text_draft": "Auburn Current floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Kirstie Mccarrel floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
+          "caption": "Auburn Current floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 24,
-      "path": "mock_images/kirstie-pool.jpg"
+      "path": "mock_images/auburn-pool.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Liam Maloney, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
+        "alt_text_draft": "Linen Kestrel, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Liam Maloney, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
+          "caption": "Linen Kestrel, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "media_id": 25,
-      "path": "mock_images/liam-maloney-2.jpg"
+      "path": "mock_images/linen-kestrel-2.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Liam Maloney takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him.",
+        "alt_text_draft": "Linen Kestrel takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Liam Maloney takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him.",
+          "caption": "Linen Kestrel takes a selfie in his kitchen wearing a faded two-tone cap, wire-rimmed glasses, and a black t-shirt with a yellow Pittsburgh baseball skull graphic, colorful vintage kitchenware shelved behind him.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "media_id": 26,
-      "path": "mock_images/liam-maloney-home.jpg"
+      "path": "mock_images/linen-kestrel-home.jpg"
     },
     {
       "describe": {
@@ -518,84 +518,84 @@
       "face_count": 0,
       "identities": [],
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
+        "alt_text_draft": "Slate Willow, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
+          "caption": "Slate Willow, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 4,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 28,
-      "path": "mock_images/maria-cocktail.jpg"
+      "path": "mock_images/slate-cocktail.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
+        "alt_text_draft": "Slate Willow bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
+          "caption": "Slate Willow bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 3,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 29,
-      "path": "mock_images/maria-party.jpg"
+      "path": "mock_images/slate-party.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water.",
+        "alt_text_draft": "Slate Willow lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water.",
+          "caption": "Slate Willow lounges on a rose-gold glitter mermaid-tail pool float in a red-and-navy bikini, smiling and flashing a peace sign over the bright blue water.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye.",
+        "alt_text_draft": "Slate Willow, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye.",
+          "caption": "Slate Willow, lit in blue and teal and wearing dark lipstick, stretches a black cord to hold a small geometric puzzle toy over one eye.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 31,
       "path": "mock_images/mcm-eye-blocked.jpg"
@@ -603,19 +603,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee.",
+        "alt_text_draft": "Slate Willow crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee.",
+          "caption": "Slate Willow crouches on wet rocks inside a dark glacial ice cave wearing a white helmet with a headlamp, a fur-hooded black parka, and crampon-fitted boots, a DSLR camera resting at her knee.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 32,
       "path": "mock_images/mcm-icecave.jpg"
@@ -623,19 +623,19 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
+        "alt_text_draft": "Slate Willow climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
+          "caption": "Slate Willow climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 33,
       "path": "mock_images/mcm-planecrash.jpg"
@@ -679,62 +679,62 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
+        "alt_text_draft": "Muted Yarrow stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
+          "caption": "Muted Yarrow stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 1,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
+        "alt_text_draft": "Muted Yarrow celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
+          "caption": "Muted Yarrow celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 6,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them.",
+        "alt_text_draft": "Muted Yarrow, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them.",
         "cached": false,
         "model_id": "seeded-fixtures",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them.",
+          "caption": "Muted Yarrow, wearing a white lace bralette with layered pearl necklaces, sits on a couch beside a dark-haired friend in a black corset with a white feather boa, framed pictures and a red clock on the wall behind them.",
           "objects": []
         }
       },
       "error": null,
       "face_count": 2,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg"
+      "path": "mock_images/muted-party.jpg"
     }
   ],
   "kind": "run_record",

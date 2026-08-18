@@ -68,7 +68,7 @@ const buildCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabele
   is_auto_label: false,
   identity_count: 3,
   user_confirmed: false,
-  suggested_label: 'Maria Correonero',
+  suggested_label: 'Slate Willow',
   suggested_label_source: 'similar_cluster',
   suggested_label_confidence: 0.62,
   suggested_target_cluster_id: 'cluster-target',

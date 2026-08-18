@@ -93,7 +93,7 @@ def test_celebs_stay_publishable_despite_carrying_an_xmp_name():
 
 def test_named_personal_uploads_are_never_publishable():
     # The 219 XMP-named personal photos are local-only.
-    assert is_public_figure_root(rec(xmp_names=["Maria Correonero"]), Source.LOCALWP_UPLOADS) is False
+    assert is_public_figure_root(rec(xmp_names=["Slate Willow"]), Source.LOCALWP_UPLOADS) is False
 
 
 # --- bucketing ---------------------------------------------------------------

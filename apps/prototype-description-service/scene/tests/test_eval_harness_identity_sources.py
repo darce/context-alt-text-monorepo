@@ -12,7 +12,7 @@ from scripts.eval_harness.identity_sources import (
 
 _UPLOADS = os.path.expanduser("~/Development/wp-context-alt-text/app/public/wp-content/uploads")
 
-# A real plugin-written region image (Tory Guzman) discovered during S1 recon.
+# A real plugin-written region image (Flaxen Yarrow) discovered during S1 recon.
 _REAL_XMP_IMG = os.path.join(_UPLOADS, "2025/12/28514407_10156297712651133_2186204419637901683_o.jpg")
 
 
@@ -89,7 +89,7 @@ _IPTC_XMP = """<x:xmpmeta xmlns:x="adobe:ns:meta/">
       <Iptc4xmpExt:rbH>0.154</Iptc4xmpExt:rbH>
       <Iptc4xmpExt:rbUnit>relative</Iptc4xmpExt:rbUnit>
      </Iptc4xmpExt:RegionBoundary>
-     <Iptc4xmpExt:Name xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">Tory Guzman</Iptc4xmpExt:Name>
+     <Iptc4xmpExt:Name xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">Flaxen Yarrow</Iptc4xmpExt:Name>
     </rdf:li>
    </rdf:Bag></Iptc4xmpExt:ImageRegion>
   </rdf:Description>
@@ -135,7 +135,7 @@ def test_iptc_region_name_and_box_parsed():
     regions = extract_face_regions(_jpeg_with_xmp(_IPTC_XMP))
     assert len(regions) == 1
     r = regions[0]
-    assert r.name == "Tory Guzman" and r.source == "iptc"
+    assert r.name == "Flaxen Yarrow" and r.source == "iptc"
     assert (round(r.x, 3), round(r.y, 3), round(r.w, 3), round(r.h, 3)) == (0.637, 0.193, 0.178, 0.154)
 
 
@@ -162,7 +162,7 @@ def test_no_xmp_returns_empty():
 
 def test_named_identities_dedup_and_order():
     regions = extract_face_regions(_jpeg_with_xmp(_IPTC_XMP))
-    assert named_identities(regions) == ["Tory Guzman"]
+    assert named_identities(regions) == ["Flaxen Yarrow"]
     assert named_identities([]) == []
 
 
@@ -171,6 +171,10 @@ def test_real_localwp_image_yields_named_region():
     with open(_REAL_XMP_IMG, "rb") as fh:
         regions = extract_face_regions(fh.read())
     named = named_identities(regions)
-    assert "Tory Guzman" in named
+    # The name lives in the image's own XMP, which this repo does not own and
+    # cannot pseudonymize; assert the structure the reader must produce instead
+    # of pinning the subject's real name into a tracked file.
+    assert named, "plugin-written XMP regions should yield at least one named identity"
+    assert all(len(n.split()) >= 2 for n in named), named
     iptc = [r for r in regions if r.source == "iptc" and r.name]
     assert iptc and all(0.0 <= r.x <= 1.0 and 0.0 <= r.w <= 1.0 for r in iptc)

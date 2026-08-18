@@ -412,8 +412,8 @@ def test_stranger_faces_are_not_detection_fps() -> None:
             {
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Ryann and friends.", "visual_facts": {"objects": []}},
-                "identities": ["Ryann Wiseman"],
+                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
+                "identities": ["Muted Yarrow"],
                 "face_count": 3,
                 "error": None,
             }
@@ -424,12 +424,12 @@ def test_stranger_faces_are_not_detection_fps() -> None:
             "path": "mock_images/group.jpg",
             "media_id": 1,
             "face_count": 3,
-            "present_identities": ["Ryann Wiseman"],
+            "present_identities": ["Muted Yarrow"],
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [
-                _named_box("Ryann Wiseman"),
+                _named_box("Muted Yarrow"),
                 _named_box(None, x=0.2),
                 _named_box(None, x=0.8),
             ],

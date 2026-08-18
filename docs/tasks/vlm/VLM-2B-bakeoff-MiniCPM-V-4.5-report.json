@@ -27,13 +27,13 @@
     },
     "identification": {
       "excluded_images": [
-        "mock_images/maria-pool.jpg"
+        "mock_images/slate-pool.jpg"
       ],
       "ignored_wrong_names": [],
       "macro_precision": null,
       "macro_recall": 0.0,
       "per_identity": {
-        "Caitlin Weaver": {
+        "Russet Fathom": {
           "fn": 1,
           "fp": 0,
           "precision": null,
@@ -47,21 +47,21 @@
           "recall": 0.0,
           "tp": 0
         },
-        "Kirstie Mccarrel": {
+        "Auburn Current": {
           "fn": 1,
           "fp": 0,
           "precision": null,
           "recall": 0.0,
           "tp": 0
         },
-        "Maria Correonero": {
+        "Slate Willow": {
           "fn": 1,
           "fp": 0,
           "precision": null,
           "recall": 0.0,
           "tp": 0
         },
-        "Ryann Wiseman": {
+        "Muted Yarrow": {
           "fn": 1,
           "fp": 0,
           "precision": null,
@@ -77,24 +77,24 @@
   },
   "failures": [
     {
-      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to figure out the alt text for this image. Hmm, let me start by understanding the steps involved here. First, the image shows a person taking a selfie in a bathroom mirror. They\\'re wearing a tiara that says \"100 YEAR SURPRISE,\" a blue crop top, white pants, and holding a phone with a glittery case. Their hair is long and blonde, and they have a scrunchie on their wrist. The bathroom has a bathtub, a towel, and some shelves with toiletries.\\n\\nWait, but the context block says \"Bea Burke at the science fair.\" That seems to conflict with the image content. The image doesn\\'t show a science fair, but the context mentions Bea Burke volunteering as a judge there. Since the context is provided as trusted editorial metadata, maybe I should include that information even if it doesn\\'t match the image? Or should I focus strictly on what\\'s visible?\\n\\nLet me check the instructions again. It says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it; treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\"\\n\\nSo even though the image doesn\\'t show a science fair, the context says Bea Burke is at the science fair. But the image shows a person in a bathroom with a tiara. Wait, maybe the context is for a different image? Or perhaps there\\'s a mix-up? Wait, no, the user provided the image and the context block. Let me make sure I\\'m not missing anything.\\n\\nWait, the context block says: \"caption: Bea Burke at the science fair. description: Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running.\" But the image shows someone taking a selfie in a bathroom. That seems contradictory. Maybe the context is for a different image, but the user wants me to use the context as provided? Hmm, maybe the context is meant to be associated with the image, but the image doesn\\'t match. Wait, perhaps the context is for a different image, but the user wants me to use the context as given. Wait, no, the instruction says \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it; treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\"\\n\\n'}}], 'created': 1783451276, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 815, 'total_tokens': 1327, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-CQ5JPudipgzKtY2LuSDo1oDRZGGGcNhS', 'timings': {'cache_n': 99, 'prompt_n': 716, 'prompt_ms': 203218.125, 'prompt_per_token_ms': 283.8241969273743, 'prompt_per_second': 3.5233077758197013, 'predicted_n': 512, 'predicted_ms': 144979.761, 'predicted_per_token_ms': 283.163595703125, 'predicted_per_second': 3.5315274109191006}}",
+      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to figure out the alt text for this image. Hmm, let me start by understanding the steps involved here. First, the image shows a person taking a selfie in a bathroom mirror. They\\'re wearing a tiara that says \"100 YEAR SURPRISE,\" a blue crop top, white pants, and holding a phone with a glittery case. Their hair is long and blonde, and they have a scrunchie on their wrist. The bathroom has a bathtub, a towel, and some shelves with toiletries.\\n\\nWait, but the context block says \"Hollow Pennant at the science fair.\" That seems to conflict with the image content. The image doesn\\'t show a science fair, but the context mentions Hollow Pennant volunteering as a judge there. Since the context is provided as trusted editorial metadata, maybe I should include that information even if it doesn\\'t match the image? Or should I focus strictly on what\\'s visible?\\n\\nLet me check the instructions again. It says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it; treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\"\\n\\nSo even though the image doesn\\'t show a science fair, the context says Hollow Pennant is at the science fair. But the image shows a person in a bathroom with a tiara. Wait, maybe the context is for a different image? Or perhaps there\\'s a mix-up? Wait, no, the user provided the image and the context block. Let me make sure I\\'m not missing anything.\\n\\nWait, the context block says: \"caption: Hollow Pennant at the science fair. description: Hollow Pennant volunteered as a judge at the regional science fair; she has judged the fair three years running.\" But the image shows someone taking a selfie in a bathroom. That seems contradictory. Maybe the context is for a different image, but the user wants me to use the context as provided? Hmm, maybe the context is meant to be associated with the image, but the image doesn\\'t match. Wait, perhaps the context is for a different image, but the user wants me to use the context as given. Wait, no, the instruction says \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it; treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\"\\n\\n'}}], 'created': 1783451276, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 815, 'total_tokens': 1327, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-CQ5JPudipgzKtY2LuSDo1oDRZGGGcNhS', 'timings': {'cache_n': 99, 'prompt_n': 716, 'prompt_ms': 203218.125, 'prompt_per_token_ms': 283.8241969273743, 'prompt_per_second': 3.5233077758197013, 'predicted_n': 512, 'predicted_ms': 144979.761, 'predicted_per_token_ms': 283.163595703125, 'predicted_per_second': 3.5315274109191006}}",
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
-      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write alt text for the image based on the context provided. Hmm, let me start by understanding the steps involved here. First, I should look at the context block to get the details about who is in the photo. The caption says Caitlin Weaver and Erika Hansen Miller with friends, and the description mentions the other two people asked not to be named. So, the main subjects are Caitlin and Erika, and the others are unnamed.\\n\\nNow, the image itself shows a group of people, but since the context specifies who is named and who isn\\'t, I need to make sure the alt text reflects that. The image is upside down, so the people are reflected in a mirror, and there\\'s a bright light source. Let me check the context again to make sure I have all the details right.\\n\\nSo, the alt text should mention Caitlin Weaver and Erika Hansen Miller, and note that the other two people are unnamed. Also, the image is upside down with a mirror reflection and a bright light. Let me put that all together in a clear sentence or two.\\n\\nWait, let me make sure I\\'m not missing anything. The context says \"Caitlin Weaver and Erika Hansen Miller with friends,\" and the description adds that the other two people asked not to be named. So in the alt text, I should state that Caitlin Weaver and Erika Hansen Miller are present, and the other two are unnamed. Also, the image is upside down, showing a mirror reflection with a bright light source.\\n\\nLet me draft the alt text: \"Caitlin Weaver and Erika Hansen Miller are visible in an upside-down photo with friends; the other two people in the photo asked not to be named.\" Wait, but the image shows the group, so maybe mention the mirror reflection and the light. Let me check the context again. The context says \"Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.\" So the alt text should include that they met up downtown, but wait, the image might not show that, but the context is trusted. Wait, the context says \"Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.\" So the alt text should mention that they met up downtown, but the image might not show the location, but the context is editorial metadata. Wait, but the user says to describe only what is visible in the'}}], 'created': 1783451625, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 823, 'total_tokens': 1335, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-wKQOEaYqjLoY5fqs5JjaOWVyqhStFjLV', 'timings': {'cache_n': 99, 'prompt_n': 724, 'prompt_ms': 202689.708, 'prompt_per_token_ms': 279.9581602209945, 'prompt_per_second': 3.5719623218362915, 'predicted_n': 512, 'predicted_ms': 145545.002, 'predicted_per_token_ms': 284.26758203125, 'predicted_per_second': 3.5178123120984943}}",
+      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write alt text for the image based on the context provided. Hmm, let me start by understanding the steps involved here. First, I should look at the context block to get the details about who is in the photo. The caption says Russet Fathom and Muted Current with friends, and the description mentions the other two people asked not to be named. So, the main subjects are Russet and Candid, and the others are unnamed.\\n\\nNow, the image itself shows a group of people, but since the context specifies who is named and who isn\\'t, I need to make sure the alt text reflects that. The image is upside down, so the people are reflected in a mirror, and there\\'s a bright light source. Let me check the context again to make sure I have all the details right.\\n\\nSo, the alt text should mention Russet Fathom and Muted Current, and note that the other two people are unnamed. Also, the image is upside down with a mirror reflection and a bright light. Let me put that all together in a clear sentence or two.\\n\\nWait, let me make sure I\\'m not missing anything. The context says \"Russet Fathom and Muted Current with friends,\" and the description adds that the other two people asked not to be named. So in the alt text, I should state that Russet Fathom and Muted Current are present, and the other two are unnamed. Also, the image is upside down, showing a mirror reflection with a bright light source.\\n\\nLet me draft the alt text: \"Russet Fathom and Muted Current are visible in an upside-down photo with friends; the other two people in the photo asked not to be named.\" Wait, but the image shows the group, so maybe mention the mirror reflection and the light. Let me check the context again. The context says \"Russet Fathom and Muted Current met up downtown; the other two people in the photo asked not to be named.\" So the alt text should include that they met up downtown, but wait, the image might not show that, but the context is trusted. Wait, the context says \"Russet Fathom and Muted Current met up downtown; the other two people in the photo asked not to be named.\" So the alt text should mention that they met up downtown, but the image might not show the location, but the context is editorial metadata. Wait, but the user says to describe only what is visible in the'}}], 'created': 1783451625, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 823, 'total_tokens': 1335, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-wKQOEaYqjLoY5fqs5JjaOWVyqhStFjLV', 'timings': {'cache_n': 99, 'prompt_n': 724, 'prompt_ms': 202689.708, 'prompt_per_token_ms': 279.9581602209945, 'prompt_per_second': 3.5719623218362915, 'predicted_n': 512, 'predicted_ms': 145545.002, 'predicted_per_token_ms': 284.26758203125, 'predicted_per_second': 3.5178123120984943}}",
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
-      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write the alt text for the image based on the context provided. Hmm, let me start by understanding the steps involved here. First, I should look at the image itself and note the details: it\\'s a framed abstract painting, likely in grayscale or muted tones, showing a figure with a jacket and some geometric shapes. Then, I need to incorporate the context details—title, caption, description—without guessing or conflicting with what\\'s visible.\\n\\nLet me check the context block again. The title is \"Untitled No. 7,\" the caption says it\\'s an abstract painting by Liam Maloney, and the description states it was painted in 2024 for a group show at the riverside gallery, using oil on linen. So, the alt text should mention the title, the artist, the year, the medium, and the context of the show.\\n\\nWait, the image shows a framed abstract painting. The context says it\\'s oil on linen, so the medium is oil paint on linen canvas. The artist is Liam Maloney, and the piece is titled \"Untitled No. 7.\" It was created in 2024 for a group show at the riverside gallery.\\n\\nLet me make sure the alt text is clear and includes all the relevant details from the context without adding anything that\\'s not visible. The image is a framed abstract painting, likely in grayscale or muted tones, showing a figure with a jacket and some geometric shapes. The context adds the title, artist, year, medium, and exhibition details.\\n\\nSo, putting it all together, the alt text should describe the image as a framed abstract painting, mention the title, the artist, the year, the medium, and the context of the show. Let me structure that carefully.\\n\\nThe alt text should be: A framed abstract painting titled \"Untitled No. 7\" by Liam Maloney, painted in 2024 for a group show at the riverside gallery, executed in oil on linen. The painting features a figure with a jacket and geometric shapes in muted tones.\\n\\nWait, let me check if that covers everything. The context says \"abstract painting by Liam Maloney,\" so the alt text should include the artist\\'s name. The title is \"Untitled No. 7,\" so that\\'s part of the description. The year is 2024, the medium is oil on linen, and the context is the group show at the riverside gallery. The image shows a framed piece with a figure and geometric'}}], 'created': 1783452824, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 634, 'total_tokens': 1146, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-SDS2c5V8yLdM8X3xqV0BXyA2FtxY5JRa', 'timings': {'cache_n': 99, 'prompt_n': 535, 'prompt_ms': 142700.053, 'prompt_per_token_ms': 266.7290710280374, 'prompt_per_second': 3.749122643983881, 'predicted_n': 512, 'predicted_ms': 139023.516, 'predicted_per_token_ms': 271.5303046875, 'predicted_per_second': 3.6828301767306764}}",
+      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write the alt text for the image based on the context provided. Hmm, let me start by understanding the steps involved here. First, I should look at the image itself and note the details: it\\'s a framed abstract painting, likely in grayscale or muted tones, showing a figure with a jacket and some geometric shapes. Then, I need to incorporate the context details—title, caption, description—without guessing or conflicting with what\\'s visible.\\n\\nLet me check the context block again. The title is \"Untitled No. 7,\" the caption says it\\'s an abstract painting by Linen Kestrel, and the description states it was painted in 2024 for a group show at the riverside gallery, using oil on linen. So, the alt text should mention the title, the artist, the year, the medium, and the context of the show.\\n\\nWait, the image shows a framed abstract painting. The context says it\\'s oil on linen, so the medium is oil paint on linen canvas. The artist is Linen Kestrel, and the piece is titled \"Untitled No. 7.\" It was created in 2024 for a group show at the riverside gallery.\\n\\nLet me make sure the alt text is clear and includes all the relevant details from the context without adding anything that\\'s not visible. The image is a framed abstract painting, likely in grayscale or muted tones, showing a figure with a jacket and some geometric shapes. The context adds the title, artist, year, medium, and exhibition details.\\n\\nSo, putting it all together, the alt text should describe the image as a framed abstract painting, mention the title, the artist, the year, the medium, and the context of the show. Let me structure that carefully.\\n\\nThe alt text should be: A framed abstract painting titled \"Untitled No. 7\" by Linen Kestrel, painted in 2024 for a group show at the riverside gallery, executed in oil on linen. The painting features a figure with a jacket and geometric shapes in muted tones.\\n\\nWait, let me check if that covers everything. The context says \"abstract painting by Linen Kestrel,\" so the alt text should include the artist\\'s name. The title is \"Untitled No. 7,\" so that\\'s part of the description. The year is 2024, the medium is oil on linen, and the context is the group show at the riverside gallery. The image shows a framed piece with a figure and geometric'}}], 'created': 1783452824, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 634, 'total_tokens': 1146, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-SDS2c5V8yLdM8X3xqV0BXyA2FtxY5JRa', 'timings': {'cache_n': 99, 'prompt_n': 535, 'prompt_ms': 142700.053, 'prompt_per_token_ms': 266.7290710280374, 'prompt_per_second': 3.749122643983881, 'predicted_n': 512, 'predicted_ms': 139023.516, 'predicted_per_token_ms': 271.5303046875, 'predicted_per_second': 3.6828301767306764}}",
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
-      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write alt text for the image. Hmm, let me start by understanding the steps involved here. First, I should look at the image itself and note the details: the person, the setting, the objects present. Then, I need to make sure the alt text is clear and descriptive, focusing on what\\'s visible. The context block says it\\'s Ryann Wiseman at a neighborhood bar after work on a Friday evening. Wait, but the image shows a woman with long, wavy hair, wearing a black crop top and a sheer black skirt with a pattern. She\\'s holding a drink with a lemon slice, standing next to a marble table with a candle. There\\'s a pink poster of the Pink Panther with \"RASPBERRY OAT MILK\" text, a mirror, a radiator, and a metal stool. \\n\\nLet me make sure the alt text includes all these elements. The context mentions Ryann Wiseman, but the image doesn\\'t show her name, so I should focus on the visual details. Wait, the context says \"Ryann Wiseman at the neighborhood bar,\" but the image might not explicitly show her name. Wait, the user\\'s instruction is to describe only what\\'s visible. So maybe the context is just for background, but the alt text should be based on the image content. Wait, no, the user says \"treat it as trusted editorial metadata,\" so maybe the context is part of the alt text? Wait, the user\\'s instruction says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it. Treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\" Wait, so maybe the context is part of the alt text? Let me check the exact wording. The user says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it. Treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\" So the context is provided as metadata, and the alt text should include the names and details from the context where possible. Wait, but the image might not show the name, but the context says it\\'s Ryann Wiseman. Hmm, maybe the alt text should mention Ryann Wiseman as per the context, even if the image doesn\\'t show her name? Wait, the user\\'s'}}], 'created': 1783453175, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 812, 'total_tokens': 1324, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-XsuiQHj6ktCMTBNXKOmmztSwOTsldiZ2', 'timings': {'cache_n': 99, 'prompt_n': 713, 'prompt_ms': 204687.905, 'prompt_per_token_ms': 287.07981065918653, 'prompt_per_second': 3.483351886375504, 'predicted_n': 512, 'predicted_ms': 145517.578, 'predicted_per_token_ms': 284.21401953125, 'predicted_per_second': 3.5184752731384794}}",
+      "error": "RemoteClientError: chat completion returned empty caption: {'choices': [{'finish_reason': 'length', 'index': 0, 'message': {'role': 'assistant', 'content': '', 'reasoning_content': 'Okay, so I need to write alt text for the image. Hmm, let me start by understanding the steps involved here. First, I should look at the image itself and note the details: the person, the setting, the objects present. Then, I need to make sure the alt text is clear and descriptive, focusing on what\\'s visible. The context block says it\\'s Muted Yarrow at a neighborhood bar after work on a Friday evening. Wait, but the image shows a woman with long, wavy hair, wearing a black crop top and a sheer black skirt with a pattern. She\\'s holding a drink with a lemon slice, standing next to a marble table with a candle. There\\'s a pink poster of the Pink Panther with \"RASPBERRY OAT MILK\" text, a mirror, a radiator, and a metal stool. \\n\\nLet me make sure the alt text includes all these elements. The context mentions Muted Yarrow, but the image doesn\\'t show her name, so I should focus on the visual details. Wait, the context says \"Muted Yarrow at the neighborhood bar,\" but the image might not explicitly show her name. Wait, the user\\'s instruction is to describe only what\\'s visible. So maybe the context is just for background, but the alt text should be based on the image content. Wait, no, the user says \"treat it as trusted editorial metadata,\" so maybe the context is part of the alt text? Wait, the user\\'s instruction says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it. Treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\" Wait, so maybe the context is part of the alt text? Let me check the exact wording. The user says: \"Describe only what is visible in the image, in 2-4 plain sentences. A context block may accompany it. Treat it as trusted editorial metadata. Weave the people\\'s names and factual details it supplies into the description where they fit naturally.\" So the context is provided as metadata, and the alt text should include the names and details from the context where possible. Wait, but the image might not show the name, but the context says it\\'s Muted Yarrow. Hmm, maybe the alt text should mention Muted Yarrow as per the context, even if the image doesn\\'t show her name? Wait, the user\\'s'}}], 'created': 1783453175, 'model': 'models/MiniCPM-V-4_5-Q4_K_M.gguf', 'system_fingerprint': 'b9893-6f8895fee', 'object': 'chat.completion', 'usage': {'completion_tokens': 512, 'prompt_tokens': 812, 'total_tokens': 1324, 'prompt_tokens_details': {'cached_tokens': 99}}, 'id': 'chatcmpl-XsuiQHj6ktCMTBNXKOmmztSwOTsldiZ2', 'timings': {'cache_n': 99, 'prompt_n': 713, 'prompt_ms': 204687.905, 'prompt_per_token_ms': 287.07981065918653, 'prompt_per_second': 3.483351886375504, 'predicted_n': 512, 'predicted_ms': 145517.578, 'predicted_per_token_ms': 284.21401953125, 'predicted_per_second': 3.5184752731384794}}",
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     }
   ],
   "kind": "report",
@@ -112,7 +112,7 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 3,
       "meta_framing_hits": [],
@@ -135,7 +135,7 @@
       "hallucinated_names": [],
       "inserted_identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 23,
       "meta_framing_hits": [
@@ -144,7 +144,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.24,
       "sentence_count": 3,
@@ -159,7 +159,7 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 37,
       "meta_framing_hits": [
@@ -168,7 +168,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2267,
       "sentence_count": 4,
@@ -188,11 +188,11 @@
         "the scene captures"
       ],
       "missing_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "must_right_failures": [],
       "name_front_loaded": null,
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2449,
       "sentence_count": 2,
@@ -210,10 +210,10 @@
       "media_id": 33,
       "meta_framing_hits": [],
       "missing_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "must_right_failures": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "name_front_loaded": false,
       "path": "mock_images/mcm-planecrash.jpg",

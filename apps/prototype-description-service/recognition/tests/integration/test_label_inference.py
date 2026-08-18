@@ -325,7 +325,7 @@ async def test_infer_suggested_label_from_accepted_member_suggestion_without_rep
     labeled_cluster = IdentityCluster(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
-        label="Maria Correonero",
+        label="Slate Willow",
         identity_count=10,
         user_confirmed=True,
     )
@@ -353,7 +353,7 @@ async def test_infer_suggested_label_from_accepted_member_suggestion_without_rep
     )
 
     assert result is not None
-    assert result.label == "Maria Correonero"
+    assert result.label == "Slate Willow"
     assert result.source == SuggestedLabelSource.IDENTITY
     assert result.target_cluster_id == str(labeled_cluster.id)
 

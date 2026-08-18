@@ -2,16 +2,16 @@
   "manifest_version": 3,
   "annotation_mode": "roster_only",
   "roster": [
-    "Bea Burke",
-    "Caitlin Weaver",
-    "Cristina Quintana",
+    "Hollow Pennant",
+    "Russet Fathom",
+    "Tidal Harbor",
     "Daniel Arce",
-    "Ellyn Heald",
-    "Erika Hansen Miller",
-    "Kirstie Mccarrel",
-    "Liam Maloney",
-    "Maria Correonero",
-    "Ryann Wiseman"
+    "Gilded Cypress",
+    "Muted Current",
+    "Auburn Current",
+    "Linen Kestrel",
+    "Slate Willow",
+    "Muted Yarrow"
   ],
   "entries": [
     {
@@ -20,18 +20,18 @@
       "media_id": 3,
       "face_count": 1,
       "present_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "context_pack": {
         "title": "Antarctica expedition",
-        "caption": "Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.",
-        "description": "Caitlin Weaver reached the peninsula by icebreaker after a two-day crossing of the Drake Passage."
+        "caption": "Russet Fathom on the Antarctic peninsula during her 2023 research residency.",
+        "description": "Russet Fathom reached the peninsula by icebreaker after a two-day crossing of the Drake Passage."
       },
       "must_right": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "easy_wrong": [
-        "Erika Hansen Miller"
+        "Muted Current"
       ],
       "policy": {
         "recognition_enabled": true
@@ -39,8 +39,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Caitlin Weaver",
-          "fact_id": "identity:cluster:cluster-caitlin-weaver",
+          "fact_label": "Russet Fathom",
+          "fact_id": "identity:cluster:cluster-russet-fathom",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -55,22 +55,22 @@
       }
     },
     {
-      "path": "mock_images/bea-nye.jpg",
+      "path": "mock_images/quiet-nye.jpg",
       "sha256": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
       "media_id": 2,
       "face_count": 1,
       "present_identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "context_pack": {
-        "caption": "Bea Burke at the science fair.",
-        "description": "Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running."
+        "caption": "Hollow Pennant at the science fair.",
+        "description": "Hollow Pennant volunteered as a judge at the regional science fair; she has judged the fair three years running."
       },
       "must_right": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "easy_wrong": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "policy": {
         "recognition_enabled": true
@@ -78,8 +78,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Bea Burke",
-          "fact_id": "identity:cluster:cluster-bea-burke",
+          "fact_label": "Hollow Pennant",
+          "fact_id": "identity:cluster:cluster-hollow-pennant",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -94,24 +94,24 @@
       }
     },
     {
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
       "media_id": 5,
       "face_count": 4,
       "present_identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "context_pack": {
-        "caption": "Caitlin Weaver and Erika Hansen Miller with friends.",
-        "description": "Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named."
+        "caption": "Russet Fathom and Muted Current with friends.",
+        "description": "Russet Fathom and Muted Current met up downtown; the other two people in the photo asked not to be named."
       },
       "must_right": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "easy_wrong": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "policy": {
         "recognition_enabled": true
@@ -119,8 +119,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Caitlin Weaver",
-          "fact_id": "identity:cluster:cluster-caitlin-weaver",
+          "fact_label": "Russet Fathom",
+          "fact_id": "identity:cluster:cluster-russet-fathom",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -128,8 +128,8 @@
         },
         {
           "fact_source": "identity",
-          "fact_label": "Erika Hansen Miller",
-          "fact_id": "identity:cluster:cluster-erika-hansen-miller",
+          "fact_label": "Muted Current",
+          "fact_id": "identity:cluster:cluster-muted-current",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -144,21 +144,21 @@
       }
     },
     {
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "sha256": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603",
       "media_id": 23,
       "face_count": 2,
       "present_identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "context_pack": {
-        "caption": "Kirstie Mccarrel and Daniel Arce on vacation.",
-        "description": "Kirstie Mccarrel and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day."
+        "caption": "Auburn Current and Daniel Arce on vacation.",
+        "description": "Auburn Current and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day."
       },
       "must_right": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "easy_wrong": [],
       "policy": {
@@ -176,8 +176,8 @@
         },
         {
           "fact_source": "identity",
-          "fact_label": "Kirstie Mccarrel",
-          "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
+          "fact_label": "Auburn Current",
+          "fact_id": "identity:cluster:cluster-auburn-current",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -192,22 +192,22 @@
       }
     },
     {
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "sha256": "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
       "media_id": 37,
       "face_count": 6,
       "present_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "context_pack": {
-        "caption": "Ryann Wiseman celebrating with friends.",
-        "description": "Ryann Wiseman hosted the birthday party; the guests around her are coworkers who are not on the site roster."
+        "caption": "Muted Yarrow celebrating with friends.",
+        "description": "Muted Yarrow hosted the birthday party; the guests around her are coworkers who are not on the site roster."
       },
       "must_right": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "easy_wrong": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "policy": {
         "recognition_enabled": true
@@ -215,8 +215,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Ryann Wiseman",
-          "fact_id": "identity:cluster:cluster-ryann-wiseman",
+          "fact_label": "Muted Yarrow",
+          "fact_id": "identity:cluster:cluster-muted-yarrow",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -231,12 +231,12 @@
       }
     },
     {
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "sha256": "4b98847d196ea19d6fc1181f0f16533c61ef6dfe8ba0da18bfc13d77afc404c1",
       "media_id": 30,
       "face_count": 1,
       "present_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "context_pack": {
         "caption": "An afternoon at the hotel pool.",
@@ -256,18 +256,18 @@
       }
     },
     {
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "sha256": "4e9ecee469b6a48a55c95e6a32688498d7065b2ba403eb697f06ddb65a541416",
       "media_id": 27,
       "face_count": 0,
       "present_identities": [],
       "context_pack": {
         "title": "Untitled No. 7",
-        "caption": "Abstract painting by Liam Maloney.",
-        "description": "Liam Maloney painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen."
+        "caption": "Abstract painting by Linen Kestrel.",
+        "description": "Linen Kestrel painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen."
       },
       "must_right": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "easy_wrong": [],
       "policy": {
@@ -276,8 +276,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Liam Maloney",
-          "fact_id": "identity:0:Liam Maloney",
+          "fact_label": "Linen Kestrel",
+          "fact_id": "identity:0:Linen Kestrel",
           "decision": "dropped",
           "altitude": "none",
           "visible": false,
@@ -292,19 +292,19 @@
       }
     },
     {
-      "path": "mock_images/ryann-bar.jpg",
+      "path": "mock_images/muted-bar.jpg",
       "sha256": "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
       "media_id": 36,
       "face_count": 1,
       "present_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "context_pack": {
-        "caption": "Ryann Wiseman at the neighborhood bar.",
-        "description": "Ryann Wiseman stopped by the neighborhood bar after work on a Friday evening."
+        "caption": "Muted Yarrow at the neighborhood bar.",
+        "description": "Muted Yarrow stopped by the neighborhood bar after work on a Friday evening."
       },
       "must_right": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "easy_wrong": [],
       "policy": {
@@ -313,8 +313,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Ryann Wiseman",
-          "fact_id": "identity:cluster:cluster-ryann-wiseman",
+          "fact_label": "Muted Yarrow",
+          "fact_id": "identity:cluster:cluster-muted-yarrow",
           "decision": "object",
           "altitude": "object",
           "visible": true,
@@ -334,11 +334,11 @@
       "media_id": 33,
       "face_count": 1,
       "present_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "context_pack": {
-        "caption": "Maria Correonero at a summer garden picnic.",
-        "description": "Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.",
+        "caption": "Slate Willow at a summer garden picnic.",
+        "description": "Slate Willow at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.",
         "taxonomy_terms": [
           {
             "taxonomy": "event",
@@ -353,12 +353,12 @@
         ],
         "eval_scenario": {
           "undetected_identities": [
-            "Maria Correonero"
+            "Slate Willow"
           ]
         }
       },
       "must_right": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "easy_wrong": [],
       "policy": {
@@ -367,8 +367,8 @@
       "expected_attachments": [
         {
           "fact_source": "identity",
-          "fact_label": "Maria Correonero",
-          "fact_id": "identity:cluster:cluster-maria-correonero",
+          "fact_label": "Slate Willow",
+          "fact_id": "identity:cluster:cluster-slate-willow",
           "decision": "dropped",
           "altitude": "none",
           "visible": false,

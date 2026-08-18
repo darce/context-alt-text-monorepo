@@ -180,7 +180,7 @@ def test_reasoning_tuned_controls_no_think_on_run_argv() -> None:
     assert plans["thinky"].run_argv[-1] == "--no-think"
     assert "--no-think" not in plans["plain"].run_argv
     for plan in plans.values():
-        assert plan.run_argv[:3] == ("python", "-m", "scripts.eval_harness.bakeoff")
+        assert plan.run_argv[:3] == ("python3", "-m", "scripts.eval_harness.bakeoff")
         assert "--two-pass" in plan.run_argv
         assert "--limit" not in plan.run_argv
         assert plan.out_path == f"out/run-bakeoff-{plan.candidate_id}.json"
@@ -336,7 +336,7 @@ def test_run_argv_round_trips_through_bakeoff_parser() -> None:
     plans = build_plans(registry, **_PLAN_KW)
     parser = bakeoff.build_parser()
     for plan in plans:
-        assert plan.run_argv[:3] == ("python", "-m", "scripts.eval_harness.bakeoff")
+        assert plan.run_argv[:3] == ("python3", "-m", "scripts.eval_harness.bakeoff")
         parsed = parser.parse_args(list(plan.run_argv[3:]))
         assert parsed.endpoint == _PLAN_KW["endpoint"]
         assert parsed.model_id == plan.model_id
@@ -350,7 +350,7 @@ def test_report_argv_round_trips_through_report_parser() -> None:
         "qwen-anchor": "/records/qwen-anchor.json",
     }
     argv = _report_argv(plans, incumbents)
-    assert argv[:3] == ["python", "-m", "scripts.eval_harness.build_bakeoff_report"]
+    assert argv[:3] == ["python3", "-m", "scripts.eval_harness.build_bakeoff_report"]
     parsed = build_bakeoff_report.build_parser().parse_args(argv[3:])
     assert parsed.manifest == _PLAN_KW["manifest"]
     assert parsed.limit == 646
@@ -690,3 +690,22 @@ def test_emit_shell_cold_stamp_uses_python3_and_survives_without_python(tmp_path
     assert ran.stdout.startswith("COLD=")
     stamped = ran.stdout.strip().removeprefix("COLD=")
     assert re.fullmatch(r"\d+\.\d", stamped), stamped
+
+
+_BARE_PYTHON_M = re.compile(r"(^|[^0-9a-z_])python -m")
+
+
+def test_plan_and_report_argv_use_python3_not_bare_python() -> None:
+    # VLM6-RV3-Q4-02 residual: GPU host PATH has python3, not bare python.
+    plans = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)
+    assert plans
+    for plan in plans:
+        assert plan.run_argv[0] == "python3"
+        assert plan.run_argv[:3] == ("python3", "-m", "scripts.eval_harness.bakeoff")
+    report_argv = _report_argv(plans, {})
+    assert report_argv[0] == "python3"
+    assert report_argv[:3] == ["python3", "-m", "scripts.eval_harness.build_bakeoff_report"]
+    script = emit_shell(plans, incumbent_runs={})
+    assert _BARE_PYTHON_M.search(script) is None, script
+    assert "python3 -m scripts.eval_harness.bakeoff" in script
+    assert "python3 -m scripts.eval_harness.build_bakeoff_report" in script

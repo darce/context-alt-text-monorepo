@@ -36,6 +36,9 @@ READY_SLEEP_S = 1
 _CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
 _REPORT_MODULE = "scripts.eval_harness.build_bakeoff_report"
 _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
+# Shell is planned on the laptop/VM but executed on the GPU host; sys.executable
+# is the local interpreter path and is meaningless there (Ubuntu ships python3).
+PYTHON_EXE = "python3"
 WARMUP_REQUESTS = 1
 """Discarded first-image requests before scored items, PERF-03."""
 
@@ -373,7 +376,7 @@ def _plan_candidate(
     )
     out_path = _run_out_path(out_dir, entry.id)
     run_argv_list = [
-        "python",
+        PYTHON_EXE,
         "-m",
         _BAKEOFF_MODULE,
         "--endpoint",
@@ -484,7 +487,7 @@ def _report_base_argv(plans: Sequence[CandidatePlan]) -> list[str]:
         manifest = _argv_flag(plans[0].run_argv, "--manifest")
         out_dir = plans[0].out_path.rsplit("/", 1)[0] or DEFAULT_OUT_DIR
     return [
-        "python",
+        PYTHON_EXE,
         "-m",
         _REPORT_MODULE,
         "--manifest",

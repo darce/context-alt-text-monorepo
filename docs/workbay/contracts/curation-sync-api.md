@@ -106,7 +106,7 @@ Timeout expectations:
   - `person_uuid` (null): Explicit null to signal unbinding
   - `person_name` (null): Explicit null because unbind does not carry a local label target
 - Backend behavior: Sets `identity_clusters.roster_id = NULL`, increments `updated_at`, and leaves the replay row at `not_applicable` because no suggestion refresh work is queued
-- Plugin `delete_person` also clears the local cluster `label` and emits `cluster_label_updated` with `label: null` so the backend learns the human label is gone. Dissociated clusters return to the unlabeled queue (`is_user_confirmed = 0`, `curation_state = uncurated`).
+- Plugin `delete_person` also clears the local cluster `label` and emits `cluster_label_updated` with `label: null` so the backend learns the human label is gone. Dissociated clusters return to the unlabeled queue (`is_user_confirmed = 0`, `curation_state = uncurated`). Response includes `clusters_dissociated` (count) and `cluster_ids`. SELECT of affected clusters runs inside `run_transactional`; reset is delegated to `ClusterCurationWriter::reset_curation`.
 - **`cluster_label_updated` with `label: null` is a documented clear.** The backend MUST store `identity_clusters.label = NULL` and MUST NOT 400. Blank/non-string values still reject. Idempotent when the stored label is already NULL.
 
 ### Idempotency Semantics

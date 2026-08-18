@@ -37,7 +37,7 @@ import {
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
+import { dropClusterFromReviewCaches, invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 interface ClusterLabelingPanelProps {
@@ -147,6 +147,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setError(null);
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
+    // UXW2-2 (B6): the labelled cluster's pending rows leave the review caches
+    // now — backend suggestion curation lags the label write.
+    dropClusterFromReviewCaches(queryClient, clusterId);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
     void invalidateSuggestionProjection(queryClient);
@@ -158,6 +161,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
     setLastMerge(result);
+    // UXW2-2 (B6): the merged-away source cluster leaves the review caches now.
+    dropClusterFromReviewCaches(queryClient, clusterId);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
     void invalidateSuggestionProjection(queryClient);

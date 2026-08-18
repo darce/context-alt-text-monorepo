@@ -13,6 +13,7 @@ import {
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchTopUnlabeledClusters,
+  listRecognitionClusters,
   rejectSuggestion,
   updateClusterLabel,
   type PendingSuggestionsResponse,
@@ -37,6 +38,7 @@ import {
   VIEW_IN_ROSTER_HREF,
 } from '../personCommitCopy';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
+import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
@@ -126,6 +128,7 @@ vi.mock('../../../../api/recognition', async () => {
       truncated: false,
     }),
     fetchTopUnlabeledClusters: vi.fn(),
+    listRecognitionClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
     mergeCluster: vi.fn().mockResolvedValue(undefined),
     updateClusterLabel: vi.fn().mockResolvedValue(undefined),
@@ -1606,6 +1609,77 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
+  });
+
+  // UXW2-2 (B6): labelling a cluster from the panel must drop that cluster's
+  // rows from the loaded review caches, so the header count tracks labelling
+  // on panel close without waiting for backend curation (rg-015: no invented
+  // totals — the count is the loaded rows, and the loaded rows must shrink).
+  it('header count decrements after a label commit panel round-trip without a refetch', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-x',
+          cluster_id: 'cluster-x',
+          suggested_name: 'Xavier',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-y',
+          cluster_id: 'cluster-y',
+          suggested_name: 'Yara',
+          confidence_score: 0.8,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      limit: 10,
+      total: 0,
+      truncated: false,
+    });
+
+    const { queryClient } = renderQueue();
+    const countEl = () => document.querySelector('.acx-review-queue__count');
+    await waitFor(() => expect(countEl()).toHaveTextContent('2'));
+    vi.mocked(fetchPendingNameSuggestions).mockClear();
+
+    // Open the labelling panel (ScanTabContent mounts it over the queue).
+    const panel = render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel clusterId="cluster-x" onClose={vi.fn()} onLabel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    const search = screen.getByPlaceholderText('Search people...');
+    await user.type(search, 'Zed Newperson');
+    const createButton = screen.queryByRole('button', { name: /Create "/i });
+    if (createButton) {
+      await user.click(createButton);
+    }
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(updateClusterLabel).toHaveBeenCalledWith('cluster-x', 'Zed Newperson', expect.any(AbortSignal)),
+    );
+
+    // Close the panel; the queue count must already reflect the labelled cluster.
+    panel.unmount();
+    await waitFor(() => expect(countEl()).toHaveTextContent('1'));
+    expect(fetchPendingNameSuggestions).not.toHaveBeenCalled();
   });
 
   it('BR-41: CLUSTER card receives queue ordinal from position chrome', async () => {

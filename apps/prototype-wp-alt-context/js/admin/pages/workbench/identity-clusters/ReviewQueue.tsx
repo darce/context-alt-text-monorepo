@@ -949,7 +949,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
-              {length}
+              {/* UXW2-2 (B6) / rg-015: every source feed is a capped page
+                  (25/10/25/20) with no envelope total — state the loaded scope
+                  instead of implying a true remaining count. */}
+              {sprintf(
+                /* translators: %d: number of loaded review items */
+                __('%d left to review (loaded)', 'alt-context'),
+                length,
+              )}
             </span>
           ) : null}
         </header>

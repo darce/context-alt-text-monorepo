@@ -18,6 +18,8 @@ import type {
   PendingMergeSuggestionsResponse,
   PendingNameSuggestion,
   PendingNameSuggestionsResponse,
+  TopUnlabeledCluster,
+  TopUnlabeledClustersResponse,
 } from '../../../../api/recognition/types';
 import * as recognitionApi from '../../../../api/recognition';
 import * as rosterApi from '../../../../api/rosterApi';
@@ -115,6 +117,25 @@ const makeNamePage = (suggestions: PendingNameSuggestion[]): PendingNameSuggesti
   suggestions,
   limit: 25,
   offset: 0,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
+const makeTopCluster = (id: string): TopUnlabeledCluster => ({
+  id,
+  tenant_id: 'test-tenant',
+  label: null,
+  is_labeled: false,
+  is_auto_label: true,
+  identity_count: 2,
+  user_confirmed: false,
+  representatives: [],
+});
+
+const makeTopUnlabeledPage = (clusters: TopUnlabeledCluster[]): TopUnlabeledClustersResponse => ({
+  clusters,
+  limit: 20,
+  total: clusters.length,
+  truncated: false,
   data_source: DATA_SOURCE.LOCAL_PROJECTION,
 });
 
@@ -1375,5 +1396,60 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     // The committed cluster's row stays dropped; the other cluster's row survives.
     const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
     expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
+  });
+
+  it('UXW2-2 (B6): person-commit drops the committed cluster from all four review caches', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([
+        makeItem({ suggestionId: 'sugg-x', clusterId: 'cluster-1' }),
+        makeItem({ suggestionId: 'sugg-y', clusterId: 'cluster-other' }),
+      ]),
+    );
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        makeName('name-1'),
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    );
+    queryClient.setQueryData(
+      mergePendingKey,
+      makeMergePage([
+        { ...makeMerge('merge-a-side'), cluster_a_id: 'cluster-1', cluster_b_id: 'b' },
+        { ...makeMerge('merge-b-side'), cluster_a_id: 'c', cluster_b_id: 'cluster-1' },
+        { ...makeMerge('merge-unrelated'), cluster_a_id: 'd', cluster_b_id: 'e' },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-other')]),
+    );
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
+
+    const { result } = renderMutations();
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-y']);
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-other']);
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-unrelated']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-other']);
   });
 });

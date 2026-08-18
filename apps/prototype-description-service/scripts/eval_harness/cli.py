@@ -2667,7 +2667,6 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
 _SPLIT_HASH_SKIP_REASON = "split seal pins sha256 metadata; image bytes never opened"
 _SCORE_HASH_SKIP_REASON = "caption score uses must_right/roster/policy; image bytes already in the run-record"
 _FACE_SCORE_HASH_SKIP_REASON = "face score uses tags/face_count/record embeddings; image files never opened"
-_DEFAULT_HELD_OUT_FRACTION = 0.5
 
 
 def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
@@ -2682,12 +2681,17 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         hash_skip_reason=_SPLIT_HASH_SKIP_REASON,
     )
     out = Path(args.out)
+    exposure_notes = _collect_exposure_notes(args.exposure_note, args.exposure_file)
+    if not exposure_notes:
+        print(
+            "draw-eval-split requires --exposure-note (repeatable) or --exposure-file "
+            "with at least one note (EVAL-10)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if args.check:
         artifact = json.loads(out.read_text())
         source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
-        expected_exposure = None
-        if args.exposure_note or args.exposure_file:
-            expected_exposure = _collect_exposure_notes(args.exposure_note, args.exposure_file)
         violations = verify_eval_split(
             artifact,
             manifest,
@@ -2697,7 +2701,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             expected_draw_timestamp=args.draw_timestamp,
             expected_partition_provenance=args.partition_provenance,
             expected_source_manifest_path=_source_manifest_path_for_artifact(args.manifest),
-            expected_pre_split_exposure=expected_exposure,
+            expected_pre_split_exposure=exposure_notes,
         )
         for message in violations:
             print(message, file=sys.stderr)
@@ -2709,17 +2713,16 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         print(f"refusing to overwrite sealed split {out} without --force", file=sys.stderr)
         raise SystemExit(3)
 
-    fraction = args.held_out_fraction if args.held_out_fraction is not None else _DEFAULT_HELD_OUT_FRACTION
     source_path = _source_manifest_path_for_artifact(args.manifest)
     source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
     artifact = draw_eval_split(
         manifest,
         seed=args.seed,
-        held_out_fraction=fraction,
+        held_out_fraction=args.held_out_fraction,
         draw_timestamp=args.draw_timestamp,
         source_manifest_path=source_path,
         source_manifest_sha256=source_sha,
-        pre_split_exposure=_collect_exposure_notes(args.exposure_note, args.exposure_file),
+        pre_split_exposure=exposure_notes,
         partition_provenance=args.partition_provenance,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -3008,7 +3011,12 @@ def main(argv: list[str] | None = None) -> None:
     draw_split_p.add_argument("--manifest", required=True)
     draw_split_p.add_argument("--out", required=True)
     draw_split_p.add_argument("--seed", required=True)
-    draw_split_p.add_argument("--held-out-fraction", type=_held_out_fraction_arg, default=None)
+    draw_split_p.add_argument(
+        "--held-out-fraction",
+        type=_held_out_fraction_arg,
+        required=True,
+        help="required in draw and --check; --check compares the value for equality (EVAL-07)",
+    )
     draw_split_p.add_argument(
         "--draw-timestamp",
         required=True,
@@ -3019,8 +3027,20 @@ def main(argv: list[str] | None = None) -> None:
         required=True,
         help="required in draw and --check; --check compares the value for equality",
     )
-    draw_split_p.add_argument("--exposure-note", action="append", default=None)
-    draw_split_p.add_argument("--exposure-file", default=None, help="one pre-split exposure note per line")
+    draw_split_p.add_argument(
+        "--exposure-note",
+        action="append",
+        default=None,
+        help=(
+            "pre-split exposure note (repeatable); required in draw and --check unless "
+            "--exposure-file is set; --check compares the collected notes for equality (EVAL-10)"
+        ),
+    )
+    draw_split_p.add_argument(
+        "--exposure-file",
+        default=None,
+        help="one pre-split exposure note per line; alternative to --exposure-note",
+    )
     draw_split_p.add_argument("--force", action="store_true", help="permit overwriting an existing sealed split")
     draw_split_p.add_argument("--check", action="store_true", help="verify an existing artifact against --manifest")
     draw_split_p.set_defaults(func=_cmd_draw_eval_split)

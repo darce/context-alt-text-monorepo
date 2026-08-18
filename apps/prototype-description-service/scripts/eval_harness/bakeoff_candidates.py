@@ -1,9 +1,10 @@
 """VLM-6 S2 candidate registry — fail-fast loader (rg-008).
 
-``bakeoff_candidates.yaml`` is the single source of truth for the sealed
-13-candidate + 2-incumbent bake-off roster. Every field is strictly typed
-under ``extra='forbid'`` and checked at load time: revision pins, serving
-recipes, prompt templates, and tiers cannot be omitted or left as TODO.
+``bakeoff_candidates.yaml`` is the single source of truth for sealed
+candidate/incumbent counts and generation pairs. Every field is strictly
+typed under ``extra='forbid'`` and checked at load time: revision pins,
+serving recipes, prompt templates, and tiers cannot be omitted or left
+as TODO.
 """
 
 from __future__ import annotations
@@ -21,26 +22,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 SCHEMA = "acx-bakeoff-candidates/v1"
-SEALED_CANDIDATE_COUNT = 14
-SEALED_INCUMBENT_COUNT = 2
 KNOWN_PROMPT_TEMPLATES = frozenset({"v1", "v2", "v3"})
-QWEN38_ROW_ID = "qwen38-27b"
-QWEN36_ROW_ID = "qwen36-27b"
-QWEN_PAIR_QUANT = "UD-Q4_K_XL"
-# id -> (model_id, artifact_gb) for the Qwen generation pair. Both generations
-# compete so quality, speed, and token usage can be attributed to the model
-# generation; that only holds if the serving recipe is identical, which
-# ``_assert_qwen_generation_pair`` enforces.
-QWEN_GENERATION_PAIR: dict[str, tuple[str, float]] = {
-    QWEN38_ROW_ID: ("Qwen3.8-27B", 17.9),
-    QWEN36_ROW_ID: ("Qwen3.6-27B", 17.6),
-}
-# Recipe fields that must match across the pair for the comparison to be
-# like-for-like. ``gguf`` differs by construction (different artifact).
+# Recipe fields that must match across a generation pair for the comparison
+# to be like-for-like. ``gguf`` differs by construction (different artifact).
 # ``min_runtime_build`` / ``min_runtime_build_is_lower_bound`` decide which
 # llama.cpp build is legal; a missing floor on one leg is not a generation
-# delta, it is a preflight-policy delta.
-QWEN_PAIR_SHARED_RECIPE_FIELDS = (
+# delta, it is a preflight-policy delta. Structural, not roster data.
+GENERATION_PAIR_SHARED_RECIPE_FIELDS = (
     "stack",
     "ctx_size",
     "image_max_tokens",
@@ -53,7 +41,7 @@ QWEN_PAIR_SHARED_RECIPE_FIELDS = (
 # Entry-level workload fields (not on ServingRecipe) that also decide the
 # system prompt and whether /no_think is appended. Sealed separately so a
 # recipe-only walk cannot claim the pair is like-for-like.
-QWEN_PAIR_SHARED_ENTRY_FIELDS = ("prompt_template", "reasoning_tuned")
+GENERATION_PAIR_SHARED_ENTRY_FIELDS = ("prompt_template", "reasoning_tuned")
 _SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 _TODO_RE = re.compile(r"TODO|<TODO", re.IGNORECASE)
 _LLAMA_CPP_BUILD_RE = re.compile(r"^b\d+$")
@@ -101,13 +89,36 @@ class HardwareTarget(BaseModel):
     usable_vram_budget_gb: int
 
 
+class GenerationPair(BaseModel):
+    """YAML-declared like-for-like generation comparison (ids + shared quant)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[str] = Field(min_length=2)
+    quant: str
+
+    @field_validator("ids")
+    @classmethod
+    def _ids_unique_nonempty(cls, value: list[str]) -> list[str]:
+        cleaned = [_nonempty_no_todo(item) for item in value]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("generation pair ids must be unique")
+        return cleaned
+
+    @field_validator("quant")
+    @classmethod
+    def _quant_nonempty(cls, value: str) -> str:
+        return _nonempty_no_todo(value)
+
+
 class SealedCounts(BaseModel):
-    """Declared sealed sizes; must match loader constants and entry counts."""
+    """Declared sealed sizes and generation pairs; counts must match entry roles."""
 
     model_config = ConfigDict(extra="forbid")
 
     candidates: int
     incumbent_anchors: int
+    generation_pairs: list[GenerationPair] = Field(default_factory=list)
 
 
 class ServingRecipe(BaseModel):
@@ -303,7 +314,7 @@ def _assert_sealed_invariants(registry: BakeoffCandidateRegistry) -> None:
     ids = [e.id for e in registry.entries]
     if len(ids) != len(set(ids)):
         raise RegistryError(f"duplicate candidate id in registry: {ids}")
-    _assert_qwen_generation_pair(registry)
+    _assert_generation_pairs(registry)
 
 
 def _assert_counts(
@@ -313,62 +324,52 @@ def _assert_counts(
 ) -> None:
     declared_c = registry.sealed.candidates
     declared_i = registry.sealed.incumbent_anchors
-    if declared_c != SEALED_CANDIDATE_COUNT or declared_i != SEALED_INCUMBENT_COUNT:
+    if len(candidates) != declared_c:
+        raise RegistryError(f"expected {declared_c} candidates, found {len(candidates)}")
+    if len(incumbents) != declared_i:
         raise RegistryError(
-            f"sealed declaration {declared_c}+{declared_i} != "
-            f"{SEALED_CANDIDATE_COUNT}+{SEALED_INCUMBENT_COUNT}"
-        )
-    if len(candidates) != SEALED_CANDIDATE_COUNT:
-        raise RegistryError(
-            f"expected {SEALED_CANDIDATE_COUNT} candidates, found {len(candidates)}"
-        )
-    if len(incumbents) != SEALED_INCUMBENT_COUNT:
-        raise RegistryError(
-            f"expected {SEALED_INCUMBENT_COUNT} incumbent anchors, found {len(incumbents)}"
+            f"expected {declared_i} incumbent anchors, found {len(incumbents)}"
         )
 
 
-def _assert_qwen_generation_pair(registry: BakeoffCandidateRegistry) -> None:
+def _assert_generation_pairs(registry: BakeoffCandidateRegistry) -> None:
     by_id = {e.id: e for e in registry.entries}
-    rows = []
-    for row_id, (model_id, artifact_gb) in QWEN_GENERATION_PAIR.items():
-        row = by_id.get(row_id)
-        if row is None:
-            raise RegistryError(f"sealed roster missing Qwen generation-pair row {row_id}")
-        if row.model_id != model_id:
-            raise RegistryError(f"{row_id} model_id must be {model_id}, got {row.model_id}")
-        if row.quant != QWEN_PAIR_QUANT:
-            raise RegistryError(f"{row_id} quant must be {QWEN_PAIR_QUANT}, got {row.quant}")
-        if row.artifact_gb != artifact_gb:
-            raise RegistryError(
-                f"{row_id} artifact_gb must be {artifact_gb}, got {row.artifact_gb}"
-            )
-        if not row.competing:
-            raise RegistryError(f"{row_id} must compete for the generation delta to be scored")
-        rows.append(row)
+    for pair in registry.sealed.generation_pairs:
+        rows = []
+        for row_id in pair.ids:
+            row = by_id.get(row_id)
+            if row is None:
+                raise RegistryError(f"sealed roster missing generation-pair row {row_id}")
+            if row.quant != pair.quant:
+                raise RegistryError(f"{row_id} quant must be {pair.quant}, got {row.quant}")
+            if not row.competing:
+                raise RegistryError(
+                    f"{row_id} must compete for the generation delta to be scored"
+                )
+            rows.append(row)
 
-    reference, *others = rows
-    for field in QWEN_PAIR_SHARED_RECIPE_FIELDS:
-        expected = getattr(reference.recipe, field)
-        for row in others:
-            actual = getattr(row.recipe, field)
-            if actual != expected:
-                raise RegistryError(
-                    f"Qwen generation pair recipe drift on {field!r}: "
-                    f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
-                    "The pair must share a recipe or the speed/token delta is unattributable."
-                )
-    for field in QWEN_PAIR_SHARED_ENTRY_FIELDS:
-        expected = getattr(reference, field)
-        for row in others:
-            actual = getattr(row, field)
-            if actual != expected:
-                raise RegistryError(
-                    f"Qwen generation pair entry drift on {field!r}: "
-                    f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
-                    "The pair must share prompt and reasoning settings or the "
-                    "delta is unattributable."
-                )
+        reference, *others = rows
+        for field in GENERATION_PAIR_SHARED_RECIPE_FIELDS:
+            expected = getattr(reference.recipe, field)
+            for row in others:
+                actual = getattr(row.recipe, field)
+                if actual != expected:
+                    raise RegistryError(
+                        f"generation pair recipe drift on {field!r}: "
+                        f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
+                        "The pair must share a recipe or the speed/token delta is unattributable."
+                    )
+        for field in GENERATION_PAIR_SHARED_ENTRY_FIELDS:
+            expected = getattr(reference, field)
+            for row in others:
+                actual = getattr(row, field)
+                if actual != expected:
+                    raise RegistryError(
+                        f"generation pair entry drift on {field!r}: "
+                        f"{reference.id}={expected!r} vs {row.id}={actual!r}. "
+                        "The pair must share prompt and reasoning settings or the "
+                        "delta is unattributable."
+                    )
 
 
 def _hf_list_repo_files(repo: str, revision: str) -> list[str]:

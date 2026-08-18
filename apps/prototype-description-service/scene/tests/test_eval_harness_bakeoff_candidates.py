@@ -13,14 +13,8 @@ import pytest
 import yaml
 
 from scripts.eval_harness.bakeoff_candidates import (
-    QWEN36_ROW_ID,
-    QWEN38_ROW_ID,
-    QWEN_GENERATION_PAIR,
-    QWEN_PAIR_QUANT,
-    QWEN_PAIR_SHARED_RECIPE_FIELDS,
+    GENERATION_PAIR_SHARED_RECIPE_FIELDS,
     SCHEMA,
-    SEALED_CANDIDATE_COUNT,
-    SEALED_INCUMBENT_COUNT,
     BakeoffTier,
     CandidateRole,
     RegistryError,
@@ -34,11 +28,23 @@ from scripts.eval_harness.bakeoff_candidates import (
 
 REGISTRY_PATH = default_registry_path()
 
+# Test-owned roster pins. YAML is the loader source of truth; these literals
+# give TEST-15 kill power if the committed qwen pair drifts.
+_QWEN38_ROW_ID = "qwen38-27b"
+_QWEN36_ROW_ID = "qwen36-27b"
+_QWEN_PAIR_QUANT = "UD-Q4_K_XL"
+_QWEN_PAIR_PINS: dict[str, tuple[str, float]] = {
+    _QWEN38_ROW_ID: ("Qwen3.8-27B", 17.9),
+    _QWEN36_ROW_ID: ("Qwen3.6-27B", 17.6),
+}
+_PINNED_CANDIDATE_COUNT = 14
+_PINNED_INCUMBENT_COUNT = 2
+
 # Test-owned sealed sets. Parametrizing over these — not the production
 # constants — is what gives TEST-15 kill power: dropping a name from
-# QWEN_PAIR_SHARED_RECIPE_FIELDS / QWEN_PAIR_SHARED_ENTRY_FIELDS leaves the
-# corresponding drift case in the suite. The equality tests below then also
-# fail, so a tuple shrink cannot silently delete its own mutant.
+# GENERATION_PAIR_SHARED_RECIPE_FIELDS / GENERATION_PAIR_SHARED_ENTRY_FIELDS
+# leaves the corresponding drift case in the suite. The equality tests
+# below then also fail, so a tuple shrink cannot silently delete its own mutant.
 _SEALED_RECIPE_FIELDS = (
     "stack",
     "ctx_size",
@@ -88,48 +94,51 @@ def _write_registry(tmp_path: Path, payload: dict[str, Any]) -> Path:
 def test_committed_registry_loads(registry) -> None:
     assert registry.schema_id == SCHEMA
     assert registry.task_ref == "VLM-6"
-    assert len(registry.entries) == SEALED_CANDIDATE_COUNT + SEALED_INCUMBENT_COUNT
+    assert len(registry.entries) == registry.sealed.candidates + registry.sealed.incumbent_anchors
+    assert len(registry.entries) == _PINNED_CANDIDATE_COUNT + _PINNED_INCUMBENT_COUNT
 
 
 def test_sealed_counts_are_exact(registry) -> None:
     n_cand = sum(1 for e in registry.entries if e.role is CandidateRole.CANDIDATE)
     n_inc = sum(1 for e in registry.entries if e.role is CandidateRole.INCUMBENT)
-    assert n_cand == SEALED_CANDIDATE_COUNT == 14
-    assert n_inc == SEALED_INCUMBENT_COUNT == 2
-    assert registry.sealed.candidates == 14
-    assert registry.sealed.incumbent_anchors == 2
+    assert n_cand == registry.sealed.candidates == _PINNED_CANDIDATE_COUNT == 14
+    assert n_inc == registry.sealed.incumbent_anchors == _PINNED_INCUMBENT_COUNT == 2
+
+
+def test_committed_generation_pairs_are_yaml_declared(registry) -> None:
+    assert len(registry.sealed.generation_pairs) == 1
+    pair = registry.sealed.generation_pairs[0]
+    assert pair.ids == [_QWEN38_ROW_ID, _QWEN36_ROW_ID]
+    assert pair.quant == _QWEN_PAIR_QUANT
 
 
 def test_qwen_generation_pair_rows_present(registry) -> None:
     by_id = {e.id: e for e in registry.entries}
-    assert set(QWEN_GENERATION_PAIR) == {QWEN38_ROW_ID, QWEN36_ROW_ID}
-    for row_id, (model_id, artifact_gb) in QWEN_GENERATION_PAIR.items():
+    for row_id, (model_id, artifact_gb) in _QWEN_PAIR_PINS.items():
         row = by_id[row_id]
         assert row.model_id == model_id
         assert row.competing is True
-        assert row.quant == QWEN_PAIR_QUANT
+        assert row.quant == _QWEN_PAIR_QUANT
         assert row.artifact_gb == artifact_gb
         assert row.artifact == f"{model_id}-UD-Q4_K_XL.gguf"
         assert row.recipe.stack is ServingStack.LLAMA_CPP
         assert row.recipe.gguf == row.artifact
         assert row.recipe.mmproj == "mmproj-F16.gguf"
-    assert by_id[QWEN38_ROW_ID].revision == "1cff334a4a228324d4ee1f76d55d372588f0d556"
-    assert by_id[QWEN36_ROW_ID].revision == "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
-    assert by_id[QWEN38_ROW_ID].repo == "unsloth/Qwen3.8-27B-GGUF"
-    assert by_id[QWEN36_ROW_ID].repo == "unsloth/Qwen3.6-27B-GGUF"
+    assert by_id[_QWEN38_ROW_ID].revision == "1cff334a4a228324d4ee1f76d55d372588f0d556"
+    assert by_id[_QWEN36_ROW_ID].revision == "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
+    assert by_id[_QWEN38_ROW_ID].repo == "unsloth/Qwen3.8-27B-GGUF"
+    assert by_id[_QWEN36_ROW_ID].repo == "unsloth/Qwen3.6-27B-GGUF"
 
 
-def test_qwen_pair_shared_recipe_fields_are_exactly_the_sealed_set() -> None:
-    assert QWEN_PAIR_SHARED_RECIPE_FIELDS == _SEALED_RECIPE_FIELDS
+def test_generation_pair_shared_recipe_fields_are_exactly_the_sealed_set() -> None:
+    assert GENERATION_PAIR_SHARED_RECIPE_FIELDS == _SEALED_RECIPE_FIELDS
     assert set(_RECIPE_DRIFT_VALUES) == set(_SEALED_RECIPE_FIELDS)
 
 
-def test_qwen_pair_shared_entry_fields_are_exactly_the_sealed_set() -> None:
-    # getattr so this file still collects against an unfixed module that has
-    # not grown QWEN_PAIR_SHARED_ENTRY_FIELDS yet (TEST-06).
+def test_generation_pair_shared_entry_fields_are_exactly_the_sealed_set() -> None:
     from scripts.eval_harness import bakeoff_candidates as bakeoff_mod
 
-    actual = getattr(bakeoff_mod, "QWEN_PAIR_SHARED_ENTRY_FIELDS", ())
+    actual = getattr(bakeoff_mod, "GENERATION_PAIR_SHARED_ENTRY_FIELDS", ())
     assert actual == _SEALED_ENTRY_FIELDS
     assert set(_ENTRY_DRIFT_VALUES) == set(_SEALED_ENTRY_FIELDS)
 
@@ -140,11 +149,11 @@ def _qwen_row(payload: dict[str, Any], row_id: str) -> dict[str, Any]:
 
 def _apply_recipe_drift(payload: dict[str, Any], field: str, value: Any) -> None:
     """Mutate qwen36 so only ``field`` differs, without tripping schema first."""
-    qwen36 = _qwen_row(payload, QWEN36_ROW_ID)
+    qwen36 = _qwen_row(payload, _QWEN36_ROW_ID)
     if field == "stack":
         # Build pins are stack-specific. Neutralize both legs so the pair
         # invariant — not ``_min_runtime_build_matches_stack`` — is the killer.
-        for row in (_qwen_row(payload, QWEN36_ROW_ID), _qwen_row(payload, QWEN38_ROW_ID)):
+        for row in (_qwen_row(payload, _QWEN36_ROW_ID), _qwen_row(payload, _QWEN38_ROW_ID)):
             row["recipe"]["min_runtime_build"] = None
             row["recipe"].pop("min_runtime_build_is_lower_bound", None)
     qwen36["recipe"][field] = value
@@ -165,7 +174,7 @@ def test_qwen_pair_entry_drift_fails(
     field: str, tmp_path: Path, raw_registry: dict[str, Any]
 ) -> None:
     payload = deepcopy(raw_registry)
-    _qwen_row(payload, QWEN36_ROW_ID)[field] = _ENTRY_DRIFT_VALUES[field]
+    _qwen_row(payload, _QWEN36_ROW_ID)[field] = _ENTRY_DRIFT_VALUES[field]
     with pytest.raises(RegistryError, match=f"entry drift on {field!r}"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
@@ -174,7 +183,7 @@ def test_qwen_pair_omitted_min_runtime_build_fails(
     tmp_path: Path, raw_registry: dict[str, Any]
 ) -> None:
     payload = deepcopy(raw_registry)
-    row = _qwen_row(payload, QWEN36_ROW_ID)
+    row = _qwen_row(payload, _QWEN36_ROW_ID)
     del row["recipe"]["min_runtime_build"]
     row["recipe"].pop("min_runtime_build_is_lower_bound", None)
     with pytest.raises(RegistryError, match="recipe drift on 'min_runtime_build'"):
@@ -197,9 +206,9 @@ def test_losing_the_previous_generation_row_fails(
     # Rename rather than delete so the sealed counts still pass: the pair
     # invariant, not the count check, must be what catches this.
     payload = deepcopy(raw_registry)
-    row = next(e for e in payload["entries"] if e["id"] == QWEN36_ROW_ID)
+    row = next(e for e in payload["entries"] if e["id"] == _QWEN36_ROW_ID)
     row["id"] = "qwen36-27b-renamed"
-    with pytest.raises(RegistryError, match=f"missing Qwen generation-pair row {QWEN36_ROW_ID}"):
+    with pytest.raises(RegistryError, match=f"missing generation-pair row {_QWEN36_ROW_ID}"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
@@ -274,7 +283,7 @@ def test_todo_artifact_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> No
 
 def test_llama_cpp_missing_mmproj_fails(tmp_path: Path, raw_registry: dict[str, Any]) -> None:
     payload = deepcopy(raw_registry)
-    row = next(e for e in payload["entries"] if e["id"] == QWEN38_ROW_ID)
+    row = next(e for e in payload["entries"] if e["id"] == _QWEN38_ROW_ID)
     row["recipe"]["mmproj"] = None
     with pytest.raises(RegistryError, match="gguf and mmproj"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
@@ -284,6 +293,54 @@ def test_wrong_candidate_count_fails(tmp_path: Path, raw_registry: dict[str, Any
     payload = deepcopy(raw_registry)
     payload["entries"] = [e for e in payload["entries"] if e["id"] != "ovis2-8b"]
     with pytest.raises(RegistryError, match="expected 14 candidates, found 13"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_declared_candidate_count_mismatch_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    # YAML declaration is the source of truth (rg-009): 13 declared, 14 rows.
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["candidates"] = 13
+    with pytest.raises(RegistryError, match="expected 13 candidates, found 14"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_generation_pair_quant_mismatch_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    # Pair.quant comes from YAML, not a Python constant (TEST-15).
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["generation_pairs"] = [
+        {"ids": ["qwen38-27b", "qwen36-27b"], "quant": "Q5_K_M"}
+    ]
+    with pytest.raises(RegistryError, match="qwen38-27b quant must be Q5_K_M"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_generation_pair_missing_id_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["generation_pairs"] = [
+        {"ids": ["qwen38-27b", "does-not-exist"], "quant": "UD-Q4_K_XL"}
+    ]
+    with pytest.raises(RegistryError, match="missing generation-pair row does-not-exist"):
+        load_bakeoff_candidates(_write_registry(tmp_path, payload))
+
+
+def test_generation_pair_recipe_drift_on_shared_field_fails(
+    tmp_path: Path, raw_registry: dict[str, Any]
+) -> None:
+    # Non-Qwen pair so the generic YAML walker — not the old Qwen-only
+    # constant — is the killer (TEST-15).
+    payload = deepcopy(raw_registry)
+    payload["sealed"]["generation_pairs"] = [
+        {"ids": ["ovis25-9b", "ovis2-8b"], "quant": "bf16"}
+    ]
+    ovis2 = next(entry for entry in payload["entries"] if entry["id"] == "ovis2-8b")
+    ovis2["recipe"]["ctx_size"] = 4096
+    with pytest.raises(RegistryError, match="recipe drift on 'ctx_size'"):
         load_bakeoff_candidates(_write_registry(tmp_path, payload))
 
 
@@ -331,7 +388,7 @@ def test_qwen_min_runtime_build_matches_incident_source(registry) -> None:
     qwen_vl = next(e for e in registry.entries if e.id == "qwen3-vl-30b-a3b")
     assert qwen_vl.recipe.min_runtime_build == "b6887"
     assert qwen_vl.recipe.min_runtime_build_is_lower_bound is False
-    qwen38 = next(e for e in registry.entries if e.id == QWEN38_ROW_ID)
+    qwen38 = next(e for e in registry.entries if e.id == _QWEN38_ROW_ID)
     assert qwen38.recipe.min_runtime_build == "b6887"
     assert qwen38.recipe.min_runtime_build_is_lower_bound is True
 
@@ -360,7 +417,7 @@ def test_min_runtime_build_prose_rejected(
     tmp_path: Path, raw_registry: dict[str, Any]
 ) -> None:
     payload = deepcopy(raw_registry)
-    row = next(e for e in payload["entries"] if e["id"] == QWEN38_ROW_ID)
+    row = next(e for e in payload["entries"] if e["id"] == _QWEN38_ROW_ID)
     row["recipe"]["min_runtime_build"] = "newer than b6887"
     row["recipe"].pop("min_runtime_build_is_lower_bound", None)
     with pytest.raises(RegistryError, match="newer than b6887"):

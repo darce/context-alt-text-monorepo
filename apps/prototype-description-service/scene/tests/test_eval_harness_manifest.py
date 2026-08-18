@@ -777,6 +777,27 @@ def test_load_manifest_skip_true_reason_with_golden_images_dir_verifies(tmp_path
     assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in rec)
 
 
+def test_load_manifest_skip_true_reason_with_golden_images_dir_verifies_tamper(tmp_path, monkeypatch):
+    """VLM6-W3-RV-06: skip=True + reason + GOLDEN_IMAGES_DIR still verifies.
+
+    Env-resolved dir (no images_dir arg) must not skip _verify_hashes.
+    Tampered scene-001 bytes must raise ManifestError naming the field.
+    """
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"tampered bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="sha256 mismatch|scene-001"):
+        load_manifest(
+            path,
+            skip_hash_verification=True,
+            hash_skip_reason="metadata-only scoring path; image bytes never opened",
+        )
+
+
 def test_load_manifest_skip_true_reason_with_images_dir_still_verifies_tamper(tmp_path, monkeypatch):
     """VLM6-W2-RV-01 / R1-02: skip=True must not bypass verify when images resolve.
 

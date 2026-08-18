@@ -23,6 +23,7 @@ from scripts.eval_harness.bakeoff_runner import (
     SKIP_REASON_NOT_COMPETING,
     SKIP_REASON_STACK,
     SKIP_REASON_VRAM,
+    WARMUP_REQUESTS,
     NotCompetingError,
     SkipNotesInconsistentError,
     UnknownCandidateError,
@@ -256,6 +257,16 @@ def test_cli_only_unknown_id_exits_2(capsys: pytest.CaptureFixture[str]) -> None
     assert main(["--only", "definitely-missing"]) == 2
     err = capsys.readouterr().err
     assert "definitely-missing" in err
+
+
+def test_run_argv_pins_warmup_on_every_plan() -> None:
+    # VLM-6 S2 residual / PERF-03: --warmup must be explicit, not implicit default.
+    plans = build_plans(_sample_registry(), **_PLAN_KW)
+    assert plans
+    for plan in plans:
+        argv = list(plan.run_argv)
+        assert "--warmup" in argv, plan.run_argv
+        assert argv[argv.index("--warmup") + 1] == str(WARMUP_REQUESTS)
 
 
 def test_run_argv_omits_limit_zero() -> None:

@@ -226,8 +226,8 @@ class ClustersReadRepositoryTest extends TestCase
         $rows = $this->repository->list_top_unlabeled(self::currentTenantId(), 10);
 
         $this->assertSame(['cluster-two-members'], array_column($rows, 'cluster_uuid'));
-        $sql = $wpdb->queries[0];
-        $this->assertStringContainsString($this->expectedTopUnlabeledMemberCountPredicate(), $this->normalizeSql($sql));
+        $sql = $this->normalizeSql($wpdb->queries[0]);
+        $this->assertSame($this->expectedTopUnlabeledWhereClause(self::currentTenantId()), $this->extractWhereClause($sql));
     }
 
     /**
@@ -328,6 +328,7 @@ class ClustersReadRepositoryTest extends TestCase
         $uses_member_min = str_contains($sql, 'acx_identity_members')
             && (bool) preg_match('/\)\s*>=\s*2/', $sql);
         $or_bypass = (bool) preg_match('/OR\s+1\s*=\s*1/i', $sql);
+        $or_column = (bool) preg_match('/\)\s*>=\s*2\s+OR\s+c\.identity_count/i', $sql);
 
         $matched = [];
         foreach ($clusters as $cluster) {
@@ -335,10 +336,14 @@ class ClustersReadRepositoryTest extends TestCase
                 continue;
             }
             $observed = $member_counts[$cluster['cluster_uuid']] ?? 0;
-            if ($uses_column_min && (int) $cluster['identity_count'] < 2) {
+            if ($uses_column_min && ! $or_column && (int) $cluster['identity_count'] < 2) {
                 continue;
             }
-            if ($uses_member_min && ! $or_bypass && $observed < 2) {
+            $member_ok = $observed >= 2;
+            if ($or_column) {
+                $member_ok = $member_ok || (int) $cluster['identity_count'] >= 2;
+            }
+            if ($uses_member_min && ! $or_bypass && ! $member_ok) {
                 continue;
             }
             $matched[] = $cluster;
@@ -397,6 +402,22 @@ class ClustersReadRepositoryTest extends TestCase
         return $this->normalizeSql(
             "( SELECT COUNT(*) FROM `wp_acx_identity_members` m WHERE m.cluster_uuid = c.cluster_uuid ) >= 2"
         );
+    }
+
+    private function expectedTopUnlabeledWhereClause(string $tenant_id): string
+    {
+        return $this->normalizeSql(
+            "c.tenant_id = '{$tenant_id}' AND c.is_user_confirmed = 0 AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%') AND ( SELECT COUNT(*) FROM `wp_acx_identity_members` m WHERE m.cluster_uuid = c.cluster_uuid ) >= 2 AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')"
+        );
+    }
+
+    private function extractWhereClause(string $normalized_sql): string
+    {
+        if (! preg_match('/WHERE (.+) ORDER BY/i', $normalized_sql, $matches)) {
+            $this->fail('top-unlabeled SQL must have a WHERE ... ORDER BY clause');
+        }
+
+        return $this->normalizeSql($matches[1]);
     }
 
     private function normalizeSql(string $sql): string

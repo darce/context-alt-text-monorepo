@@ -724,6 +724,23 @@ def _render(alias: str, matched: str) -> str:
     return sep.join(words)
 
 
+def _preserve_case(word: str, source: str) -> str:
+    """Mirror Title / UPPER / lower of the source token onto a replacement.
+
+    Family-word nouns are stored lowercase; positional aliases are stored
+    Title-cased. Without this, a sentence-initial family-word hit becomes
+    a lowercase alias (`Velmoth` → `harbor`) while a positional hit of
+    the same shape stays Title (REV-D-09).
+    """
+    if source.isupper():
+        return word.upper()
+    if source.islower():
+        return word.lower()
+    if source.istitle():
+        return word[:1].upper() + word[1:].lower()
+    return word
+
+
 def _substitute(text: str, rx: re.Pattern, by_key: dict) -> tuple[str, int]:
     count = 0
 
@@ -1174,9 +1191,9 @@ def _nonpersonal_tokens(identities=None) -> set[str]:
 def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -> tuple[re.Pattern | None, dict, list[str]]:
     """Bare name tokens that can only be one person and are not ordinary words.
 
-    The full-name pass cannot see `Candid relax by a lake` or `Weavers'`; the
+    The full-name pass cannot see `Nylphra relax by a lake` or `Qorvexes'`; the
     residue is a real given name in readable prose. The filter is deliberately
-    one-sided: a token that is also a dictionary word (`rose`, `faith`, `ivy`),
+    one-sided: a token that is also a dictionary word (`qorvist`, `brook`, `self`),
     that more than one identity shares, or that a non-personal identity also
     carries is left alone, so this under-scrubs rather than rewriting an
     ordinary caption word -- or a real celebrity -- into somebody's pseudonym.
@@ -1239,8 +1256,13 @@ def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple
 
     A pair is emitted only when the leading token is a real-name token
     of identity X with a positional alias, and the adjacent token is a
-    *different-index* alias token of the same X. Same-index pairing
-    would turn `Qorvist cobalt` into `Cobalt cobalt`. A pair that two
+    *different-index* alias token of the same X — or a family-word
+    replacement of a different-index real token of the same X. Shared
+    surnames become one minted noun, not either identity's positional
+    word, so pairing only against positional aliases leaves
+    `Qorvist harbor` and `Qorvist K. harbor` on disk after the
+    given-name pass (REV-D-03). Same-index pairing would turn
+    `Qorvist cobalt` into `Cobalt cobalt`. A pair that two
     identities resolve to different replacements is refused, not
     guessed. One-letter leading tokens are refused and counted: letter
     anchors cannot separate `a quarry` from the English article.
@@ -1253,9 +1275,21 @@ def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple
     dropped: list[dict] = []
     no_alias: list[int] = []
 
+    # Family words are minted from the map's own token→alias sets, never
+    # the wordlist: the adjacent builder must not become silent because
+    # a surname was edited out of the exclusion list (BR-19 / CARD-08).
+    by_token: dict[str, set[str]] = {}
+    parsed_entries: list[tuple[list[str], list[str]]] = []
     for entry in mapping["entries"]:
         real = [t for t in re.split(r"[^A-Za-z]+", entry.get("real_name", "")) if t]
         alias = [t for t in re.split(r"[^A-Za-z]+", entry.get("alias", "")) if t]
+        parsed_entries.append((real, alias))
+        for i, token in enumerate(real):
+            if i < len(alias):
+                by_token.setdefault(token.lower(), set()).add(alias[i])
+    family = _family_words(by_token)
+
+    for real, alias in parsed_entries:
         if not real:
             dropped.append({"reason": "empty name; no adjacent pair exists", "tokens": 0})
             continue
@@ -1290,6 +1324,14 @@ def _adjacent_alias_regex(mapping: dict) -> tuple[re.Pattern | None, dict, tuple
                 # mutant can tell them apart. The document side is different
                 # and does need casefold -- see `_adjacent_repl` (BR-30).
                 collected.setdefault((token.lower(), adj.lower()), set()).add(replacement)
+                contributed = True
+            for k, other in enumerate(real):
+                if k == i:
+                    continue
+                fw = family.get(other.lower())
+                if fw is None or fw.lower() == token.lower():
+                    continue
+                collected.setdefault((token.lower(), fw.lower()), set()).add(replacement)
                 contributed = True
         if not contributed and len(dropped) == before:
             dropped.append({"reason": "no distinct alias neighbour", "tokens": len(real)})
@@ -1458,8 +1500,7 @@ class _Passes:
                     return m.group(0)
                 counts["given"] += 1
                 word = self.given[m.group(1).lower()]
-                tok = m.group(1)
-                return word.upper() if tok.isupper() else word.lower() if tok.islower() else word
+                return _preserve_case(word, m.group(1))
 
             text = self.given_rx.sub(_given_repl, text)
 
@@ -1710,27 +1751,75 @@ def _free_text_residue() -> list[str]:
     return found
 
 
-def _reorder_roster(passes: _Passes) -> bool:
-    """Re-sort the identity array on the post-scrub slug.
+def _is_roster_bearing(data: object) -> bool:
+    """True when ``data`` is a JSON object with an identities roster."""
+    if not isinstance(data, dict):
+        return False
+    identities = data.get("identities")
+    if not isinstance(identities, list) or not identities:
+        return False
+    return any(isinstance(row, dict) and "bucket" in row and "slug" in row for row in identities)
 
-    The array was sorted by real name, so its order is an alphabetical ordering
-    of the names it no longer contains -- an attacker holding a candidate name
-    set can align the two and re-identify by position (MLDATA-17). Sorting on
-    the minted slug destroys that channel; the slug order is a function of the
-    secret key alone.
-    """
-    text = _read(ROSTER)
-    data = json.loads(text)
+
+def _reorder_roster_file(path: Path) -> bool:
+    """Re-sort one roster-bearing JSON document on (bucket, slug)."""
+    if not path.is_file():
+        return False
+    text = _read(path)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not _is_roster_bearing(data):
+        return False
     before = [i.get("slug") for i in data["identities"]]
-    data["identities"] = sorted(data["identities"], key=lambda i: (i.get("bucket", ""), i.get("slug", "")))
+    data["identities"] = sorted(
+        data["identities"], key=lambda i: (i.get("bucket", ""), i.get("slug", ""))
+    )
     if [i.get("slug") for i in data["identities"]] == before:
         return False
     # Re-serialize at the file's own indent. Hard-coding indent=2 against a
     # 1-space roster reformats all ~105K lines, so the reorder -- the only change
     # that matters here -- becomes unreviewable inside a 210K-line diff.
     dumped = json.dumps(data, indent=_json_indent(text), ensure_ascii=False)
-    _write(ROSTER, dumped + "\n" if text.endswith("\n") else dumped)
+    _write(path, dumped + "\n" if text.endswith("\n") else dumped)
     return True
+
+
+def _reorder_roster(passes: _Passes, files: list[tuple[Path, bool]] | None = None) -> bool:
+    """Re-sort identity arrays on the post-scrub slug.
+
+    The array was sorted by real name, so its order is an alphabetical ordering
+    of the names it no longer contains -- an attacker holding a candidate name
+    set can align the two and re-identify by position (MLDATA-17). Sorting on
+    the minted slug destroys that channel; the slug order is a function of the
+    secret key alone.
+
+    Every in-scope roster-bearing manifest the script rewrites gets the same
+    treatment — v3, v3r, corpus646 interleave copies, the golden150 draft —
+    not just ``ROSTER``. Restricting the sort to v3 left those copies in
+    real-name order (REV-D-07).
+    """
+    changed = False
+    seen: set[Path] = set()
+    candidates: list[Path] = [ROSTER]
+    if files is not None:
+        for path, in_scope in files:
+            if in_scope:
+                candidates.append(path)
+    for path in candidates:
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        if path != ROSTER and path.suffix.lower() != ".json":
+            continue
+        if _reorder_roster_file(path):
+            changed = True
+    return changed
 
 
 def _json_indent(text: str, default: int = 2) -> int:
@@ -1775,6 +1864,10 @@ def _repin_digests(
             old = published.get(rel)
             if old is None:
                 continue
+            if old == "":
+                raise SystemExit(
+                    f"in-scope path {rel} has an empty pre_sha; refusing to create an empty digest key"
+                )
             new = _sha_file(path)
             if new == old:
                 continue
@@ -2102,17 +2195,22 @@ def cmd_apply(args) -> int:
         if new_rel != rel:
             renames.append((rel, new_rel))
             if not args.dry_run:
+                old_sha = pre_sha.pop(rel, None)
+                if not old_sha:
+                    raise SystemExit(
+                        f"renamed in-scope path {rel} has an empty or absent pre-rewrite "
+                        "digest; refusing to create an empty pin key"
+                    )
                 (REPO / new_rel).parent.mkdir(parents=True, exist_ok=True)
                 subprocess.run(["git", "mv", rel, new_rel], cwd=REPO, check=True)
-                pre_sha[new_rel] = pre_sha.pop(rel, "")
+                pre_sha[new_rel] = old_sha
 
     redactions = _redact_free_text(args.dry_run)
 
+    files_after = _tracked_files() if renames and not args.dry_run else files
     reordered = False
     if not args.dry_run and args.reorder:
-        reordered = _reorder_roster(passes)
-
-    files_after = _tracked_files() if renames and not args.dry_run else files
+        reordered = _reorder_roster(passes, files_after)
     # `_repin_digests` must run first: persist hashes current file
     # bytes, but the pin *literals* are only those current digests
     # after the rewrite. Persist does not read the mutated values of

@@ -124,19 +124,13 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
-  const selectOrCreateName = async (name: string) => {
+  // UXW2-3: the panel uses the inline NameFaceControl — type straight into the field.
+  const typePanelName = async (name: string) => {
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, name);
-    // Prefer selecting an existing option; Create only appears when the list is empty.
-    const option = await screen.findByRole('option', { name: new RegExp(name, 'i') }).catch(() => null);
-    if (option) {
-      await user.click(option);
-      return;
-    }
-    await user.click(screen.getByRole('button', { name: `Create "${name}"` }));
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    await user.clear(input);
+    await user.type(input, name);
+    return user;
   };
 
   it('blocks save with pre-save duplicate guard for an existing cluster and merges with named target (PR-18/23/24)', async () => {
@@ -146,8 +140,9 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel(onLabel);
 
-    // Selecting a cluster option primes the guard (INT-07 outcome sample on the same surface).
-    await selectOrCreateName('Slate Willow');
+    // Confirming a cluster option row primes the guard (INT-07 outcome sample on the same surface).
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
 
     expect(
       await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
@@ -194,7 +189,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Only Person');
+    await typePanelName('Only Person');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
@@ -224,7 +219,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel(onLabel);
 
-    await selectOrCreateName('Self Name');
+    await typePanelName('Self Name');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -241,7 +236,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel(onLabel);
 
-    await selectOrCreateName('A New Person');
+    await typePanelName('A New Person');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -477,7 +472,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Pewter Hollow');
+    await typePanelName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -489,7 +484,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Pewter Hollow');
+    await typePanelName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -505,7 +500,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Pewter Hollow');
+    await typePanelName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -517,7 +512,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Slate Willow');
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
 
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
@@ -527,12 +523,11 @@ describe('ClusterLabelingPanel', () => {
       expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByRole('combobox', { name: 'Name' }));
-    const searchInput = screen.getByPlaceholderText('Search people...');
-    expect(searchInput).toBeEnabled();
-    await userEvent.clear(searchInput);
-    await userEvent.type(searchInput, 'Slate Willow Jr');
-    expect(searchInput).toHaveValue('Slate Willow Jr');
+    const nameInput = screen.getByRole('combobox', { name: 'Name' });
+    expect(nameInput).toBeEnabled();
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'Slate Willow Jr');
+    expect(nameInput).toHaveValue('Slate Willow Jr');
   });
 
   it('keeps input editable while save is pending', async () => {
@@ -546,12 +541,11 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Pewter Hollow');
+    await typePanelName('Pewter Hollow');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('combobox', { name: 'Name' }));
-    expect(screen.getByPlaceholderText('Search people...')).not.toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Name' })).not.toBeDisabled();
 
     await act(async () => {
       resolveSave?.();
@@ -633,7 +627,8 @@ describe('ClusterLabelingPanel', () => {
       </QueryClientProvider>,
     );
 
-    await selectOrCreateName('Slate Willow');
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
     rerender(
@@ -645,8 +640,8 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     });
-    // Cleared input shows the empty-state placeholder on the combobox trigger.
-    expect(screen.getByRole('combobox', { name: 'Name' })).toHaveTextContent(/Enter name/i);
+    // Cleared input shows the empty-state placeholder.
+    expect(screen.getByRole('combobox', { name: 'Name' })).toHaveAttribute('placeholder', 'Enter name...');
   });
 
   it('arms guard from remote exact match when local collision set is empty (FIX-8)', async () => {
@@ -661,16 +656,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Slate Willow');
-    // Create free-text path (no option select) so local collisions stay empty until remote.
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    // Free-text path (no option confirm) so local collisions stay empty until remote.
+    const user = await typePanelName('Slate Willow');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
@@ -696,15 +683,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'cluster-auto-1');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('cluster-auto-1');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
@@ -740,15 +719,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Cluster-Auto-1');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('Cluster-Auto-1');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
@@ -785,15 +756,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Pat Rivera');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('Pat Rivera');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(
@@ -830,15 +793,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Unique Name Zq');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('Unique Name Zq');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -867,15 +822,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'cluster-1a2b3c4d');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('cluster-1a2b3c4d');
     // Snapshot remote-guard-shaped calls before Save (union query uses limit:20).
     const remoteGuardCallsBefore = listMock.mock.calls.filter((call) => call[0]?.limit === 10).length;
 
@@ -898,15 +845,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Cluster-Dad');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    const user = await typePanelName('Cluster-Dad');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -956,7 +895,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Alice');
+    await typePanelName('Alice');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
@@ -979,17 +918,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'self name');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    } else {
-      // Combobox may set value via typing alone
-    }
+    const user = await typePanelName('self name');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -1019,7 +948,7 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    await selectOrCreateName('Dup Name');
+    await typePanelName('Dup Name');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
@@ -1032,16 +961,10 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    // Type into combobox without selecting the option — exercise handleSubmit free-text path.
-    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.clear(search);
-    await user.type(search, 'Slate Willow');
+    // Type without confirming an option row — exercise the free-text submit path.
+    const user = await typePanelName('Slate Willow');
     // Wait for labeled clusters query to populate collisions
     await waitFor(() => expect(listRecognitionClusters).toHaveBeenCalled());
-    // Escape/close list and save typed value
-    await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(

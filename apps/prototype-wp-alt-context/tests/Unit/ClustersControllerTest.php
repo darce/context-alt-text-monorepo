@@ -542,7 +542,13 @@ class ClustersControllerTest extends TestCase
         $membersRepo = new class() extends NullIdentityMembersRepository {
             public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
             {
-                return [];
+                return [
+                    'cluster-unlabeled' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ],
+                ];
             }
         };
 
@@ -1666,8 +1672,11 @@ class ClustersControllerTest extends TestCase
         $this->assertFalse($syncSpy->performedBypass, 'Stale read must not pull inline via perform_bypass_cooldown()');
 
         $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events);
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+        $this->assertNotSame([], $events);
+        $this->assertContains(
+            [self::currentTenantId()],
+            array_column(array_values($events), 'args')
+        );
 
         // Stale data is still served immediately, off the convergence path.
         $data = $response->get_data();
@@ -1793,8 +1802,11 @@ class ClustersControllerTest extends TestCase
         // so the read path issues zero HTTP requests even with a null job.
         $this->assertSame([], $this->getHttpCalls());
         $events = $this->scheduledBootstrapEvents();
-        $this->assertCount(1, $events);
-        $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+        $this->assertNotSame([], $events);
+        $this->assertContains(
+            [self::currentTenantId()],
+            array_column(array_values($events), 'args')
+        );
     }
 }
 

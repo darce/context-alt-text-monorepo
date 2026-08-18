@@ -473,6 +473,36 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertContains('cluster-exact-4', $this->mapper->requested_repair_cluster_ids());
     }
 
+    /**
+     * R1-13: non-positive preview_limit is not a truncation cap (null-default
+     * and 0 both publish observed).
+     */
+    public function testMapClusterListNonPositivePreviewLimitIsNotTruncation(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-zero-cap',
+                    'identity_count' => 9,
+                ],
+            ],
+            [
+                'cluster-zero-cap' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            0
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertContains('cluster-zero-cap', $this->mapper->requested_repair_cluster_ids());
+    }
+
     public function testMapClusterListIncludesPinnedRepresentativeState(): void
     {
         $clusters = [

@@ -107,6 +107,7 @@ Timeout expectations:
   - `person_name` (null): Explicit null because unbind does not carry a local label target
 - Backend behavior: Sets `identity_clusters.roster_id = NULL`, increments `updated_at`, and leaves the replay row at `not_applicable` because no suggestion refresh work is queued
 - Plugin `delete_person` also clears the local cluster `label` and emits `cluster_label_updated` with `label: null` so the backend learns the human label is gone. Dissociated clusters return to the unlabeled queue (`is_user_confirmed = 0`, `curation_state = uncurated`).
+- **`cluster_label_updated` with `label: null` is a documented clear.** The backend MUST store `identity_clusters.label = NULL` and MUST NOT 400. Blank/non-string values still reject. Idempotent when the stored label is already NULL.
 
 ### Idempotency Semantics
 
@@ -227,7 +228,7 @@ The following operations mutate cluster topology and are dispatched by `OutboxDi
 | `cluster_created_for_identity` | `POST /recognition/clusters/create-for-identity` | `identity_uuid`, `cluster_uuid`              |
 | `revert_merge_cluster`         | `POST /recognition/clusters/revert-merge`        | `source_cluster_uuid`, `target_cluster_uuid` |
 | `assign_outlier_to_cluster`    | `POST /recognition/clusters/{id}/assign`         | `identity_uuid`                              |
-| `cluster_label_updated`        | via curation sync                                | `cluster_uuid`, `label`                      |
+| `cluster_label_updated`        | via curation sync                                | `cluster_uuid`, `label` (string to set; JSON `null` clears `identity_clusters.label`) |
 | `cluster_dismissed`            | via curation sync                                | `cluster_uuid`                               |
 | `cluster_undismissed`          | via curation sync                                | `cluster_uuid`                               |
 | `cluster_person_bound`         | via curation sync                                | `cluster_uuid`, `person_uuid`                |

@@ -12,6 +12,8 @@ require_once __DIR__ . '/../sovereign/repositories/class-identity-members-reposi
 require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/interface-targeted-sync-pull-job.php';
+require_once __DIR__ . '/../support/class-telemetry.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
@@ -29,6 +31,8 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 use WP_Query;
@@ -115,9 +119,17 @@ class Api {
 			}
 		}
 		$normalized_ids = array_values( array_unique( $normalized_ids ) );
-		if ( array() !== $normalized_ids && $sync_pull_job instanceof \AltContext\Sovereign\Sync\TargetedSyncPullJobInterface ) {
+		if ( array() !== $normalized_ids && $sync_pull_job instanceof TargetedSyncPullJobInterface ) {
 			$sync_pull_job->perform_targeted_snapshot( $normalized_tenant_id, $normalized_ids );
 			return;
+		}
+		if ( array() !== $normalized_ids ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] bootstrap sync received %d cluster ids but job is not targeted-capable; falling back to full-tenant sync',
+					count( $normalized_ids )
+				)
+			);
 		}
 
 		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );

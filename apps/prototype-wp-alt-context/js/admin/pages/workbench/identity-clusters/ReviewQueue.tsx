@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { AlertTriangle } from 'lucide-react';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
@@ -91,10 +91,20 @@ import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
 
 /** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
-const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled clusters.';
+const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled groups.';
 
 /** Empty-queue position copy when the projection outage makes the count unmeasurable. */
 const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
+
+/** Visual count when the full loaded page is in view (no kind/band chip). */
+export const REVIEW_QUEUE_COUNT_PAGE = '%d left to review on this page';
+/** Visual count when a kind or strength-band chip is active. */
+export const REVIEW_QUEUE_COUNT_FILTERED = '%d shown';
+/** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
+export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
+export const REVIEW_QUEUE_POSITION_FILTERED = '%1$d of %2$d shown';
+
+export const REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE = 'Name saved. Back to review suggestions.';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -949,12 +959,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
-              {/* UXW2-2 (B6) / rg-015: every source feed is a capped page
-                  (25/10/25/20) with no envelope total — state the loaded scope
-                  instead of implying a true remaining count. */}
               {sprintf(
-                /* translators: %d: number of loaded review items */
-                __('%d left to review (loaded)', 'alt-context'),
+                filtersActive
+                  ? _n(REVIEW_QUEUE_COUNT_FILTERED, REVIEW_QUEUE_COUNT_FILTERED, length, 'alt-context')
+                  : _n(REVIEW_QUEUE_COUNT_PAGE, REVIEW_QUEUE_COUNT_PAGE, length, 'alt-context'),
                 length,
               )}
             </span>
@@ -1019,8 +1027,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
-                    /* translators: 1: current 1-based position, 2: total */
-                    __('%1$d of %2$d', 'alt-context'),
+                    /* translators: 1: current 1-based position, 2: loaded count on this page or in the active filter */
+                    __(
+                      filtersActive ? REVIEW_QUEUE_POSITION_FILTERED : REVIEW_QUEUE_POSITION_PAGE,
+                      'alt-context',
+                    ),
                     safeIndex + 1,
                     length,
                   )}

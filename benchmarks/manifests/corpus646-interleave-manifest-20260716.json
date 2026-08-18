@@ -94,7 +94,7 @@
     "Leonard Cohen",
     "Leonardo DiCaprio",
     "Linen Kestrel",
-    "Linen Neeson",
+    "Liam Neeson",
     "Coral Ridgeway",
     "Linen Warren",
     "Vellum Meadow",
@@ -19040,7 +19040,7 @@
     },
     {
       "media_id": 60,
-      "path": "celebs/plumb_obama_60.jpg",
+      "path": "celebs/michelle_obama_60.jpg",
       "sha256": "411dc9e850fec72ea7f7f182afbda745cb6a86b92066aa814e651b6326ebdfb8",
       "face_count": 1,
       "present_identities": [
@@ -19074,14 +19074,14 @@
     },
     {
       "media_id": 59,
-      "path": "celebs/linen_neeson_59.webp",
+      "path": "celebs/liam_neeson_59.webp",
       "sha256": "3493eed212c2ec2cd004fe6d75a98635d9907131b3acc061ded10c5b06b55f02",
       "face_count": 1,
       "present_identities": [
-        "Linen Neeson"
+        "Liam Neeson"
       ],
       "must_right": [
-        "Linen Neeson"
+        "Liam Neeson"
       ],
       "easy_wrong": [],
       "policy": {
@@ -19093,12 +19093,12 @@
           "y": 359.0,
           "w": 239.0,
           "h": 340.0,
-          "name": "Linen Neeson",
+          "name": "Liam Neeson",
           "source": "workbench"
         }
       ],
       "context_pack": {
-        "people": "Linen Neeson"
+        "people": "Liam Neeson"
       },
       "provenance": {
         "source": "localwp",
@@ -20230,7 +20230,7 @@
     },
     {
       "media_id": 25,
-      "path": "celebs/bob_harbor_25.webp",
+      "path": "celebs/bob_ross_25.webp",
       "sha256": "a9c52b5c3c8ca335a3a1a323e2592692ee71a6f2c580f15b4ec961f275f0a4be",
       "face_count": 1,
       "present_identities": [

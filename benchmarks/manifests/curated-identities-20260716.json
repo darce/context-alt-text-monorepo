@@ -3901,7 +3901,7 @@
         "confirmed": true,
         "curated_member": false,
         "name": "Bob Ross",
-        "rel_path": "celebs/bob_harbor_25.webp"
+        "rel_path": "celebs/bob_ross_25.webp"
       }
     ],
     "250": [
@@ -11858,8 +11858,8 @@
         "cluster_uuid": "f3cbc109-b029-4072-951d-95041ecaa74c",
         "confirmed": true,
         "curated_member": false,
-        "name": "Linen Neeson",
-        "rel_path": "celebs/linen_neeson_59.webp"
+        "name": "Liam Neeson",
+        "rel_path": "celebs/liam_neeson_59.webp"
       }
     ],
     "590": [
@@ -12213,7 +12213,7 @@
         "confirmed": true,
         "curated_member": false,
         "name": "Michelle Obama",
-        "rel_path": "celebs/plumb_obama_60.jpg"
+        "rel_path": "celebs/michelle_obama_60.jpg"
       }
     ],
     "600": [

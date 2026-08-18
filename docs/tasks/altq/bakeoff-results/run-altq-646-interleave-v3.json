@@ -17046,14 +17046,14 @@
       "identities": [],
       "latency_s": 17.198,
       "media_id": 60,
-      "path": "2026/07/plumb_obama_22-scaled.jpg"
+      "path": "2026/07/michelle_obama_22-scaled.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Linen Neeson sits at a table in a calm indoor room, looking at a laptop, wearing a dark jacket and light-colored shirt.",
-        "alt_text_long": "Linen Neeson sits quietly at a table, focused on a laptop in a softly lit room. The atmosphere is calm, with a chair and table visible nearby. He wears a dark jacket over a light-colored shirt, his expression intent.",
-        "alt_text_title": "Linen Neeson at laptop",
+        "alt_text_draft": "Liam Neeson sits at a table in a calm indoor room, looking at a laptop, wearing a dark jacket and light-colored shirt.",
+        "alt_text_long": "Liam Neeson sits quietly at a table, focused on a laptop in a softly lit room. The atmosphere is calm, with a chair and table visible nearby. He wears a dark jacket over a light-colored shirt, his expression intent.",
+        "alt_text_title": "Liam Neeson at laptop",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
         "model_version": "Q4_K_M",
         "passes": [
@@ -17065,7 +17065,7 @@
           {
             "latency_s": 1.386,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Linen Neeson at laptop\",\n  \"alt\": \"Linen Neeson sits at a table in a calm indoor room, looking at a laptop, wearing a dark jacket and light-colored shirt.\",\n  \"caption\": \"Linen Neeson sits quietly at a table, focused on a laptop in a softly lit room. The atmosphere is calm, with a chair and table visible nearby. He wears a dark jacket over a light-colored shirt, his expression intent.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Liam Neeson at laptop\",\n  \"alt\": \"Liam Neeson sits at a table in a calm indoor room, looking at a laptop, wearing a dark jacket and light-colored shirt.\",\n  \"caption\": \"Liam Neeson sits quietly at a table, focused on a laptop in a softly lit room. The atmosphere is calm, with a chair and table visible nearby. He wears a dark jacket over a light-colored shirt, his expression intent.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -17075,7 +17075,7 @@
       "identities": [],
       "latency_s": 2.671,
       "media_id": 59,
-      "path": "2026/07/linen_neeson_25.webp"
+      "path": "2026/07/liam_neeson_25.webp"
     },
     {
       "describe": {
@@ -18061,7 +18061,7 @@
       "identities": [],
       "latency_s": 2.469,
       "media_id": 25,
-      "path": "2026/07/bob_harbor_1.webp"
+      "path": "2026/07/bob_ross_1.webp"
     },
     {
       "describe": {

@@ -494,10 +494,10 @@
    "bucket": "celebs",
    "naming": "real_name",
    "primary_of": [
-    "celebs/bob_harbor_25.webp"
+    "celebs/bob_ross_25.webp"
    ],
    "appears_in": [
-    "celebs/bob_harbor_25.webp"
+    "celebs/bob_ross_25.webp"
    ],
    "primary_count": 1,
    "appearance_count": 1
@@ -1887,15 +1887,15 @@
    "appearance_count": 2
   },
   {
-   "slug": "linen_neeson",
-   "name": "Linen Neeson",
+   "slug": "liam_neeson",
+   "name": "Liam Neeson",
    "bucket": "celebs",
    "naming": "real_name",
    "primary_of": [
-    "celebs/linen_neeson_59.webp"
+    "celebs/liam_neeson_59.webp"
    ],
    "appears_in": [
-    "celebs/linen_neeson_59.webp"
+    "celebs/liam_neeson_59.webp"
    ],
    "primary_count": 1,
    "appearance_count": 1
@@ -2200,10 +2200,10 @@
    "bucket": "celebs",
    "naming": "real_name",
    "primary_of": [
-    "celebs/plumb_obama_60.jpg"
+    "celebs/michelle_obama_60.jpg"
    ],
    "appears_in": [
-    "celebs/plumb_obama_60.jpg"
+    "celebs/michelle_obama_60.jpg"
    ],
    "primary_count": 1,
    "appearance_count": 1
@@ -4625,7 +4625,7 @@
   },
   {
    "media_id": 25,
-   "path": "celebs/bob_harbor_25.webp",
+   "path": "celebs/bob_ross_25.webp",
    "bucket": "celebs",
    "slug": "bob_ross",
    "sha256": "0eaec7a977121eb0e3414836da7f8fb5f8e590233e6fceb3d86ba6694dbd30d2",
@@ -8383,17 +8383,17 @@
   },
   {
    "media_id": 59,
-   "path": "celebs/linen_neeson_59.webp",
+   "path": "celebs/liam_neeson_59.webp",
    "bucket": "celebs",
-   "slug": "linen_neeson",
+   "slug": "liam_neeson",
    "sha256": "6996d182839e8a0ba4df9e60ea1890212f58cc3b54809f17875f59aa9afa646c",
    "sha256_source": "3493eed212c2ec2cd004fe6d75a98635d9907131b3acc061ded10c5b06b55f02",
    "bytes": 384961,
    "width": 914,
    "height": 1280,
-   "primary_identity": "Linen Neeson",
+   "primary_identity": "Liam Neeson",
    "named_identities": [
-    "Linen Neeson"
+    "Liam Neeson"
    ],
    "named_boxes": [
     {
@@ -8401,7 +8401,7 @@
      "y": 359.0,
      "w": 239.0,
      "h": 340.0,
-     "name": "Linen Neeson",
+     "name": "Liam Neeson",
      "source": "workbench"
     }
    ],
@@ -8472,7 +8472,7 @@
   },
   {
    "media_id": 60,
-   "path": "celebs/plumb_obama_60.jpg",
+   "path": "celebs/michelle_obama_60.jpg",
    "bucket": "celebs",
    "slug": "michelle_obama",
    "sha256": "39b386372f285e8879ccdb6dbdee3bd7a47d713a87a095f0d2e2d3fd91ce9a81",

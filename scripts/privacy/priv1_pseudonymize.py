@@ -144,7 +144,7 @@ _ADJ = (
     "umber",
     "flaxen",
     "dappled",
-    "coral",
+    "burnished",
     "indigo",
     "ochre",
     "sylvan",
@@ -426,6 +426,66 @@ def _assert_vocab_disjoint_from_roster(identities: list[dict]) -> None:
             f"alias vocabulary collides with real roster names: {detail}. "
             "Remove those words from _ADJ/_NOUN -- a minted alias sharing a token with a "
             "real name defeats both the re-run guard and the residue scan."
+        )
+
+
+def _split_tokens(text: str) -> list[str]:
+    return [t for t in re.split(r"[^A-Za-z]+", text) if t]
+
+
+def _assert_map_vocab_disjoint(mapping: dict) -> None:
+    """Re-check the disjointness invariant against the map that actually shipped.
+
+    `_assert_vocab_disjoint_from_roster` only runs inside `plan`. It landed one
+    commit after the map had already been minted and applied, so it has never
+    seen the state on disk -- and it never will, because it reads the roster,
+    which `apply` has since pseudonymized. The map is the only artifact that
+    still holds the real names, so it is the only place the invariant can be
+    re-tested after the fact.
+
+    A collision here is invisible to every other check: a minted alias is by
+    construction not residue, so `verify` reports clean, and `plan` refuses to
+    re-run against a roster that now looks pseudonymized (CARD-08 -- the blind
+    spot was the mint step, which nothing re-validated post-apply).
+
+    The comparison is real-name tokens against *live alias* tokens, not against
+    `_ALIAS_VOCAB`. Keying it off the vocabulary would make the check answer a
+    question about the current source rather than about the shipped artifact:
+    editing the offending word out of `_ADJ` would silence it while the minted
+    alias carrying that word stayed on disk. The measurement must not be
+    derived from the thing being changed.
+    """
+    alias_tokens: set[str] = set()
+    for entry in mapping.get("entries", ()):
+        alias_tokens.update(t.lower() for t in _split_tokens(entry.get("alias", "")))
+    # Both sides are counted, because they are different quantities and the
+    # smaller one is not the repair scope. One real name carrying the word can
+    # collide with several minted aliases, and it is the *aliases* that have to
+    # be re-minted. Collapsing to a single number would understate the work
+    # whenever the two differ.
+    real_hits: dict[str, int] = {}
+    alias_hits: dict[str, int] = {}
+    for entry in mapping.get("entries", ()):
+        for token in (t for t in _split_tokens(entry.get("real_name", "")) if t.lower() in alias_tokens):
+            real_hits[token.lower()] = real_hits.get(token.lower(), 0) + 1
+    real_tokens = {t.lower() for e in mapping.get("entries", ()) for t in _split_tokens(e.get("real_name", ""))}
+    for entry in mapping.get("entries", ()):
+        for token in (t for t in _split_tokens(entry.get("alias", "")) if t.lower() in real_tokens):
+            alias_hits[token.lower()] = alias_hits.get(token.lower(), 0) + 1
+    tokens = real_hits
+    if tokens:
+        detail = ", ".join(
+            f"{w} ({alias_hits.get(w, 0)} alias{'es' if alias_hits.get(w, 0) != 1 else ''}, "
+            f"{n} real name{'s' if n != 1 else ''})"
+            for w, n in sorted(tokens.items())
+        )
+        raise SystemExit(
+            f"shipped alias map reuses real name tokens as pseudonym tokens: {detail}. "
+            "Each of those words is a real name token AND half of a live pseudonym, so neither "
+            "the re-run guard nor the residue scan can tell the two apart. Replace the word in "
+            "_ADJ/_NOUN keeping the list length -- so every other alias is unchanged -- then "
+            "re-mint the affected entries and migrate the tree old-alias->new-alias through "
+            "_Passes rather than a literal sweep."
         )
 
 
@@ -1317,6 +1377,7 @@ def cmd_apply(args) -> int:
     _load_key()
     mapping = load_map()
     _assert_roster_is_covered(mapping)
+    _assert_map_vocab_disjoint(mapping)
     passes = _Passes(mapping)
     files = _tracked_files()
 
@@ -1424,6 +1485,7 @@ def cmd_verify(args) -> int:
     # last `plan` produces a clean scan for the reason that nothing is looking
     # for them (CARD-11).
     _assert_roster_is_covered(mapping)
+    _assert_map_vocab_disjoint(mapping)
     passes = _Passes(mapping)
 
     residue: list[tuple[str, dict[str, int]]] = []

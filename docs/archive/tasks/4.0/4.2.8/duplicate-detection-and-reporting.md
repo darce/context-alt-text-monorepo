@@ -31,8 +31,8 @@ The `predicted_clusters` section in canonical reports shows `member_identity_loc
 
 **Timeline (from logs):**
 
-1. `d43ccfb3` cluster created with Coral Ridgeway from `6694` + `6692`
-2. Coral Ridgeway from `6695` (duplicate of 6694) tries to join via RepresentativeDiscovery
+1. `d43ccfb3` cluster created with Burnished Ridgeway from `6694` + `6692`
+2. Burnished Ridgeway from `6695` (duplicate of 6694) tries to join via RepresentativeDiscovery
 3. Match: 92.62% similarity to best representative
 4. **REJECTED** by complete_link: minimum similarity across ALL reps was below 0.85
 5. `6695` gets its own singleton cluster
@@ -40,7 +40,7 @@ The `predicted_clusters` section in canonical reports shows `member_identity_loc
 **Why this happens:**
 
 - 6694 and 6695 are **pixel-identical** → their embeddings should be identical
-- 6692 is a **different photo** of Coral Ridgeway → its embedding differs
+- 6692 is a **different photo** of Burnished Ridgeway → its embedding differs
 - When 6695 tries to join, it matches perfectly to 6694's rep but poorly to 6692's rep
 - Since it came via RepresentativeDiscovery (not GraphDiscovery), `anchor_linked=False`
 - The bypass conditions don't apply: similarity (92.62%) < 95% threshold

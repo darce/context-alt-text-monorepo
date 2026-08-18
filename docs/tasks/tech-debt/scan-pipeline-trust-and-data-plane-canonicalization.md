@@ -119,7 +119,7 @@ SELECT cluster_uuid, label FROM wp_acx_clusters WHERE label LIKE '%thistle%';
 -- a60a64dc-132b-4e61-8810-fdd25d47b523 | Saffron Cypress
 ```
 
-There ARE genuine duplicate-labeled clusters (`Slate Willow` ×3, `Coral Ridgeway` ×2, `Pewter Hollow` ×2) where the same code path will work correctly; the bug is purely the self-match case.
+There ARE genuine duplicate-labeled clusters (`Slate Willow` ×3, `Burnished Ridgeway` ×2, `Pewter Hollow` ×2) where the same code path will work correctly; the bug is purely the self-match case.
 
 ## Root Cause
 

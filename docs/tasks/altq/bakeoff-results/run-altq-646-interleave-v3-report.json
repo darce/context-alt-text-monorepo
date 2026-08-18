@@ -708,7 +708,7 @@
           "recall": 0.0,
           "tp": 0
         },
-        "Coral Ridgeway": {
+        "Burnished Ridgeway": {
           "fn": 4,
           "fp": 0,
           "precision": null,
@@ -1701,7 +1701,7 @@
       "hallucinated_names": [],
       "inserted_identities": [
         "Dappled Meadow",
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "long": {
         "context_duplication_ratio": 0.0,
@@ -1709,7 +1709,7 @@
         "hallucinated_names": [],
         "inserted_identities": [
           "Dappled Meadow",
-          "Coral Ridgeway"
+          "Burnished Ridgeway"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -5230,7 +5230,7 @@
         "Tidal Rookery"
       ],
       "inserted_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "long": {
         "context_duplication_ratio": null,
@@ -5239,7 +5239,7 @@
           "Tidal Rookery"
         ],
         "inserted_identities": [
-          "Coral Ridgeway"
+          "Burnished Ridgeway"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -5271,14 +5271,14 @@
         "Tidal Rookery"
       ],
       "inserted_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "long": {
         "context_duplication_ratio": null,
         "gated_score": 1.0,
         "hallucinated_names": [],
         "inserted_identities": [
-          "Coral Ridgeway"
+          "Burnished Ridgeway"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],
@@ -5310,7 +5310,7 @@
         "Tidal Rookery"
       ],
       "inserted_identities": [
-        "Coral Ridgeway"
+        "Burnished Ridgeway"
       ],
       "long": {
         "context_duplication_ratio": null,
@@ -5319,7 +5319,7 @@
           "Tidal Rookery"
         ],
         "inserted_identities": [
-          "Coral Ridgeway"
+          "Burnished Ridgeway"
         ],
         "meta_framing_hits": [],
         "missing_identities": [],

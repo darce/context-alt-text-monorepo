@@ -73,7 +73,7 @@ export const useClusterActions = ({
       reassignClusterIdentity({ identityId: variables.faceId, targetClusterId: variables.targetClusterId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      success(__('Identity assignment updated.', 'alt-context'));
+      success(__('Face moved.', 'alt-context'));
     },
     onError: (err) => showToastError(err.message),
     onSettled: onReassignSettled,
@@ -125,7 +125,7 @@ export const useClusterActions = ({
       void invalidateSuggestionProjection(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-      success(__('Cluster committed to roster entry.', 'alt-context'));
+      success(__('Face group assigned to person.', 'alt-context'));
     },
     onError: (err) => showToastError(err.message),
     onSettled: onCommitSettled,

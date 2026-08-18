@@ -105,4 +105,51 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     fireEvent.click(rescanButton);
     expect(onRescanCluster).toHaveBeenCalledWith(cluster, identities);
   });
+
+  it('renders the shell with Close when only requestedClusterId is set (loading)', () => {
+    const onClose = vi.fn();
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={null}
+        identities={[]}
+        requestedClusterId="cluster-missing"
+        isDetailLoading
+        onClose={onClose}
+      />,
+    );
+
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Close$/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the shell with Close and error when only requestedClusterId is set (failed fetch)', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={null}
+        identities={[]}
+        requestedClusterId="cluster-missing"
+        detailError="Unable to load face group details."
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
+    expect(screen.getByText('Unable to load face group details.')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
+  });
+
+  it('hides Move and uses honest copy when reassign is unavailable in this view', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        reassignUnavailableReason="Move faces between groups in the Workbench review queue."
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Move faces between groups in the Workbench review queue.')).toBeInTheDocument();
+  });
 });

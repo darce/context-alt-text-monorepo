@@ -192,14 +192,14 @@ export const PERSON_ROUTE_UNMATCHED_NOTICE = __(
 );
 
 /**
- * Workbench review-queue deep link for card-at-a-time triage (assignment band).
+ * Workbench review-queue deep link for unnamed face groups.
  *
- * `cluster=` emission dropped (jobId precedent): workbench has no cluster reader.
- * Never re-parse builder output to append reader-less params.
+ * Lands on `rq=all.all.0` so the CTA count (top-unlabeled envelope total)
+ * matches the landing filter. `cluster=` emission dropped (jobId precedent).
  */
 export const workbenchReviewQueueUrl = (): string => {
   // rq stays E21-5-owned; contract supplies route base + param *names* only.
   const base = toWorkbench({ tab: 'scan' });
   const separator = base.includes('?') ? '&' : '?';
-  return `${base}${separator}${APP_LINK_PARAMS.rq}=assignment.all.0`;
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=all.all.0`;
 };

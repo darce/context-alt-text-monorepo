@@ -201,7 +201,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
     expect(screen.getByTestId('roster-review-cta')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
       'href',
-      '#/workbench?tab=scan&rq=assignment.all.0',
+      '#/workbench?tab=scan&rq=all.all.0',
     );
     expect(screen.queryByTestId('needs-assignment-section')).not.toBeInTheDocument();
   });

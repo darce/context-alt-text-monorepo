@@ -57,7 +57,7 @@ const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => 
 
   // Decorative empty alt only when a non-blank name label sits beside the face
   // [A11Y-21]. Unnamed rows have no adjacent text equivalent — omit alt so
-  // IdentityThumbnail's default ("Identity from media %d") names the face [S6-BR-03].
+  // IdentityThumbnail's default ("Face from media %d") names the face [S6-BR-03].
   const decorativeAlt = entry.name.trim() !== '' ? '' : undefined;
 
   // Empty cases: no clusters / null representative / null media_url → placeholder.

@@ -31,17 +31,13 @@ import {
 
 export const RosterPage = (): React.JSX.Element => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
 
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
   const selectAllSelection = selection.selectAll;
 
   const parsedRoute = React.useMemo(() => parseRosterRoute(searchParams), [searchParams]);
-
-  React.useEffect(() => {
-    setSelectedClusterId(parsedRoute.selectedClusterId);
-  }, [parsedRoute.selectedClusterId]);
+  const selectedClusterId = parsedRoute.selectedClusterId;
 
   // UXW2-4: the needs-assignment rail is retired (NAV-05 — the workbench queue is
   // the single home for unnamed faces). The drawer survives only as a `?cluster=`
@@ -164,7 +160,6 @@ export const RosterPage = (): React.JSX.Element => {
   };
 
   const handleCloseDrawer = (): void => {
-    setSelectedClusterId(null);
     dragDrop.resetDragState();
     actions.resetAll();
     setSearchParams(
@@ -179,7 +174,6 @@ export const RosterPage = (): React.JSX.Element => {
 
   const handleOpenPersonWorkspace = React.useCallback(
     (personUuid: string, queueId?: string) => {
-      setSelectedClusterId(null);
       dragDrop.resetDragState();
       actions.resetAll();
       setSearchParams(
@@ -228,15 +222,23 @@ export const RosterPage = (): React.JSX.Element => {
           aria-labelledby="acx-roster-review-cta-title"
           data-testid="roster-review-cta"
         >
-          <h2 id="acx-roster-review-cta-title">{__('Unnamed faces waiting', 'alt-context')}</h2>
-          <p>
-            {topUnlabeledTotal !== null
-              ? sprintf(
-                  // translators: %d: server-reported count of unnamed face groups
-                  __('%d face groups waiting', 'alt-context'),
-                  topUnlabeledTotal,
-                )
-              : __('Unnamed faces are reviewed in the Workbench.', 'alt-context')}
+          <h2 id="acx-roster-review-cta-title">
+            {topUnlabeledTotal === null
+              ? __('Unnamed faces', 'alt-context')
+              : topUnlabeledTotal === 0
+                ? __('No unnamed face groups right now', 'alt-context')
+                : __('Unnamed faces waiting', 'alt-context')}
+          </h2>
+          <p role={topUnlabeledTotal !== null ? 'status' : undefined}>
+            {topUnlabeledTotal === null
+              ? __('Unnamed faces are reviewed in the Workbench.', 'alt-context')
+              : topUnlabeledTotal === 0
+                ? __('Nothing waiting in the review queue.', 'alt-context')
+                : sprintf(
+                    // translators: %d: server-reported count of unnamed face groups
+                    __('%d face groups waiting', 'alt-context'),
+                    topUnlabeledTotal,
+                  )}
           </p>
           <a className="acx-button acx-button--secondary" href={workbenchReviewQueueUrl()}>
             {__('Review in Workbench', 'alt-context')}
@@ -246,6 +248,12 @@ export const RosterPage = (): React.JSX.Element => {
 
       <ClusterDrawerPanel
         cluster={selectedClusterId === null ? null : drawerCluster}
+        requestedClusterId={selectedClusterId}
+        reassignUnavailableReason={
+          selectedClusterId === null
+            ? null
+            : __('Move faces between groups in the Workbench review queue.', 'alt-context')
+        }
         identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={

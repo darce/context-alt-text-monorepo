@@ -235,7 +235,14 @@ async def list_roster_candidates(
             if previous is None or match.similarity > previous:
                 best_by_cluster[match.cluster_id] = match.similarity
 
-    ranked = sorted(best_by_cluster.items(), key=lambda item: (-item[1], item[0]))
+    ranked = sorted(
+        (
+            (cluster_id, best_by_cluster[cluster_id])
+            for cluster_id in reps_by_cluster
+            if cluster_id in best_by_cluster
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
     candidates = [
         RosterCandidate(
             cluster_id=labeled_id,

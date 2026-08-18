@@ -48,13 +48,37 @@ def _rep(
 
 
 def test_roster_candidates_empty_when_cluster_exists_without_roster(
-    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
 ) -> None:
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    monkeypatch.setattr(
+        "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",
+        lambda: ClusteringSettings(
+            suggestion_floor=0.40,
+            suggestion_ceiling=0.80,
+            similarity_threshold=0.77,
+            fatal_quality_floor=0.20,
+            fatal_confidence_floor=0.30,
+        ),
+    )
     cluster = seed_cluster(
         fake_cluster_service,
         tenant_id,
         label=None,
         fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_repository.seed(
+        cluster.id,
+        tenant_id,
+        label=None,
+        representatives=[
+            _rep(
+                embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+                embedding_model=same_model,
+                quality_score=0.95,
+                landmark_quality=0.9,
+            )
+        ],
     )
 
     resp = api_client.get(
@@ -64,8 +88,11 @@ def test_roster_candidates_empty_when_cluster_exists_without_roster(
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["candidates"] == []
     jsonschema.validate(body, _schema())
+    assert body["candidates"] == []
+    assert body["probe_face_count"] > 0
+    assert body["reference_face_count"] == 0
+    assert body["quality_flag"] == "ok"
 
 
 def test_roster_candidates_missing_cluster_is_404(api_client, tenant_id) -> None:
@@ -119,16 +146,17 @@ def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_
         label=None,
         fake_cluster_repository=fake_cluster_repository,
     )
-    strong = seed_cluster(
-        fake_cluster_service,
-        tenant_id,
-        label="Ada",
-        fake_cluster_repository=fake_cluster_repository,
-    )
+    # Seed lower-similarity first so insertion order cannot pass as rank order.
     possible = seed_cluster(
         fake_cluster_service,
         tenant_id,
         label="Bea",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    strong = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Ada",
         fake_cluster_repository=fake_cluster_repository,
     )
     foreign = seed_cluster(
@@ -147,16 +175,16 @@ def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_
         ],
     )
     fake_cluster_repository.seed(
-        strong.id,
-        tenant_id,
-        label="Ada",
-        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
-    )
-    fake_cluster_repository.seed(
         possible.id,
         tenant_id,
         label="Bea",
         representatives=[_rep(embedding=_normalize(np.array([0.55, 0.835, 0.0])), embedding_model=same_model)],
+    )
+    fake_cluster_repository.seed(
+        strong.id,
+        tenant_id,
+        label="Ada",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
     )
     fake_cluster_repository.seed(
         foreign.id,
@@ -175,8 +203,7 @@ def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_
     body = resp.json()
     jsonschema.validate(body, _schema())
     ids = [row["cluster_id"] for row in body["candidates"]]
-    assert ids[0] == strong.id
-    assert possible.id in ids
+    assert ids == [strong.id, possible.id]
     assert foreign.id not in ids
     bands = {row["cluster_id"]: row["band"] for row in body["candidates"]}
     assert bands[strong.id] == "strong"

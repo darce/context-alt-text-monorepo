@@ -106,17 +106,17 @@
         },
         {
           "id": "z-cluster-list",
-          "label": "Cluster list / selection (size, confidence, unnamed-first)",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl",
           "role": "queue",
-          "states": ["default", "loading", "empty"]
+          "states": ["default", "loading", "empty", "error", "pending", "suggestions-open"]
         },
         {
           "id": "z-name-curate",
-          "label": "Name & curate (assign name; confirm / correct / merge / split; forced-choice candidates)",
+          "label": "Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice)",
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 5,
-          "states": ["default", "loading", "empty", "error"]
+          "states": ["default", "loading", "empty", "error", "pending", "suggestions-open"]
         }
       ]
     },
@@ -147,16 +147,16 @@
         },
         {
           "id": "z-lib-inline-edit",
-          "label": "Inline alt-text / long-description editor (per row)",
+          "label": "Inline person naming (NameFaceControl) + alt-text / long-description editor",
           "role": "form",
-          "states": ["default", "error"]
+          "states": ["default", "loading", "empty", "error", "pending", "suggestions-open"]
         },
         {
           "id": "z-lib-ai-suggest",
-          "label": "AI caption/description suggestions (evidence-linked; editable before accept)",
+          "label": "AI name / caption suggestions (evidence-linked; editable before accept)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading"]
+          "states": ["default", "empty", "loading", "error", "pending", "suggestions-open"]
         },
         {
           "id": "z-lib-actions",
@@ -284,7 +284,7 @@
     },
     {
       "id": "act-select-cluster",
-      "verb": "Select cluster (UMAP or list)",
+      "verb": "Select face group (UMAP or list)",
       "target": "workbench-library",
       "hierarchy": "primary",
       "costly": false,
@@ -294,7 +294,7 @@
     },
     {
       "id": "act-name-cluster",
-      "verb": "Assign name to cluster",
+      "verb": "Save name (NameFaceControl)",
       "target": "identity-store",
       "hierarchy": "primary",
       "costly": true,
@@ -304,7 +304,7 @@
     },
     {
       "id": "act-curate-cluster",
-      "verb": "Merge / split / correct cluster",
+      "verb": "Merge / split / correct group",
       "target": "identity-store",
       "hierarchy": "destructive",
       "costly": true,

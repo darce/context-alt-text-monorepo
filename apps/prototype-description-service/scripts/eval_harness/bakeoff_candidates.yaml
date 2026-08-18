@@ -18,6 +18,9 @@ hardware_target:
 sealed:
   candidates: 14
   incumbent_anchors: 2
+  generation_pairs:
+    - ids: [qwen38-27b, qwen36-27b]
+      quant: UD-Q4_K_XL
 entries:
   - id: minicpm-v-45
     role: candidate

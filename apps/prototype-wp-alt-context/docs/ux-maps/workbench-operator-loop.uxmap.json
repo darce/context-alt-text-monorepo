@@ -104,10 +104,10 @@
         },
         {
           "id": "z-identity-preview",
-          "label": "Identity / findings preview (AI-assisted)",
+          "label": "Review suggestions + Name this person (NameFaceControl)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading"]
+          "states": ["default", "empty", "loading", "error", "pending", "suggestions-open"]
         }
       ]
     },

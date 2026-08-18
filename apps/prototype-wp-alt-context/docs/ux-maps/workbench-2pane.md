@@ -80,15 +80,15 @@ by other lanes and are not yet covered by this list.
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Recognition endpoint + health (read-only: InsightFace… |
-|   - Cluster/recognition controls (run, refresh, threshold… |
-|   - UMAP cluster scatter (2D projection of face embedding… |
-|   - Cluster list / selection (size, confidence, unnamed-f… |
-|   - Name & curate (assign name; confirm / correct / merge… |
+|   - Face-group/recognition controls (run, refresh, thresh… |
+|   - UMAP face-group scatter (2D projection of faces)       |
+|   - Face-group list / selection + NameFaceControl (queue)  |
+|   - Name this person (NameFaceControl) (forced_choice)     |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + clustering -> job… |
-|   [PRIMARY] Assign name to cluster -> identity-store (cos… |
-|   [PRIMARY] Select cluster (UMAP or list) -> workbench-li… |
+|   [PRIMARY] Save name (NameFaceControl) -> identity-store  |
+|   [PRIMARY] Select face group (UMAP or list) -> library    |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] View / change recognition endpoint (Setting… |
 |   [DESTRUCTIVE] Merge / split / correct cluster -> identi… |
@@ -107,8 +107,8 @@ by other lanes and are not yet covered by this list.
 | ZONES                                                      |
 |   - Library filters (status, has-alt, has-description, cl… |
 |   - Media library table (thumb | title | status | alt-tex… |
-|   - Inline alt-text / long-description editor (per row) (… |
-|   - AI caption/description suggestions (evidence-linked; … |
+|   - Inline person naming (NameFaceControl) + alt editor    |
+|   - AI name / caption suggestions (ai_review)              |
 |   - Bulk describe / scan CTAs + job progress (job) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |

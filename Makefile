@@ -650,6 +650,11 @@ bakeoff-face-score:
 	@if [ -z "$(FACE_RUN)" ]; then echo "error: FACE_RUN is required" >&2; exit 2; fi
 	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli score-face --run-record "$(FACE_RUN)" $(EVAL_ARGS)
 
+# VLM-6 S2 dry-run: bake-off client end-to-end against the loopback stub server (no GPU, no weights)
+.PHONY: bakeoff-dry-run
+bakeoff-dry-run:
+	@cd apps/prototype-description-service && uv run python -m pytest scene/tests/test_eval_harness_stub_dryrun.py -q -p no:randomly
+
 # Offline determinism freezes (caption + face). Not eval-captions / bakeoff-face-score:
 # those score a freshly fetched record with no committed freeze. Non-zero on mismatch.
 # --freeze-certification: exit code means byte-stability only (fx8). The freezes are

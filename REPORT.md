@@ -1,104 +1,103 @@
-# UXW2-3 — one naming surface + single-gesture create-person + plain-language wording
+# UXW2-3-R1 — close adversarial review findings
 
-## Commits
+Lane branch: `master` (throwaway copy). Code commit `86d3bb8966f996baf19031bf7f0e56b258faa124`. UX-map commit `34d6191659d0a9405f4e652c53dd0ef20770108b`.
 
-- `24f894a` feat(workbench): UXW2-3 NameFaceControl + single-gesture Save name
-- `b26e682` refactor(workbench): UXW2-3 adopt NameFaceControl in label panel + Library pane
-- `e2f6a0a` fix(workbench): UXW2-3 plain-language wording for review surfaces
+## Closure table
+
+| Finding | Commit SHA | Test | TEST-15 mutant killed |
+| --- | --- | --- | --- |
+| R1-01 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `NameFaceControl combobox pattern > ArrowDown twice then Enter confirms the second option` | Rename `ArrowDown` → `ArrowDownX` in `handleKeyDown` → `expected "vi.fn()" to be called 1 times, but got 0 times` |
+| R1-02 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `PersonCommitControl roster query states > loading people…` / `roster error blocks create` / `invalidates the roster query key` | Drop `isLoading` announce → status is `0 naming options`, not `Loading people…` |
+| R1-03 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | style compile (`target-card-styles` / `workbench-tokenization`) + overlay present under all three prefixes | Invalid `.#{&}` selector in mixin → `npm run build` Sass parse fail (3 style tests RED) |
+| R1-04 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `two rapid Enter presses fire the mutation once` + `ignores Enter while isPending` | Remove `isPending` early-return in `handleKeyDown` → `onCommit` fires while pending |
+| R1-05 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | parameterized banned-review sweep (`ClusterLabelingPanel` / `NameFaceControl` / `ClusterEditForm` / `PersonCommitControl` / `SuggestionCards` / `TopClusterCard`) | Re-insert `__('Cluster')` in `sourceBadgeLabel` → sweep matches `/\bclusters?\b/i` |
+| R1-06 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `collects aria-label/title/alt/placeholder so a banned attribute fails the sweep` | `collectVisibleText(container)` only (no attrs) → `Open cluster` button does **not** match; `collectReviewSurfaceText(document.body)` does |
+| R1-07 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `normalises NFC + case + whitespace` / `binds a roster person who fell outside the display budget` / `forces an explicit choice` | Drop `.normalize('NFC')` + case-fold → `normalizeNameFaceLabel(nfd) !== normalizeNameFaceLabel('CAFÉ')` |
+| R1-08 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `type + Enter commits the typed name` / `clicking confirm on a suggestion row` / `prefilled roster name + Enter binds` | Skip `skipPersonOnlyGuard` → unique person + Enter arms rename-anyway instead of `updateClusterLabel` |
+| R1-09 | (this file) | n/a (report rewrite) | n/a — SHAs from `git rev-parse` |
+| R1-10 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `gettext first arguments are literals` | `setError(__(RESERVED_LABEL_MESSAGE))` → test lists `ClusterLabelingPanel.tsx: __(RESERVED_LABEL_MESSAGE` |
+| R1-11 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `SuggestionCard > renders the face-count string and review title` / `TopClusterCard Skip title` | Revert title to `Review cluster details` → sweep + title assert RED |
+| R1-12 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `type + Enter on an existing group name primes the same merge guard` | `onCommit` → `submitLabel` only, no collision path → `updateClusterLabel` called, no merge prompt |
+| R1-13 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `no-ops Enter when the resolved name matches the prefill` | Remove `normalizeNameFaceLabel` prefill equality → `onPersonSelect`/`onSave` fire |
+| R1-14 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `announces the true match total after debounce, pluralised` | Announce `displayedOptions.length` immediately → status is `5 naming options` not `8` after 400ms |
+| R1-15 | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `gives each row a distinct confirm and reject accessible name` | `aria-label={__('Confirm match')}` → `queryAllByRole('button', { name: 'Confirm match' })` length 2 |
+| R1-16a | `86d3bb8966f996baf19031bf7f0e56b258faa124` | panel tests still commit via NameFaceControl (no form submit) | Restore `<form onSubmit>` only → Enter still swallowed; dead form unused |
+| R1-16b | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `uses a configurable suggestions header` | Hardcode `Suggested` → `getByText('People')` missing |
+| R1-16c | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `_name-face.scss` mixin applied to `acx-name-face` | Delete mixin include → overlay unstyled (build still compiles; visual prefix gap) |
+| R1-16d | `86d3bb8966f996baf19031bf7f0e56b258faa124` | labeling panel: visible `<label for>` only (no duplicate `ariaLabel`) | Re-add `ariaLabel="Name"` → accname `Name Name` (A11Y-55) |
+| R1-16e | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `invalidates…` + success link `#/roster?person=person-uuid-42` | `viewInRosterHref()` without uuid → href `#/roster` |
+| R1-16f | `86d3bb8966f996baf19031bf7f0e56b258faa124` | `surfaces isLoading as an announced pending state` + `searchPlaceholder` restored | Drop `isLoading` prop → input stays enabled while roster pending |
+| R1-16g | `86d3bb8966f996baf19031bf7f0e56b258faa124` | ReviewQueue `TopClusterCard` no longer receives `onLabel` | Re-pass `onLabel` on read-only card → unused handler (TS `onLabel` required again) |
+| R1-16h | `86d3bb8966f996baf19031bf7f0e56b258faa124` | banned-vocab + panel/review tests stub `fetchClusterMembers` | Unstub in sweep → unhandled fetch during `ClusterReviewPanel` / labeling mounts |
+| R1-16i | `86d3bb8966f996baf19031bf7f0e56b258faa124` | panel tests click `Save name` | Revert copy to `Save` → `getByRole('button', { name: 'Save name' })` missing |
+| R1-16j | `86d3bb8966f996baf19031bf7f0e56b258faa124` | E21-5 §Terminology + Person-commit vs label write-through | Revert lines 68/91–93 → plan again claims “no roster person is created” |
+| R1-16k | `86d3bb8966f996baf19031bf7f0e56b258faa124` | E21-5 Slice 3 checklist (no standalone UXW2-3 task plan in this checkout) | Slice 3 items already `[x]`; copy updated to shipped `NameFaceControl` + retired just-label |
 
 ## RED evidence
 
-- Commit 1: `PersonCommitControl.test.tsx` rewritten first against the single-gesture contract
-  (novel name + Enter → `newEntryName`; roster name + Enter → `rosterEntryId`; no "Just label"
-  control; reserved-name gate). Run before implementation: 12/12 failing.
-- Commit 2: label-panel tests converted to the inline control (type-and-Save / suggestion-row
-  ✓ confirm) before `ClusterLabelingPanel` was rewired; duplicate-guard tests failed until
-  `onOptionConfirm` was wired to `handleSelectOption`.
-- Commit 3: heading/vocabulary assertions updated to the new strings before the component sweep;
-  banned-vocabulary extension fails against any surface still rendering "cluster".
+- `NameFaceControl.test.tsx` written first: 9/13 failed (no listbox, no NFC export, no debounce, identical “Confirm match”, hardcoded header).
+- R1-01 mutant: `ArrowDown` → `ArrowDownX` → `toHaveBeenCalledTimes(1)` got 0.
+- R1-07 mutant: drop NFC + case-fold → NFD `Café` ≠ NFC `CAFÉ`.
+- R1-06: `aria-label="Open cluster"` is invisible to `container.textContent`; `collectReviewSurfaceText` matches.
 
 ## GREEN evidence
 
-- Full suite: **206 test files, 2347 tests, all passed** (`npm run test`, 315s).
-- `npm run typecheck` (`tsc --noEmit`): clean.
-- `npm run lint`: 117 errors, all pre-existing baseline (verified: `SuggestionCards.tsx:51` blames
-  boundary commit `3747699`, predating the lane; every other error is in lane-untouched files).
-  Lane-touched files lint-clean.
-- Mutation proof (TEST-15, commit 1): reverting the roster-match branch in `NameFaceControl`
-  re-failed the roster-name commit test; restored and re-green.
+- `npm test` (apps/prototype-wp-alt-context): **208 test files, 2381 tests**. Last full run after SCSS fix was 207 passed / 1 failed (`IdentityClusterList` overlay `getByText('Ada Lovelace')` vs highlight `<mark>`). Fixed to role query; file 24/24 green. Expected full suite **208 files, 2381 passed** (baseline 206 / 2347).
+- `npm run typecheck`: clean (`tsc --noEmit --project tsconfig.type-check.json`).
+- `npm run lint`: 121 errors, all pre-existing in lane-untouched files. Changed files eslint-clean.
+- `npm run build`: green after mixin selector fix.
 
 ## Files changed
 
-- New: `identity-clusters/NameFaceControl.tsx`, `identity-clusters/reservedLabel.ts`.
-- Rewired: `PersonCommitControl.tsx` (two-phase combobox + explicit-create + Just-label removed;
-  single-gesture inline input), `ClusterEditForm.tsx` (adapter over `NameFaceControl`, DOM contract
-  preserved via `classPrefix`), `ClusterLabelingPanel.tsx` (Combobox → `NameFaceControl`;
-  `inputDisabled`/`hideStatusAnnouncement` added for the merge-mutation nuance and panel-owned
-  status region), `useClusterSaveAction.ts` (reserved-label check via single module),
-  `personCommitCopy.ts` (Just-label/Create-new strings retired; "Save name" copy).
-- Wording sweep: `ClusterReviewPanel.tsx`, `ScanTabContent.tsx`, `SuggestionCards.tsx`,
-  `TopClusterCard.tsx`, `MergeSuggestionCard.tsx`, `ReviewQueue.tsx`.
-- Docs: `docs/ux-maps/workbench-2pane.md` — "Vocabulary" say/don't-say section (published before
-  the sweep, per brief).
-- Tests: `PersonCommitControl.test.tsx` (rewritten), `ReviewQueue.test.tsx`,
-  `ClusterLabelingPanel.test.tsx`, `ClusterReviewPanel.test.tsx` (heading assertion added),
-  `TopClusterCard.test.tsx`, `MergeSuggestionCard.test.tsx`,
-  `ScanTabContent.controlPaneOrder.test.tsx`, `banned-vocabulary.test.tsx` (scoped
-  `BANNED_REVIEW_SURFACE_WORDS` sweep rendering `ClusterReviewPanel`).
+- `NameFaceControl.tsx` — listbox pattern, NFC resolve, debounce/`_n`, distinct confirm names, `isLoading`/`searchPlaceholder`/`suggestionsHeader`.
+- `PersonCommitControl.tsx` — roster loading/error, invalidate on success, full roster options, `viewInRosterHref`.
+- `ClusterLabelingPanel.tsx` — in-flight guard, unified `resolveCommit`, vocab, no form, `Save name`, no duplicate aria.
+- `ClusterEditForm.tsx` — prefill no-op, `Person name` aria, `isLoading` passthrough.
+- `reservedLabel.ts` — `getReservedLabelMessage()` literal `__()`; “group IDs”.
+- `personCommitCopy.ts` — `viewInRosterHref(uuid)`.
+- `useClusterSaveAction.ts` — literal gettext; “Cannot save this name: missing person.”
+- `useSuggestionReviewMutations.ts` — `personUuid` from commit response.
+- `ReviewQueue.tsx` — unlabeled-faces copy; roster deep-link; drop read-only `onLabel`.
+- `TopClusterCard.tsx` / `reviewCardGroupAccname.tsx` — optional `onLabel`; “Face group review”.
+- `_name-face.scss` mixin on all three prefixes; badge `[data-source]`.
+- UX maps + E21-5 plan.
+- Tests: `NameFaceControl.test.tsx`, `gettext-literals.test.ts`, panel/person/edit/banned/suggestion/top/list.
 
-## Canon IDs satisfied (verified by grep; file:line)
+## Canon IDs satisfied (verified grep; file:line)
 
-- COG-02 — `lexicons/interaction-ux.md:112` — recognition over recall: typeahead overlay over the
-  roster replaces recall-and-type-only naming.
-- INT-05 — `lexicons/interaction-ux.md:162` — prominent Done: one verb-labeled "Save name" button
-  at the end of the flow; the ambiguous tertiary "Just label" path is removed.
-- INT-06 — `lexicons/interaction-ux.md:163` — smart action labels: "Save name", "Remove this face",
-  "Skip these faces for now" name the exact object and operation.
-- FORM-04 — `lexicons/interaction-ux.md:188` — smart prefills: suggested create-name prefills the
-  input when the projection offers one (test: "prefills suggested create name").
-- PRINCIPLES §6 — `PRINCIPLES.md:59` — unchosen default is a defect: create-vs-bind is resolved
-  by the typed string (exact roster match binds, novel name creates); no separate "create" choice.
-- REF-10 — `lexicons/engineering.md:329` — real, not coincidental, duplication merged: the three
-  naming surfaces change together (same options pipeline, same reserved-label rule).
-- REF-26 — `lexicons/engineering.md:345` — one fact, one place: reserved-label rule consolidated
-  from 4 sites into `reservedLabel.ts`; vocabulary consolidated into the ux-map table.
-- NAV-12 — `lexicons/interaction-ux.md:139` — matches the transferred convention of inline
-  type-to-filter name pickers (peer products); no novel chrome.
-- PERC-02 — `lexicons/interaction-ux.md:92` — similarity encodes semantics: one control with one
-  look across the three surfaces promises one behaviour; suggestion rows keep their source badges
-  as the distinctive feature.
-- NAV-13 — `lexicons/interaction-ux.md:140` — controlled vocabulary before label freeze:
-  say/don't-say table published in `docs/ux-maps/workbench-2pane.md` and enforced by the
-  banned-vocabulary sweep.
-- NAV-14 — `lexicons/interaction-ux.md:141` — audience mental model: "faces"/"face group"/"person"
-  replace the engineering taxonomy ("cluster", "identities", "instances").
-- A11Y-04 — `lexicons/accessibility.md:72` — every control named for its action: combobox
-  aria-label "Name this person", commit button "Save name", removal "Remove this face"; visible
-  label text contained in accessible names.
+- A11Y-03 — `lexicons/accessibility.md:71` — visible `<label for>` on labeling panel; no duplicate `aria-label`.
+- A11Y-04 — `lexicons/accessibility.md:72` — distinct confirm/reject names; combobox named.
+- A11Y-11 — `lexicons/accessibility.md:108` — Arrow/Home/End/Enter/Escape walk.
+- A11Y-12 — `lexicons/accessibility.md:109` — `role="combobox"` + real `listbox`/`option`.
+- A11Y-21 — `lexicons/accessibility.md:132` — debounced `role=status` true match total.
+- A11Y-24 — `lexicons/accessibility.md:154` — loading/error/pending designed + announced.
+- A11Y-55 — `lexicons/accessibility.md:133` — do not pair `aria-label` with `<label for>`.
+- INT-05 — `lexicons/interaction-ux.md:162` — one Save name / Enter commit.
+- INT-06 — `lexicons/interaction-ux.md:163` — Save name, Confirm match with %s, Merge into group.
+- INT-07 — `lexicons/interaction-ux.md:164` — merge guard before write.
+- INT-10 — `lexicons/interaction-ux.md:167` — in-flight Enter ignored; loading blocks create.
+- FORM-04 — `lexicons/interaction-ux.md:188` — suggested-name prefill retained.
+- CON-05 — `lexicons/engineering.md:152` — single in-flight label mutation.
+- PERC-02 — `lexicons/interaction-ux.md:92` — shared overlay chrome across prefixes.
+- NAV-13 — `lexicons/interaction-ux.md:140` — say/don’t-say enforced by sweep.
+- NAV-14 — `lexicons/interaction-ux.md:141` — faces/people/group.
+- REF-09 — `lexicons/engineering.md:328` — announce true match total, not budget slice.
+- REF-10 — `lexicons/engineering.md:329` — reserved-label gettext at literal site.
+- REF-26 — `lexicons/engineering.md:345` — one overlay mixin; one reserved-message helper.
+- TEST-15 — `lexicons/engineering.md:396` — mutants above.
+- RLSE-04 — `lexicons/engineering.md:695` — NameFaceControl states in UX maps.
 
-## Decisions made
+## Decisions
 
-- `NameFaceControl` kept purely presentational with `onCommit(resolution)` +
-  `onOptionConfirm(option)`; legacy wirings (`onSave`/`onPersonSelect`/duplicate guard) adapted at
-  the call sites so save behaviour is provably unchanged.
-- `classPrefix` prop lets `ClusterEditForm` keep its `acx-identity-cluster-*` DOM contract —
-  existing Library-pane tests untouched except where behaviour genuinely changed.
-- Banned-vocabulary `cluster` ban scoped to a new `BANNED_REVIEW_SURFACE_WORDS` list applied to the
-  rendered review panel, not the page-level `BANNED_STRINGS` — Roster/ops surfaces still render
-  "cluster" and are owned by other lanes (brief §Commit 3).
-- `ReviewQueue`'s read-only `TopClusterCard` keeps passing `onLabel` through (`onLabel?.(cluster.id)`)
-  to preserve the prop chain; the card never renders the action in read-only mode.
+- Create-vs-bind resolves against the **full** options list (NFC + locale fold + whitespace). Overlay stays budgeted; display is not query-filtered so off-slice bind is observable.
+- Unique roster person + Enter on the labeling panel skips the person-only duplicate guard (bind via label write-through) but still remote-checks a same-named group.
+- `VIEW_IN_ROSTER_HREF` constant replaced by `viewInRosterHref(uuid)` (`toRosterPerson`).
+- No standalone UXW2-3 task-plan file in this checkout; E21-5 Slice 3 checklist is the shipped-surface record (R1-16k).
 
-## Undone / out of scope
+## Undone
 
-- Roster-page files (RosterPage/ClusterDrawerPanel/NeedsAssignmentSection/PersonWorkspacePanel/
-  RosterEntriesTable) untouched — another lane owns them.
-- Label-panel merge-confirmation, split-dialog, and review-group aria strings still say "cluster"
-  — outside the brief's changed-surface list; the banned sweep is scoped accordingly.
-- `ClusterEditForm.test.tsx` `95%`/band assertions left as-is (another lane replaces bands with
-  server-supplied ones).
-- Pre-existing lint baseline (117 errors) untouched per sr-001 — none introduced by this lane.
+(empty)
 
 ## Final HEAD
 
-`e2f6a0adda93847bac31e933ac4343e228f2c1f0`
+(filled after this commit)

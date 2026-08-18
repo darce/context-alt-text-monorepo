@@ -17,7 +17,14 @@ FIXTURE = Path(__file__).parent / "fixtures" / "v3_boxed_detection.json"
 
 def test_require_true_mismatch_raises() -> None:
     with pytest.raises(BenchError) as exc:
-        load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=True, skip_hash_verification=True)
+        load_bench_manifest(
+            FIXTURE,
+            None,
+            require_detection_exhaustiveness=True,
+            metadata_only=True,
+            skip_hash_verification=True,
+            hash_skip_reason="detection-exhaustiveness check is metadata-only",
+        )
     assert exc.value.code == "gt_box_count_mismatch"
 
 
@@ -42,14 +49,28 @@ def test_v3_loader_refuses_unstamped_annotation_mode(tmp_path: Path) -> None:
 
 
 def test_default_flag_loads_mismatch_as_non_exhaustive() -> None:
-    manifest = load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=False, skip_hash_verification=True)
+    manifest = load_bench_manifest(
+        FIXTURE,
+        None,
+        require_detection_exhaustiveness=False,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="detection-exhaustiveness check is metadata-only",
+    )
     assert 3 in non_exhaustive_ids(manifest)
     mismatch = next(e for e in manifest.entries if e.media_id == 3)
     assert stranger_faces_for(mismatch) == 0
 
 
 def test_exhaustive_stranger_faces_from_unnamed_boxes() -> None:
-    manifest = load_bench_manifest(FIXTURE, None, require_detection_exhaustiveness=False, skip_hash_verification=True)
+    manifest = load_bench_manifest(
+        FIXTURE,
+        None,
+        require_detection_exhaustiveness=False,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="detection-exhaustiveness check is metadata-only",
+    )
     multi = next(e for e in manifest.entries if e.media_id == 1)
     assert stranger_faces_for(multi) == 0  # both boxes named
     # zero-box entry cannot be scored for detection (boxes present is required)

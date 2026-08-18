@@ -1352,6 +1352,7 @@ def main(argv: list[str] | None = None) -> None:
         images_dir = ""
         manifest = load_manifest(
             args.manifest,
+            metadata_only=True,
             skip_hash_verification=True,
             hash_skip_reason="weave-bench bakeoff is text-only; image bytes never opened",
         )

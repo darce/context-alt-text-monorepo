@@ -389,6 +389,7 @@ def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
         if candidate.is_file():
             return load_manifest(
                 str(candidate),
+                metadata_only=True,
                 skip_hash_verification=True,
                 hash_skip_reason="metadata-only scoring path; image bytes never opened",
             )
@@ -398,6 +399,7 @@ def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
         raise BenchError("config_invalid", "run-dir has no manifest.json or manifest_path")
     return load_manifest(
         path,
+        metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason="metadata-only scoring path; image bytes never opened",
     )

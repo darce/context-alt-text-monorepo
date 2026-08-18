@@ -72,7 +72,13 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
 
     # Metadata-only rescore (records/manifest fields, no image bytes opened) — same
     # contract as score_report.py::_load_manifest_from_run (VLM6-MERGE-01).
-    manifest = load_bench_manifest(run_dir / "manifest.json", None, skip_hash_verification=True)
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition rescore is metadata-only; image bytes never opened",
+    )
     records_by = {
         p.name: ItemOutcomeStore(p / "items.jsonl").read_all() for p in (run_dir / "legs").iterdir() if p.is_dir()
     }
@@ -98,7 +104,13 @@ def test_join_attrition_when_ingest_row_missing(tmp_path: Path) -> None:
 
     # Metadata-only rescore — same contract as score_report.py::_load_manifest_from_run
     # (VLM6-MERGE-01): no image bytes are opened here, only manifest fields.
-    manifest = load_bench_manifest(run_dir / "manifest.json", None, skip_hash_verification=True)
+    manifest = load_bench_manifest(
+        run_dir / "manifest.json",
+        None,
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason="attrition rescore is metadata-only; image bytes never opened",
+    )
     records_by = {
         p.name: ItemOutcomeStore(p / "items.jsonl").read_all() for p in (run_dir / "legs").iterdir() if p.is_dir()
     }

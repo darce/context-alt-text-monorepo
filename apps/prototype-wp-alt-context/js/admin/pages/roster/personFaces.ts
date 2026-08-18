@@ -93,10 +93,9 @@ export const resolveVisibleFaceId = (
 
 export const getSelectedFacePreviewLabel = (face: PersonScrubFace): string =>
   sprintf(
-    __('Selected face, instance %d for Cluster %d, media %d', 'alt-context'),
-    face.instanceOrdinal,
-    face.clusterIndex + 1,
+    __('Selected face from media %d in face group %d', 'alt-context'),
     face.mediaId,
+    face.clusterIndex + 1,
   );
 
 export const assertSelectedFace = (face: PersonScrubFace | null): asserts face is PersonScrubFace => {

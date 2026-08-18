@@ -18,7 +18,7 @@ import {
 } from './clusterDrawerState';
 
 const RESERVED_LABEL_MESSAGE = __(
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
   'alt-context',
 );
 
@@ -61,14 +61,14 @@ interface Props {
 }
 
 const EMPTY_TARGETS: ClusterReassignTarget[] = [];
-const NO_TARGETS_REASON = __('No other clusters available to move this identity into.', 'alt-context');
+const NO_TARGETS_REASON = __('No other face groups available to move this face into.', 'alt-context');
 const NO_TARGETS_REASON_ID = 'acx-cluster-drawer-no-move-targets-reason';
 
 /** Unlabeled targets: list index (type has no face count). */
 const clusterTargetLabel = (target: ClusterReassignTarget, index: number): string =>
   target.label.trim().length > 0
     ? target.label
-    : sprintf(__('Unnamed cluster %d', 'alt-context'), index + 1);
+    : sprintf(__('Unnamed face group %d', 'alt-context'), index + 1);
 
 export const ClusterDrawerPanel = ({
   cluster,
@@ -189,7 +189,7 @@ export const ClusterDrawerPanel = ({
       setStatusMessage(reassignErrorMessage);
     } else {
       setStatusMessage(
-        sprintf(__('Moved identity to %s.', 'alt-context'), pending.targetLabel),
+        sprintf(__('Moved face to %s.', 'alt-context'), pending.targetLabel),
       );
     }
     pendingReassignRef.current = null;
@@ -261,7 +261,7 @@ export const ClusterDrawerPanel = ({
       }
       const targetLabel = clusterTargetLabel(target, index);
       pendingReassignRef.current = { faceId, targetLabel };
-      setStatusMessage(sprintf(__('Moving identity to %s…', 'alt-context'), targetLabel));
+      setStatusMessage(sprintf(__('Moving face to %s…', 'alt-context'), targetLabel));
       closePicker(true);
       onReassignFace(faceId, target.id);
     },
@@ -315,19 +315,19 @@ export const ClusterDrawerPanel = ({
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">
               {drawerState === CLUSTER_DRAWER_STATES.ASSIGNED
-                ? __('Assigned cluster', 'alt-context')
+                ? __('Assigned face group', 'alt-context')
                 : drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL
                   ? __('Singleton proposal', 'alt-context')
-                  : __('Unresolved cluster', 'alt-context')}
+                  : __('Unresolved face group', 'alt-context')}
             </span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster.label?.trim() ? cluster.label : __('Unnamed cluster', 'alt-context')}
+              {cluster.label?.trim() ? cluster.label : __('Unnamed face group', 'alt-context')}
             </h3>
             <ul className="acx-cluster-drawer__meta">
               <li>
                 <strong>{__('Faces:', 'alt-context')}</strong>
                 {sprintf(
-                  _n('%d identity', '%d identities', cluster.identity_count, 'alt-context'),
+                  _n('%d face', '%d faces', cluster.identity_count, 'alt-context'),
                   cluster.identity_count,
                 )}
               </li>
@@ -358,9 +358,9 @@ export const ClusterDrawerPanel = ({
 
         <div className="acx-cluster-drawer__faces">
           {isDetailLoading ? (
-            <p>{__('Loading identities…', 'alt-context')}</p>
+            <p>{__('Loading faces…', 'alt-context')}</p>
           ) : !hasIdentities ? (
-            <p>{__('No identities found for this cluster.', 'alt-context')}</p>
+            <p>{__('No faces found in this face group.', 'alt-context')}</p>
           ) : (
             <>
               {!hasReassignTargets ? (
@@ -371,7 +371,7 @@ export const ClusterDrawerPanel = ({
               {identitiesToDisplay.map((identity) => {
                 const pickerOpen = pickerFaceId === identity.identity_id;
                 const moveButtonLabel = sprintf(
-                  __('Move to… identity from media %d', 'alt-context'),
+                  __('Move to… face from media %d', 'alt-context'),
                   identity.media_id,
                 );
                 return (
@@ -379,7 +379,7 @@ export const ClusterDrawerPanel = ({
                     key={identity.identity_id}
                     className="acx-cluster-drawer__face"
                     draggable
-                    aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
+                    aria-label={sprintf(__('Move face from media %d', 'alt-context'), identity.media_id)}
                     onDragStart={createFaceDragStart(identity.identity_id)}
                     onDragEnd={onFaceDragEnd}
                   >
@@ -416,7 +416,7 @@ export const ClusterDrawerPanel = ({
                           id={`acx-cluster-move-targets-${identity.identity_id}`}
                           className="acx-cluster-drawer__move-picker"
                           role="menu"
-                          aria-label={__('Choose a target cluster', 'alt-context')}
+                          aria-label={__('Choose a target face group', 'alt-context')}
                           onKeyDown={handlePickerKeyDown}
                         >
                           {reassignTargets.map((target, index) => {
@@ -476,7 +476,7 @@ export const ClusterDrawerPanel = ({
             }}
             onDrop={handleDropzoneDrop}
           >
-            {__('Drop identities here to remove them from this cluster.', 'alt-context')}
+            {__('Drop faces here to remove them from this face group.', 'alt-context')}
           </div>
         </div>
 
@@ -501,7 +501,7 @@ export const ClusterDrawerPanel = ({
 
         <div className="acx-cluster-drawer__assignment">
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
-            {__('Assign to Identity', 'alt-context')}
+            {__('Assign to person', 'alt-context')}
           </label>
           <div className="acx-cluster-drawer__assignment-controls">
             <Combobox

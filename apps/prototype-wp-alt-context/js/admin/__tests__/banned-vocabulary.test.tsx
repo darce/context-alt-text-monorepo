@@ -449,6 +449,10 @@ import { RetentionPage } from '../pages/RetentionPage';
 import { RosterPage } from '../pages/RosterPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { WorkbenchPage } from '../pages/WorkbenchPage';
+import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
+import type { RosterEntry } from '../api/rosterApi';
+import { ClusterDrawerPanel } from '../pages/roster/ClusterDrawerPanel';
+import { PersonWorkspacePanel } from '../pages/roster/PersonWorkspacePanel';
 
 const pageRenderers: Record<PageName, () => React.JSX.Element> = {
   DashboardPage: () => <DashboardPage />,
@@ -591,6 +595,100 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface).toContain(confirmTabCopy.CONFIRM_NO_JOB_ZERO_STATE);
     expect(surface.toLowerCase()).not.toContain('embeddings');
     expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXW2-4: Roster surfaces say "faces" / "face group" / "person" — never
+   * cluster / identities / projected instances (NAV-13 controlled vocabulary).
+   * The RosterPage empty-fixture sweep cannot reach the drawer (`?cluster=`
+   * deep-link shim) or the person workspace (`?person=`), so both panels are
+   * rendered directly here with representative fixtures.
+   */
+  it('roster surfaces render without cluster/identity jargon', () => {
+    const ROSTER_BANNED = ['cluster', 'identities', 'projected instances'] as const;
+
+    const drawerCluster: ClusterSummary = {
+      id: 'drawer-fixture-1',
+      label: null,
+      identity_count: 2,
+      member_ids: ['face-1', 'face-2'],
+      representative_identity: { media_id: 7, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+      sample_identities: [],
+    };
+    const drawerFaces: ClusterIdentity[] = [
+      { identity_id: 'face-1', media_id: 7, similarity: 0.9, confidence: 0.9, bbox: null },
+    ];
+    const { container: drawerContainer } = render(
+      <ClusterDrawerPanel
+        cluster={drawerCluster}
+        identities={drawerFaces}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={vi.fn()}
+        onOpenPersonWorkspace={vi.fn()}
+        isCommitting={false}
+        rosterEntries={[]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    const rosterEntry: RosterEntry = {
+      id: 1,
+      person_uuid: 'person-fixture-1',
+      name: 'Alice',
+      tags: [],
+      cluster_count: 1,
+      clusters: [
+        {
+          cluster_id: 'drawer-fixture-1',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'face-1',
+            media_id: 7,
+            media_url: 'https://example.com/face-7.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.95,
+            similarity_threshold: 0.8,
+          },
+          instances: [
+            {
+              identity_id: 'face-1',
+              media_id: 7,
+              media_url: 'https://example.com/face-7.jpg',
+              bbox: { x: 10, y: 20, width: 30, height: 40 },
+              similarity: 0.95,
+              similarity_threshold: 0.8,
+            },
+          ],
+        },
+      ],
+      queue_memberships: [],
+      updated_at: '2026-05-07T12:00:00Z',
+      source_version: 11,
+      projection_status: 'current',
+      projection_refreshed_at: '2026-05-07T12:00:00Z',
+    };
+    const { container: workspaceContainer } = render(
+      wrap(<PersonWorkspacePanel entry={rosterEntry} onOpenQueue={vi.fn()} />),
+    );
+
+    const { container: pageContainer } = render(wrap(<RosterPage />));
+
+    for (const surface of [drawerContainer, workspaceContainer, pageContainer]) {
+      const text = collectVisibleText(surface).toLowerCase();
+      for (const banned of ROSTER_BANNED) {
+        expect(text).not.toContain(banned);
+      }
+      expect(text).not.toMatch(UUID_REGEX);
+    }
   });
 
   /**

@@ -334,9 +334,9 @@ describe('RosterPage projection-aware workspace shell', () => {
       within(workspace).getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`),
     ).toBeInTheDocument();
     expect(within(workspace).getByText('Source version: 11')).toBeInTheDocument();
-    expect(within(workspace).getByText('Grouped cluster detail')).toBeInTheDocument();
+    expect(within(workspace).getByText('Face group detail')).toBeInTheDocument();
     expect(
-      within(workspace).getByText('2 curated clusters are currently grouped under this person.'),
+      within(workspace).getByText('2 face groups are currently assigned to this person.'),
     ).toBeInTheDocument();
     expect(within(workspace).getByText('Primary')).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
@@ -429,7 +429,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     expect(onOpenQueue).not.toHaveBeenCalled();
   });
 
-  it('[PAG-M3-S3] renders assigned cluster evidence and all projected instances for the selected person', () => {
+  it('[PAG-M3-S3] renders face evidence and all faces for the selected person', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -476,16 +476,16 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
-    const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
-    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster 1' });
+    const evidenceSection = screen.getByRole('region', { name: 'Face evidence' });
+    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Face group 1' });
 
-    expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
+    expect(within(clusterRegion).getByText('2 faces')).toBeInTheDocument();
     expect(within(evidenceSection).queryByText(/cluster-alpha/)).not.toBeInTheDocument();
 
     const evidenceImages = [
-      { name: 'Representative face for Cluster 1', src: 'https://example.com/rep-alpha.jpg' },
-      { name: 'Instance 101 for Cluster 1', src: 'https://example.com/instance-101.jpg' },
-      { name: 'Instance 102 for Cluster 1', src: 'https://example.com/instance-102.jpg' },
+      { name: 'Representative face for face group 1', src: 'https://example.com/rep-alpha.jpg' },
+      { name: 'Face from media 101 in face group 1', src: 'https://example.com/instance-101.jpg' },
+      { name: 'Face from media 102 in face group 1', src: 'https://example.com/instance-102.jpg' },
     ];
     for (const { name, src } of evidenceImages) {
       const image = within(clusterRegion).getByRole('img', { name });
@@ -572,7 +572,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Above this cluster’s current threshold').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Above this face group’s current threshold').length).toBeGreaterThan(0);
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

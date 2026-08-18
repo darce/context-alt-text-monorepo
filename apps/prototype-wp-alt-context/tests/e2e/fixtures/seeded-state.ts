@@ -54,7 +54,7 @@ export const skipUnlessPopulatedRoster = async (page: Page): Promise<void> => {
   await page.getByRole('tab', { name: /Entries/i }).click();
 
   const entryRow = page.locator('.acx-roster-entries__table tbody tr').first();
-  const noPeople = page.getByText(/No people yet\. Add one manually or assign a cluster\./i);
+  const noPeople = page.getByText(/No people yet\. Add one manually or assign a face group\./i);
   await waitForEither([entryRow, noPeople], 10_000);
 
   if (await isVisible(entryRow)) {

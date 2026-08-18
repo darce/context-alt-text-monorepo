@@ -210,7 +210,7 @@ export const RosterPage = (): React.JSX.Element => {
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'People are known identities you curate. Unassigned face groups stay reachable below for bulk merge or workbench review.',
+            'People are the faces you have named. Unnamed face groups are reviewed in the Workbench.',
             'alt-context',
           )}
         </p>
@@ -250,7 +250,7 @@ export const RosterPage = (): React.JSX.Element => {
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={
           clusterDetailQuery.isError
-            ? (clusterDetailQuery.error?.message ?? __('Unable to load cluster details.', 'alt-context'))
+            ? (clusterDetailQuery.error?.message ?? __('Unable to load face group details.', 'alt-context'))
             : null
         }
         mediaMap={mediaMap}

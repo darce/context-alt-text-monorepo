@@ -147,8 +147,8 @@ const renderWorkspace = (
   return { user, queryClient };
 };
 
-const previewName = (instanceOrdinal: number, clusterOrdinal: number, mediaId: number): string =>
-  `Selected face, instance ${instanceOrdinal} for Cluster ${clusterOrdinal}, media ${mediaId}`;
+const previewName = (clusterOrdinal: number, mediaId: number): string =>
+  `Selected face from media ${mediaId} in face group ${clusterOrdinal}`;
 
 describe('PersonWorkspacePanel face scrubber', () => {
   beforeEach(() => {
@@ -163,12 +163,12 @@ describe('PersonWorkspacePanel face scrubber', () => {
   it('updates the preview and face route param when a filmstrip face is clicked', async () => {
     const { user } = renderWorkspace();
 
-    const preview = screen.getByRole('img', { name: previewName(1, 1, 101) });
+    const preview = screen.getByRole('img', { name: previewName(1, 101) });
     expect(preview).toHaveAttribute('src', 'https://example.com/instance-101.jpg');
 
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
 
-    expect(screen.getByRole('img', { name: previewName(2, 1, 102) })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: previewName(1, 102) })).toHaveAttribute(
       'src',
       'https://example.com/instance-102.jpg',
     );
@@ -179,7 +179,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
   it('moves the cursor with arrows and Home/End and announces the selected face', async () => {
     const { user } = renderWorkspace();
 
-    const rail = screen.getByRole('listbox', { name: 'Face instances for Cluster 1' });
+    const rail = screen.getByRole('listbox', { name: 'Faces in face group 1' });
     expect(rail).toHaveAttribute('aria-orientation', 'horizontal');
     rail.focus();
 
@@ -205,7 +205,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
   it('maps ArrowUp/ArrowDown to the same horizontal cursor movement', async () => {
     const { user } = renderWorkspace();
 
-    screen.getByRole('listbox', { name: 'Face instances for Cluster 1' }).focus();
+    screen.getByRole('listbox', { name: 'Faces in face group 1' }).focus();
     await user.keyboard('{ArrowDown}');
     expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-2'));
 
@@ -216,16 +216,16 @@ describe('PersonWorkspacePanel face scrubber', () => {
   it('keeps arrow keys inside the focused rail when multiple clusters exist', async () => {
     const { user } = renderWorkspace(twoClusterEntry());
 
-    const cluster1Rail = screen.getByRole('listbox', { name: 'Face instances for Cluster 1' });
-    const cluster2Rail = screen.getByRole('listbox', { name: 'Face instances for Cluster 2' });
+    const cluster1Rail = screen.getByRole('listbox', { name: 'Faces in face group 1' });
+    const cluster2Rail = screen.getByRole('listbox', { name: 'Faces in face group 2' });
     expect(cluster1Rail.getAttribute('aria-activedescendant')).toBeTruthy();
     expect(cluster2Rail.getAttribute('aria-activedescendant')).toBeNull();
 
     cluster1Rail.focus();
     await user.keyboard('{End}{ArrowRight}{ArrowDown}');
     expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-a2'));
-    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute(
+    expect(screen.getByRole('option', { name: 'Face from media 102 in face group 1' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'Face from media 201 in face group 2' })).toHaveAttribute(
       'aria-selected',
       'false',
     );
@@ -233,7 +233,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     cluster2Rail.focus();
     await user.keyboard('{ArrowRight}');
     expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-b1', CLUSTER_B));
-    expect(screen.getByRole('option', { name: 'Instance 201 for Cluster 2' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'Face from media 201 in face group 2' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('status', { name: 'Face selection announcements' })).toHaveTextContent(
       'Selected face 1 of 2',
     );
@@ -249,7 +249,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
     const status = screen.getByRole('status', { name: 'Face selection announcements' });
     const statusNode = status;
-    screen.getByRole('listbox', { name: 'Face instances for Cluster 1' }).focus();
+    screen.getByRole('listbox', { name: 'Faces in face group 1' }).focus();
 
     await user.keyboard('{End}');
     expect(status).toHaveTextContent('Selected face 2 of 2');
@@ -273,7 +273,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     const { user, queryClient } = renderWorkspace();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
     const pinButton = screen.getByRole('button', { name: 'Set as representative' });
     await user.click(pinButton);
 
@@ -292,7 +292,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     vi.mocked(pinRepresentative).mockRejectedValue(new Error('backend rejected pin'));
     const { user } = renderWorkspace();
 
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
     await user.click(screen.getByRole('button', { name: 'Set as representative' }));
 
     await waitFor(() => {
@@ -308,7 +308,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     vi.mocked(pinRepresentative).mockRejectedValue(abortError);
     const { user } = renderWorkspace();
 
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
     await user.click(screen.getByRole('button', { name: 'Set as representative' }));
 
     await waitFor(() => {
@@ -354,19 +354,19 @@ describe('PersonWorkspacePanel face scrubber', () => {
     try {
       const { rerender } = render(<Harness entry={baseEntry()} />);
 
-      await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
-      const rail = screen.getByRole('listbox', { name: 'Face instances for Cluster 1' });
+      await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
+      const rail = screen.getByRole('listbox', { name: 'Faces in face group 1' });
       rail.scrollLeft = 48;
       scrollAssignments.length = 0;
 
       rerender(<Harness entry={baseEntry({ source_version: 12 })} />);
 
-      expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute(
+      expect(screen.getByRole('option', { name: 'Face from media 102 in face group 1' })).toHaveAttribute(
         'aria-selected',
         'true',
       );
       expect(scrollAssignments).toContain(48);
-      expect(screen.getByRole('listbox', { name: 'Face instances for Cluster 1' }).scrollLeft).toBe(48);
+      expect(screen.getByRole('listbox', { name: 'Faces in face group 1' }).scrollLeft).toBe(48);
       expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-2'));
 
       const pruned = baseEntry({
@@ -396,8 +396,8 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
       rerender(<Harness entry={pruned} />);
 
-      expect(screen.queryByRole('option', { name: 'Instance 102 for Cluster 1' })).not.toBeInTheDocument();
-      expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toHaveAttribute(
+      expect(screen.queryByRole('option', { name: 'Face from media 102 in face group 1' })).not.toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Face from media 101 in face group 1' })).toHaveAttribute(
         'aria-selected',
         'true',
       );
@@ -428,8 +428,8 @@ describe('PersonWorkspacePanel face scrubber', () => {
     );
 
     const { rerender } = render(<Harness entry={baseEntry()} />);
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
-    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveFocus();
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
+    expect(screen.getByRole('option', { name: 'Face from media 102 in face group 1' })).toHaveFocus();
 
     rerender(
       <Harness
@@ -460,7 +460,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
       />,
     );
 
-    expect(screen.getByRole('listbox', { name: 'Face instances for Cluster 1' })).toHaveFocus();
+    expect(screen.getByRole('listbox', { name: 'Faces in face group 1' })).toHaveFocus();
   });
 
   it('gives rail cells explicit width and height before the image loads', () => {
@@ -473,7 +473,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     try {
       renderWorkspace();
 
-      const option = screen.getByRole('option', { name: 'Instance 101 for Cluster 1' });
+      const option = screen.getByRole('option', { name: 'Face from media 101 in face group 1' });
       const thumb = option.querySelector('.acx-face-thumbnail');
       expect(thumb).not.toBeNull();
       expect(thumb).toHaveClass('acx-face-thumbnail--loading');
@@ -508,7 +508,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
       }),
     );
 
-    const image = screen.getByRole('img', { name: 'Instance 303 for Cluster 1' });
+    const image = screen.getByRole('img', { name: 'Face from media 303 in face group 1' });
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('width', '64');
     expect(image).toHaveAttribute('height', '64');
@@ -517,11 +517,11 @@ describe('PersonWorkspacePanel face scrubber', () => {
   it('selects a face from the face= deep link and falls back without crashing when unmatched', async () => {
     renderWorkspace(baseEntry(), '/?person=person-uuid-1&face=identity-2');
 
-    expect(screen.getByRole('img', { name: previewName(2, 1, 102) })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: previewName(1, 102) })).toHaveAttribute(
       'src',
       'https://example.com/instance-102.jpg',
     );
-    expect(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'Face from media 102 in face group 1' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => {
       expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-2'));
     });
@@ -530,8 +530,8 @@ describe('PersonWorkspacePanel face scrubber', () => {
     renderWorkspace(baseEntry(), '/?person=person-uuid-1&face=missing-face');
 
     expect(screen.getByRole('region', { name: 'Person workspace: Alice' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: previewName(1, 1, 101) })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('img', { name: previewName(1, 101) })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Face from media 101 in face group 1' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => {
       expect(screen.getByLabelText('route-state')).toHaveTextContent(encodedFace('identity-1'));
     });
@@ -553,7 +553,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     expect(screen.getByRole('region', { name: 'Hard examples queue' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Needs confirmation after merge queue' })).toBeInTheDocument();
     expect(
-      screen.getByText('Assigned cluster evidence will appear after the next projection refresh.'),
+      screen.getByText('Face evidence will appear after the next refresh.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Select a face to preview.')).toBeInTheDocument();
     expect(screen.getByText('No face selected.')).toBeInTheDocument();
@@ -570,9 +570,9 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
     const metadata = screen.getByRole('region', { name: 'Selected face details' });
     expect(within(metadata).getByText('strong match')).toBeInTheDocument();
-    expect(within(metadata).getByText('Match evidence from current cluster response')).toBeInTheDocument();
+    expect(within(metadata).getByText('Match evidence from the current face group')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('option', { name: 'Instance 102 for Cluster 1' }));
+    await user.click(screen.getByRole('option', { name: 'Face from media 102 in face group 1' }));
     expect(
       within(screen.getByRole('region', { name: 'Selected face details' })).getByText('possible match'),
     ).toBeInTheDocument();
@@ -583,8 +583,8 @@ describe('PersonWorkspacePanel face scrubber', () => {
     renderWorkspace(twoClusterEntry());
 
     const rails = [
-      screen.getByRole('listbox', { name: 'Face instances for Cluster 1' }),
-      screen.getByRole('listbox', { name: 'Face instances for Cluster 2' }),
+      screen.getByRole('listbox', { name: 'Faces in face group 1' }),
+      screen.getByRole('listbox', { name: 'Faces in face group 2' }),
     ];
     expect(rails).toHaveLength(2);
     for (const rail of rails) {

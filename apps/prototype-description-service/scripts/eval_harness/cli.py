@@ -2664,7 +2664,7 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
     if exposure_file:
         try:
             collected.extend(Path(exposure_file).read_text().splitlines())
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             print(
                 f"draw-eval-split: exposure file not found/unreadable: {exposure_file}",
                 file=sys.stderr,
@@ -2701,7 +2701,14 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         )
         raise SystemExit(2)
     if args.check:
-        artifact = json.loads(out.read_text())
+        try:
+            artifact = json.loads(out.read_text())
+        except (OSError, ValueError):
+            print(
+                f"draw-eval-split: sealed split not found/unreadable: {out}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
         violations = verify_eval_split(
             artifact,

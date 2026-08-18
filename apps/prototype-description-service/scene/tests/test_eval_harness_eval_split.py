@@ -1499,3 +1499,44 @@ def test_cli_draw_directory_exposure_file_exits_2(tmp_path, capsys):
     assert "draw-eval-split: exposure file not found/unreadable:" in captured.err
     assert str(directory) in captured.err
     assert not out.exists()
+
+
+def test_cli_draw_non_utf8_exposure_file_exits_2(tmp_path, capsys):
+    # VLM6-RV8-Q1-01 / AGT-21 / REF-37: non-UTF-8 --exposure-file must be
+    # SystemExit 2 with the named stderr, not an uncaught UnicodeDecodeError.
+    # MUT[oserror_only_guard]: revert except to OSError only -> this test goes red.
+    bad = tmp_path / "notes-latin1.bin"
+    bad.write_bytes(b"\xff\xfe")
+    out, argv = _draw_with_exposure_file(tmp_path, bad)
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: exposure file not found/unreadable:" in captured.err
+    assert str(bad) in captured.err
+    assert not out.exists()
+
+
+def test_cli_check_missing_out_exits_2(tmp_path, capsys):
+    # VLM6-RV8-L-02 / AGT-21: --check with missing --out must be named exit 2,
+    # not FileNotFoundError traceback exit 1.
+    # MUT[unguarded_check_read]: drop the read/parse guard -> this test goes red.
+    missing = tmp_path / "no-such-sealed-split.json"
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(missing))
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: sealed split not found/unreadable:" in captured.err
+    assert str(missing) in captured.err
+
+
+def test_cli_check_malformed_out_json_exits_2(tmp_path, capsys):
+    # VLM6-RV8-L-02: --check with malformed JSON at --out → named exit 2.
+    bad = tmp_path / "not-json.json"
+    bad.write_text("{not valid json")
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(bad))
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: sealed split not found/unreadable:" in captured.err
+    assert str(bad) in captured.err

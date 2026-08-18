@@ -185,12 +185,13 @@ _NOUN = (
 )
 
 
-# Single-token identity names that must never be matched in free text, because
-# the token is overwhelmingly an ordinary word rather than the person. `self`
-# alone accounts for 283 in-tree occurrences, essentially all of them the Python
-# parameter. These are still scrubbed where they appear as a whole JSON string,
-# which is the only position that unambiguously denotes the identity.
-FREE_TEXT_DENY = {"self"}
+# Single-token identity names that must never be matched in free text live
+# on the alias map as `free_text_deny`: lowercase tokens that are
+# overwhelmingly an ordinary word rather than the person. The block is
+# optional at schema and required at load — an absent list is not an
+# empty list (CARD-07). An empty list is valid and means every
+# single-token identity is eligible in data/prose. Denied tokens are
+# still scrubbed where they appear as a whole JSON string.
 
 # A bare single-token name is also a perfectly good variable name: `bea =
 # _identity_item(...)` in a test is an identifier, not a person, and rewriting
@@ -543,6 +544,7 @@ def build_map() -> dict:
         "celeb_identities_left_intact": len(celeb_names),
         "entries": entries,
         "wordlist": _wordlist_record(),
+        "free_text_deny": [],
     }
 
 
@@ -553,7 +555,14 @@ def load_map() -> dict:
             "Run `plan` first. The map is name-bearing and therefore untracked; "
             "point ACX_CORPUS_PRIVATE_DIR at it if it lives elsewhere."
         )
-    mapping = json.loads(ALIAS_MAP.read_text(encoding="utf-8"))
+    try:
+        mapping = json.loads(ALIAS_MAP.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"{ALIAS_MAP}: malformed JSON ({exc}). "
+            "Restore the alias map from the private corpus store, or re-run `plan` "
+            "from a clean tree if the file is unrecoverable."
+        ) from exc
     _validate_map(mapping)
     return mapping
 
@@ -573,6 +582,18 @@ def _validate_map(mapping: dict) -> None:
             raise SystemExit(f"{ALIAS_MAP}: entry {i} missing {sorted(missing)}")
         if not entry["real_name"] or not entry["alias"]:
             raise SystemExit(f"{ALIAS_MAP}: entry {i} has an empty name or alias")
+    if "free_text_deny" not in mapping:
+        raise SystemExit(
+            f"{ALIAS_MAP}: add a `free_text_deny` list to the alias map — an empty list is valid. "
+            "An absent list is not an empty list: on a real corpus an empty deny set rewrites "
+            "every ordinary-word occurrence of a single-token identity."
+        )
+    deny = mapping["free_text_deny"]
+    if not isinstance(deny, list) or not all(isinstance(t, str) for t in deny):
+        raise SystemExit(
+            f"{ALIAS_MAP}: `free_text_deny` must be a list of lowercase tokens "
+            "(an empty list is valid)"
+        )
     if mapping.get("key_fingerprint") != _key_fingerprint():
         raise SystemExit(
             f"{ALIAS_MAP} was minted under a different key than {MINT_KEY}.\n"
@@ -636,15 +657,26 @@ def _tracked_files() -> list[tuple[Path, bool]]:
     return files
 
 
+def _map_free_text_deny(mapping: dict) -> set[str]:
+    """Lowercased deny tokens from the map. Absent means empty (unit fixtures)."""
+    raw = mapping.get("free_text_deny")
+    if raw is None:
+        return set()
+    return {t.lower() for t in raw}
+
+
 def _multi_token_regex(mapping: dict, singles: bool = False) -> tuple[re.Pattern, dict]:
     """One alternation over multi-token names, longest-first.
 
-    With ``singles=True`` the alternation also carries single-token names whose
-    token is not an ordinary word (see FREE_TEXT_DENY). Callers pass that only
-    for data and prose files.
+    With ``singles=True`` the alternation also carries single-token names
+    whose token is not in the map's ``free_text_deny`` list. Callers pass
+    that only for data and prose files. A map that never went through
+    ``load_map`` and omits the block is treated as an empty deny so
+    unit-constructed fixtures keep exercising the rewrite passes.
     """
+    deny = _map_free_text_deny(mapping)
     multi = [
-        e for e in mapping["entries"] if e["tokens"] > 1 or (singles and e["real_name"].lower() not in FREE_TEXT_DENY)
+        e for e in mapping["entries"] if e["tokens"] > 1 or (singles and e["real_name"].lower() not in deny)
     ]
     by_key = {}
     parts = []
@@ -986,20 +1018,25 @@ def _wordlist_line() -> str:
 
 
 def _assert_wordlist_pin(mapping: dict) -> None:
-    """Fail verify when the live wordlist is not the one the map recorded.
+    """Fail closed when the map has no wordlist pin, or the live list drifted.
 
-    A map minted before this field existed must keep working: warn, do
-    not fail, and do not invent the field (rg-015).
+    An absent block is not "any host wordlist is fine" (CARD-07). Re-pin
+    with ``plan --pin-wordlist``; do not invent the field here (rg-015).
     """
     recorded = mapping.get("wordlist")
     if recorded is None:
-        print("warning: alias map has no wordlist block; residue depends on the host wordlist")
-        return
+        raise SystemExit(
+            "alias map has no wordlist block. "
+            "Run `plan --pin-wordlist` to record the live wordlist without reminting. "
+            "An absent pin cannot be treated as 'any host wordlist is fine'."
+        )
     _words, digest, _path = _load_wordlist()
     expected = recorded.get("sha256")
     if expected != digest:
         raise SystemExit(
-            f"wordlist sha256 mismatch: map has {expected}, live wordlist is {digest}"
+            f"wordlist sha256 mismatch: map has {expected}, live wordlist is {digest}. "
+            f"Restore the recorded list via {_WORDLIST_ENV}, or re-pin with "
+            "`plan --pin-wordlist` after a deliberate wordlist change."
         )
 
 
@@ -1525,8 +1562,44 @@ class _Passes:
         return found
 
 
+def _pin_existing_map_wordlist() -> int:
+    """Write only the ``wordlist`` block onto an existing map. No remint."""
+    if not ALIAS_MAP.is_file():
+        raise SystemExit(
+            f"alias map not found: {ALIAS_MAP}\n"
+            "`plan --pin-wordlist` records a wordlist pin on an existing map; "
+            "it will not mint one. Run `plan` first, or point ACX_CORPUS_PRIVATE_DIR "
+            "at the directory that holds the map."
+        )
+    try:
+        mapping = json.loads(ALIAS_MAP.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"{ALIAS_MAP}: malformed JSON ({exc}). "
+            "Restore the alias map from the private corpus store, or re-run `plan` "
+            "from a clean tree if the file is unrecoverable."
+        ) from exc
+    if mapping.get("wordlist") is not None:
+        _assert_wordlist_pin(mapping)
+    mapping["wordlist"] = _wordlist_record()
+    ALIAS_MAP.write_text(json.dumps(mapping, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"wordlist pin written: {ALIAS_MAP}")
+    print(f"  {_wordlist_line()}")
+    return 0
+
+
 def cmd_plan(args) -> int:
-    if ALIAS_MAP.is_file() and not args.force:
+    pin_wordlist = getattr(args, "pin_wordlist", False)
+    force = getattr(args, "force", False)
+    if pin_wordlist and force:
+        raise SystemExit(
+            "`--pin-wordlist` and `--force` cannot be combined. "
+            "`--pin-wordlist` records the live wordlist on the existing map; "
+            "`--force` remints every alias."
+        )
+    if pin_wordlist:
+        return _pin_existing_map_wordlist()
+    if ALIAS_MAP.is_file() and not force:
         raise SystemExit(
             f"{ALIAS_MAP} already exists. Re-planning re-mints every alias, which "
             "orphans any rewrite already applied to the tree. Pass --force if that "
@@ -1568,6 +1641,16 @@ FREE_TEXT_REDACTIONS = (
     ),
 )
 
+# Checker floor independent of the rewrite tuple (REV-B-07). Emptying
+# FREE_TEXT_REDACTIONS must not make verify greener over a sidecar that
+# still carries a live parsed_name.
+_FREE_TEXT_SHAPE_RELS = (
+    "benchmarks/manifests/golden150-draft-20260723.sidecar.json",
+)
+_LIVE_PARSED_NAME_RX = re.compile(
+    r'"parsed_name"\s*:\s*"(?!<redacted-filename-parse>")(?:[^"\\]|\\.)*"'
+)
+
 
 def _redact_free_text(dry_run: bool) -> list[tuple[str, int]]:
     out = []
@@ -1600,8 +1683,31 @@ def _free_text_residue() -> list[str]:
     `_redact_free_text` is the one rewrite channel outside `_Passes`, so the
     shared-object argument does not cover it and `verify` would otherwise never
     look at it at all. This is the checker half.
+
+    The scan does not depend on ``FREE_TEXT_REDACTIONS`` being non-empty:
+    any known sidecar whose JSON still carries a live ``parsed_name`` is
+    residue even if the rewrite tuple was emptied (REV-B-07).
     """
-    return [rel for rel, _rx, _repl, marker in FREE_TEXT_REDACTIONS if marker not in _read(REPO / rel)]
+    found: list[str] = []
+    checked: set[str] = set()
+    for rel, _rx, _repl, marker in FREE_TEXT_REDACTIONS:
+        path = REPO / rel
+        if not path.is_file():
+            raise SystemExit(
+                f"free-text target missing: {rel}. "
+                "Restore the sidecar or update FREE_TEXT_REDACTIONS; "
+                "verify cannot treat an absent file as clean."
+            )
+        checked.add(rel)
+        if marker not in _read(path):
+            found.append(rel)
+    for rel in _FREE_TEXT_SHAPE_RELS:
+        if rel in checked:
+            continue
+        path = REPO / rel
+        if path.is_file() and _LIVE_PARSED_NAME_RX.search(_read(path)):
+            found.append(rel)
+    return found
 
 
 def _reorder_roster(passes: _Passes) -> bool:
@@ -1858,7 +1964,11 @@ def _pin_check_line(n_published: int, n_stale: int, n_missing: int) -> str:
 
 
 def _stale_pin_line(rel: str, pinned: str, live: str) -> str:
-    return f"STALE-PIN {rel} pinned {pinned[:12]}.. found {live[:12]}.."
+    return (
+        f"STALE-PIN {rel} pinned {pinned[:12]}.. found {live[:12]}.. "
+        "Repair: manual old->new sweep of the pin literal in the named file, "
+        "then re-run apply; the next apply alone will not repair it"
+    )
 
 
 def _missing_pin_line(rel: str, pinned: str) -> str:
@@ -2032,8 +2142,10 @@ def cmd_apply(args) -> int:
     print(f"  {_ambiguous_family_exclusion_line(passes.ambiguous_family_dropped)}")
     print(f"  {_wordlist_line()}")
     print(f"  {_ambiguous_stem_line(len(all_unresolved))}")
+    stale_pins: list = []
+    missing_pins: list = []
     if pin_record is None:
-        print(f"  {_pin_check_line(0, 0, 0)}")
+        print("  digest pins: not checked (dry run; no record published)")
     else:
         stale_pins, missing_pins = _check_published_pins(pin_record)
         for rel, pinned, live in stale_pins:
@@ -2054,7 +2166,7 @@ def cmd_apply(args) -> int:
         print(f"  UNSCANNABLE -- in scope but never opened ({len(undeclared)} files); coverage is NOT complete:")
         for rel, reason in sorted(undeclared):
             print(f"    {rel:<84} {reason}")
-    return 1 if (undeclared or symlink_residue) else 0
+    return 1 if (undeclared or symlink_residue or stale_pins or missing_pins) else 0
 
 
 def cmd_verify(args) -> int:
@@ -2138,6 +2250,11 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan")
     p.add_argument("--force", action="store_true", help="overwrite an existing alias map (re-mints every alias)")
+    p.add_argument(
+        "--pin-wordlist",
+        action="store_true",
+        help="record the live wordlist on an existing map without reminting",
+    )
     p.set_defaults(fn=cmd_plan)
     a = sub.add_parser("apply")
     a.add_argument("--dry-run", action="store_true")

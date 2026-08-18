@@ -943,12 +943,11 @@ def test_wordlist_sha256_mismatch_fails_verify(monkeypatch, tmp_path):
     assert recorded in msg
 
 
-def test_map_without_wordlist_block_warns_and_does_not_fail(capsys):
+def test_map_without_wordlist_block_warns_and_does_not_fail():
+    # Wave 7c inverted this: absent is fail-closed, not warn-and-pass.
     mapping = {"entries": []}
-    pz._assert_wordlist_pin(mapping)
-    captured = capsys.readouterr()
-    assert "warning" in captured.out.lower()
-    assert "wordlist" in captured.out.lower()
+    with pytest.raises(SystemExit, match="pin-wordlist"):
+        pz._assert_wordlist_pin(mapping)
     assert "wordlist" not in mapping, "absent means absent (rg-015); do not invent the field"
 
 
@@ -978,6 +977,7 @@ def test_validate_map_does_not_invent_a_wordlist_block():
                 "tokens": 2,
             }
         ],
+        "free_text_deny": [],
     }
     pz._validate_map(mapping)
     assert "wordlist" not in mapping
@@ -1948,6 +1948,7 @@ def _prepare_verify_env(tmp_path, monkeypatch, *, files: dict[str, str], record:
             }
         ],
         "wordlist": pz._wordlist_record(),
+        "free_text_deny": [],
     }
     pz.ALIAS_MAP.write_text(json.dumps(mapping) + "\n", encoding="utf-8")
     tracked = []
@@ -2014,7 +2015,9 @@ def test_stale_and_missing_pin_lines_are_path_and_digest_only():
     live = "bb" * 32
     stale = pz._stale_pin_line(_PIN_REL, pinned, live)
     missing = pz._missing_pin_line("docs/veldrun-gone.md", pinned)
-    assert stale == f"STALE-PIN {_PIN_REL} pinned {pinned[:12]}.. found {live[:12]}.."
+    assert stale.startswith(f"STALE-PIN {_PIN_REL} pinned {pinned[:12]}.. found {live[:12]}..")
+    assert "manual old->new sweep" in stale
+    assert "will not repair" in stale
     assert missing == f"MISSING-PIN docs/veldrun-gone.md pinned {pinned[:12]}.. (path gone)"
     assert "Zyllora" not in stale and "Zyllora" not in missing
     assert "Amber" not in stale and "Falcon" not in missing
@@ -2658,3 +2661,318 @@ def test_apply_records_the_post_rename_path_of_a_live_pin(tmp_path, monkeypatch)
     by_path = {e["path"]: e["sha256"] for e in record["pins"]}
     assert by_path.get(new_rel) == digest
     assert old_rel not in by_path
+
+
+# ---- wave 7c: fail-closed + DBG-01 ----
+
+_SIDECAR_REL = "benchmarks/manifests/golden150-draft-20260723.sidecar.json"
+_DENY_TOKEN = "nylphra"
+
+
+def _wave7c_entries():
+    return [
+        {
+            "real_name": "Zyllora Elm",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "zyllora-elm",
+            "tokens": 2,
+        },
+        {
+            "real_name": "Nylphra",
+            "alias": "Cobalt Harbor",
+            "alias_slug": "cobalt_harbor",
+            "original_slug": "nylphra",
+            "tokens": 1,
+        },
+    ]
+
+
+def _wave7c_map(**extra) -> dict:
+    mapping = {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": pz._key_fingerprint(),
+        "entries": _wave7c_entries(),
+    }
+    mapping.update(extra)
+    return mapping
+
+
+def _wave7c_private(tmp_path, monkeypatch):
+    private = tmp_path / "private"
+    private.mkdir()
+    monkeypatch.setattr(pz, "PRIVATE", private)
+    monkeypatch.setattr(pz, "ALIAS_MAP", private / "priv1-alias-map.json")
+    monkeypatch.setattr(pz, "MINT_KEY", private / "priv1-mint-key")
+    return private
+
+
+def test_validate_map_absent_free_text_deny_is_systemexit():
+    mapping = _wave7c_map()
+    assert "free_text_deny" not in mapping
+    with pytest.raises(SystemExit, match="free_text_deny") as exc:
+        pz._validate_map(mapping)
+    assert "empty list is valid" in str(exc.value)
+    assert "free_text_deny" not in mapping
+
+
+def test_load_map_absent_free_text_deny_is_systemexit(tmp_path, monkeypatch):
+    _wave7c_private(tmp_path, monkeypatch)
+    pz.MINT_KEY.write_text(("t" * 64) + "\n", encoding="utf-8")
+    mapping = _wave7c_map(wordlist=pz._wordlist_record())
+    assert "free_text_deny" not in mapping
+    pz.ALIAS_MAP.write_text(json.dumps(mapping) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="free_text_deny") as exc:
+        pz.load_map()
+    assert "empty list is valid" in str(exc.value)
+
+
+def test_singles_filter_honours_free_text_deny_from_the_map():
+    mapping = {"entries": _wave7c_entries(), "free_text_deny": [_DENY_TOKEN]}
+    rx, _by_key = pz._multi_token_regex(mapping, singles=True)
+    text = "hello nylphra and Zyllora Elm"
+    hits = [m.group(0) for m in rx.finditer(text)]
+    assert not any("nylphra" in h.lower() for h in hits)
+    assert any("zyllora" in h.lower() for h in hits)
+
+
+def test_empty_free_text_deny_admits_the_single_token():
+    mapping = {"entries": _wave7c_entries(), "free_text_deny": []}
+    rx, _by_key = pz._multi_token_regex(mapping, singles=True)
+    assert rx.search("hello nylphra there")
+
+
+def test_build_map_writes_empty_free_text_deny(tmp_path, monkeypatch):
+    roster = tmp_path / "roster.json"
+    roster.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
+                    {"bucket": "celebs", "name": "Marlow Vensk", "slug": "marlow_vensk"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    monkeypatch.setattr(pz, "ROSTER", roster)
+    mapping = pz.build_map()
+    assert mapping["free_text_deny"] == []
+
+
+def test_production_module_has_no_free_text_deny_constant():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "FREE_TEXT_DENY" not in src
+
+
+def test_assert_wordlist_pin_absent_block_is_systemexit():
+    mapping = {"entries": []}
+    with pytest.raises(SystemExit) as exc:
+        pz._assert_wordlist_pin(mapping)
+    msg = str(exc.value)
+    assert "wordlist" in msg.lower()
+    assert "pin-wordlist" in msg
+    assert "wordlist" not in mapping
+
+
+def test_plan_pin_wordlist_adds_block_and_leaves_entries_byte_identical(tmp_path, monkeypatch):
+    _wave7c_private(tmp_path, monkeypatch)
+    mapping = {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": "deadbeefdeadbeef",
+        "entries": [
+            {
+                "real_name": "Zyllora Elm",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "zyllora-elm",
+                "tokens": 2,
+            }
+        ],
+        "free_text_deny": [],
+    }
+    pz.ALIAS_MAP.write_text(json.dumps(mapping, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    entries_before = json.loads(json.dumps(mapping["entries"]))
+    fingerprint_before = mapping["key_fingerprint"]
+    rc = pz.cmd_plan(type("Args", (), {"force": False, "pin_wordlist": True})())
+    assert rc == 0
+    loaded = json.loads(pz.ALIAS_MAP.read_text(encoding="utf-8"))
+    assert loaded["entries"] == entries_before
+    assert loaded["key_fingerprint"] == fingerprint_before
+    assert loaded["free_text_deny"] == []
+    assert loaded["wordlist"] == pz._wordlist_record()
+    assert not (tmp_path / "private" / "priv1-mint-key").exists()
+
+
+def test_plan_pin_wordlist_refuses_existing_different_digest(tmp_path, monkeypatch):
+    _wave7c_private(tmp_path, monkeypatch)
+    mapping = {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": "deadbeefdeadbeef",
+        "entries": [
+            {
+                "real_name": "Zyllora Elm",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "zyllora-elm",
+                "tokens": 2,
+            }
+        ],
+        "free_text_deny": [],
+        "wordlist": {"path": "/nope", "sha256": "ab" * 32, "count": 1},
+    }
+    pz.ALIAS_MAP.write_text(json.dumps(mapping) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="sha256") as exc:
+        pz.cmd_plan(type("Args", (), {"force": False, "pin_wordlist": True})())
+    assert "ab" * 32 in str(exc.value)
+    loaded = json.loads(pz.ALIAS_MAP.read_text(encoding="utf-8"))
+    assert loaded["entries"] == mapping["entries"]
+    assert loaded["wordlist"]["sha256"] == "ab" * 32
+    assert loaded["key_fingerprint"] == "deadbeefdeadbeef"
+
+
+def test_plan_pin_wordlist_refuses_missing_map(tmp_path, monkeypatch):
+    private = _wave7c_private(tmp_path, monkeypatch)
+    assert not pz.ALIAS_MAP.is_file()
+    with pytest.raises(SystemExit, match="not found") as exc:
+        pz.cmd_plan(type("Args", (), {"force": False, "pin_wordlist": True})())
+    assert "pin-wordlist" in str(exc.value)
+    assert not pz.ALIAS_MAP.is_file()
+    assert not (private / "priv1-mint-key").exists()
+
+
+def test_plan_pin_wordlist_and_force_together_is_an_error(tmp_path, monkeypatch):
+    _wave7c_private(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit, match="--pin-wordlist") as exc:
+        pz.cmd_plan(type("Args", (), {"force": True, "pin_wordlist": True})())
+    assert "--force" in str(exc.value)
+    assert not pz.ALIAS_MAP.is_file()
+
+
+def test_apply_returns_nonzero_on_a_stale_pin(tmp_path, monkeypatch, capsys):
+    body = "payload-one\n"
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body, _PIN_NOTE: "no digest literal\n"},
+        record=_pin_record((_PIN_REL, "cd" * 32)),
+    )
+    try:
+        rc = pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "STALE-PIN" in out
+    assert "digest pins: 1 published; 1 stale; 0 missing" in out
+
+
+def test_verify_returns_nonzero_when_redactions_tuple_is_empty_and_sidecar_has_live_parsed_name(
+    tmp_path, monkeypatch, capsys
+):
+    body = "payload-one\n"
+    pinned = _pin_digest(body)
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={
+            _PIN_REL: body,
+            _SIDECAR_REL: '{"parsed_name": "qorvex-veldrun-export.jpg"}\n',
+        },
+        record=_pin_record((_PIN_REL, pinned)),
+    )
+    monkeypatch.setattr(pz, "FREE_TEXT_REDACTIONS", ())
+    try:
+        rc = pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "RESIDUE free-text" in out
+    assert _SIDECAR_REL in out
+
+
+def test_stale_pin_message_names_the_repair(tmp_path, monkeypatch, capsys):
+    body = "payload-one\n"
+    pinned = _pin_digest(body)
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body, _PIN_NOTE: f"sha256: {pinned}\n"},
+        record=_pin_record((_PIN_REL, pinned)),
+    )
+    (repo / _PIN_REL).write_text("payload-two-out-of-band\n", encoding="utf-8")
+    try:
+        rc = pz.cmd_verify(type("Args", (), {"show_out_of_scope": False})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "manual old->new sweep" in out
+    assert "re-run apply" in out
+    assert "will not repair" in out
+
+
+def test_wordlist_mismatch_message_names_both_fixes(monkeypatch, tmp_path):
+    wl = tmp_path / "words"
+    body = b"alpha\nbeta\n"
+    wl.write_bytes(body)
+    monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
+    _reset_wordlist()
+    recorded = "ab" * 32
+    with pytest.raises(SystemExit) as exc:
+        pz._assert_wordlist_pin({"wordlist": {"path": str(wl), "sha256": recorded, "count": 2}})
+    msg = str(exc.value)
+    assert "PRIV1_WORDLIST" in msg
+    assert "pin-wordlist" in msg
+    assert recorded in msg
+
+
+def test_free_text_residue_missing_sidecar_is_systemexit_with_next_action(tmp_path, monkeypatch):
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    monkeypatch.setattr(
+        pz,
+        "FREE_TEXT_REDACTIONS",
+        (
+            (
+                "benchmarks/manifests/nylphra.sidecar.json",
+                re.compile(r'("parsed_name":\s*)"(?:[^"\\]|\\.)*"'),
+                r'\1"<redacted-filename-parse>"',
+                '"parsed_name": "<redacted-filename-parse>"',
+            ),
+        ),
+    )
+    with pytest.raises(SystemExit) as exc:
+        pz._free_text_residue()
+    msg = str(exc.value).lower()
+    assert "missing" in msg
+    assert "restore" in msg or "update" in msg
+
+
+def test_load_map_malformed_json_is_systemexit_with_next_action(tmp_path, monkeypatch):
+    _wave7c_private(tmp_path, monkeypatch)
+    pz.ALIAS_MAP.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        pz.load_map()
+    msg = str(exc.value).lower()
+    assert "malformed" in msg or "json" in msg
+    assert "plan" in msg or "restore" in msg
+
+
+def test_apply_dry_run_prints_pins_not_checked(tmp_path, monkeypatch, capsys):
+    _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: "hello Zyllora Elm\n"},
+        record=None,
+    )
+    try:
+        rc = pz.cmd_apply(type("Args", (), {"dry_run": True, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "digest pins: not checked (dry run; no record published)" in out
+    assert "digest pins: 0 published; 0 stale; 0 missing" not in out
+

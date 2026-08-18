@@ -1642,9 +1642,11 @@ def _repin_digests(
 ) -> list[tuple[str, str, str, int]]:
     """Rewrite every tracked occurrence of a digest whose file this run changed.
 
-    Doing it by hand missed one of five pins on the first attempt. Any 64-hex
-    literal equal to a file's previously-published digest is a pin by
-    construction, so this is exhaustive where a manual sweep is not.
+    Doing it by hand missed one of five pins on the first attempt. Any
+    left-aligned non-overlapping 64-hex window equal to a file's
+    previously-published digest is a pin by construction (`_HEX64_RX`,
+    same window rule as `_live_pin_targets`). A digest at a non-aligned
+    offset inside a longer hex run is not a pin.
 
     Run to a fixpoint: writing a corrected pin *into* a file changes that file's
     own digest, so a single pass leaves the second-order pins stale (three of
@@ -1685,18 +1687,25 @@ def _repin_digests(
             )
         if not moved:
             return applied
-        rx = re.compile("|".join(re.escape(o) for o in moved))
+        # Same window scan as `_live_pin_targets`: `_HEX64_RX.sub`, not an
+        # alternation of the moved digests. Substring semantics would
+        # rewrite a non-aligned embed that the publisher then refuses
+        # to record (CARD-11).
+        replacements = {old: new for old, (new, _rels) in moved.items()}
         hits: dict[str, int] = {}
 
-        def _repl(m: re.Match, moved=moved, hits=hits) -> str:
+        def _repl(m: re.Match, replacements=replacements, hits=hits) -> str:
+            new = replacements.get(m.group(0))
+            if new is None:
+                return m.group(0)
             hits[m.group(0)] = hits.get(m.group(0), 0) + 1
-            return moved[m.group(0)][0]
+            return new
 
         for path in scoped:
             text, _reason = _read_or_reason(path)
             if text is None:
                 continue
-            new_text = rx.sub(_repl, text)
+            new_text = _HEX64_RX.sub(_repl, text)
             if new_text != text:
                 _write(path, new_text)
         for old, (new, rels) in moved.items():
@@ -1714,9 +1723,12 @@ _PIN_RECORD_NAME = "priv1-digest-pins.json"
 _PIN_RECORD_SCHEMA = "priv1-digest-pins/1"
 
 # Pin literals are sha256 hexdigest() — lowercase, exactly 64 chars.
-# Compiled once. No word boundaries: `_live_pin_targets` used to
-# alternate the published digests with none, and a digest sitting
-# inside a longer hex run still counted (BR-34).
+# One window rule for every pin walk (`_repin_digests` via sub,
+# `_live_pin_targets` via findall): left-aligned, non-overlapping
+# 64-hex windows. A digest at a non-aligned offset inside a longer
+# hex run is a pin for neither walk. No word boundaries: an aligned
+# prefix of a longer run (`<digest>` + more hex) is a window and is
+# a pin (BR-34).
 _HEX64_RX = re.compile(r"[0-9a-f]{64}")
 
 
@@ -1858,8 +1870,11 @@ def _live_pin_targets(published: dict[str, str], files: list[tuple[Path, bool]])
 
     Inverse of `_repin_digests`: that function rewrites literals that match
     a *previous* digest. This finds literals that match a *current* one.
-    Both treat such a literal as a pin by construction, so this is not a
-    guess about unmatched hex (an upstream release, an untracked artifact).
+    Both walks use `_HEX64_RX` (see that comment): left-aligned
+    non-overlapping 64-hex windows. A digest at a non-aligned offset
+    inside a longer hex run is a pin for neither. Both treat a matching
+    window as a pin by construction, so this is not a guess about
+    unmatched hex (an upstream release, an untracked artifact).
     The scan is a generic 64-hex pass filtered through ``digest_to_rels``,
     not an alternation of every published digest (BR-34).
 

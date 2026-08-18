@@ -2427,3 +2427,234 @@ def test_apply_records_the_post_apply_digest_of_a_moved_pin(tmp_path, monkeypatc
     record = pz._load_pin_record()
     by_path = {e["path"]: e["sha256"] for e in record["pins"]}
     assert by_path[_PIN_REL] == post
+
+
+# ---- wave 7a: pin-scanner unification ----
+#
+# One window rule for `_repin_digests` and `_live_pin_targets`. Invented
+# paths only (`nylphra` / `qorvex` / `veldrun`). Predictions for the
+# table below were written in REPORT.md before this test first ran
+# against unfixed production (TEST-06).
+
+
+def _wave7a_publisher_records(tmp_path, monkeypatch, make_body) -> bool:
+    """True iff `_live_pin_targets` records a path whose digest sits in `make_body`."""
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(make_body(digest), encoding="utf-8")
+    published = {_PIN_REL: digest, _PIN_NOTE: pz._sha_file(note)}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    return found.get(_PIN_REL) == digest
+
+
+def _wave7a_rewriter_rewrites(tmp_path, monkeypatch, make_body) -> bool:
+    """True iff `_repin_digests` rewrites a note that embeds the moved digest."""
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    old = pz._sha_file(data)
+    data.write_text("payload-two-moved\n", encoding="utf-8")
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True, exist_ok=True)
+    before = make_body(old)
+    note.write_text(before, encoding="utf-8")
+    published = {_PIN_REL: old, _PIN_NOTE: pz._sha_file(note)}
+    pz._repin_digests(published, [(data, True), (note, True)], dry_run=False)
+    after = note.read_text(encoding="utf-8")
+    return after != before
+
+
+_WINDOW_ROWS = (
+    ("isolated literal", lambda d: d, True),
+    ("sha256: <d>", lambda d: f"sha256: {d}\n", True),
+    ("aligned prefix <d>+f*64", lambda d: d + "f" * 64, True),
+    ("aligned suffix f*64+<d>", lambda d: "f" * 64 + d, True),
+    ("non-aligned f*16+<d>+f*16", lambda d: "f" * 16 + d + "f" * 16, False),
+    ("70-run <d>+f*6", lambda d: d + "f" * 6, True),
+    ("pin not first window", lambda d: "cd" * 32 + "\n" + d, True),
+    ("<d> split by a newline", lambda d: d[:32] + "\n" + d[32:], False),
+)
+
+
+@pytest.mark.parametrize(
+    "label, make_body, expected",
+    _WINDOW_ROWS,
+    ids=[
+        "isolated",
+        "sha256",
+        "aligned_prefix",
+        "aligned_suffix",
+        "non_aligned",
+        "seventy_run",
+        "not_first_window",
+        "split_by_newline",
+    ],
+)
+def test_repin_and_live_targets_share_one_window_rule(
+    tmp_path, monkeypatch, label, make_body, expected
+):
+    """CARD-11: rewriter and publisher agree on what a pin literal is.
+
+    TEST-06 predictions (written before the first run against unfixed
+    `_repin_digests`, which still alternates the moved digests):
+
+    isolated literal          both pin
+    sha256: <d>               both pin
+    <d>+f*64 aligned prefix   both pin
+    f*64+<d> aligned suffix   both pin
+    f*16+<d>+f*16 non-aligned rewriter pins, publisher does not  ← red
+    <d>+f*6 70-run            both pin
+    cd*32 \\n <d> not first   both pin
+    <d> split by a newline    neither pin
+
+    After unification both walks use `_HEX64_RX` windows, so the
+    non-aligned row becomes neither-pin and this test goes green.
+    The expected column is load-bearing for M1 / M10 (shared regex)
+    and M2 / M7 / the BR-34 alternation (publisher-only swap).
+    """
+    publisher = _wave7a_publisher_records(tmp_path, monkeypatch, make_body)
+    rewriter = _wave7a_rewriter_rewrites(tmp_path, monkeypatch, make_body)
+    assert rewriter == publisher, (
+        f"{label}: rewriter would rewrite={rewriter} publisher records={publisher}"
+    )
+    assert publisher is expected, (
+        f"{label}: publisher records={publisher} expected={expected}"
+    )
+    assert rewriter is expected, (
+        f"{label}: rewriter would rewrite={rewriter} expected={expected}"
+    )
+
+
+def test_live_pin_targets_does_not_record_a_non_aligned_embed(tmp_path, monkeypatch):
+    """REV-A-10 / BR-34: the mixed-hex fixture never held this shape.
+
+    A published digest at offset 16 of a longer hex run is a substring
+    hit for the old alternation (`if digest in text` / `"|".join`) and
+    not a left-aligned window. Reintroducing either old scan in
+    `_live_pin_targets` must turn this red (TEST-15).
+    """
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    data = tmp_path / _PIN_REL
+    data.parent.mkdir(parents=True)
+    data.write_text("payload-one\n", encoding="utf-8")
+    digest = pz._sha_file(data)
+    body = ("f" * 16) + digest + ("f" * 16)
+    assert digest in body
+    assert body[0:64] != digest
+    note = tmp_path / _PIN_NOTE
+    note.parent.mkdir(parents=True)
+    note.write_text(body, encoding="utf-8")
+    published = {_PIN_REL: digest, _PIN_NOTE: pz._sha_file(note)}
+    found = pz._live_pin_targets(published, [(data, True), (note, True)])
+    assert found == {}
+
+
+def test_merge_overwrites_a_recorded_digest_for_the_same_path(tmp_path, monkeypatch):
+    """REV-A-03 / M3: updates win. Existing-wins leaves the old digest."""
+    monkeypatch.setattr(pz, "PRIVATE", tmp_path)
+    old, new = "aa" * 32, "bb" * 32
+    (tmp_path / "priv1-digest-pins.json").write_text(
+        json.dumps(_pin_record((_PIN_REL, old))) + "\n"
+    )
+    merged = pz._merge_pin_record({_PIN_REL: new})
+    by_path = {e["path"]: e["sha256"] for e in merged["pins"]}
+    assert by_path[_PIN_REL] == new
+    loaded = pz._load_pin_record()
+    assert {e["path"]: e["sha256"] for e in loaded["pins"]}[_PIN_REL] == new
+
+
+def test_second_wet_apply_refreshes_the_recorded_digest(tmp_path, monkeypatch):
+    """Same overwrite, through two wet `apply` runs whose pin digest moves."""
+    body1 = "Zyllora Elm\npayload-one\n"
+    pre1 = _pin_digest(body1)
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={_PIN_REL: body1, _PIN_NOTE: f"sha256: {pre1}\n"},
+        record=None,
+    )
+    try:
+        rc1 = pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    assert rc1 == 0
+    digest1 = pz._sha_file(repo / _PIN_REL)
+    assert digest1 != pre1
+    by_path = {e["path"]: e["sha256"] for e in pz._load_pin_record()["pins"]}
+    assert by_path[_PIN_REL] == digest1
+
+    body2 = "Zyllora Elm\npayload-two\n"
+    pre2 = _pin_digest(body2)
+    assert pre2 != digest1
+    (repo / _PIN_REL).write_text(body2, encoding="utf-8")
+    (repo / _PIN_NOTE).write_text(f"sha256: {pre2}\n", encoding="utf-8")
+    try:
+        rc2 = pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    assert rc2 == 0
+    digest2 = pz._sha_file(repo / _PIN_REL)
+    assert digest2 != digest1
+    assert digest2 != pre2
+    assert digest2 in (repo / _PIN_NOTE).read_text(encoding="utf-8")
+    by_path = {e["path"]: e["sha256"] for e in pz._load_pin_record()["pins"]}
+    assert by_path[_PIN_REL] == digest2
+
+
+def test_apply_records_the_post_rename_path_of_a_live_pin(tmp_path, monkeypatch):
+    """REV-A-08 / M11: persist must walk `files_after`, not the pre-rename list.
+
+    The pinned file's path is rewritten by the run. The live pin travels
+    with the bytes; the record must name the new path. Walking `files`
+    sees a gone path and records nothing.
+    """
+    old_rel = "apps/nylphra/zyllora-elm.py"
+    new_rel = "apps/nylphra/amber_falcon.py"
+    body = "payload-one\n"
+    digest = _pin_digest(body)
+    repo, _private = _prepare_verify_env(
+        tmp_path,
+        monkeypatch,
+        files={old_rel: body, _PIN_NOTE: f"sha256: {digest}\n"},
+        record=None,
+    )
+
+    def tracked():
+        out = []
+        for rel in (old_rel, new_rel, _PIN_NOTE):
+            path = repo / rel
+            if path.is_file():
+                out.append((path, True))
+        return out
+
+    monkeypatch.setattr(pz, "_tracked_files", tracked)
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)) and len(cmd) >= 4 and cmd[0] == "git" and cmd[1] == "mv":
+            cwd = Path(kwargs.get("cwd") or ".")
+            src = cwd / cmd[2]
+            dst = cwd / cmd[3]
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.replace(dst)
+            return pz.subprocess.CompletedProcess(list(cmd), 0, "", "")
+        raise AssertionError(f"unexpected subprocess.run: {cmd!r}")
+
+    monkeypatch.setattr(pz.subprocess, "run", fake_run)
+    try:
+        rc = pz.cmd_apply(type("Args", (), {"dry_run": False, "reorder": False, "top": 25})())
+    finally:
+        pz._nonpersonal_identities.cache_clear()
+    assert rc == 0
+    assert (repo / new_rel).is_file()
+    assert not (repo / old_rel).exists()
+    assert pz._sha_file(repo / new_rel) == digest
+    record = pz._load_pin_record()
+    by_path = {e["path"]: e["sha256"] for e in record["pins"]}
+    assert by_path.get(new_rel) == digest
+    assert old_rel not in by_path

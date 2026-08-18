@@ -546,9 +546,7 @@ def test_extract_identities_orders_left_to_right_not_alphabetically():
             "bbox": {"x": 10, "y": 40, "width": 50, "height": 60},
         },
     ]
-    identities, face_count, ordering = _extract_identities(
-        payload, media_id=1, image_width=400, image_height=200
-    )
+    identities, face_count, ordering = _extract_identities(payload, media_id=1, image_width=400, image_height=200)
     assert face_count == 3
     from scripts.eval_harness.cli import IdentityOrdering
 
@@ -585,9 +583,7 @@ def test_extract_identities_orders_by_centre_x_not_corner_x():  # VLM6-B-03
             "bbox": {"x": 150, "y": 0, "width": 50, "height": 100},
         },
     ]
-    identities, face_count, ordering = _extract_identities(
-        payload, media_id=1, image_width=400, image_height=200
-    )
+    identities, face_count, ordering = _extract_identities(payload, media_id=1, image_width=400, image_height=200)
     assert face_count == 2
     assert ordering == IdentityOrdering.POSITIONAL.value
     names = [row["name"] for row in identities]
@@ -741,7 +737,14 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json", *, anno
     }
     manifest_path.write_text(json.dumps(payload))
     # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
-    return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
+    return manifest_path, _manifest_sha(
+        load_manifest(
+            str(manifest_path),
+            skip_hash_verification=True,
+            hash_skip_reason="test helper computes score-time sha; image bytes never opened",
+            metadata_only=True,
+        )
+    )
 
 
 # False-polarity trap phrases that clean fixture captions never assert.
@@ -908,9 +911,7 @@ def _w1_audience_manifest_and_record(tmp_path, *, inject_wrong_name: bool = Fals
     # roster_only would structurally refuse detection and leave
     # face_detection.precision/recall permanently None -> category-vacuity
     # (not_ready), contradicting the "clean successful score" contract above.
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, roster, annotation_mode="exhaustive"
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, annotation_mode="exhaustive")
     record_path = tmp_path / "run-x.json"
     record_path.write_text(
         json.dumps(
@@ -1356,9 +1357,7 @@ def test_cmd_score_quality_floor_breach_exits_nonzero(tmp_path, monkeypatch):
         # Keep compared_images > 0 so the floor is measured-and-bad, not vacuous.
         assert int(pos.get("compared_images") or 0) > 0
         pos["position_accuracy"] = 0.0
-        scored["verdict"] = build_score_verdict(
-            scored, rubric_gate=kwargs.get("rubric_gate", "enforce")
-        )
+        scored["verdict"] = build_score_verdict(scored, rubric_gate=kwargs.get("rubric_gate", "enforce"))
         return scored
 
     monkeypatch.setattr(cli_mod, "score_run_record", _force_position_floor)
@@ -1497,7 +1496,12 @@ def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeyp
 
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports baseline for expect-report; never opens image bytes.
-    man = load_manifest(str(manifest_path), skip_hash_verification=True)
+    man = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in man.entries]
     base_json, _ = build_reports(
         record,
@@ -1754,7 +1758,12 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
 
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports for determinism baseline; never opens image bytes.
-    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     # VLM6-DELTA-06: mirror _check_score_determinism_cross_process's stamp-fill
     # (S2R6E-04) so this locally-built base_json matches what the real parent
     # baseline now produces — otherwise a missing per-entry annotation_mode
@@ -1933,7 +1942,12 @@ def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch
 
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports for determinism baseline; never opens image bytes.
-    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in manifest.entries]
     ignore_list = cli_mod._load_ignore_list(record_path.parent)
     base_json, base_md = build_reports(
@@ -1991,7 +2005,12 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     # operator will write skip — the GATE-05 divergence in one comparison.
     record = json.loads(record_path.read_text())
     # Metadata-only: build_reports for GATE-05 divergence baseline; never opens image bytes.
-    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in manifest.entries]
     ignore = cli_mod._load_ignore_list(record_path.parent)
     sha = cli_mod._manifest_sha(manifest)
@@ -2544,9 +2563,7 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
     assert entries[-1]["easy_wrong"]  # independent vacuity still non-empty
     # VLM6-DELTA-05: face_detection.precision/recall must be measurable for an
     # honest pass_ungated verdict (roster_only structurally refuses detection).
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, roster, annotation_mode="exhaustive"
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, annotation_mode="exhaustive")
     record = _score_run_record(
         entries,
         # Avoid the token "person" — synthetic easy_wrong names are "Person N"
@@ -2554,9 +2571,7 @@ def test_score_guard_rubric_gate_skip_bypasses_must_right_gate(tmp_path, monkeyp
         # Assert placement so placement claims > 0 (not vacuous).
         caption_fn=lambda _e: "A human standing in the foreground outdoors near greenery.",
         # Correct centre-ordered identity rows so positional is evaluable (not π=0).
-        identity_fn=lambda e: (
-            [_score_identity(e["present_identities"][0])] if e.get("present_identities") else []
-        ),
+        identity_fn=lambda e: [_score_identity(e["present_identities"][0])] if e.get("present_identities") else [],
         manifest_sha=manifest_sha,
     )
     record_path = tmp_path / "run-seeded-shape.json"
@@ -2596,9 +2611,7 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     roster, entries = _corpus_entries(6, with_rubric=True)
     # VLM6-DELTA-05: exhaustive so face_detection.precision/recall are
     # measurable (honest PASS, not category-vacuity not_ready).
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, roster, annotation_mode="exhaustive"
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, annotation_mode="exhaustive")
     record = _score_run_record(
         entries,
         # Assert placement phrase so placement is measurable (honest pass).
@@ -2810,7 +2823,12 @@ def _real_golden_good_record() -> tuple[Path, dict]:
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     # Metadata-only: builds synthetic run-record from roster/must_right; never opens image bytes.
-    manifest = load_manifest(str(_GOLDEN_SEED), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_GOLDEN_SEED),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     msha = _manifest_sha(manifest)
@@ -2960,7 +2978,12 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
     from scripts.eval_harness.schema import SCHEMA, DocKind
 
     # Metadata-only: builds synthetic wrong-name record from roster; never opens image bytes.
-    manifest = load_manifest(str(_GOLDEN_SEED), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(_GOLDEN_SEED),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     msha = _manifest_sha(manifest)
@@ -3044,12 +3067,18 @@ def _boxed_golden_manifest(tmp_path, *, name: str = "golden-boxed.json") -> tupl
         lineage = dict(_TEST_LINEAGE_NAMED)
         lineage["decision"] = "named"
         entry["face_boxes"] = [
-            {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": n, "source": "iptc", "lineage": lineage}
-            for n in names
+            {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": n, "source": "iptc", "lineage": lineage} for n in names
         ]
     manifest_path = tmp_path / name
     manifest_path.write_text(json.dumps(boxed))
-    return manifest_path, _manifest_sha(load_manifest(str(manifest_path), skip_hash_verification=True))
+    return manifest_path, _manifest_sha(
+        load_manifest(
+            str(manifest_path),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
+    )
 
 
 def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch):
@@ -3114,7 +3143,12 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
     man_path = tmp_path / "golden-rec-off.json"
     man_path.write_text(json.dumps(man))
     # Metadata-only: score path uses policy/must_right only; never opens image bytes.
-    manifest = load_manifest(str(man_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(man_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     entries = [e.model_dump() for e in manifest.entries]
     assert len(entries) == 37
     assert all(not e["policy"]["recognition_enabled"] for e in entries)
@@ -3362,7 +3396,12 @@ def test_score_persisted_verdict_fail_empty_rubric_must_right_real_golden(tmp_pa
     man_path = tmp_path / "golden-no-mr.json"
     man_path.write_text(json.dumps(man))
     # Metadata-only: empty must_right scoring fixture; never opens image bytes.
-    manifest = load_manifest(str(man_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(man_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     msha = _manifest_sha(manifest)
     _, record = _real_golden_good_record()
     record = copy.deepcopy(record)
@@ -3638,9 +3677,7 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
                 "must_right": [name],
                 "easy_wrong": [other],
                 "policy": {"recognition_enabled": True},
-                "face_boxes": [
-                    {"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": name, "source": "iptc"}
-                ],
+                "face_boxes": [{"x": 10.0, "y": 40.0, "w": 50.0, "h": 60.0, "name": name, "source": "iptc"}],
             }
         )
         # Exactly one wrong name on image 0; the rest are correct.
@@ -4201,7 +4238,7 @@ def _leg_dispatch_manifest(tmp_path):
         json.dumps(
             {
                 "manifest_version": 3,
-            "annotation_mode": "roster_only",
+                "annotation_mode": "roster_only",
                 "roster": ["Alice Q"],
                 "entries": [
                     {
@@ -4581,12 +4618,8 @@ def test_cli_compare_rejects_handwritten_four_field_json(tmp_path):
 def test_cli_compare_rejects_pass_ungated_baseline(tmp_path):
     """VLM6-A-02: baseline whose own verdict is not adoption-eligible pass is refused."""
     # Match protocol (rubric_gate) so the adoption-eligible verdict check is reached.
-    baseline = _adoption_compare_report(
-        verdict={"verdict": ScoreVerdict.PASS_UNGATED.value, "rubric_gate": "enforce"}
-    )
-    candidate = _adoption_compare_report(
-        verdict={"verdict": ScoreVerdict.PASS.value, "rubric_gate": "enforce"}
-    )
+    baseline = _adoption_compare_report(verdict={"verdict": ScoreVerdict.PASS_UNGATED.value, "rubric_gate": "enforce"})
+    candidate = _adoption_compare_report(verdict={"verdict": ScoreVerdict.PASS.value, "rubric_gate": "enforce"})
     base_path = tmp_path / "baseline.json"
     cand_path = tmp_path / "candidate.json"
     base_path.write_text(json.dumps(baseline))
@@ -4872,7 +4905,11 @@ def test_cmd_score_public_carries_local_folded_verdict(tmp_path, monkeypatch):
     def _zero_scored(*args, **kwargs):
         scored = real_score(*args, **kwargs)
         # Force the evidence fold path: scored=0 triggers fail verdict on LOCAL.
-        scored["counts"] = {"total": int(scored["counts"]["total"]), "scored": 0, "failed": int(scored["counts"]["total"])}
+        scored["counts"] = {
+            "total": int(scored["counts"]["total"]),
+            "scored": 0,
+            "failed": int(scored["counts"]["total"]),
+        }
         return scored
 
     monkeypatch.setattr(cli_mod, "score_run_record", _zero_scored)
@@ -5012,18 +5049,14 @@ def test_score_freeze_certification_requires_expect_report(tmp_path, monkeypatch
     assert "--freeze-certification requires --expect-report" in str(exc2.value)
 
 
-def test_score_freeze_certification_exits_zero_when_bytes_match_despite_wrong_names(
-    tmp_path, monkeypatch, capsys
-):
+def test_score_freeze_certification_exits_zero_when_bytes_match_despite_wrong_names(tmp_path, monkeypatch, capsys):
     """TEST-15: freeze-certification exit = byte-stability only (adoption visible).
 
     Fixture has a wrong-name floor breach so live score exits non-zero. After a
     freeze is captured, --freeze-certification must exit 0 while still printing
     the adoption verdict so operators cannot misread it as model certification.
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=True
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=True)
     monkeypatch.chdir(tmp_path)
 
     # Capture a freeze of the imperfect fixture (adoption gates fire).
@@ -5070,14 +5103,10 @@ def test_score_freeze_certification_exits_zero_when_bytes_match_despite_wrong_na
     # Explicit non-adoption certification language (VLM6-E-08).
     assert "freeze-certification" in out.lower()
     assert "byte-stable" in out.lower() or "bit-identical" in out.lower()
-    assert "not" in out.lower() and (
-        "adoption" in out.lower() or "model quality" in out.lower()
-    )
+    assert "not" in out.lower() and ("adoption" in out.lower() or "model quality" in out.lower())
 
 
-def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(
-    tmp_path, monkeypatch
-):
+def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(tmp_path, monkeypatch):
     """TEST-15: freeze-certification still goes red on byte mismatch."""
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -5124,17 +5153,13 @@ def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(
     assert "matches --expect-report" not in msg or "does not match" in msg
 
 
-def test_score_live_wrong_name_still_exits_nonzero_without_freeze_certification(
-    tmp_path, monkeypatch
-):
+def test_score_live_wrong_name_still_exits_nonzero_without_freeze_certification(tmp_path, monkeypatch):
     """TEST-15 / sr-001: live score (no freeze-cert) keeps adoption gates hard.
 
     Regression guard: freeze-certification must not soft-open the wrong-name floor
     for ordinary score runs.
     """
-    manifest_path, record_path = _w1_audience_manifest_and_record(
-        tmp_path, inject_wrong_name=True
-    )
+    manifest_path, record_path = _w1_audience_manifest_and_record(tmp_path, inject_wrong_name=True)
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as exc:
         main(
@@ -5180,9 +5205,7 @@ def test_score_face_freeze_certification_requires_expect_report(tmp_path):
 # Integrity still exit-determining; only adoption quality is soft (TEST-15).
 
 
-def _certified_caption_expect(
-    manifest_path, record_path, expect_path, *, rubric_gate="enforce"
-):
+def _certified_caption_expect(manifest_path, record_path, expect_path, *, rubric_gate="enforce"):
     """Write certified build_reports JSON as --expect-report (anchor-generator shape).
 
     Mirrors generate_determinism_anchor: capture pre-fold certified bytes so a
@@ -5194,7 +5217,12 @@ def _certified_caption_expect(
     from scripts.eval_harness.report import Audience, build_reports
 
     record = json.loads(Path(record_path).read_text(encoding="utf-8"))
-    manifest = load_manifest(str(manifest_path), skip_hash_verification=True)
+    manifest = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
     # VLM6-DELTA-06: mirror _cmd_score's stamp-fill (S2R6E-04) so this
     # "certified expect" is built from the same entries the cross-process
     # determinism guard now produces (cli.py _cmd_score /
@@ -5279,9 +5307,7 @@ def test_score_freeze_certification_zero_scored_exits_nonzero(tmp_path, monkeypa
             "policy": {"recognition_enabled": True},
         }
     ]
-    manifest_path, manifest_sha = _write_score_manifest(
-        tmp_path, entries, ["Alice Example", "Bob Builder"]
-    )
+    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, ["Alice Example", "Bob Builder"])
     record = {
         "schema": SCHEMA,
         "kind": DocKind.RUN_RECORD.value,
@@ -5384,9 +5410,7 @@ def test_score_freeze_certification_schema_invalid_exits_nonzero(tmp_path, monke
     assert "must_right_failed_images" in msg
 
 
-def test_score_face_freeze_certification_exits_zero_when_bytes_match(
-    tmp_path, monkeypatch, capsys
-):
+def test_score_face_freeze_certification_exits_zero_when_bytes_match(tmp_path, monkeypatch, capsys):
     """TEST-15: score-face freeze-cert green path (byte-stable + integrity clean)."""
     from scripts.eval_harness.cli import _manifest_sha
     from scripts.eval_harness.manifest import load_manifest
@@ -5398,10 +5422,13 @@ def test_score_face_freeze_certification_exits_zero_when_bytes_match(
     man_path = tmp_path / "face-man-fc.json"
     man_path.write_text(json.dumps(manifest))
     # Certified face expect (anchor-generator shape).
-    man = load_manifest(str(man_path), skip_hash_verification=True)
-    j, _m = build_face_reports(
-        record, man, score_manifest_sha256=_manifest_sha(man), public=False
+    man = load_manifest(
+        str(man_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
     )
+    j, _m = build_face_reports(record, man, score_manifest_sha256=_manifest_sha(man), public=False)
     expect = tmp_path / "face-expect.json"
     expect.write_text(j, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
@@ -5425,6 +5452,43 @@ def test_score_face_freeze_certification_exits_zero_when_bytes_match(
     assert "matches --expect-report" in out
     assert "freeze-certification" in out.lower()
     assert "byte-stable" in out.lower() or "bit-identical" in out.lower()
+
+
+def _empty_golden_dir(tmp_path, monkeypatch) -> Path:
+    """Existing-but-empty GOLDEN_IMAGES_DIR — fresh eval box shape (VLM6-RV3-Q4-01)."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    return empty
+
+
+def test_cli_score_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
+    """VLM6-RV3-Q4-01 / OBS-04: score is metadata-only; empty env dir must not fail.
+
+    Mutation: removing metadata_only=True from _cmd_score.load_manifest fails
+    with ManifestError: image file missing.
+    """
+    _empty_golden_dir(tmp_path, monkeypatch)
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert list(tmp_path.glob("*-report.json")), "score must write a report without image bytes"
+
+
+def test_cli_score_face_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
+    """VLM6-RV3-Q4-01 / OBS-04: score-face is metadata-only; empty env dir must not fail.
+
+    Mutation: removing metadata_only=True from _cmd_score_face.load_manifest
+    fails with ManifestError: image file missing.
+    """
+    _empty_golden_dir(tmp_path, monkeypatch)
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest))
+    main(["score-face", "--run-record", str(rec_path), "--manifest", str(man_path)])
+    assert (tmp_path / "face-run-face-report.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -5472,8 +5536,7 @@ def test_score_face_failed_items_shares_caption_gate_prefix(tmp_path, monkeypatc
     assert exc.value.code != 0
     msg = str(exc.value)
     assert SCORE_GATE_PREFIX_FAILED_ITEMS in msg, (
-        f"face failed-items must share caption prefix {SCORE_GATE_PREFIX_FAILED_ITEMS!r}; "
-        f"got: {msg!r}"
+        f"face failed-items must share caption prefix {SCORE_GATE_PREFIX_FAILED_ITEMS!r}; got: {msg!r}"
     )
     assert "failed-items gate" in msg
     # Divergent historical prefix must not return (grep contract).
@@ -5509,12 +5572,7 @@ def test_score_gate_prefixes_documented_in_readme():
     """
     from scripts.eval_harness.cli import SCORE_GATE_PREFIXES
 
-    readme_path = (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
-        / "eval_harness"
-        / "README.md"
-    )
+    readme_path = Path(__file__).resolve().parents[2] / "scripts" / "eval_harness" / "README.md"
     assert readme_path.is_file(), f"missing eval-harness README at {readme_path}"
     readme = readme_path.read_text(encoding="utf-8")
     table = _parse_readme_score_gate_prefix_table(readme)
@@ -5547,12 +5605,7 @@ def test_score_gate_fail_call_sites_use_prefix_constants():
 
     from scripts.eval_harness.cli import SCORE_GATE_PREFIXES
 
-    cli_path = (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
-        / "eval_harness"
-        / "cli.py"
-    )
+    cli_path = Path(__file__).resolve().parents[2] / "scripts" / "eval_harness" / "cli.py"
     src = cli_path.read_text(encoding="utf-8")
     tree = ast.parse(src)
 
@@ -5563,15 +5616,13 @@ def test_score_gate_fail_call_sites_use_prefix_constants():
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target = node.targets[0]
-        if not isinstance(target, ast.Name) or not target.id.startswith(
-            "SCORE_GATE_PREFIX_"
-        ):
+        if not isinstance(target, ast.Name) or not target.id.startswith("SCORE_GATE_PREFIX_"):
             continue
         if target.id == "SCORE_GATE_PREFIXES":
             continue
-        assert isinstance(node.value, ast.Constant) and isinstance(
-            node.value.value, str
-        ), f"{target.id} must be a string constant"
+        assert isinstance(node.value, ast.Constant) and isinstance(node.value.value, str), (
+            f"{target.id} must be a string constant"
+        )
         assigned[target.id] = node.value.value
     assert set(assigned.values()) == set(SCORE_GATE_PREFIXES), (
         "SCORE_GATE_PREFIX_* assignments ≠ SCORE_GATE_PREFIXES frozenset:\n"
@@ -5592,11 +5643,7 @@ def test_score_gate_fail_call_sites_use_prefix_constants():
     offenders: list[str] = []
 
     def _names_in(expr: ast.AST) -> set[str]:
-        return {
-            n.id
-            for n in ast.walk(expr)
-            if isinstance(n, ast.Name)
-        }
+        return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
 
     def _arg_ok(arg: ast.AST) -> bool:
         if isinstance(arg, ast.Name):
@@ -5645,15 +5692,12 @@ def test_score_gate_fail_call_sites_use_prefix_constants():
                     static = arg0.value
                 elif isinstance(arg0, ast.JoinedStr):
                     static = "".join(
-                        v.value
-                        for v in arg0.values
-                        if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                        v.value for v in arg0.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
                     )
                 if re.search(r"score gate failed|run score gate", static):
                     if not _arg_ok(arg0):
                         offenders.append(
-                            f"L{node.lineno}: print gate wrapper missing "
-                            f"SCORE_GATE_PREFIX_*; static={static!r}"
+                            f"L{node.lineno}: print gate wrapper missing SCORE_GATE_PREFIX_*; static={static!r}"
                         )
         elif func_name == "exit" and node.args:
             # sys.exit(...) — run multi-record summary.
@@ -5663,15 +5707,12 @@ def test_score_gate_fail_call_sites_use_prefix_constants():
                 static = arg0.value
             elif isinstance(arg0, ast.JoinedStr):
                 static = "".join(
-                    v.value
-                    for v in arg0.values
-                    if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                    v.value for v in arg0.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
                 )
             if re.search(r"run score gates failed|score gate failed", static):
                 if not _arg_ok(arg0):
                     offenders.append(
-                        f"L{node.lineno}: sys.exit gate summary missing "
-                        f"SCORE_GATE_PREFIX_*; static={static!r}"
+                        f"L{node.lineno}: sys.exit gate summary missing SCORE_GATE_PREFIX_*; static={static!r}"
                     )
 
     assert not offenders, (
@@ -5710,8 +5751,7 @@ def test_refuse_overwrite_uses_stable_shared_prefix(tmp_path, monkeypatch):
         _refuse_report_overwrite([target], allow=False, label="score")
     msg_score = str(cap_score.value)
     assert msg_score.startswith(SCORE_GATE_PREFIX_REFUSE_OVERWRITE), (
-        f"caption refuse-overwrite must start with "
-        f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_score!r}"
+        f"caption refuse-overwrite must start with {SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_score!r}"
     )
     assert "score:" in msg_score  # label as suffix
 
@@ -5719,8 +5759,7 @@ def test_refuse_overwrite_uses_stable_shared_prefix(tmp_path, monkeypatch):
         _refuse_report_overwrite([target], allow=False, label="score-face")
     msg_face = str(cap_face.value)
     assert msg_face.startswith(SCORE_GATE_PREFIX_REFUSE_OVERWRITE), (
-        f"face refuse-overwrite must start with "
-        f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_face!r}"
+        f"face refuse-overwrite must start with {SCORE_GATE_PREFIX_REFUSE_OVERWRITE!r}; got {msg_face!r}"
     )
     assert "score-face" in msg_face
     # Historical label-varying prefixes must not return as the class token.

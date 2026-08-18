@@ -33,8 +33,7 @@ from scripts.bench.status import (
 from scripts.eval_harness.remote_client import RemoteSceneClient
 
 LICENSE_BANNER = (
-    "INTERNAL BENCH ONLY — insightface/buffalo_l outputs must never be user-facing "
-    "or used as training data."
+    "INTERNAL BENCH ONLY — insightface/buffalo_l outputs must never be user-facing or used as training data."
 )
 
 
@@ -339,6 +338,7 @@ def run_pair(
     # entry counts and media_id sets are read here, never image bytes.
     manifest = load_manifest(
         str(manifest_path),
+        metadata_only=True,
         skip_hash_verification=True,
         hash_skip_reason="bench driver reads media ids only",
     )
@@ -350,6 +350,7 @@ def run_pair(
     if pair.baseline_manifest_path:
         baseline = load_manifest(
             str(pair.baseline_manifest_path),
+            metadata_only=True,
             skip_hash_verification=True,
             hash_skip_reason="bench driver reads media ids only",
         )

@@ -33,7 +33,12 @@ BAKEOFF = Path(__file__).parent / "seed" / "bakeoff_golden.json"
 def manifest():
     # Metadata-only: run_fusion_eval → _synthetic_image_bytes; tests read labels/
     # context_pack/policy/expected_attachments only — never open image bytes.
-    return load_manifest(str(BAKEOFF), skip_hash_verification=True)
+    return load_manifest(
+        str(BAKEOFF),
+        skip_hash_verification=True,
+        hash_skip_reason="fusion tests read labels/policy only; image bytes never opened",
+        metadata_only=True,
+    )
 
 
 def test_bakeoff_labels_include_expected_attachments(manifest):
@@ -240,3 +245,27 @@ def test_cli_writes_reports(tmp_path, manifest):
     adhoc_mis = json.loads((tmp_path / "E20-FUSION-adhoc-misattachment.json").read_text())
     assert staged_mis["misattachments"] == 0
     assert adhoc_mis["misattachments"] > 0
+
+
+def test_fusion_main_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
+    """VLM6-RV3-Q4-01 / OBS-04: fusion_runner synthesizes bytes; empty env dir must load.
+
+    Mutation: removing metadata_only=True from fusion_runner.main load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    code = fusion_main(
+        [
+            "--manifest",
+            str(BAKEOFF),
+            "--mode",
+            "staged",
+            "--out-dir",
+            str(tmp_path),
+        ]
+    )
+    # roster_only bakeoff_golden refuses detection — reports still written (exit 3).
+    assert code == 3
+    assert (tmp_path / "E20-FUSION-staged-run-record.json").is_file()

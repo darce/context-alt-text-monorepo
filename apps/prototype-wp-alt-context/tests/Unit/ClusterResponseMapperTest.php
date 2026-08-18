@@ -243,10 +243,83 @@ class ClusterResponseMapperTest extends TestCase
             4
         );
 
-        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertSame(2, $payload[0]['identity_count']);
         $log = \implode("\n", $GLOBALS['__ac_error_log']);
         $this->assertStringContainsString('cluster-shortfall', $log);
         $this->assertStringContainsString('projected=9 observed=2', $log);
+    }
+
+    /**
+     * B5 / REF-09: projected 3, observed 2, preview cap 4 is a non-truncated
+     * shortfall — identity_count must be the honest observed 2 (TEST-15: returning
+     * the stale projected 3 makes this assertion red).
+     */
+    public function testMapTopUnlabeledReturnsObservedCountOnNonTruncatedShortfall(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-drift-3-2',
+                    'label' => '',
+                    'identity_count' => 3,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-drift-3-2' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(2, $payload[0]['identity_count']);
+        $this->assertCount(2, $payload[0]['representatives']);
+        $this->assertContains(
+            'cluster-drift-3-2',
+            $this->mapper->requested_repair_cluster_ids(),
+            'non-truncated shortfall must request targeted projection repair'
+        );
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-drift-3-2', $log);
+        $this->assertStringContainsString('projected=3 observed=2', $log);
+    }
+
+    /**
+     * Preview cap hit (observed 4, projected 9) is truncation, not drift.
+     */
+    public function testMapTopUnlabeledKeepsProjectedCountWhenPreviewIsTruncated(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-truncated-9-4',
+                    'label' => '',
+                    'identity_count' => 9,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-truncated-9-4' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
     }
 
     public function testMapClusterListIncludesPinnedRepresentativeState(): void

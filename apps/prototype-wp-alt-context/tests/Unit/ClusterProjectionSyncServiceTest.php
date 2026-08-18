@@ -31,6 +31,45 @@ class ClusterProjectionSyncServiceTest extends TestCase
         $this->assertTrue($service->cluster_row_should_have_members(['identity_count' => 2]));
     }
 
+    public function testFindClustersMissingProjectedMembersIncludesNonTruncatedShortfall(): void
+    {
+        $service = $this->makeService();
+
+        $ids = $service->find_clusters_missing_projected_members(
+            [
+                [
+                    'cluster_uuid' => 'cluster-drift-3-2',
+                    'identity_count' => 3,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-truncated-9-4',
+                    'identity_count' => 9,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'identity_count' => 3,
+                ],
+            ],
+            [
+                'cluster-drift-3-2' => [
+                    ['identity_uuid' => 'id-1'],
+                    ['identity_uuid' => 'id-2'],
+                ],
+                'cluster-truncated-9-4' => [
+                    ['identity_uuid' => 'id-1'],
+                    ['identity_uuid' => 'id-2'],
+                    ['identity_uuid' => 'id-3'],
+                    ['identity_uuid' => 'id-4'],
+                ],
+            ],
+            4
+        );
+
+        $this->assertContains('cluster-drift-3-2', $ids);
+        $this->assertContains('cluster-empty', $ids);
+        $this->assertNotContains('cluster-truncated-9-4', $ids);
+    }
+
     public function testMaybeBootstrapAfterProxyReadSchedulesCronWhenInlineSyncFails(): void
     {
         $GLOBALS['__ac_scheduled'] = [];

@@ -35,6 +35,8 @@ READY_SLEEP_S = 15
 _CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
 _REPORT_MODULE = "scripts.eval_harness.build_bakeoff_report"
 _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
+WARMUP_REQUESTS = 1
+"""Discarded first-image requests before scored items, PERF-03."""
 
 
 class UnsupportedStackError(Exception):
@@ -379,6 +381,8 @@ def _plan_candidate(
         "--two-pass",
         "--out",
         out_path,
+        "--warmup",
+        str(WARMUP_REQUESTS),
     ]
     if entry.reasoning_tuned or "--no-think" in entry.recipe.extra_flags:
         run_argv_list.append("--no-think")

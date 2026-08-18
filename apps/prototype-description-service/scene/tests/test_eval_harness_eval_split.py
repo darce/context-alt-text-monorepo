@@ -15,6 +15,7 @@ from scripts.eval_harness.strata import (
     SplitDisjointnessStatus,
     SplitHalf,
     assign_split,
+    compute_split_seal_sha256,
     draw_eval_split,
     verify_eval_split,
 )
@@ -209,7 +210,7 @@ def test_cli_draw_without_force_exits_3_on_existing_out(tmp_path):
 
 
 @pytest.mark.parametrize("fraction", ["0.0", "1.0"])
-def test_cli_held_out_fraction_bounds_exit_2(tmp_path, fraction):
+def test_cli_held_out_fraction_bounds_exit_2(tmp_path, fraction, capsys):
     with pytest.raises(SystemExit) as excinfo:
         main(
             [
@@ -229,6 +230,9 @@ def test_cli_held_out_fraction_bounds_exit_2(tmp_path, fraction):
             ]
         )
     assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    combined = f"{captured.err}{captured.out}"
+    assert "fraction" in combined.lower() or "0 < f < 1" in combined, combined
 
 
 def test_verify_seedless_swapped_is_violation():
@@ -522,3 +526,64 @@ def test_committed_artifact_verifies_clean():
     artifact = json.loads(_SEALED_SPLIT.read_text())
     assert verify_eval_split(artifact, _load_golden()) == []
     assert artifact["disjointness"]["note"] == SPLIT_DISJOINTNESS_NOTE
+
+
+def _reseal(artifact: dict) -> dict:
+    """Recompute seal_sha256 so only the field check (not digest) can fail."""
+    artifact["seal_sha256"] = compute_split_seal_sha256(artifact)
+    return artifact
+
+
+def test_verify_exposure_inventory_with_present_identities_tamper_names_field():
+    # VLM6-W3-RV-05 (a): reseal so digest passes; only inventory recompute kills.
+    artifact = _reseal(_draw_golden())
+    artifact["exposure_inventory"]["with_present_identities"] = 0
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("exposure_inventory" in message for message in violations), violations
+
+
+def test_verify_protection_rewrite_names_field():
+    # VLM6-W3-RV-05 (b): rewrite protection after reseal.
+    artifact = _draw_golden()
+    artifact["protection"] = "operator-blessed"
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("protection" in message for message in violations), violations
+
+
+def test_verify_protection_deleted_names_field():
+    artifact = _draw_golden()
+    del artifact["protection"]
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("protection" in message for message in violations), violations
+
+
+def test_verify_empty_partition_provenance_names_field():
+    # VLM6-W3-RV-05 (c): empty string after reseal; do not pass expected= so
+    # only the empty-string check (not mismatch) can kill.
+    artifact = _draw_golden()
+    artifact["disjointness"]["partition_provenance"] = ""
+    _reseal(artifact)
+    violations = verify_eval_split(artifact, _load_golden())
+    assert any("partition_provenance" in message for message in violations), violations
+
+
+def test_verify_wrong_expected_draw_timestamp_names_field():
+    # VLM6-W3-RV-05 (d): artifact is sealed-clean; only expected-equality kills.
+    artifact = _draw_golden()
+    violations = verify_eval_split(
+        artifact,
+        _load_golden(),
+        expected_draw_timestamp="2020-01-01T00:00:00+00:00",
+    )
+    assert any("draw_timestamp" in message for message in violations), violations
+
+
+def test_cli_check_wrong_draw_timestamp_exits_1(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(_SEALED_SPLIT, draw_timestamp="2020-01-01T00:00:00+00:00"))
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "draw_timestamp" in captured.err or "draw_timestamp" in captured.out

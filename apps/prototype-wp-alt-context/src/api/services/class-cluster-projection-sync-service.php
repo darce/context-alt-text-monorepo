@@ -6,6 +6,7 @@ namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../sovereign/class-projection-query-exception.php';
 require_once __DIR__ . '/../../support/class-telemetry.php';
+require_once __DIR__ . '/../../sovereign/sync/interface-targeted-sync-pull-job.php';
 
 use AltContext\Api\ClustersHostInterface;
 use AltContext\Sovereign\ProjectionQueryException;
@@ -17,6 +18,7 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
 use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
@@ -24,11 +26,8 @@ use WP_REST_Response;
 
 use function array_unique;
 use function array_values;
-use function count;
 use function do_action;
-use function is_array;
 use function is_numeric;
-use function max;
 use function sanitize_text_field;
 use function time;
 use function trim;
@@ -120,62 +119,40 @@ class ClusterProjectionSyncService {
 		return $response;
 	}
 
-	private function schedule_bootstrap_sync_event( string $tenant_id ): void {
-		$args = array( $tenant_id );
+	private function schedule_bootstrap_sync_event( string $tenant_id, array $cluster_ids = array() ): void {
+		$args = array() === $cluster_ids
+			? array( $tenant_id )
+			: array( $tenant_id, $cluster_ids );
 		if ( false === wp_next_scheduled( $this->bootstrap_sync_hook, $args ) ) {
 			wp_schedule_single_event( time(), $this->bootstrap_sync_hook, $args );
 		}
 	}
 
-	public function perform_bootstrap_sync( string $tenant_id ): void {
+	/**
+	 * @param list<string> $cluster_ids
+	 */
+	public function perform_bootstrap_sync( string $tenant_id, array $cluster_ids = array() ): void {
 		$sync_pull_job = $this->resolve_sync_pull_job();
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id || null === $sync_pull_job ) {
 			return;
 		}
 
-		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $clusters
-	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
-	 * @return string[]
-	 */
-	public function find_clusters_missing_projected_members( array $clusters, array $members_by_cluster, ?int $preview_limit = null ): array {
-		$normalized_preview = null === $preview_limit
-			? IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
-			: max( 0, $preview_limit );
-		$cluster_ids        = array();
-		foreach ( $clusters as $cluster ) {
-			if ( ! is_array( $cluster ) ) {
-				continue;
-			}
-
-			$cluster_id = sanitize_text_field( (string) ( $cluster['cluster_uuid'] ?? '' ) );
-			if ( '' === $cluster_id || ! $this->cluster_row_should_have_members( $cluster ) ) {
-				continue;
-			}
-
-			$observed = isset( $members_by_cluster[ $cluster_id ] ) && is_array( $members_by_cluster[ $cluster_id ] )
-				? count( $members_by_cluster[ $cluster_id ] )
-				: 0;
-			if ( 0 === $observed ) {
-				$cluster_ids[] = $cluster_id;
-				continue;
-			}
-
-			$projected = is_numeric( $cluster['identity_count'] ?? null ) ? (int) $cluster['identity_count'] : 0;
-			// Observed below the preview cap is a provable shortfall, not
-			// truncation. Cap-hit (observed === preview, projected > observed)
-			// stays truncated and is not repair-eligible on this path.
-			if ( $normalized_preview > 0 && $observed < $normalized_preview && $observed < $projected ) {
-				$cluster_ids[] = $cluster_id;
+		$normalized_ids = array();
+		foreach ( $cluster_ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized_ids[] = $id;
 			}
 		}
+		$normalized_ids = array_values( array_unique( $normalized_ids ) );
 
-		// Bounded per request: at most one repair id per cluster on this page (rg-007).
-		return array_values( array_unique( $cluster_ids ) );
+		if ( array() !== $normalized_ids && $sync_pull_job instanceof TargetedSyncPullJobInterface ) {
+			$sync_pull_job->perform_targeted_snapshot( $normalized_tenant_id, $normalized_ids );
+			return;
+		}
+
+		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
 	}
 
 	/**
@@ -190,22 +167,26 @@ class ClusterProjectionSyncService {
 	}
 
 	/**
-	 * BR-07: never pull synchronously on the read path. The prior
-	 * perform_targeted_snapshot blocked the sovereign read for the full
-	 * targeted-snapshot timeout budget whenever the backend was offline/degraded
-	 * — exactly the state rows-first routing must keep serving through. Schedule
-	 * the deduped async bootstrap heal and serve the current projection; missing
-	 * members converge off the request path. Returns false so callers do not
-	 * re-read (nothing was repaired synchronously).
+	 * BR-07: never pull synchronously. Schedule a deduped async heal whose
+	 * cron args include the cluster ids so the handler can run a targeted
+	 * snapshot (R1-07). Returns false so callers do not re-read.
 	 *
 	 * @param string[] $cluster_ids
 	 */
 	public function repair_targeted_projection( string $tenant_id, array $cluster_ids ): bool {
-		if ( empty( $cluster_ids ) ) {
+		$normalized_ids = array();
+		foreach ( $cluster_ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized_ids[] = $id;
+			}
+		}
+		$normalized_ids = array_values( array_unique( $normalized_ids ) );
+		if ( array() === $normalized_ids ) {
 			return false;
 		}
 
-		$this->schedule_bootstrap_sync_event( $tenant_id );
+		$this->schedule_bootstrap_sync_event( $tenant_id, $normalized_ids );
 
 		return false;
 	}

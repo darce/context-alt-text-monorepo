@@ -272,6 +272,67 @@ class ClustersReadRepository {
 		return is_array( $rows ) ? $rows : array();
 	}
 
+	/**
+	 * @return list<string>
+	 */
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_limit = max( 1, $limit );
+		$members_table    = $this->resolve_identity_members_table_name();
+		$sql              = $this->prepare_projection_read_query(
+			"SELECT c.cluster_uuid
+			FROM %i c
+			WHERE c.tenant_id = %s
+				AND c.is_user_confirmed = 0
+				AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
+				AND c.identity_count <> (
+					SELECT COUNT(*)
+					FROM %i m
+					WHERE m.cluster_uuid = c.cluster_uuid
+				)
+			LIMIT %d",
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+				$members_table,
+				$normalized_limit,
+			)
+		);
+
+		$this->clear_query_error();
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_unlabeled_identity_count_drift', $rows, true );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$ids = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$cluster_id = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' !== $cluster_id ) {
+				$ids[] = $cluster_id;
+			}
+		}
+
+		return $ids;
+	}
+
 	public function count_top_unlabeled_singletons( string $tenant_id ): int {
 		global $wpdb;
 

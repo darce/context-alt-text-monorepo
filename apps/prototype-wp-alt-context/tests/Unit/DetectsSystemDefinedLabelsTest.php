@@ -69,4 +69,20 @@ class DetectsSystemDefinedLabelsTest extends TestCase
             'mid-string cluster_x' => ['my cluster_x'],
         ];
     }
+
+    public function testReservedLabelSqlPredicateCoversHyphenAndUnderscore(): void
+    {
+        $detector = new class() {
+            use DetectsSystemDefinedLabels;
+
+            public function sql(string $column): string
+            {
+                return $this->reserved_label_sql_predicate($column);
+            }
+        };
+
+        $sql = $detector->sql('c.label');
+        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+    }
 }

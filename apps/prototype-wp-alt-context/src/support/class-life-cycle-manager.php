@@ -6,8 +6,12 @@ namespace AltContext\Support;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
+require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
+require_once __DIR__ . '/../api/class-tenant-identity.php';
 
+use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use function array_keys;
 use function defined;
@@ -90,6 +94,7 @@ class LifecycleManager {
 		if ( $this->maybe_create_projection_tables() ) {
 			update_option( self::OPTION_SCHEMA_FINGERPRINT, $this->compute_projection_schema_fingerprint() );
 		}
+		$this->heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
 	}
@@ -139,6 +144,24 @@ class LifecycleManager {
 		}
 		update_option( self::OPTION_VERSION, ACX_VERSION );
 		update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
+		$this->heal_unbound_human_labels();
+	}
+
+	private function heal_unbound_human_labels(): void {
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return;
+		}
+
+		$result = ( new PersonLabelBackfillService() )->backfill_tenant( $tenant_id );
+		if ( $result['stalled'] ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] unbound-label heal stalled after %d batches; will retry on next upgrade',
+					(int) $result['stalls']
+				)
+			);
+		}
 	}
 
 	/**

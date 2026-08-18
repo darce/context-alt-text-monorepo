@@ -30,8 +30,8 @@ import type {
   ReviewQueueKindParam,
 } from '../../../../hooks/workbenchQueueUrl';
 import {
-  JUST_LABEL_COPY,
   MODEL_OUTPUT_DISCLOSURE,
+  PERSON_COMMIT_COMBOBOX_ARIA,
   PERSON_COMMIT_CONFIRM_COPY,
   VIEW_IN_ROSTER_COPY,
   VIEW_IN_ROSTER_HREF,
@@ -55,6 +55,20 @@ const rosterCommitFixture = (
   updated_at: '2026-01-01T00:00:00Z',
   ...overrides,
 });
+
+/**
+ * UXW2-3 single-gesture naming: type into the inline NameFaceControl and commit
+ * with Enter. Waits for the roster typeahead so exact names resolve to rosterEntryId.
+ */
+const typePersonName = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+): Promise<void> => {
+  const commit = await screen.findByTestId('acx-person-commit');
+  await within(commit).findByText(name);
+  const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+  await user.type(input, `${name}{Enter}`);
+};
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -1811,10 +1825,8 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    // Open combobox and select roster entry "Alex".
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    // Type the existing roster name and commit with Enter (single gesture).
+    await typePersonName(user, 'Alex');
 
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
@@ -1848,9 +1860,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     const link = await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
     expect(link).toHaveAttribute('href', VIEW_IN_ROSTER_HREF);
@@ -1878,17 +1888,14 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
     expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('tertiary just label dispatches open_label with the card clusterId', async () => {
-    const onLabel = vi.fn();
+  it('no just-label tertiary control renders on the queue card (UXW2-3)', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -1905,21 +1912,12 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
-    const user = userEvent.setup();
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
-    });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MergeSurvivorProvider>
-          <ReviewQueueHarness onLabel={onLabel} />
-        </MergeSurvivorProvider>
-      </QueryClientProvider>,
-    );
+    renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('button', { name: JUST_LABEL_COPY }));
-    expect(onLabel).toHaveBeenCalledWith('cluster-1');
+    // Naming always creates/binds a roster person — the misleading tertiary path is retired.
+    expect(screen.queryByRole('button', { name: /just label/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/don't add to roster/i)).not.toBeInTheDocument();
   });
 
   it('person-commit while accept hold is open flushes held accept first', async () => {
@@ -1963,9 +1961,7 @@ describe('ReviewQueue', () => {
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
     expect(acceptSuggestion).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalled();
@@ -2126,9 +2122,7 @@ describe('ReviewQueue', () => {
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     // Accept flushed → card advanced to sugg-2 before person-commit settles.
     await waitFor(() => {
@@ -2787,7 +2781,7 @@ describe('ReviewQueue', () => {
     expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
   });
 
-  it('BR-35: substring match still allows Create new person via explicit call-site action', async () => {
+  it('BR-35/UXW2-3: a substring of an existing name still creates a new person in one gesture', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -2806,19 +2800,12 @@ describe('ReviewQueue', () => {
 
     const user = userEvent.setup();
     renderQueue();
-    await screen.findByTestId('acx-person-commit');
+    const commit = await screen.findByTestId('acx-person-commit');
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    // Type a substring of existing "Alex" — shared combobox would hide Create.
-    const search = await screen.findByPlaceholderText(/Choose or create/i);
-    await user.clear(search);
-    await user.type(search, 'Al');
+    // Type a substring of existing "Alex" — not an exact match, so Enter creates.
+    const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+    await user.type(input, 'Al{Enter}');
 
-    const createBtn = await screen.findByRole('button', { name: /Create new person "Al"/i });
-    await user.click(createBtn);
-
-    // Confirm uses create path with the typed name.
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'cluster-1',

@@ -1720,7 +1720,6 @@ const CurrentCard = ({
             }
           });
         }}
-        onJustLabel={onLabel}
       />
     );
   };
@@ -1928,7 +1927,7 @@ const CurrentCard = ({
           {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
           <TopClusterCard
             cluster={cluster}
-            onLabel={() => undefined}
+            onLabel={() => onLabel?.(cluster.id)}
             isReadOnly
             onReview={onReview}
             // BR-41: pass ordinal only when both are defined (position chrome available).

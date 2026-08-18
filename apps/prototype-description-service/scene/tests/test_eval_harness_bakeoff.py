@@ -376,14 +376,16 @@ def test_ablate_names_replaces_word_boundary_case_insensitive() -> None:
     pack = {
         "title": "Antarctica expedition",
         "caption": "RUSSET FATHOM on the peninsula.",
-        "description": "Russet Fathom reached the peninsula. Russet Weavers' gear stayed aboard.",
+        "description": "Russet Fathom reached the peninsula. Russet Fathoms' gear stayed aboard.",
     }
     out, ablated = _ablate_names(pack, ["Russet Fathom"])
     assert ablated == ["Russet Fathom"]
     assert out["caption"] == "someone on the peninsula."
     assert out["description"].startswith("someone reached the peninsula.")
-    # word boundary (S2-06): "Russet Weavers'" is a different token and must survive.
-    assert "Russet Weavers'" in out["description"]
+    # word boundary (S2-06): "Fathoms'" extends the surname, so the trailing
+    # lookahead must refuse it. The distractor has to share the ablated
+    # surname or this assertion passes with no boundary logic at all.
+    assert "Russet Fathoms' gear" in out["description"]
     assert "Russet Fathom reached" not in out["description"]
     assert out["title"] == "Antarctica expedition"
 

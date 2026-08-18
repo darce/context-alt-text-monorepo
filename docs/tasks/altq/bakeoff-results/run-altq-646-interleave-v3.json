@@ -650,7 +650,7 @@
           {
             "latency_s": 2.243,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"person with brown hair and bangs, wearing a black top and red pants\"}, {\"position\": \"right\", \"appearance\": \"person with dark, wavy hair, wearing a black top\"}], \"setting\": \"indoor hallway with a framed picture on the wall\", \"action\": \"two people standing close together, one with an arm around the other, looking at a phone\", \"legible_text\": [\"@sleevynicks\", \"@rosaliefransen @brkwtz\"], \"atmosphere\": \"casual and intimate\"}"
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"person with brown hair and bangs, wearing a black top and red pants\"}, {\"position\": \"right\", \"appearance\": \"person with dark, wavy hair, wearing a black top\"}], \"setting\": \"indoor hallway with a framed picture on the wall\", \"action\": \"two people standing close together, one with an arm around the other, looking at a phone\", \"legible_text\": [\"@sleevynicks\", \"@umberwillow @brkwtz\"], \"atmosphere\": \"casual and intimate\"}"
           },
           {
             "latency_s": 2.426,
@@ -1607,7 +1607,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "A woman with blonde hair lies on a red surface in a circular profile picture on a Twitter page. The page shows the user sable @talvifaustmann with 5,000 tweets and displays three recent tweets.",
+        "alt_text_draft": "A woman with blonde hair lies on a red surface in a circular profile picture on a Twitter page. The page shows the user sable @sablecurrent with 5,000 tweets and displays three recent tweets.",
         "alt_text_long": "Sable Current's Twitter profile features a red-tinted bedroom background and a circular profile photo of her lying on a red surface. Her tweets reveal a bold, confrontational tone, with messages about social media, relationships, and personal grievances. The profile shows she joined in February 2011 and has 993 followers.",
         "alt_text_title": "Sable Current Twitter profile",
         "model_id": "Qwen3-VL-30B-A3B-Instruct",
@@ -1616,12 +1616,12 @@
           {
             "latency_s": 7.812,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"profile picture\", \"appearance\": \"a woman with blonde hair lying on a red surface\"}, {\"position\": \"in tweets\", \"appearance\": \"a woman with blonde hair in circular profile pictures accompanying tweets\"}], \"setting\": \"a Twitter profile page with a red-tinted background image of a bedroom\", \"action\": \"displaying a Twitter profile with tweets\", \"legible_text\": [\"Home\", \"Moments\", \"Notifications\", \"Messages\", \"Search Tw\", \"sable\", \"@talvifaustmann\", \"1/2 of @princeinnocence\", \"IG: instagram.com/t_a_l_v_i/?hl=...\", \"Joined February 2011\", \"Tweet to sable\", \"4 Followers you know\", \"Tweets\", \"5,000\", \"Following\", \"253\", \"Followers\", \"993\", \"Likes\", \"2,264\", \"Tweets & replies\", \"Media\", \"sable @talvifaustmann \u00b7 2h\", \"All u lames still wearing Vlone I see u\", \"5\", \"sable @talvifaustmann \u00b7 Oct 8\", \"most of the hot photos u see of me on social media were posted out of spite\", \"2\", \"1\", \"23\", \"sable @talvifaustmann \u00b7 Oct 3\", \"I'm that girl at the after party who snitches if I see u cheating on ur gf <3\", \"1\", \"2\", \"24\"], \"atmosphere\": \"personal and social media-focused\"}"
+            "raw": "{\"people\": [{\"position\": \"profile picture\", \"appearance\": \"a woman with blonde hair lying on a red surface\"}, {\"position\": \"in tweets\", \"appearance\": \"a woman with blonde hair in circular profile pictures accompanying tweets\"}], \"setting\": \"a Twitter profile page with a red-tinted background image of a bedroom\", \"action\": \"displaying a Twitter profile with tweets\", \"legible_text\": [\"Home\", \"Moments\", \"Notifications\", \"Messages\", \"Search Tw\", \"sable\", \"@sablecurrent\", \"1/2 of @princeinnocence\", \"IG: instagram.com/t_a_l_v_i/?hl=...\", \"Joined February 2011\", \"Tweet to sable\", \"4 Followers you know\", \"Tweets\", \"5,000\", \"Following\", \"253\", \"Followers\", \"993\", \"Likes\", \"2,264\", \"Tweets & replies\", \"Media\", \"sable @sablecurrent \u00b7 2h\", \"All u lames still wearing Vlone I see u\", \"5\", \"sable @sablecurrent \u00b7 Oct 8\", \"most of the hot photos u see of me on social media were posted out of spite\", \"2\", \"1\", \"23\", \"sable @sablecurrent \u00b7 Oct 3\", \"I'm that girl at the after party who snitches if I see u cheating on ur gf <3\", \"1\", \"2\", \"24\"], \"atmosphere\": \"personal and social media-focused\"}"
           },
           {
             "latency_s": 6.38,
             "pass": "ground_weave",
-            "raw": "```json\n{\n  \"title\": \"Sable Current Twitter profile\",\n  \"alt\": \"A woman with blonde hair lies on a red surface in a circular profile picture on a Twitter page. The page shows the user sable @talvifaustmann with 5,000 tweets and displays three recent tweets.\",\n  \"caption\": \"Sable Current's Twitter profile features a red-tinted bedroom background and a circular profile photo of her lying on a red surface. Her tweets reveal a bold, confrontational tone, with messages about social media, relationships, and personal grievances. The profile shows she joined in February 2011 and has 993 followers.\"\n}\n```"
+            "raw": "```json\n{\n  \"title\": \"Sable Current Twitter profile\",\n  \"alt\": \"A woman with blonde hair lies on a red surface in a circular profile picture on a Twitter page. The page shows the user sable @sablecurrent with 5,000 tweets and displays three recent tweets.\",\n  \"caption\": \"Sable Current's Twitter profile features a red-tinted bedroom background and a circular profile photo of her lying on a red surface. Her tweets reveal a bold, confrontational tone, with messages about social media, relationships, and personal grievances. The profile shows she joined in February 2011 and has 993 followers.\"\n}\n```"
           }
         ],
         "prompt_variant": "v3"
@@ -1776,7 +1776,7 @@
       "identities": [],
       "latency_s": 7.63,
       "media_id": 590,
-      "path": "2026/07/sierratesanovic_241161458_551678666285088_618059856824578045_n.jpg"
+      "path": "2026/07/sylvanridgeway_241161458_551678666285088_618059856824578045_n.jpg"
     },
     {
       "describe": {
@@ -1805,7 +1805,7 @@
       "identities": [],
       "latency_s": 5.189,
       "media_id": 589,
-      "path": "2026/07/sierratesanovic_18949857_439505066410515_3264121968969908224_n.jpg"
+      "path": "2026/07/sylvanridgeway_18949857_439505066410515_3264121968969908224_n.jpg"
     },
     {
       "describe": {
@@ -1834,7 +1834,7 @@
       "identities": [],
       "latency_s": 4.687,
       "media_id": 588,
-      "path": "2026/07/sierratesanovic_15538236_180643162405047_7489363215403450368_n.jpg"
+      "path": "2026/07/sylvanridgeway_15538236_180643162405047_7489363215403450368_n.jpg"
     },
     {
       "describe": {
@@ -1930,7 +1930,7 @@
       "identities": [],
       "latency_s": 5.599,
       "media_id": 584,
-      "path": "2026/07/sarahfairbank_90676306_152924202869158_1804058040157748005_n.jpg"
+      "path": "2026/07/opalinetanner_90676306_152924202869158_1804058040157748005_n.jpg"
     },
     {
       "describe": {
@@ -1944,7 +1944,7 @@
           {
             "latency_s": 2.09,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman with dark hair, wearing a white top and dark blue pants, sitting with one leg extended\"}, {\"position\": \"right\", \"appearance\": \"woman with blonde hair, wearing a patterned top and white pants, sitting with her hand on her chin\"}], \"setting\": \"indoor space with a pink backdrop, sheer white fabric, pink flowers, and a name decoration\", \"action\": \"two women posing for a photo\", \"legible_text\": [\"BARBARA\", \"@sarahfairbank\"], \"atmosphere\": \"celebratory and festive\"}"
+            "raw": "{\"people\": [{\"position\": \"left\", \"appearance\": \"woman with dark hair, wearing a white top and dark blue pants, sitting with one leg extended\"}, {\"position\": \"right\", \"appearance\": \"woman with blonde hair, wearing a patterned top and white pants, sitting with her hand on her chin\"}], \"setting\": \"indoor space with a pink backdrop, sheer white fabric, pink flowers, and a name decoration\", \"action\": \"two women posing for a photo\", \"legible_text\": [\"BARBARA\", \"@opalinetanner\"], \"atmosphere\": \"celebratory and festive\"}"
           },
           {
             "latency_s": 2.747,
@@ -1959,7 +1959,7 @@
       "identities": [],
       "latency_s": 4.838,
       "media_id": 583,
-      "path": "2026/07/sarahfairbank_121067288_132866045203611_3369673072008915763_n.jpg"
+      "path": "2026/07/opalinetanner_121067288_132866045203611_3369673072008915763_n.jpg"
     },
     {
       "describe": {
@@ -1988,7 +1988,7 @@
       "identities": [],
       "latency_s": 2.685,
       "media_id": 582,
-      "path": "2026/07/sarahfairbank_10254263_708210189242213_261874539_n.jpg"
+      "path": "2026/07/opalinetanner_10254263_708210189242213_261874539_n.jpg"
     },
     {
       "describe": {
@@ -2191,7 +2191,7 @@
       "identities": [],
       "latency_s": 3.944,
       "media_id": 575,
-      "path": "2026/07/rileypay_3207882229225483739.jpg"
+      "path": "2026/07/hazelyarrow_3207882229225483739.jpg"
     },
     {
       "describe": {
@@ -2220,7 +2220,7 @@
       "identities": [],
       "latency_s": 4.444,
       "media_id": 574,
-      "path": "2026/07/rileypay_275444500_654139459126624_1694714785466324249_n.jpg"
+      "path": "2026/07/hazelyarrow_275444500_654139459126624_1694714785466324249_n.jpg"
     },
     {
       "describe": {
@@ -2278,7 +2278,7 @@
       "identities": [],
       "latency_s": 5.706,
       "media_id": 572,
-      "path": "2026/07/rachelrabbitwhite_13102411_1597313033928665_2070912860_n.jpg"
+      "path": "2026/07/tidalrookery_13102411_1597313033928665_2070912860_n.jpg"
     },
     {
       "describe": {
@@ -5236,7 +5236,7 @@
       "identities": [],
       "latency_s": 5.607,
       "media_id": 470,
-      "path": "2026/07/ellynheald_385272147_209973281946966_3848809468701316_n.jpg"
+      "path": "2026/07/gildedcypress_385272147_209973281946966_3848809468701316_n.jpg"
     },
     {
       "describe": {
@@ -5265,7 +5265,7 @@
       "identities": [],
       "latency_s": 5.245,
       "media_id": 469,
-      "path": "2026/07/ellynheald_384809603_300376612706176_3427086060551719205_n.jpg"
+      "path": "2026/07/gildedcypress_384809603_300376612706176_3427086060551719205_n.jpg"
     },
     {
       "describe": {
@@ -5294,7 +5294,7 @@
       "identities": [],
       "latency_s": 5.841,
       "media_id": 468,
-      "path": "2026/07/ellynheald_193876120_308648490746437_6867040231297854149_n-1.jpg"
+      "path": "2026/07/gildedcypress_193876120_308648490746437_6867040231297854149_n-1.jpg"
     },
     {
       "describe": {
@@ -5497,7 +5497,7 @@
       "identities": [],
       "latency_s": 4.865,
       "media_id": 461,
-      "path": "2026/07/clhoeheath_241510590_371757751076849_3032673365068118855_n.jpg"
+      "path": "2026/07/candidyarrow_241510590_371757751076849_3032673365068118855_n.jpg"
     },
     {
       "describe": {
@@ -5671,7 +5671,7 @@
       "identities": [],
       "latency_s": 3.566,
       "media_id": 455,
-      "path": "2026/07/charstiles_94975816_575050619792415_2043485691279569890_n.jpg"
+      "path": "2026/07/russetlantern_94975816_575050619792415_2043485691279569890_n.jpg"
     },
     {
       "describe": {
@@ -5700,7 +5700,7 @@
       "identities": [],
       "latency_s": 4.053,
       "media_id": 454,
-      "path": "2026/07/charstiles_342103571_144380278601226_7602375935712757245_n.jpg"
+      "path": "2026/07/russetlantern_342103571_144380278601226_7602375935712757245_n.jpg"
     },
     {
       "describe": {
@@ -5729,7 +5729,7 @@
       "identities": [],
       "latency_s": 7.582,
       "media_id": 453,
-      "path": "2026/07/charstiles_338709104_1285299708722296_5619928483121587543_n.jpg"
+      "path": "2026/07/russetlantern_338709104_1285299708722296_5619928483121587543_n.jpg"
     },
     {
       "describe": {
@@ -5816,7 +5816,7 @@
       "identities": [],
       "latency_s": 5.233,
       "media_id": 450,
-      "path": "2026/07/cassandratrenary_323812714_689322759518518_8002818462961957637_n.jpg"
+      "path": "2026/07/marbledkestrel_323812714_689322759518518_8002818462961957637_n.jpg"
     },
     {
       "describe": {
@@ -7005,7 +7005,7 @@
       "identities": [],
       "latency_s": 7.413,
       "media_id": 409,
-      "path": "2026/07/sierratesanovic_65706060_1351191795029292_1089833214401464865_n.jpg"
+      "path": "2026/07/sylvanridgeway_65706060_1351191795029292_1089833214401464865_n.jpg"
     },
     {
       "describe": {
@@ -7034,7 +7034,7 @@
       "identities": [],
       "latency_s": 4.57,
       "media_id": 408,
-      "path": "2026/07/sierratesanovic_3197421734125841345.jpg"
+      "path": "2026/07/sylvanridgeway_3197421734125841345.jpg"
     },
     {
       "describe": {
@@ -7164,7 +7164,7 @@
           {
             "latency_s": 2.736,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"profile picture\", \"appearance\": \"person with long red hair\"}], \"setting\": \"a screenshot of a social media post on a dark background\", \"action\": \"a social media post is displayed\", \"legible_text\": [\"SAFFRON\", \"@marenaltman\", \"today's full moon in pisces is conjunct saturn, planet of boundaries.\", \"so although a full moon in pisces may normally indicate escape, today's indicates firmly ending chapters in our lives.\", \"it's a very serious full moon energy.\"], \"atmosphere\": \"mysterious and contemplative\"}"
+            "raw": "{\"people\": [{\"position\": \"profile picture\", \"appearance\": \"person with long red hair\"}], \"setting\": \"a screenshot of a social media post on a dark background\", \"action\": \"a social media post is displayed\", \"legible_text\": [\"SAFFRON\", \"@saffronbeacon\", \"today's full moon in pisces is conjunct saturn, planet of boundaries.\", \"so although a full moon in pisces may normally indicate escape, today's indicates firmly ending chapters in our lives.\", \"it's a very serious full moon energy.\"], \"atmosphere\": \"mysterious and contemplative\"}"
           },
           {
             "latency_s": 2.916,
@@ -7179,7 +7179,7 @@
       "identities": [],
       "latency_s": 5.653,
       "media_id": 403,
-      "path": "2026/07/marenaltman_371741694_2600248780122876_6195357355733670710_n.jpg"
+      "path": "2026/07/saffronbeacon_371741694_2600248780122876_6195357355733670710_n.jpg"
     },
     {
       "describe": {
@@ -7193,7 +7193,7 @@
           {
             "latency_s": 4.808,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long red hair wearing a red jacket, a striped crop top, a red pleated skirt, and red platform boots\"}, {\"position\": \"left\", \"appearance\": \"a woman with long dark hair wearing a black dress and black boots\"}, {\"position\": \"left\", \"appearance\": \"a woman with long dark hair wearing a white top and a dark skirt\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a black shirt and carrying a backpack\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a black shirt and grey pants\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a white shirt and dark pants\"}], \"setting\": \"a busy city street with tall buildings, signs in Japanese, and a paved sidewalk\", \"action\": \"a woman with red hair posing on a city street\", \"legible_text\": [\"marenaltman\", \"WELCOME TO SHIBUYA\", \"IKEA\", \"libra season has started so can we all agree to stop fighting for the next month pls\", \"\u9632\u72af\u30ab\u30e1\u30e9\u4f5c\u52d5\u4e2d\"], \"atmosphere\": \"vibrant and urban\"}"
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long red hair wearing a red jacket, a striped crop top, a red pleated skirt, and red platform boots\"}, {\"position\": \"left\", \"appearance\": \"a woman with long dark hair wearing a black dress and black boots\"}, {\"position\": \"left\", \"appearance\": \"a woman with long dark hair wearing a white top and a dark skirt\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a black shirt and carrying a backpack\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a black shirt and grey pants\"}, {\"position\": \"background\", \"appearance\": \"a man wearing a white shirt and dark pants\"}], \"setting\": \"a busy city street with tall buildings, signs in Japanese, and a paved sidewalk\", \"action\": \"a woman with red hair posing on a city street\", \"legible_text\": [\"saffronbeacon\", \"WELCOME TO SHIBUYA\", \"IKEA\", \"libra season has started so can we all agree to stop fighting for the next month pls\", \"\u9632\u72af\u30ab\u30e1\u30e9\u4f5c\u52d5\u4e2d\"], \"atmosphere\": \"vibrant and urban\"}"
           },
           {
             "latency_s": 4.267,
@@ -7208,7 +7208,7 @@
       "identities": [],
       "latency_s": 9.077,
       "media_id": 402,
-      "path": "2026/07/marenaltman_3198609455925992126.jpg"
+      "path": "2026/07/saffronbeacon_3198609455925992126.jpg"
     },
     {
       "describe": {
@@ -7237,7 +7237,7 @@
       "identities": [],
       "latency_s": 7.734,
       "media_id": 401,
-      "path": "2026/07/marenaltman_3190953495175502062.jpg"
+      "path": "2026/07/saffronbeacon_3190953495175502062.jpg"
     },
     {
       "describe": {
@@ -11335,7 +11335,7 @@
       "identities": [],
       "latency_s": 11.434,
       "media_id": 259,
-      "path": "2026/07/rachelrabbitwhite-19700120_130225-424451792_1121319255543531_5610209557707992493_n1.jpeg"
+      "path": "2026/07/tidalrookery-19700120_130225-424451792_1121319255543531_5610209557707992493_n1.jpeg"
     },
     {
       "describe": {
@@ -12060,7 +12060,7 @@
       "identities": [],
       "latency_s": 9.594,
       "media_id": 234,
-      "path": "2026/07/hillarysampliner-20240316_185654-433397367_1862056847563564_6936770630513291043_n.jpeg"
+      "path": "2026/07/russetridgeway-20240316_185654-433397367_1862056847563564_6936770630513291043_n.jpeg"
     },
     {
       "describe": {
@@ -12089,7 +12089,7 @@
       "identities": [],
       "latency_s": 8.296,
       "media_id": 233,
-      "path": "2026/07/hillarysampliner-20240214_104826-427961006_18410392978056208_4131467977863194409_n.jpeg"
+      "path": "2026/07/russetridgeway-20240214_104826-427961006_18410392978056208_4131467977863194409_n.jpeg"
     },
     {
       "describe": {
@@ -12118,7 +12118,7 @@
       "identities": [],
       "latency_s": 8.356,
       "media_id": 232,
-      "path": "2026/07/hillarysampliner-20240214_104826-427915297_18410392954056208_1708671989886084545_n.jpeg"
+      "path": "2026/07/russetridgeway-20240214_104826-427915297_18410392954056208_1708671989886084545_n.jpeg"
     },
     {
       "describe": {
@@ -12147,7 +12147,7 @@
       "identities": [],
       "latency_s": 5.181,
       "media_id": 231,
-      "path": "2026/07/hillarysampliner-20160608_214336-13380987_810312982403636_2090694528_n.jpeg"
+      "path": "2026/07/russetridgeway-20160608_214336-13380987_810312982403636_2090694528_n.jpeg"
     },
     {
       "describe": {
@@ -12350,7 +12350,7 @@
       "identities": [],
       "latency_s": 8.925,
       "media_id": 224,
-      "path": "2026/07/friedanolan_538638667_18526650706043481_3459042590155817911_n.jpg"
+      "path": "2026/07/opalinecypress_538638667_18526650706043481_3459042590155817911_n.jpg"
     },
     {
       "describe": {
@@ -12379,7 +12379,7 @@
       "identities": [],
       "latency_s": 3.737,
       "media_id": 223,
-      "path": "2026/07/friedanolan_468447858_3417801821848553_2678197070740613917_n.jpg"
+      "path": "2026/07/opalinecypress_468447858_3417801821848553_2678197070740613917_n.jpg"
     },
     {
       "describe": {
@@ -15123,7 +15123,7 @@
       "identities": [],
       "latency_s": 5.362,
       "media_id": 127,
-      "path": "2026/07/ellynheald_367519385_806546770934860_6456027836281973303_n.jpg"
+      "path": "2026/07/gildedcypress_367519385_806546770934860_6456027836281973303_n.jpg"
     },
     {
       "describe": {
@@ -15152,7 +15152,7 @@
       "identities": [],
       "latency_s": 5.649,
       "media_id": 126,
-      "path": "2026/07/ellynheald_367085164_847554936931343_5484690315090382822_n.jpg"
+      "path": "2026/07/gildedcypress_367085164_847554936931343_5484690315090382822_n.jpg"
     },
     {
       "describe": {
@@ -15181,7 +15181,7 @@
       "identities": [],
       "latency_s": 6.621,
       "media_id": 125,
-      "path": "2026/07/ellynheald_366959284_646962987389762_9175754671337452591_n.jpg"
+      "path": "2026/07/gildedcypress_366959284_646962987389762_9175754671337452591_n.jpg"
     },
     {
       "describe": {
@@ -15210,7 +15210,7 @@
       "identities": [],
       "latency_s": 6.213,
       "media_id": 124,
-      "path": "2026/07/ellynheald_363913264_311094324634550_7954724066129232415_n.jpg"
+      "path": "2026/07/gildedcypress_363913264_311094324634550_7954724066129232415_n.jpg"
     },
     {
       "describe": {
@@ -15239,7 +15239,7 @@
       "identities": [],
       "latency_s": 5.785,
       "media_id": 123,
-      "path": "2026/07/ellynheald_356637205_1443578959777554_5058032428037778101_n.jpg"
+      "path": "2026/07/gildedcypress_356637205_1443578959777554_5058032428037778101_n.jpg"
     },
     {
       "describe": {
@@ -15268,7 +15268,7 @@
       "identities": [],
       "latency_s": 5.325,
       "media_id": 122,
-      "path": "2026/07/ellynheald_356612555_221659704126023_5506235041093599440_n.jpg"
+      "path": "2026/07/gildedcypress_356612555_221659704126023_5506235041093599440_n.jpg"
     },
     {
       "describe": {
@@ -15297,7 +15297,7 @@
       "identities": [],
       "latency_s": 5.284,
       "media_id": 121,
-      "path": "2026/07/ellynheald_356423616_252251640844764_1572353288010100391_n.jpg"
+      "path": "2026/07/gildedcypress_356423616_252251640844764_1572353288010100391_n.jpg"
     },
     {
       "describe": {
@@ -15326,7 +15326,7 @@
       "identities": [],
       "latency_s": 5.661,
       "media_id": 120,
-      "path": "2026/07/ellynheald_356402824_3605723516326260_710556954955843805_n.jpg"
+      "path": "2026/07/gildedcypress_356402824_3605723516326260_710556954955843805_n.jpg"
     },
     {
       "describe": {
@@ -15355,7 +15355,7 @@
       "identities": [],
       "latency_s": 5.569,
       "media_id": 119,
-      "path": "2026/07/ellynheald_350577824_792126098974460_6022658022734866223_n.jpg"
+      "path": "2026/07/gildedcypress_350577824_792126098974460_6022658022734866223_n.jpg"
     },
     {
       "describe": {
@@ -15384,7 +15384,7 @@
       "identities": [],
       "latency_s": 5.578,
       "media_id": 118,
-      "path": "2026/07/ellynheald_350257756_942261983709481_120910464297873868_n-1.jpg"
+      "path": "2026/07/gildedcypress_350257756_942261983709481_120910464297873868_n-1.jpg"
     },
     {
       "describe": {
@@ -15413,7 +15413,7 @@
       "identities": [],
       "latency_s": 5.498,
       "media_id": 117,
-      "path": "2026/07/ellynheald_350239517_205724985732233_5042370152062932273_n.jpg"
+      "path": "2026/07/gildedcypress_350239517_205724985732233_5042370152062932273_n.jpg"
     },
     {
       "describe": {
@@ -15442,7 +15442,7 @@
       "identities": [],
       "latency_s": 5.412,
       "media_id": 116,
-      "path": "2026/07/ellynheald_350091524_219150774238426_3788641572272150726_n-1.jpg"
+      "path": "2026/07/gildedcypress_350091524_219150774238426_3788641572272150726_n-1.jpg"
     },
     {
       "describe": {
@@ -15471,7 +15471,7 @@
       "identities": [],
       "latency_s": 5.546,
       "media_id": 115,
-      "path": "2026/07/ellynheald_337565065_161301299770705_7956344234223391947_n.jpg"
+      "path": "2026/07/gildedcypress_337565065_161301299770705_7956344234223391947_n.jpg"
     },
     {
       "describe": {
@@ -15500,7 +15500,7 @@
       "identities": [],
       "latency_s": 5.591,
       "media_id": 114,
-      "path": "2026/07/ellynheald_331545531_138842335748466_4542547068904960787_n.jpg"
+      "path": "2026/07/gildedcypress_331545531_138842335748466_4542547068904960787_n.jpg"
     },
     {
       "describe": {
@@ -15529,7 +15529,7 @@
       "identities": [],
       "latency_s": 3.968,
       "media_id": 113,
-      "path": "2026/07/ellynheald_3232530061017903579.jpg"
+      "path": "2026/07/gildedcypress_3232530061017903579.jpg"
     },
     {
       "describe": {
@@ -15558,7 +15558,7 @@
       "identities": [],
       "latency_s": 4.022,
       "media_id": 112,
-      "path": "2026/07/ellynheald_3232529729818819797.jpg"
+      "path": "2026/07/gildedcypress_3232529729818819797.jpg"
     },
     {
       "describe": {
@@ -15587,7 +15587,7 @@
       "identities": [],
       "latency_s": 3.982,
       "media_id": 111,
-      "path": "2026/07/ellynheald_3227608071613502165.jpg"
+      "path": "2026/07/gildedcypress_3227608071613502165.jpg"
     },
     {
       "describe": {
@@ -15616,7 +15616,7 @@
       "identities": [],
       "latency_s": 4.213,
       "media_id": 110,
-      "path": "2026/07/ellynheald_3180366122188306860.jpg"
+      "path": "2026/07/gildedcypress_3180366122188306860.jpg"
     },
     {
       "describe": {
@@ -15630,7 +15630,7 @@
           {
             "latency_s": 1.974,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"front and center\", \"appearance\": \"woman with dark hair pulled back, wearing a gray tank top and light-colored shorts, arms crossed\"}], \"setting\": \"indoor living room with a brick fireplace, candles, books, and a guitar\", \"action\": \"woman sitting with arms crossed, looking off to the side\", \"legible_text\": [\"BRB crying again thinking about yesterday\", \"livingroomproductionsny\", \"@ellynheald\"], \"atmosphere\": \"intimate and reflective\"}"
+            "raw": "{\"people\": [{\"position\": \"front and center\", \"appearance\": \"woman with dark hair pulled back, wearing a gray tank top and light-colored shorts, arms crossed\"}], \"setting\": \"indoor living room with a brick fireplace, candles, books, and a guitar\", \"action\": \"woman sitting with arms crossed, looking off to the side\", \"legible_text\": [\"BRB crying again thinking about yesterday\", \"livingroomproductionsny\", \"@gildedcypress\"], \"atmosphere\": \"intimate and reflective\"}"
           },
           {
             "latency_s": 2.105,
@@ -15645,7 +15645,7 @@
       "identities": [],
       "latency_s": 4.08,
       "media_id": 109,
-      "path": "2026/07/ellynheald_3179455251505465361.jpg"
+      "path": "2026/07/gildedcypress_3179455251505465361.jpg"
     },
     {
       "describe": {
@@ -15659,7 +15659,7 @@
           {
             "latency_s": 2.398,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long brown hair, wearing a gray tank top and white shorts, holding a small glass\"}], \"setting\": \"a living room with a fireplace, a mirror, guitars on the wall, and candles\", \"action\": \"a woman standing in front of a fireplace, holding a glass and looking down at it\", \"legible_text\": [\"I prefer holding cups when I have to do any public speaking\", \"livingroomproductionsny\", \"Experienced prop actor and artistic director @ellynheald kicks off the first monthly artist potluck on Sunday, August 28th. Can't wait to see you all next month!\", \"Pic by @larzcarz\"], \"atmosphere\": \"warm and intimate\"}"
+            "raw": "{\"people\": [{\"position\": \"center\", \"appearance\": \"a woman with long brown hair, wearing a gray tank top and white shorts, holding a small glass\"}], \"setting\": \"a living room with a fireplace, a mirror, guitars on the wall, and candles\", \"action\": \"a woman standing in front of a fireplace, holding a glass and looking down at it\", \"legible_text\": [\"I prefer holding cups when I have to do any public speaking\", \"livingroomproductionsny\", \"Experienced prop actor and artistic director @gildedcypress kicks off the first monthly artist potluck on Sunday, August 28th. Can't wait to see you all next month!\", \"Pic by @larzcarz\"], \"atmosphere\": \"warm and intimate\"}"
           },
           {
             "latency_s": 2.343,
@@ -15674,7 +15674,7 @@
       "identities": [],
       "latency_s": 4.742,
       "media_id": 108,
-      "path": "2026/07/ellynheald_3179455010802739911.jpg"
+      "path": "2026/07/gildedcypress_3179455010802739911.jpg"
     },
     {
       "describe": {
@@ -15703,7 +15703,7 @@
       "identities": [],
       "latency_s": 4.242,
       "media_id": 107,
-      "path": "2026/07/ellynheald_3175309278805948667.jpg"
+      "path": "2026/07/gildedcypress_3175309278805948667.jpg"
     },
     {
       "describe": {
@@ -15732,7 +15732,7 @@
       "identities": [],
       "latency_s": 3.92,
       "media_id": 106,
-      "path": "2026/07/ellynheald_3175241724146309078.jpg"
+      "path": "2026/07/gildedcypress_3175241724146309078.jpg"
     },
     {
       "describe": {
@@ -15746,7 +15746,7 @@
           {
             "latency_s": 2.103,
             "pass": "describe_facts",
-            "raw": "{\"people\": [{\"position\": \"center right\", \"appearance\": \"a woman with dark hair styled in an updo, wearing a light pink off-the-shoulder dress with floral embroidery\"}], \"setting\": \"an outdoor park setting with green grass, trees, and a building in the background\", \"action\": \"a woman sitting on a floral blanket next to an open picnic basket and a white parasol\", \"legible_text\": [\"Thank you yes I art directed this picnic basket\", \"_megs_over_\", \"@ellynheald\"], \"atmosphere\": \"elegant and relaxed\"}"
+            "raw": "{\"people\": [{\"position\": \"center right\", \"appearance\": \"a woman with dark hair styled in an updo, wearing a light pink off-the-shoulder dress with floral embroidery\"}], \"setting\": \"an outdoor park setting with green grass, trees, and a building in the background\", \"action\": \"a woman sitting on a floral blanket next to an open picnic basket and a white parasol\", \"legible_text\": [\"Thank you yes I art directed this picnic basket\", \"_megs_over_\", \"@gildedcypress\"], \"atmosphere\": \"elegant and relaxed\"}"
           },
           {
             "latency_s": 2.24,
@@ -15761,7 +15761,7 @@
       "identities": [],
       "latency_s": 4.344,
       "media_id": 105,
-      "path": "2026/07/ellynheald_3168795425741860163.jpg"
+      "path": "2026/07/gildedcypress_3168795425741860163.jpg"
     },
     {
       "describe": {
@@ -15790,7 +15790,7 @@
       "identities": [],
       "latency_s": 5.33,
       "media_id": 104,
-      "path": "2026/07/ellynheald_3168787139894215384.jpg"
+      "path": "2026/07/gildedcypress_3168787139894215384.jpg"
     },
     {
       "describe": {
@@ -15819,7 +15819,7 @@
       "identities": [],
       "latency_s": 4.302,
       "media_id": 103,
-      "path": "2026/07/ellynheald_3168780206986627089.jpg"
+      "path": "2026/07/gildedcypress_3168780206986627089.jpg"
     },
     {
       "describe": {
@@ -15848,7 +15848,7 @@
       "identities": [],
       "latency_s": 4.324,
       "media_id": 102,
-      "path": "2026/07/ellynheald_3168779794703407407.jpg"
+      "path": "2026/07/gildedcypress_3168779794703407407.jpg"
     },
     {
       "describe": {
@@ -15877,7 +15877,7 @@
       "identities": [],
       "latency_s": 4.561,
       "media_id": 101,
-      "path": "2026/07/ellynheald_3168779676298218472.jpg"
+      "path": "2026/07/gildedcypress_3168779676298218472.jpg"
     },
     {
       "describe": {
@@ -15906,7 +15906,7 @@
       "identities": [],
       "latency_s": 3.817,
       "media_id": 100,
-      "path": "2026/07/ellynheald_3168573095040023618.jpg"
+      "path": "2026/07/gildedcypress_3168573095040023618.jpg"
     },
     {
       "describe": {
@@ -15935,7 +15935,7 @@
       "identities": [],
       "latency_s": 4.021,
       "media_id": 99,
-      "path": "2026/07/ellynheald_3135325363341318774.jpg"
+      "path": "2026/07/gildedcypress_3135325363341318774.jpg"
     },
     {
       "describe": {
@@ -15964,7 +15964,7 @@
       "identities": [],
       "latency_s": 4.409,
       "media_id": 98,
-      "path": "2026/07/ellynheald_3134640125107970990.jpg"
+      "path": "2026/07/gildedcypress_3134640125107970990.jpg"
     },
     {
       "describe": {
@@ -15993,7 +15993,7 @@
       "identities": [],
       "latency_s": 5.297,
       "media_id": 97,
-      "path": "2026/07/ellynheald_275722826_1229115237918391_4127440074342898118_n.jpg"
+      "path": "2026/07/gildedcypress_275722826_1229115237918391_4127440074342898118_n.jpg"
     },
     {
       "describe": {
@@ -16022,7 +16022,7 @@
       "identities": [],
       "latency_s": 3.552,
       "media_id": 96,
-      "path": "2026/07/ellynheald_269607924_949095249361957_7072258151589717679_n.jpg"
+      "path": "2026/07/gildedcypress_269607924_949095249361957_7072258151589717679_n.jpg"
     },
     {
       "describe": {
@@ -16051,7 +16051,7 @@
       "identities": [],
       "latency_s": 5.372,
       "media_id": 95,
-      "path": "2026/07/ellynheald_262932781_153154510373411_4304717268591911005_n.jpg"
+      "path": "2026/07/gildedcypress_262932781_153154510373411_4304717268591911005_n.jpg"
     },
     {
       "describe": {
@@ -16080,7 +16080,7 @@
       "identities": [],
       "latency_s": 4.101,
       "media_id": 94,
-      "path": "2026/07/ellynheald_235965947_617949395935257_2886895293539870625_n.jpg"
+      "path": "2026/07/gildedcypress_235965947_617949395935257_2886895293539870625_n.jpg"
     },
     {
       "describe": {
@@ -16109,7 +16109,7 @@
       "identities": [],
       "latency_s": 5.854,
       "media_id": 93,
-      "path": "2026/07/ellynheald_193876120_308648490746437_6867040231297854149_n.jpg"
+      "path": "2026/07/gildedcypress_193876120_308648490746437_6867040231297854149_n.jpg"
     },
     {
       "describe": {
@@ -16138,7 +16138,7 @@
       "identities": [],
       "latency_s": 5.837,
       "media_id": 92,
-      "path": "2026/07/ellynheald_192327716_579442519689013_5101016986601210892_n.jpg"
+      "path": "2026/07/gildedcypress_192327716_579442519689013_5101016986601210892_n.jpg"
     },
     {
       "describe": {
@@ -16167,7 +16167,7 @@
       "identities": [],
       "latency_s": 2.329,
       "media_id": 91,
-      "path": "2026/07/ellynheald_174283937_749431975764541_4534874602567504182_n.jpg"
+      "path": "2026/07/gildedcypress_174283937_749431975764541_4534874602567504182_n.jpg"
     },
     {
       "describe": {
@@ -16196,7 +16196,7 @@
       "identities": [],
       "latency_s": 5.125,
       "media_id": 90,
-      "path": "2026/07/ellynheald_131013546_1388093521638328_7496731044322895942_n.jpg"
+      "path": "2026/07/gildedcypress_131013546_1388093521638328_7496731044322895942_n.jpg"
     },
     {
       "describe": {
@@ -16225,7 +16225,7 @@
       "identities": [],
       "latency_s": 3.972,
       "media_id": 89,
-      "path": "2026/07/ellynheald_121646375_1128686930883792_7087312114321456861_n.jpg"
+      "path": "2026/07/gildedcypress_121646375_1128686930883792_7087312114321456861_n.jpg"
     },
     {
       "describe": {
@@ -16254,7 +16254,7 @@
       "identities": [],
       "latency_s": 3.85,
       "media_id": 88,
-      "path": "2026/07/ellynheald_121499997_400250114314190_7401768612471013093_n.jpg"
+      "path": "2026/07/gildedcypress_121499997_400250114314190_7401768612471013093_n.jpg"
     },
     {
       "describe": null,
@@ -16263,7 +16263,7 @@
       "identities": [],
       "latency_s": 5.062,
       "media_id": 87,
-      "path": "2026/07/ellynheald_121498127_2686782204907317_2475106171415242644_n.jpg"
+      "path": "2026/07/gildedcypress_121498127_2686782204907317_2475106171415242644_n.jpg"
     },
     {
       "describe": {
@@ -16292,7 +16292,7 @@
       "identities": [],
       "latency_s": 9.362,
       "media_id": 86,
-      "path": "2026/07/ellynheald-20231001_174522-384952541_870740621073715_8473197595868229777_n.jpeg"
+      "path": "2026/07/gildedcypress-20231001_174522-384952541_870740621073715_8473197595868229777_n.jpeg"
     },
     {
       "describe": {
@@ -16321,7 +16321,7 @@
       "identities": [],
       "latency_s": 9.419,
       "media_id": 85,
-      "path": "2026/07/ellynheald-20231001_174522-384809603_300376612706176_3427086060551719205_n.jpeg"
+      "path": "2026/07/gildedcypress-20231001_174522-384809603_300376612706176_3427086060551719205_n.jpeg"
     },
     {
       "describe": {
@@ -16350,7 +16350,7 @@
       "identities": [],
       "latency_s": 9.885,
       "media_id": 84,
-      "path": "2026/07/ellynheald-20231001_174522-384678903_1040950947261516_5303207747948831674_n.jpeg"
+      "path": "2026/07/gildedcypress-20231001_174522-384678903_1040950947261516_5303207747948831674_n.jpeg"
     },
     {
       "describe": {
@@ -16379,7 +16379,7 @@
       "identities": [],
       "latency_s": 9.292,
       "media_id": 83,
-      "path": "2026/07/ellynheald-20230416_172530-341909025_551484273721853_8974219165286313450_n.jpeg"
+      "path": "2026/07/gildedcypress-20230416_172530-341909025_551484273721853_8974219165286313450_n.jpeg"
     },
     {
       "describe": {
@@ -16408,7 +16408,7 @@
       "identities": [],
       "latency_s": 9.783,
       "media_id": 82,
-      "path": "2026/07/ellynheald-20230416_172530-341805113_946817666668470_72097128817538310_n.jpeg"
+      "path": "2026/07/gildedcypress-20230416_172530-341805113_946817666668470_72097128817538310_n.jpeg"
     },
     {
       "describe": {
@@ -16437,7 +16437,7 @@
       "identities": [],
       "latency_s": 9.506,
       "media_id": 81,
-      "path": "2026/07/ellynheald-20230416_172530-341348384_1613074295856597_9208869063893536381_n.jpeg"
+      "path": "2026/07/gildedcypress-20230416_172530-341348384_1613074295856597_9208869063893536381_n.jpeg"
     },
     {
       "describe": {
@@ -16466,7 +16466,7 @@
       "identities": [],
       "latency_s": 9.587,
       "media_id": 80,
-      "path": "2026/07/ellynheald-20230323_122732-337565065_161301299770705_7956344234223391947_n.jpeg"
+      "path": "2026/07/gildedcypress-20230323_122732-337565065_161301299770705_7956344234223391947_n.jpeg"
     },
     {
       "describe": {
@@ -16495,7 +16495,7 @@
       "identities": [],
       "latency_s": 5.227,
       "media_id": 79,
-      "path": "2026/07/ellynheald-20221021_175522-311991539_428551942768429_846309635818454370_n.jpeg"
+      "path": "2026/07/gildedcypress-20221021_175522-311991539_428551942768429_846309635818454370_n.jpeg"
     },
     {
       "describe": {
@@ -16524,7 +16524,7 @@
       "identities": [],
       "latency_s": 9.028,
       "media_id": 78,
-      "path": "2026/07/ellynheald-20211203_164012-262932781_153154510373411_4304717268591911005_n.jpeg"
+      "path": "2026/07/gildedcypress-20211203_164012-262932781_153154510373411_4304717268591911005_n.jpeg"
     },
     {
       "describe": {

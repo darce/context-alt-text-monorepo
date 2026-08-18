@@ -72,6 +72,20 @@ SCAN_ALLOW = (
     "workbay-overrides/",
 )
 
+# In-scope files that cannot be decoded as text, each with the reason it is
+# nonetheless not a leak. Nothing may be skipped silently: an undecodable
+# in-scope file that is NOT declared here fails `verify`, because "we could not
+# read it" and "it is clean" are not the same sentence (CARD-07).
+DECLARED_UNSCANNABLE = {
+    "docs/assessments/current/AltContext_Local_AI_Strategy_Session_Brief.docx": (
+        "OOXML container. Inspected part-by-part: the single roster-token hit in "
+        "word/document.xml is a cited author surname inside a bibliography entry "
+        "of the form `<author> & <author> (2023).pdf`, not a corpus subject. "
+        "Rewriting it would corrupt somebody else's citation -- the same reason "
+        "literature/ is scanned but never edited."
+    ),
+}
+
 SKIP_SUFFIXES = (
     ".png",
     ".jpg",
@@ -178,7 +192,7 @@ SINGLE_TOKEN_FREE_TEXT_SUFFIXES = {".json", ".md", ".html", ".htm", ".txt", ".cs
 # `\b` treats `_` as a word character, so it never fires at a letter->underscore
 # transition. That is exactly the boundary a snake_case filename or a
 # `_first_last` identifier presents, and it is why the first pass left
-# `ryann_wiseman_failure_analysis.md` and `_erika_row` untouched. Bound on
+# `candid_brisk_failure_analysis.md` and `_pewter_coral` untouched. Bound on
 # letters only.
 NBL = r"(?<![A-Za-z0-9])"
 NBR = r"(?![A-Za-z0-9])"
@@ -257,6 +271,51 @@ def _write(path: Path, text: str) -> None:
         fh.write(text)
 
 
+def _read_or_reason(path: Path) -> tuple[str | None, str]:
+    """Read `path`, or return why it could not be read.
+
+    An unreadable in-scope file is not an absent one: a `.docx`/`.epub`/unknown
+    container carries names in bytes the scrub never inspected. Swallowing the
+    decode error makes `verify` green on a file it never opened, so the reason is
+    returned for the caller to surface instead of being dropped.
+
+    A tracked symlink is read as its own target string rather than followed. That
+    string is the whole of what git stores for the path (mode 120000), so it is
+    the only content the scrub can be responsible for -- and following the link
+    instead would make coverage depend on whether an overlay happens to be
+    materialized in this worktree, which is how the git hook links read as
+    `FileNotFoundError` and looked like a scan gap.
+    """
+    if path.is_symlink():
+        return os.readlink(path), ""
+    try:
+        return _read(path), ""
+    except UnicodeDecodeError:
+        return None, "not utf-8 (binary or non-utf8 container)"
+    except OSError as exc:
+        return None, f"{type(exc).__name__}: {exc.strerror or exc}"
+
+
+def _split_declared(
+    unscannable: list[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Partition unscannable in-scope files into declared and undeclared.
+
+    Only the undeclared half fails the gate. A waiver that no longer names a
+    file the scan actually hit is worse than no waiver -- it reads as coverage
+    while excusing nothing -- so a stale entry is a hard error, not a shrug.
+    """
+    hit = {rel for rel, _ in unscannable}
+    if stale := sorted(set(DECLARED_UNSCANNABLE) - hit):
+        raise SystemExit(
+            "DECLARED_UNSCANNABLE names files the scan did not report as unscannable: "
+            f"{stale}. They were renamed, deleted, or became readable -- re-check each "
+            "one and drop or update its entry."
+        )
+    declared = [(rel, why) for rel, why in unscannable if rel in DECLARED_UNSCANNABLE]
+    return declared, [(rel, why) for rel, why in unscannable if rel not in DECLARED_UNSCANNABLE]
+
+
 def _norm(text: str) -> str:
     """Separator-insensitive normal form. The roster mixes `_` and `-` slugs, and
     comparing against only one of them under-reports name-derived slugs (it
@@ -297,6 +356,35 @@ def _looks_pseudonymized(personal: list[dict]) -> bool:
     return hits * 2 > len(personal)
 
 
+def _assert_vocab_disjoint_from_roster(identities: list[dict]) -> None:
+    """Refuse to mint from a vocabulary any real roster name already uses.
+
+    A shared token breaks two things at once. `_looks_pseudonymized` counts
+    alias-vocabulary tokens, so real names built from them read as already
+    scrubbed and `plan` silently declines to protect them; and the residue scan
+    cannot distinguish a leftover real token from a minted one, so `verify` goes
+    green over the leak. The offending vocabulary word is named -- it is a
+    literal in this file, not corpus data -- while the colliding names are not.
+    """
+    tokens: dict[str, int] = {}
+    for ident in identities:
+        parts = [t for t in re.split(r"[^A-Za-z]+", ident.get("name", "")) if t]
+        if not parts or all(t.capitalize() in _ALIAS_VOCAB for t in parts):
+            # Wholly alias-shaped: an already-minted alias, not a real name.
+            # `_looks_pseudonymized` owns that case and reports it better.
+            continue
+        for token in parts:
+            if token.capitalize() in _ALIAS_VOCAB:
+                tokens[token.lower()] = tokens.get(token.lower(), 0) + 1
+    if tokens:
+        detail = ", ".join(f"{w} (x{n})" for w, n in sorted(tokens.items()))
+        raise SystemExit(
+            f"alias vocabulary collides with real roster names: {detail}. "
+            "Remove those words from _ADJ/_NOUN -- a minted alias sharing a token with a "
+            "real name defeats both the re-run guard and the residue scan."
+        )
+
+
 def build_map() -> dict:
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
     identities = roster["identities"]
@@ -310,6 +398,8 @@ def build_map() -> dict:
             f"{ALIAS_MAP.name} with an alias->alias map and lose the real names for good.\n"
             "If this is intentional, move the existing map aside first and say so in the task plan."
         )
+
+    _assert_vocab_disjoint_from_roster(identities)
 
     taken_slugs = {i["slug"] for i in identities}
     entries: list[dict] = []
@@ -429,7 +519,7 @@ def _render(alias: str, matched: str) -> str:
     if sep_match is None:
         # A bare token must stay a bare token. Expanding a single-token name into
         # the two-word display alias inserts a space into whatever slot it sat in:
-        # `ccqw-erika.jpg` became `ccqw-cobalt orchard.jpg`, a path that resolves
+        # `ccqw-linen.jpg` became `ccqw-cobalt orchard.jpg`, a path that resolves
         # to nothing. Map positionally instead -- token i of the name to word i of
         # the alias -- which for a single-token name is the alias's first word.
         words = words[:1]
@@ -495,6 +585,48 @@ def _slug_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
     return re.compile(NBL + r"(?:" + alt + r")" + NBR, re.IGNORECASE), leaky
 
 
+def _concatenated_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
+    """Multi-token names written with no separator at all (`firstnamelastname`).
+
+    Social-media exports name their files `<first><last>-<ts>_<id>.jpg`. Every
+    other pass is anchored on NBL/NBR, which require a non-alphanumeric
+    character between the tokens, and `_media_stem_pass` splits the stem on
+    `[^A-Za-z0-9]+` -- so this shape is not under-matched, it is structurally
+    unreachable. It survived the first scrub in 379 places across 38 tracked
+    files, exposing 14 identities in full cleartext, including a rendered HTML
+    evidence report. Matched only at >=8 characters so a concatenation cannot
+    collide with an ordinary word.
+    """
+    forms: dict[str, str] = {}
+    dropped: list[int] = []
+    for entry in mapping["entries"]:
+        real = [t for t in re.split(r"[^A-Za-z0-9]+", entry["real_name"]) if t]
+        alias = [t for t in re.split(r"[^A-Za-z0-9]+", entry["alias"]) if t]
+        joined = "".join(real)
+        if len(real) < 2 or len(joined) < 8:
+            continue
+        if not alias:
+            # No alias to substitute is a map defect, not a name to skip.
+            dropped.append(len(joined))
+            continue
+        # Token counts need not match. A concatenation has no internal
+        # boundaries, so the whole joined name maps to the whole joined alias --
+        # requiring len(alias) >= len(real) silently dropped four 3-token names
+        # that carry 2-token aliases, and an independent oracle then found 8
+        # occurrences of them that `verify` was reporting as zero.
+        forms[joined.lower()] = "".join(alias)
+    if dropped:
+        raise SystemExit(
+            f"{len(dropped)} multi-token entries (name lengths {sorted(dropped)}) have no alias "
+            "tokens, so their concatenated form cannot be rewritten. Fix the alias map; "
+            "skipping them would make `verify` blind to exactly those names."
+        )
+    if not forms:
+        return None, {}
+    alt = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
+    return re.compile(NBL + r"(?:" + alt + r")" + NBR, re.IGNORECASE), forms
+
+
 _MEDIA_PATH_RX = re.compile(r"[\w./\-]*[\w\-]+\.(?:jpg|jpeg|png|webp)", re.IGNORECASE)
 
 
@@ -502,7 +634,7 @@ def _token_index(mapping: dict) -> dict[str, list[tuple[str, str, int]]]:
     """token -> [(identity key, positional alias word, name width)].
 
     Corpus filenames carry name tokens in orders the full-name pass cannot see:
-    surname-first (`heald-ellyn-*.jpg`), given-name-only (`maria-pool.jpg`), and
+    surname-first (`harbor-current-*.jpg`), given-name-only (`kestrel-pool.jpg`), and
     two-of-three-token subsets. A forward-order alternation misses all of them,
     which is why 13k name occurrences survived the first pass in filenames alone.
     """
@@ -596,7 +728,7 @@ def _family_words(by_token: dict[str, set[str]]) -> dict[str, str]:
 def _given_name_regex(mapping: dict) -> tuple[re.Pattern | None, dict]:
     """Bare name tokens that can only be one person and are not ordinary words.
 
-    The full-name pass cannot see `Ryann relax by a lake` or `Weavers'`; the
+    The full-name pass cannot see `Candid relax by a lake` or `Weavers'`; the
     residue is a real given name in readable prose. The filter is deliberately
     one-sided: a token that is also a dictionary word (`rose`, `faith`, `ivy`)
     or that more than one identity shares is left alone, so this under-scrubs
@@ -636,14 +768,15 @@ class _Passes:
         self.slug_rx, self.leaky = _slug_regex(mapping)
         self.token_index = _token_index(mapping)
         self.given_rx, self.given = _given_name_regex(mapping)
+        self.concat_rx, self.concat = _concatenated_regex(mapping)
 
     def rewrite(self, text: str, suffix: str) -> tuple[str, dict[str, int], set[str]]:
-        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0}
+        counts = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0}
 
         # Order is load-bearing, most precise pass first. A whole-string JSON
         # token names the identity unambiguously and knows whether it sits in a
         # `name` or a `slug` position; the looser passes below cannot tell, and
-        # would rewrite `"erika"` (a slug) into a space-separated display alias.
+        # would rewrite `"linen"` (a slug) into a space-separated display alias.
         if self.quoted_rx is not None and suffix == ".json":
 
             def _quoted_repl(m: re.Match) -> str:
@@ -665,6 +798,23 @@ class _Passes:
 
             text = self.slug_rx.sub(_slug_repl, text)
 
+        # Separator-free forms. No other pass can reach these -- they are one
+        # unbroken alphanumeric run -- so order relative to the rest is free.
+        if self.concat_rx is not None:
+
+            def _concat_repl(m: re.Match) -> str:
+                if _inside_hex_run(m.string, m.start(), m.end()):
+                    return m.group(0)
+                counts["concat"] += 1
+                matched, alias = m.group(0), self.concat[m.group(0).lower()]
+                if matched.isupper():
+                    return alias.upper()
+                if matched.islower():
+                    return alias.lower()
+                return alias
+
+            text = self.concat_rx.sub(_concat_repl, text)
+
         if suffix.lower() in SINGLE_TOKEN_FREE_TEXT_SUFFIXES:
             text, n_name = _substitute(text, self.data_rx, self.data_key)
         else:
@@ -675,7 +825,7 @@ class _Passes:
         counts["media"] = n_media
 
         # Unlike the single-token pass this one emits exactly one bare word, so it
-        # is safe in source too: `caitlin = ...` becomes `cobalt = ...`, still a
+        # is safe in source too: `tanner = ...` becomes `cobalt = ...`, still a
         # valid identifier, where a two-word display alias would be a SyntaxError.
         if self.given_rx is not None:
 
@@ -716,6 +866,8 @@ class _Passes:
             found["media"] = n_media
         if self.given_rx is not None and (n := len(self.given_rx.findall(text))):
             found["given"] = n
+        if self.concat_rx is not None and (n := len(self.concat_rx.findall(text))):
+            found["concat"] = n
         return found
 
 
@@ -788,8 +940,18 @@ def _reorder_roster(passes: _Passes) -> bool:
     data["identities"] = sorted(data["identities"], key=lambda i: (i.get("bucket", ""), i.get("slug", "")))
     if [i.get("slug") for i in data["identities"]] == before:
         return False
-    _write(ROSTER, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    # Re-serialize at the file's own indent. Hard-coding indent=2 against a
+    # 1-space roster reformats all ~105K lines, so the reorder -- the only change
+    # that matters here -- becomes unreviewable inside a 210K-line diff.
+    dumped = json.dumps(data, indent=_json_indent(text), ensure_ascii=False)
+    _write(ROSTER, dumped + "\n" if text.endswith("\n") else dumped)
     return True
+
+
+def _json_indent(text: str, default: int = 2) -> int:
+    """Indent width of the first nested key in an already-pretty JSON document."""
+    m = re.search(r'\n(\x20+)["\[{]', text)
+    return len(m.group(1)) if m else default
 
 
 def _sha_file(path: Path) -> str:
@@ -814,15 +976,34 @@ def _repin_digests(
     scoped = [p for p, in_scope in files if in_scope and p.is_file()]
     applied: list[tuple[str, str, str, int]] = []
     for _round in range(rounds):
-        moved = {}
+        # Keyed by the OLD digest because that is what the pin literals contain,
+        # but two byte-identical files share one old digest. If the scrub moves
+        # them apart, one old digest has two correct replacements and there is no
+        # way to tell from the literal which one a given pin meant -- say so
+        # instead of silently picking whichever file was walked last (CARD-07).
+        moved: dict[str, tuple[str, list[str]]] = {}
+        ambiguous: dict[str, set[str]] = {}
         for path in scoped:
             rel = str(path.relative_to(REPO))
             old = published.get(rel)
             if old is None:
                 continue
             new = _sha_file(path)
-            if new != old:
-                moved[old] = (new, rel)
+            if new == old:
+                continue
+            prev = moved.get(old)
+            if prev is None:
+                moved[old] = (new, [rel])
+            else:
+                prev[1].append(rel)
+                if prev[0] != new:
+                    ambiguous.setdefault(old, {prev[0]}).add(new)
+        if ambiguous:
+            detail = "; ".join(f"{old[:12]}.. -> {sorted(n[:12] for n in news)} in {moved[old][1]}" for old, news in ambiguous.items())
+            raise SystemExit(
+                "digest re-pinning is ambiguous: previously-identical files now differ, so a pin "
+                f"literal has more than one correct replacement -- {detail}. Re-pin these by hand."
+            )
         if not moved:
             return applied
         rx = re.compile("|".join(re.escape(o) for o in moved))
@@ -833,17 +1014,17 @@ def _repin_digests(
             return moved[m.group(0)][0]
 
         for path in scoped:
-            try:
-                text = _read(path)
-            except (UnicodeDecodeError, OSError):
+            text, _reason = _read_or_reason(path)
+            if text is None:
                 continue
             new_text = rx.sub(_repl, text)
             if new_text != text:
                 _write(path, new_text)
-        for old, (new, rel) in moved.items():
-            published[rel] = new
+        for old, (new, rels) in moved.items():
+            for rel in rels:
+                published[rel] = new
             if old in hits:
-                applied.append((rel, old, new, hits[old]))
+                applied.append((rels[0], old, new, hits[old]))
     raise SystemExit(
         f"digest re-pinning did not converge in {rounds} rounds -- the pin graph is cyclic. "
         "Re-pin the remaining digests by hand and record why."
@@ -860,13 +1041,16 @@ def cmd_apply(args) -> int:
 
     changed: list[tuple[str, dict[str, int]]] = []
     out_of_scope: list[tuple[str, dict[str, int]]] = []
-    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0}
+    unscannable: list[tuple[str, str]] = []
+    symlink_residue: list[tuple[str, dict[str, int]]] = []
+    totals = {"name": 0, "single": 0, "slug": 0, "media": 0, "given": 0, "concat": 0}
     all_unresolved: set[str] = set()
 
     for path, in_scope in files:
-        try:
-            original = _read(path)
-        except (UnicodeDecodeError, OSError):
+        original, reason = _read_or_reason(path)
+        if original is None:
+            if in_scope:
+                unscannable.append((str(path.relative_to(REPO)), reason))
             continue
         rel = str(path.relative_to(REPO))
         if not in_scope:
@@ -880,7 +1064,15 @@ def cmd_apply(args) -> int:
             for k, v in counts.items():
                 totals[k] += v
             changed.append((rel, counts))
-            if not args.dry_run:
+            if path.is_symlink():
+                # `_write` opens through the link and would replace a mode-120000
+                # entry with a regular file holding the rewritten target string.
+                # Retargeting a symlink is a manual call, not a text substitution.
+                symlink_residue.append((rel, counts))
+                changed.pop()
+                for k, v in counts.items():
+                    totals[k] -= v
+            elif not args.dry_run:
                 _write(path, text)
 
     renames: list[tuple[str, str]] = []
@@ -926,7 +1118,16 @@ def cmd_apply(args) -> int:
         print(f"  OUT OF SCOPE -- scanned, deliberately not rewritten ({len(out_of_scope)} files):")
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values()))[:20]:
             print(f"    {rel:<84} {hits}")
-    return 0
+    for rel, counts in sorted(symlink_residue):
+        print(f"  SYMLINK  {rel} -- target string carries {counts}; retarget by hand")
+    declared, undeclared = _split_declared(unscannable)
+    for rel, reason in sorted(declared):
+        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel].split('.')[0]}. ({reason})")
+    if undeclared:
+        print(f"  UNSCANNABLE -- in scope but never opened ({len(undeclared)} files); coverage is NOT complete:")
+        for rel, reason in sorted(undeclared):
+            print(f"    {rel:<84} {reason}")
+    return 1 if (undeclared or symlink_residue) else 0
 
 
 def cmd_verify(args) -> int:
@@ -937,13 +1138,15 @@ def cmd_verify(args) -> int:
     residue: list[tuple[str, dict[str, int]]] = []
     path_residue: list[str] = []
     out_of_scope: list[tuple[str, dict[str, int]]] = []
+    unscannable: list[tuple[str, str]] = []
     for path, in_scope in _tracked_files():
         rel = str(path.relative_to(REPO))
         if in_scope and passes.rewrite_path(rel) != rel:
             path_residue.append(rel)
-        try:
-            text = _read(path)
-        except (UnicodeDecodeError, OSError):
+        text, reason = _read_or_reason(path)
+        if text is None:
+            if in_scope:
+                unscannable.append((rel, reason))
             continue
         hits = passes.residue(text, path.suffix)
         if not hits:
@@ -954,14 +1157,29 @@ def cmd_verify(args) -> int:
         print(f"  RESIDUE {rel} {hits}")
     for rel in path_residue:
         print(f"  RESIDUE path {rel}")
+    # An unopened in-scope file is an unverified one. Counting it as clean turns
+    # "no residue found" into "no residue found in the files we could read",
+    # which is the same sentence a green gate would print (CARD-07).
+    declared, undeclared = _split_declared(unscannable)
+    for rel, reason in sorted(declared):
+        print(f"  DECLARED-UNSCANNABLE {rel} -- {DECLARED_UNSCANNABLE[rel]} ({reason})")
+    for rel, reason in sorted(undeclared):
+        print(f"  UNSCANNABLE {rel} -- {reason}")
     print(
         f"in-scope residue: {len(residue)} files / {sum(sum(h.values()) for h in (x[1] for x in residue))} occ; "
-        f"paths: {len(path_residue)}; out-of-scope (reported only): {len(out_of_scope)} files"
+        f"paths: {len(path_residue)}; unscannable in-scope: {len(undeclared)} "
+        f"(+{len(declared)} declared); out-of-scope (reported only): {len(out_of_scope)} files"
     )
+    if undeclared:
+        print(
+            "verify is INCOMPLETE: the files above are in rewrite scope but were never decoded. "
+            "Either handle them explicitly, declare them in DECLARED_UNSCANNABLE with a recorded "
+            "rationale, or add their suffix to SKIP_SUFFIXES."
+        )
     if args.show_out_of_scope:
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values())):
             print(f"  OUT-OF-SCOPE {rel} {hits}")
-    return 1 if (residue or path_residue) else 0
+    return 1 if (residue or path_residue or undeclared) else 0
 
 
 def main() -> int:

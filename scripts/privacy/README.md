@@ -48,25 +48,59 @@ residue scan has nothing to scan for. `verify` is an operator-run check on a
 machine that holds the private store, not a pipeline step. Do not add it to
 `make check-all` — a green run there would only mean "the key is missing."
 
-## Measured residue (2026-08-17, after `apply`)
+## Measured residue (2026-08-18, after `apply`)
 
-Measured by an oracle that does **not** import this script: it re-derives the
-token set from the pre-scrub roster blob (`git show main:…corpus-manifest-v3.json`)
-and rescans the working tree (MLDATA-17 — a de-identification claim needs a
-measured re-identification attempt, not an assertion).
+Two checkers, run to agreement. The first is this script's own `verify`. The
+second is an oracle that does **not** import it: the oracle re-derives the token
+set from the pre-scrub roster blob (`git show main:…corpus-manifest-v3.json`),
+rebuilds both the separated and the concatenated surface forms from scratch, and
+rescans the working tree (MLDATA-17 — a de-identification claim needs a measured
+re-identification attempt, not an assertion).
 
-- **0** non-dictionary roster tokens remain anywhere in scope (2,837 files).
-- **0** real names remain in an identity-bearing JSON key. The oracle's 238 raw
-  structural hits resolve to 236 × the `"unlabeled"` sentinel (a `slug` value in
-  the roster, not a person), one UI label sentence, and the `Alice`/`Alicia`
-  cluster-label test fixture.
-- 44 surviving tokens are ordinary dictionary words that are also given names
-  (24,262 occurrences) — prose and synthetic test fixtures, sampled and
-  confirmed. They are not scrubbed because rewriting them corrupts unrelated
-  English.
-- 4 media stems (`faith`, `kelly`, `lee`, `sampliner`) are left alone by the
-  filename pass because each maps to more than one identity; the family-word
-  pass covers those identities' surnames.
+The two are quoted together on purpose. An earlier revision of this section
+claimed "0 tokens remain" on `verify` alone, and that claim was false by 379
+occurrences: `verify` was built from the same boundary-anchored builders as the
+rewriter, so it could not see the one class the rewriter also missed. A checker
+that shares the rewriter's blind spot is not evidence (CARD-08).
+
+```
+$ python scripts/privacy/priv1_pseudonymize.py verify
+in-scope residue: 0 files / 0 occ; paths: 0; unscannable in-scope: 0 (+1 declared);
+out-of-scope (reported only): 35 files
+exit 0
+```
+
+Independent oracle over the same 2,816 in-scope tracked files, 0 undecodable:
+
+| measure                                  | value  |
+| ---------------------------------------- | ------ |
+| personal identities in the pre-scrub roster | 90     |
+| non-dictionary name tokens (≥4 chars)    | 85     |
+| concatenated forms (≥8 chars)            | 84     |
+| separated-form occurrences remaining     | **0**  |
+| concatenated-form occurrences remaining  | **0**  |
+| offending files                          | **0**  |
+
+exit 0.
+
+Two classes are deliberately left in place, and neither is a residue claim:
+
+- 73 roster tokens are ordinary dictionary words that happen to also be given
+  names (15,555 occurrences, overwhelmingly prose in `literature/` and synthetic
+  test fixtures). Rewriting them corrupts unrelated English, so they are out of
+  scope by design rather than missed.
+- 1 in-scope file is undecodable and declared, not skipped: an OOXML strategy
+  brief whose single roster-token hit is a cited author surname in a
+  bibliography entry. It is listed in `DECLARED_UNSCANNABLE` with that
+  rationale; any *undeclared* undecodable in-scope file fails `verify` with a
+  non-zero exit.
+
+Media stems that map to more than one identity are left alone by the filename
+pass; the family-word pass covers those identities' surnames. The stems are not
+listed here — one of them is a roster given name, and a document explaining the
+scrub must not be the thing that publishes it. `apply` prints the live list
+(`media stems left alone (token maps to >1 identity)`), re-derived from the
+roster on every run rather than pinned here where it would rot.
 
 ## Traps this script exists to avoid
 
@@ -81,4 +115,26 @@ measured re-identification attempt, not an assertion).
   changes that file's own digest (3 second-order pins measured). Non-convergence
   raises rather than passing quietly.
 - `rewrite()` and `residue()` share one `_Passes` object, so `verify` provably
-  exercises the same six passes as `apply` (CARD-08).
+  exercises the same six passes as `apply` (CARD-08). Sharing the object is
+  necessary but not sufficient: both are built from the same builders, so a
+  builder that drops an entry blinds the checker and the rewriter together.
+  That happened twice — once for the concatenated form as a whole, and once for
+  four 3-token names whose 2-token aliases tripped a token-count guard. Both
+  were caught only by the independent oracle, never by `verify`.
+- An entry that cannot be rewritten raises instead of being skipped. A `continue`
+  in a builder is indistinguishable, at the output, from a name that was never
+  there.
+- A tracked symlink is read as its own target string, not followed. Following it
+  makes coverage depend on whether an overlay happens to be materialized in the
+  current worktree — seven git-hook links read as `FileNotFoundError` and looked
+  like a scan gap.
+
+## Known limits
+
+- **Digest pins only track drift this script caused.** `_repin_digests` diffs
+  digests captured at the top of an `apply` run against post-rewrite digests, so
+  a digest that moves out-of-band — a hand edit, a rebase, a re-serialization by
+  another tool — is invisible to it, and `verify` does not check pins at all.
+  Both commands will report clean over a stale pin. Repair is a manual old→new
+  sweep iterated to a fixpoint. Tracked as PRIV-1-BR-11.
+- **CI cannot gate any of this** (see *The key*). `verify` is an operator check.

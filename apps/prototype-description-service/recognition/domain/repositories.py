@@ -157,6 +157,18 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        """Same ranking rows as ``get_representative_embeddings_with_model`` plus quality.
+
+        Returns:
+            ``(embeddings, chosen_embedding_model, qualities)`` where each quality
+            triple is ``(quality_score, landmark_quality, det_score)`` aligned 1:1
+            with ``embeddings``. Missing metrics are ``None`` (callers fail closed).
+        """
+        ...
+
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> Sequence[np.ndarray]:
         """Fetch top member embeddings for fallback similarity checks."""
         ...
@@ -170,6 +182,12 @@ class ClusterRepository(Protocol):
             ``(embeddings, chosen_embedding_model)`` — same semantics as
             ``get_representative_embeddings_with_model``.
         """
+        ...
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        """Same member-fallback rows as the with_model loader plus quality triples."""
         ...
 
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:

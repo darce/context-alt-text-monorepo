@@ -2,9 +2,49 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 
+import jsonschema
+import numpy as np
+from recognition.application.settings import ClusteringSettings
 from recognition.tests.api.conftest import seed_cluster
+
+_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[5]
+    / "packages"
+    / "shared-contracts"
+    / "schemas"
+    / "roster-candidates-response.schema.json"
+)
+
+
+def _schema() -> dict:
+    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def _normalize(vec: np.ndarray) -> np.ndarray:
+    arr = np.asarray(vec, dtype=np.float32)
+    return arr / float(np.linalg.norm(arr))
+
+
+def _rep(
+    *,
+    embedding: np.ndarray,
+    embedding_model: str,
+    quality_score: float = 1.0,
+    landmark_quality: float = 1.0,
+    det_score: float = 0.99,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        embedding=embedding,
+        embedding_model=embedding_model,
+        identity_id=str(uuid.uuid4()),
+        quality_score=quality_score,
+        debug_metrics={"landmark_quality": landmark_quality, "det_score": det_score},
+    )
 
 
 def test_roster_candidates_empty_when_cluster_exists_without_roster(
@@ -25,15 +65,7 @@ def test_roster_candidates_empty_when_cluster_exists_without_roster(
     assert resp.status_code == 200
     body = resp.json()
     assert body["candidates"] == []
-    assert "model_id" in body
-    assert "embedding_model" in body
-    assert "computed_at" in body
-    assert "reference_face_count" in body
-    assert set(body["thresholds"]) == {
-        "suggestion_floor",
-        "suggestion_ceiling",
-        "similarity_threshold",
-    }
+    jsonschema.validate(body, _schema())
 
 
 def test_roster_candidates_missing_cluster_is_404(api_client, tenant_id) -> None:
@@ -58,3 +90,104 @@ def test_roster_candidates_rejects_top_k_above_max(api_client, tenant_id, fake_c
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "top_k out of range"
+
+
+def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_schema(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """R1-04: non-empty candidates, live thresholds, bands, foreign tenant absent, schema."""
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    monkeypatch.setattr(
+        "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",
+        lambda: ClusteringSettings(
+            suggestion_floor=0.40,
+            suggestion_ceiling=0.80,
+            similarity_threshold=0.77,
+            fatal_quality_floor=0.20,
+            fatal_confidence_floor=0.30,
+        ),
+    )
+
+    probe = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    strong = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Ada",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    possible = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Bea",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    foreign = seed_cluster(
+        fake_cluster_service,
+        str(uuid.uuid4()),
+        label="Eve",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+
+    fake_cluster_repository.seed(
+        probe.id,
+        tenant_id,
+        label=None,
+        representatives=[
+            _rep(embedding=probe_vec, embedding_model=same_model, quality_score=0.95, landmark_quality=0.9)
+        ],
+    )
+    fake_cluster_repository.seed(
+        strong.id,
+        tenant_id,
+        label="Ada",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+    )
+    fake_cluster_repository.seed(
+        possible.id,
+        tenant_id,
+        label="Bea",
+        representatives=[_rep(embedding=_normalize(np.array([0.55, 0.835, 0.0])), embedding_model=same_model)],
+    )
+    fake_cluster_repository.seed(
+        foreign.id,
+        foreign.tenant_id,
+        label="Eve",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+    )
+
+    resp = api_client.get(
+        f"/recognition/clusters/{probe.id}/roster-candidates",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"top_k": 10},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    jsonschema.validate(body, _schema())
+    ids = [row["cluster_id"] for row in body["candidates"]]
+    assert ids[0] == strong.id
+    assert possible.id in ids
+    assert foreign.id not in ids
+    bands = {row["cluster_id"]: row["band"] for row in body["candidates"]}
+    assert bands[strong.id] == "strong"
+    assert bands[possible.id] == "possible"
+    assert body["thresholds"] == {
+        "suggestion_floor": 0.40,
+        "suggestion_ceiling": 0.80,
+        "similarity_threshold": 0.77,
+    }
+    assert body["quality_flag"] == "ok"
+    assert "quality_flag" not in body["candidates"][0]
+    assert body["probe_face_count"] == 1
+    assert body["reference_face_count"] >= 2
+    assert fake_cluster_repository.clusters[probe.id].representatives == []

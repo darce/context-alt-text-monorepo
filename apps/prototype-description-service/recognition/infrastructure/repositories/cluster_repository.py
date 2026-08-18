@@ -71,6 +71,37 @@ def _filter_embedding_pairs_to_single_model(
     return [(emb, model) for emb, model in rows if model == chosen]
 
 
+_QualityTriple = tuple[float | None, float | None, float | None]
+_QualityRow = tuple[np.ndarray, str | None, float | None, float | None, float | None]
+
+
+def _filter_quality_rows_to_single_model(rows: Sequence[_QualityRow]) -> list[_QualityRow]:
+    """Keep ranking+quality rows from one model space; single-model input is a no-op."""
+    if not rows:
+        return []
+    pairs = [(emb, model) for emb, model, *_ in rows]
+    filtered = _filter_embedding_pairs_to_single_model(pairs)
+    if len(filtered) == len(rows):
+        return list(rows)
+    chosen = _choose_embedding_model([model for _, model in filtered])
+    if chosen is None:
+        return list(rows)
+    return [row for row in rows if row[1] == chosen]
+
+
+def _quality_triples(rows: Sequence[_QualityRow]) -> list[_QualityTriple]:
+    triples: list[_QualityTriple] = []
+    for _emb, _model, quality, landmark, det in rows:
+        triples.append(
+            (
+                float(quality) if quality is not None else None,
+                float(landmark) if landmark is not None else None,
+                float(det) if det is not None else None,
+            )
+        )
+    return triples
+
+
 def _filter_identity_models_to_single_embedding_model(
     models: Sequence[MediaIdentity],
 ) -> list[MediaIdentity]:
@@ -950,6 +981,37 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         embeddings, _ = await self.get_representative_embeddings_with_model(cluster_id)
         return embeddings
 
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list[np.ndarray], str | None, list[_QualityTriple]]:
+        """Same ranking rows as ``get_representative_embeddings_with_model`` plus quality.
+
+        Each quality triple is ``(rep.quality_score, identity.quality_score, identity.confidence)``
+        aligned 1:1 with the returned embeddings.
+        """
+        stmt = (
+            select(
+                IdentityClusterRepresentative.embedding,
+                MediaIdentity.embedding_model,
+                IdentityClusterRepresentative.quality_score,
+                MediaIdentity.quality_score,
+                MediaIdentity.confidence,
+            )
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
+            .where(MediaIdentity.embedding_model.isnot(None))
+        )
+        result = await self._session.execute(stmt)
+        rows: list[_QualityRow] = [
+            (np.asarray(emb, dtype=np.float32), model, qs, lq, det) for emb, model, qs, lq, det in result.all()
+        ]
+        filtered = _filter_quality_rows_to_single_model(rows)
+        if not filtered:
+            return [], None, []
+        embeddings = [emb for emb, _, _, _, _ in filtered]
+        chosen = _choose_embedding_model([model for _, model, _, _, _ in filtered])
+        return embeddings, chosen, _quality_triples(filtered)
+
     async def get_member_fallback_embeddings_with_model(
         self, cluster_id: str, limit: int = 4
     ) -> tuple[list[np.ndarray], str | None]:
@@ -985,6 +1047,37 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """Return top member embeddings as fallback representatives ordered by similarity then recency."""
         embeddings, _ = await self.get_member_fallback_embeddings_with_model(cluster_id, limit=limit)
         return embeddings
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None, list[_QualityTriple]]:
+        """Same member-fallback rows as the with_model loader plus quality metrics."""
+        stmt = (
+            select(
+                MediaIdentity.embedding,
+                MediaIdentity.embedding_model,
+                MediaIdentity.quality_score,
+                MediaIdentity.quality_score,
+                MediaIdentity.confidence,
+            )
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+            .where(MediaIdentity.embedding.isnot(None))
+            .where(MediaIdentity.embedding_model.isnot(None))
+            .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        rows: list[_QualityRow] = [
+            (np.asarray(emb, dtype=np.float32), model, qs, lq, det) for emb, model, qs, lq, det in result.all()
+        ]
+        filtered = _filter_quality_rows_to_single_model(rows)
+        if limit is not None:
+            filtered = filtered[: max(limit, 0)]
+        if not filtered:
+            return [], None, []
+        embeddings = [emb for emb, _, _, _, _ in filtered]
+        chosen = _choose_embedding_model([model for _, model, _, _, _ in filtered])
+        return embeddings, chosen, _quality_triples(filtered)
 
     async def get_member_identities(self, cluster_id: str) -> list[DomainIdentity]:
         """Return identity records for all members of a cluster.

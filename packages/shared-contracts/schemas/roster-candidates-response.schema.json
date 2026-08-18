@@ -2,13 +2,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/roster-candidates-response.schema.json",
   "title": "Roster Candidates Response",
-  "description": "PROV-06 typed payload for GET /recognition/clusters/{cluster_id}/roster-candidates. Candidates are labelled clusters; PHP maps cluster_id to roster_entry_id.",
+  "description": "PROV-06 typed payload for GET /recognition/clusters/{cluster_id}/roster-candidates. Candidates are labelled clusters; PHP maps cluster_id to roster_entry_id and collapses to one row per person. quality_flag is probe-level. Frontend must not show Strong when quality_flag is not ok. Unknown quality_flag values must be treated as low_quality. occluded is reserved (never fabricated).",
   "type": "object",
   "required": [
     "model_id",
     "embedding_model",
     "computed_at",
+    "probe_face_count",
     "reference_face_count",
+    "quality_flag",
     "thresholds",
     "candidates"
   ],
@@ -27,10 +29,24 @@
       "format": "date-time",
       "description": "When this ranking was computed. Similarity is not a stable person attribute."
     },
+    "probe_face_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of probe representatives (or member-fallback faces) used in the comparison."
+    },
     "reference_face_count": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of probe representatives used in the comparison."
+      "description": "Number of same-space labelled reference vectors actually compared."
+    },
+    "quality_flag": {
+      "type": "string",
+      "enum": ["ok", "low_quality", "occluded"],
+      "description": "Probe-level quality gate. occluded is reserved. Unknown values → treat as low_quality. When not ok, band is capped at possible (FE must not show Strong)."
+    },
+    "data_source": {
+      "type": "string",
+      "description": "Optional WordPress proxy provenance. Absent on the python 200 wire. Degraded proxy paths use HTTP 502/503 error envelopes instead of fabricating this 200 schema."
     },
     "thresholds": {
       "type": "object",
@@ -50,10 +66,10 @@
     },
     "candidates": {
       "type": "array",
-      "description": "Server-ranked labelled clusters. Order is similarity descending.",
+      "description": "Server-ranked labelled clusters. Order is similarity descending, cluster_id ascending on ties. PHP collapses to one row per roster_entry_id (max similarity wins). roster_entry_id null rows are uncommittable and kept flagged.",
       "items": {
         "type": "object",
-        "required": ["cluster_id", "name", "similarity", "band", "quality_flag"],
+        "required": ["cluster_id", "name", "similarity", "band"],
         "additionalProperties": false,
         "properties": {
           "cluster_id": {
@@ -61,23 +77,20 @@
             "format": "uuid"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Python: cluster label. PHP: acx_persons.name when mapped, else the cluster label."
           },
           "similarity": {
             "type": "number",
-            "description": "Ranking cosine only; not a calibrated probability."
+            "description": "Ranking cosine only; not a calibrated probability. May be negative (band none)."
           },
           "band": {
             "type": "string",
             "enum": ["strong", "possible", "none"]
           },
-          "quality_flag": {
-            "type": "string",
-            "enum": ["ok", "low_quality"]
-          },
           "roster_entry_id": {
             "type": ["integer", "null"],
-            "description": "Local acx_persons.id filled by the WordPress passthrough; absent on the python wire."
+            "description": "Local acx_persons.id filled by the WordPress passthrough; absent on the python wire. Null means unmapped / uncommittable."
           }
         }
       }

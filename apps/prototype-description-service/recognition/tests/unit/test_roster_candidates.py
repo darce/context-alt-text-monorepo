@@ -1,4 +1,4 @@
-"""Unit tests for cluster → roster-person candidate ranking (UXW2-5)."""
+"""Unit tests for cluster → roster-person candidate ranking (UXW2-5 / R1)."""
 
 from __future__ import annotations
 
@@ -22,17 +22,31 @@ def _normalize(vec: np.ndarray) -> np.ndarray:
     return arr / float(np.linalg.norm(arr))
 
 
-def _rep(*, embedding: np.ndarray, embedding_model: str, quality_score: float = 1.0) -> SimpleNamespace:
+def _rep(
+    *,
+    embedding: np.ndarray,
+    embedding_model: str,
+    quality_score: float | None = 1.0,
+    landmark_quality: float | None = None,
+    det_score: float | None = 0.99,
+) -> SimpleNamespace:
+    metrics: dict[str, float] = {}
+    if landmark_quality is not None:
+        metrics["landmark_quality"] = landmark_quality
+    if det_score is not None:
+        metrics["det_score"] = det_score
     return SimpleNamespace(
         embedding=embedding,
         embedding_model=embedding_model,
         identity_id=str(uuid4()),
         quality_score=quality_score,
-        debug_metrics={"landmark_quality": quality_score, "det_score": 0.99},
+        debug_metrics=metrics,
     )
 
 
 class _FakeRosterRepo:
+    """Mirrors production: get_by_id has no representatives; quality lives on ranking rows."""
+
     def __init__(
         self,
         *,
@@ -40,28 +54,54 @@ class _FakeRosterRepo:
         probe_embeddings: list[np.ndarray],
         probe_model: str | None,
         labeled: list[tuple[SimpleNamespace, list[SimpleNamespace]]],
+        probe_qualities: list[tuple[float | None, float | None, float | None]] | None = None,
+        member_fallback: tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]
+        | None = None,
     ) -> None:
         self._probe = probe
         self._probe_embeddings = probe_embeddings
         self._probe_model = probe_model
         self._labeled = labeled
+        if probe_qualities is None:
+            self._probe_qualities = [(None, None, None) for _ in probe_embeddings]
+        else:
+            self._probe_qualities = probe_qualities
+        self._member_fallback = member_fallback or ([], None, [])
 
     async def get_by_id(self, cluster_id: str) -> SimpleNamespace | None:
         if self._probe is None or str(self._probe.id) != str(cluster_id):
             return None
-        return self._probe
+        # Production get_by_id selectinloads members only — representatives stay empty.
+        return SimpleNamespace(
+            id=self._probe.id,
+            tenant_id=self._probe.tenant_id,
+            representatives=[],
+        )
 
     async def get_representative_embeddings_with_model(
         self, cluster_id: str
     ) -> tuple[list[np.ndarray], str | None]:
+        embeddings, model, _ = await self.get_representative_embeddings_with_quality(cluster_id)
+        return embeddings, model
+
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
         if self._probe is None or str(self._probe.id) != str(cluster_id):
-            return [], None
-        return list(self._probe_embeddings), self._probe_model
+            return [], None, []
+        return list(self._probe_embeddings), self._probe_model, list(self._probe_qualities)
 
     async def get_member_fallback_embeddings_with_model(
         self, cluster_id: str, limit: int = 4
     ) -> tuple[list[np.ndarray], str | None]:
-        return [], None
+        embeddings, model, _ = await self.get_member_fallback_embeddings_with_quality(cluster_id, limit=limit)
+        return embeddings, model
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        embeddings, model, qualities = self._member_fallback
+        return list(embeddings)[:limit], model, list(qualities)[:limit]
 
     async def get_labeled_with_representatives(
         self, tenant_id: str
@@ -102,10 +142,11 @@ async def test_bands_come_from_injected_settings_not_hardcoded() -> None:
         ),
     ]
     repo = _FakeRosterRepo(
-        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id, representatives=[]),
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
         probe_embeddings=[probe_vec],
         probe_model=same_model,
         labeled=labeled,
+        probe_qualities=[(1.0, 1.0, 0.99)],
     )
     settings = ClusteringSettings(suggestion_floor=0.40, suggestion_ceiling=0.80)
 
@@ -119,6 +160,8 @@ async def test_bands_come_from_injected_settings_not_hardcoded() -> None:
     assert bands[none_id] is SimilarityBand.NONE
     assert result.thresholds.suggestion_floor == 0.40
     assert result.thresholds.suggestion_ceiling == 0.80
+    assert result.quality_flag is QualityFlag.OK
+    assert not hasattr(result.candidates[0], "quality_flag") or "quality_flag" not in result.candidates[0].__dataclass_fields__
 
 
 @pytest.mark.asyncio
@@ -142,10 +185,11 @@ async def test_same_model_guard_excludes_foreign_embedding_space() -> None:
         ),
     ]
     repo = _FakeRosterRepo(
-        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id, representatives=[]),
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
         probe_embeddings=[probe_vec],
         probe_model=same_model,
         labeled=labeled,
+        probe_qualities=[(1.0, 1.0, 0.99)],
     )
 
     result = await list_roster_candidates(
@@ -167,10 +211,11 @@ async def test_empty_roster_returns_empty_candidates_not_error() -> None:
     probe_id = str(uuid4())
     same_model = "opencv-sface+cv5@128d/l2/cosine"
     repo = _FakeRosterRepo(
-        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id, representatives=[]),
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
         probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
         probe_model=same_model,
         labeled=[],
+        probe_qualities=[(1.0, 1.0, 0.99)],
     )
 
     result = await list_roster_candidates(
@@ -180,51 +225,98 @@ async def test_empty_roster_returns_empty_candidates_not_error() -> None:
     assert result.candidates == []
     assert result.embedding_model == same_model
     assert result.model_id == same_model
+    assert result.probe_face_count == 1
+    assert result.reference_face_count == 0
 
 
 @pytest.mark.asyncio
-async def test_top_k_bounds_ranked_candidates() -> None:
+async def test_top_k_returns_exact_ids_from_out_of_rank_seed() -> None:
+    """R1-05: insert out of rank order; assert exact surviving top ids (not just length)."""
     tenant_id = str(uuid4())
     probe_id = str(uuid4())
     same_model = "opencv-sface+cv5@128d/l2/cosine"
     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
-    labeled = []
-    for idx in range(5):
-        angle = 0.05 * idx
-        labeled.append(
-            (
-                SimpleNamespace(id=str(uuid4()), label=f"P{idx}", tenant_id=tenant_id),
-                [_rep(embedding=_normalize(np.array([1.0 - angle, angle, 0.0])), embedding_model=same_model)],
-            )
-        )
+    worst_id = "aaaaaaaa-aaaa-aaaa-aaaa-000000000005"
+    mid_id = "bbbbbbbb-bbbb-bbbb-bbbb-000000000003"
+    best_id = "cccccccc-cccc-cccc-cccc-000000000001"
+    fourth_id = "dddddddd-dddd-dddd-dddd-000000000004"
+    # Seed worst-first so a "take first k of insertion order" implementation fails.
+    labeled = [
+        (
+            SimpleNamespace(id=worst_id, label="Worst", tenant_id=tenant_id),
+            [_rep(embedding=_normalize(np.array([0.2, 0.98, 0.0])), embedding_model=same_model)],
+        ),
+        (
+            SimpleNamespace(id=fourth_id, label="Fourth", tenant_id=tenant_id),
+            [_rep(embedding=_normalize(np.array([0.55, 0.835, 0.0])), embedding_model=same_model)],
+        ),
+        (
+            SimpleNamespace(id=best_id, label="Best", tenant_id=tenant_id),
+            [_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+        ),
+        (
+            SimpleNamespace(id=mid_id, label="Mid", tenant_id=tenant_id),
+            [_rep(embedding=_normalize(np.array([0.9, 0.435, 0.0])), embedding_model=same_model)],
+        ),
+    ]
     repo = _FakeRosterRepo(
-        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id, representatives=[]),
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
         probe_embeddings=[probe_vec],
         probe_model=same_model,
         labeled=labeled,
+        probe_qualities=[(1.0, 1.0, 0.99)],
     )
 
     result = await list_roster_candidates(
         tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=3
     )
 
-    assert len(result.candidates) == 3
-    sims = [row.similarity for row in result.candidates]
-    assert sims == sorted(sims, reverse=True)
+    assert [row.cluster_id for row in result.candidates] == [best_id, mid_id, fourth_id]
+    assert worst_id not in {row.cluster_id for row in result.candidates}
 
 
 @pytest.mark.asyncio
-async def test_low_quality_probe_sets_quality_flag() -> None:
+async def test_multi_rep_cluster_uses_max_not_mean_or_first() -> None:
+    """R1-05: a 2-rep cluster (0.2, 0.9) must rank on 0.9."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    multi_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[probe_vec],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=multi_id, label="Split", tenant_id=tenant_id),
+                [
+                    _rep(embedding=_normalize(np.array([0.2, 0.98, 0.0])), embedding_model=same_model),
+                    _rep(embedding=_normalize(np.array([0.9, 0.435, 0.0])), embedding_model=same_model),
+                ],
+            )
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].similarity == pytest.approx(0.9, abs=0.02)
+    assert result.reference_face_count == 2
+
+
+@pytest.mark.asyncio
+async def test_quality_flag_ok_when_metrics_above_floor() -> None:
+    """R1-05: keep an OK case (not only LOW)."""
     tenant_id = str(uuid4())
     probe_id = str(uuid4())
     same_model = "opencv-sface+cv5@128d/l2/cosine"
     labeled_id = str(uuid4())
     repo = _FakeRosterRepo(
-        probe=SimpleNamespace(
-            id=probe_id,
-            tenant_id=tenant_id,
-            representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model, quality_score=0.05)],
-        ),
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
         probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
         probe_model=same_model,
         labeled=[
@@ -233,12 +325,291 @@ async def test_low_quality_probe_sets_quality_flag() -> None:
                 [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
             )
         ],
+        probe_qualities=[(0.9, 0.85, 0.99)],
     )
-    settings = ClusteringSettings(fatal_quality_floor=0.20)
 
     result = await list_roster_candidates(
-        tenant_id, probe_id, cluster_repository=repo, settings=settings, top_k=10
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(fatal_quality_floor=0.20, fatal_confidence_floor=0.30),
+        top_k=10,
+    )
+
+    assert result.quality_flag is QualityFlag.OK
+    assert result.candidates[0].band is SimilarityBand.STRONG
+
+
+@pytest.mark.parametrize(
+    "qualities",
+    [
+        ((None, None, 0.05),),  # det_score-only low
+        ((None, 0.05, None),),  # landmark-only low
+        ((0.05, None, None),),  # quality_score-only low
+    ],
+)
+@pytest.mark.asyncio
+async def test_quality_flag_low_from_single_metric(
+    qualities: tuple[tuple[float | None, float | None, float | None], ...],
+) -> None:
+    """R1-05: parametrize det-only and landmark-only low cases."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=list(qualities),
+    )
+
+    result = await list_roster_candidates(
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(fatal_quality_floor=0.20, fatal_confidence_floor=0.30),
+        top_k=10,
+    )
+
+    assert result.quality_flag is QualityFlag.LOW_QUALITY
+
+
+@pytest.mark.asyncio
+async def test_quality_flag_fail_closed_when_metrics_missing() -> None:
+    """R1-01: missing quality metrics fail closed to low_quality."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[(None, None, None)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    assert result.quality_flag is QualityFlag.LOW_QUALITY
+
+
+@pytest.mark.asyncio
+async def test_quality_does_not_read_get_by_id_representatives() -> None:
+    """R1-01: fused reps on get_by_id must not be the quality source."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    fused_low = _rep(
+        embedding=_normalize(np.array([1.0, 0.0])),
+        embedding_model=same_model,
+        quality_score=0.01,
+        landmark_quality=0.01,
+        det_score=0.01,
+    )
+    probe = SimpleNamespace(id=probe_id, tenant_id=tenant_id, representatives=[fused_low])
+    repo = _FakeRosterRepo(
+        probe=probe,
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[(0.95, 0.95, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(fatal_quality_floor=0.20),
+        top_k=10,
+    )
+
+    assert result.quality_flag is QualityFlag.OK
+
+
+@pytest.mark.asyncio
+async def test_member_fallback_quality_fail_closed_when_metrics_missing() -> None:
+    """R1-01: member-fallback path must not unconditionally OK."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[],
+        probe_model=None,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[],
+        member_fallback=(
+            [_normalize(np.array([1.0, 0.0]))],
+            same_model,
+            [(None, None, None)],
+        ),
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
     )
 
     assert result.candidates
-    assert result.candidates[0].quality_flag is QualityFlag.LOW_QUALITY
+    assert result.quality_flag is QualityFlag.LOW_QUALITY
+    assert result.probe_face_count == 1
+
+
+@pytest.mark.asyncio
+async def test_low_quality_caps_band_at_possible() -> None:
+    """R1-09: quality_flag != ok must not emit band=strong."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    labeled_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=labeled_id, label="Ada", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[(0.05, 0.05, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55, fatal_quality_floor=0.20),
+        top_k=10,
+    )
+
+    assert result.quality_flag is QualityFlag.LOW_QUALITY
+    assert result.candidates[0].similarity >= 0.55
+    assert result.candidates[0].band is SimilarityBand.POSSIBLE
+
+
+@pytest.mark.asyncio
+async def test_negative_similarity_returned_as_none_band() -> None:
+    """R1-10: min_similarity=-1.0 so negative-cosine labelled clusters are none, not dropped."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    opposite_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=opposite_id, label="Opposite", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([-1.0, 0.0])), embedding_model=same_model)],
+            )
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id,
+        probe_id,
+        cluster_repository=repo,
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+        top_k=10,
+    )
+
+    assert len(result.candidates) == 1
+    assert result.candidates[0].cluster_id == opposite_id
+    assert result.candidates[0].similarity < 0
+    assert result.candidates[0].band is SimilarityBand.NONE
+
+
+@pytest.mark.asyncio
+async def test_tiebreak_is_cluster_id() -> None:
+    """R1-10: equal similarity sorts by cluster_id ascending."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    later_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    earlier_id = "00000000-0000-0000-0000-000000000001"
+    same_vec = _normalize(np.array([1.0, 0.0]))
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[same_vec],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=later_id, label="Zed", tenant_id=tenant_id),
+                [_rep(embedding=same_vec, embedding_model=same_model)],
+            ),
+            (
+                SimpleNamespace(id=earlier_id, label="Ann", tenant_id=tenant_id),
+                [_rep(embedding=same_vec, embedding_model=same_model)],
+            ),
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    assert [row.cluster_id for row in result.candidates] == [earlier_id, later_id]
+
+
+@pytest.mark.asyncio
+async def test_dimension_mismatched_reps_are_skipped() -> None:
+    """R1-10: dim-mismatched labelled reps must not raise; cluster with no compatible reps dropped."""
+    tenant_id = str(uuid4())
+    probe_id = str(uuid4())
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    mismatch_id = str(uuid4())
+    ok_id = str(uuid4())
+    repo = _FakeRosterRepo(
+        probe=SimpleNamespace(id=probe_id, tenant_id=tenant_id),
+        probe_embeddings=[_normalize(np.array([1.0, 0.0, 0.0]))],
+        probe_model=same_model,
+        labeled=[
+            (
+                SimpleNamespace(id=mismatch_id, label="Wide", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.ones(8)), embedding_model=same_model)],
+            ),
+            (
+                SimpleNamespace(id=ok_id, label="Fit", tenant_id=tenant_id),
+                [_rep(embedding=_normalize(np.array([0.8, 0.2, 0.0])), embedding_model=same_model)],
+            ),
+        ],
+        probe_qualities=[(1.0, 1.0, 0.99)],
+    )
+
+    result = await list_roster_candidates(
+        tenant_id, probe_id, cluster_repository=repo, settings=ClusteringSettings(), top_k=10
+    )
+
+    ids = [row.cluster_id for row in result.candidates]
+    assert ok_id in ids
+    assert mismatch_id not in ids

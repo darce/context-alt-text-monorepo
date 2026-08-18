@@ -2303,13 +2303,6 @@ if (!isset($GLOBALS['wpdb'])) {
          * @var callable|null
          */
         public $onGetVarResolve = null;
-        /**
-         * Optional get_results interceptor. Return an array to override mockResults
-         * for that SQL (behavioural predicate tests).
-         *
-         * @var callable|null
-         */
-        public $onGetResults = null;
 
         public function query($sql)
         {
@@ -2438,19 +2431,6 @@ if (!isset($GLOBALS['wpdb'])) {
                         return array_map(static fn(array $row) => (object) $row, $override);
                     }
                     return $override;
-                }
-            }
-
-            if ($this->onGetResults !== null) {
-                $intercepted = ($this->onGetResults)($normalizedSql);
-                if (is_array($intercepted)) {
-                    if ($output === ARRAY_A) {
-                        return $intercepted;
-                    }
-                    if ($output === OBJECT) {
-                        return array_map(static fn(array $row) => (object) $row, $intercepted);
-                    }
-                    return $intercepted;
                 }
             }
 
@@ -2907,7 +2887,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->tableIndexes = [];
             $this->onGetVar = null;
             $this->onGetResults = null;
-            $this->onGetVar = null;
+            $this->onGetVarResolve = null;
         }
     }
 

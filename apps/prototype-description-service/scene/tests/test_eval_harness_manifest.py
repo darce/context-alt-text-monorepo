@@ -13,6 +13,7 @@ from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
     GoldenManifest,
+    HashVerificationSkippedWarning,
     ManifestError,
     ReferenceFact,
     RubricEmptyWarning,
@@ -719,6 +720,63 @@ def test_load_manifest_skip_hash_verification_allows_metadata_only(tmp_path, mon
         skip_hash_verification=True,
     )
     assert len(manifest.entries) == 2
+
+
+def test_load_manifest_skip_hash_warning_includes_caller_reason(tmp_path, monkeypatch):
+    """VLM6-DELTA-05 / OBS-04: named skip must say WHY it is safe (TEST-15)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    reason = "metadata-only scoring path; image bytes never opened"
+    with pytest.warns(HashVerificationSkippedWarning) as rec:
+        load_manifest(path, skip_hash_verification=True, hash_skip_reason=reason)
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    msg = str(skipped[0].message)
+    assert reason in msg
+    assert path in msg
+
+
+def test_load_manifest_hash_skip_reason_without_skip_raises(tmp_path, monkeypatch):
+    """A reason without a skip is a caller bug — fail loudly (VLM6-DELTA-05)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    path = _write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="hash_skip_reason"):
+        load_manifest(
+            path,
+            images_dir=str(images),
+            skip_hash_verification=False,
+            hash_skip_reason="should not be here",
+        )
+
+
+def test_load_manifest_skip_without_reason_says_none_supplied(tmp_path, monkeypatch):
+    """Boolean skip stays valid; warning names the missing reason (VLM6-DELTA-05)."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    path = _write_manifest(tmp_path, _valid_manifest_dict())
+    with pytest.warns(HashVerificationSkippedWarning, match="no reason supplied") as rec:
+        load_manifest(path, skip_hash_verification=True)
+    skipped = [w for w in rec.list if issubclass(w.category, HashVerificationSkippedWarning)]
+    assert len(skipped) == 1
+    assert path in str(skipped[0].message)
+
+
+def test_load_manifest_verified_path_emits_no_skip_warning(tmp_path, monkeypatch):
+    """images_dir set, no skip — hashes verified, no HashVerificationSkippedWarning."""
+    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
+    data = _valid_manifest_dict()
+    images = tmp_path / "images"
+    (images / "mock_images").mkdir(parents=True)
+    (images / "mock_images" / "scene-001.jpg").write_bytes(b"fake image bytes")
+    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
+    assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in rec)
 
 
 def test_load_manifest_verifies_via_golden_images_dir_env(tmp_path, monkeypatch):

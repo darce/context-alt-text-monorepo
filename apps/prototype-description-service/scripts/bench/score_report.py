@@ -11,7 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive, load_bench_manifest
+from scripts.bench.corpus import ItemOutcomeStore, is_detection_exhaustive
 from scripts.bench.export_map import _unwrap_rows, load_leg_exports, require_cluster_success, to_face_metric_inputs
 from scripts.bench.stack_pair import BenchError, StackPairConfig, load_stack_pair
 from scripts.eval_harness.face_metrics import detection_pr, identification_pr
@@ -21,6 +21,7 @@ from scripts.eval_harness.manifest import (
     GoldenManifest,
     ScoreInvariant,
     SUPPORTED_MANIFEST_VERSION,
+    load_manifest,
     refusal_explanation,
 )
 
@@ -386,12 +387,20 @@ def _load_manifest_from_run(run_dir: Path) -> GoldenManifest:
     # load_bench_manifest/load_manifest caller on default hash verification.
     for candidate in (run_dir / "manifest.json",):
         if candidate.is_file():
-            return load_bench_manifest(candidate, None, skip_hash_verification=True)
+            return load_manifest(
+                str(candidate),
+                skip_hash_verification=True,
+                hash_skip_reason="metadata-only scoring path; image bytes never opened",
+            )
     run_doc = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     path = run_doc.get("manifest_path")
     if not path:
         raise BenchError("config_invalid", "run-dir has no manifest.json or manifest_path")
-    return load_bench_manifest(path, None, skip_hash_verification=True)
+    return load_manifest(
+        path,
+        skip_hash_verification=True,
+        hash_skip_reason="metadata-only scoring path; image bytes never opened",
+    )
 
 
 def _load_pair(run_dir: Path) -> StackPairConfig:

@@ -1183,7 +1183,11 @@ def main(argv: list[str] | None = None) -> None:
         # Text-only weave-bench: weave_bench_run_record reads roster/media_id/face_boxes
         # pins only — never opens image files (GOLDEN_IMAGES_DIR not required).
         images_dir = ""
-        manifest = load_manifest(args.manifest, skip_hash_verification=True)
+        manifest = load_manifest(
+            args.manifest,
+            skip_hash_verification=True,
+            hash_skip_reason="weave-bench bakeoff is text-only; image bytes never opened",
+        )
     else:
         images_dir = os.environ.get("GOLDEN_IMAGES_DIR", "")
         if not images_dir:

@@ -19,6 +19,7 @@ from scripts.bench.corpus import (
     load_bench_manifest,
     resolve_media_bytes,
 )
+from scripts.eval_harness.manifest import load_manifest
 from scripts.bench.export_map import export_leg
 from scripts.bench.production_shaped_guard import assert_named_bench_stack
 from scripts.bench.stack_pair import BenchError, FIR23_STACK_ALLOWLIST, StackEndpoint, StackPairConfig
@@ -336,14 +337,22 @@ def run_pair(
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
     # entry counts and media_id sets are read here, never image bytes.
-    manifest = load_bench_manifest(manifest_path, None, skip_hash_verification=True)
+    manifest = load_manifest(
+        str(manifest_path),
+        skip_hash_verification=True,
+        hash_skip_reason="bench driver reads media ids only",
+    )
     assert_floor_fits_corpus(pair.accepted_set_floor, len(manifest.entries))
     if pair.manifest_sha256:
         digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
         if digest != pair.manifest_sha256:
             raise BenchError("manifest_sha_mismatch", "manifest bytes do not match manifest_sha256")
     if pair.baseline_manifest_path:
-        baseline = load_bench_manifest(pair.baseline_manifest_path, None, skip_hash_verification=True)
+        baseline = load_manifest(
+            str(pair.baseline_manifest_path),
+            skip_hash_verification=True,
+            hash_skip_reason="bench driver reads media ids only",
+        )
         assert_baseline_superset(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},

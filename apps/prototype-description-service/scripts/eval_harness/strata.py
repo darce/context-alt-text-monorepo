@@ -717,6 +717,14 @@ def _unknown_key_violations(mapping: object, allowed: frozenset[str], *, label: 
     return [f"unknown {label} key: {key}" for key in sorted(set(mapping) - allowed)]
 
 
+_SHA256_HEX_ALPHABET = frozenset("0123456789abcdef")
+
+
+def _is_sha256_hex(value: object) -> bool:
+    """True iff value is a 64-char lowercase hex digest (EVAL-10)."""
+    return isinstance(value, str) and len(value) == 64 and _SHA256_HEX_ALPHABET.issuperset(value)
+
+
 def normalize_pre_split_exposure(notes: object) -> list[str]:
     """Strip + drop blanks. Raise if the result is empty (EVAL-10).
 
@@ -830,6 +838,9 @@ def verify_eval_split(
     except ValueError as exc:
         violations.append(str(exc))
         recorded_notes = None
+    else:
+        if exposure != recorded_notes:
+            violations.append(f"pre_split_exposure not canonical: recorded={exposure!r}")
     if expected_pre_split_exposure is None:
         violations.append("expected_pre_split_exposure is required (EVAL-10 fail-closed)")
         expected_notes = None
@@ -871,15 +882,19 @@ def verify_eval_split(
             f"source_manifest.path mismatch: recorded={source.get('path')!r} expected={expected_source_manifest_path!r}"
         )
     recorded_source_sha = source.get("sha256")
-    if not isinstance(recorded_source_sha, str) or len(recorded_source_sha) != 64:
-        violations.append(f"source_manifest.sha256 missing or not 64 hex chars: {recorded_source_sha!r}")
+    if not _is_sha256_hex(recorded_source_sha):
+        violations.append(
+            f"source_manifest.sha256 missing or not 64 hex chars "
+            f"(lowercase 0-9a-f only; uppercase rejected): {recorded_source_sha!r}"
+        )
     if source_manifest_sha256 is None:
         violations.append("source_manifest_sha256 is required (EVAL-10 fail-closed)")
-    elif (
-        isinstance(recorded_source_sha, str)
-        and len(recorded_source_sha) == 64
-        and recorded_source_sha != source_manifest_sha256
-    ):
+    elif not _is_sha256_hex(source_manifest_sha256):
+        violations.append(
+            f"source_manifest_sha256 missing or not 64 hex chars "
+            f"(lowercase 0-9a-f only; uppercase rejected): {source_manifest_sha256!r}"
+        )
+    elif _is_sha256_hex(recorded_source_sha) and recorded_source_sha != source_manifest_sha256:
         violations.append(
             f"source_manifest.sha256 mismatch: recorded={recorded_source_sha} recomputed={source_manifest_sha256}"
         )

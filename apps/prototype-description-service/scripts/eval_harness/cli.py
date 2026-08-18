@@ -2662,7 +2662,14 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
 
     collected = list(notes or [])
     if exposure_file:
-        collected.extend(Path(exposure_file).read_text().splitlines())
+        try:
+            collected.extend(Path(exposure_file).read_text().splitlines())
+        except OSError:
+            print(
+                f"draw-eval-split: exposure file not found/unreadable: {exposure_file}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     try:
         return normalize_pre_split_exposure(collected)
     except ValueError:

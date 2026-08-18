@@ -72,7 +72,7 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
     public function testNormalizeTopUnlabeledResponseAcceptsCanonicalEnvelope(): void
     {
         $response = new WP_REST_Response([
-            'clusters' => [['id' => 'c1']],
+            'clusters' => [['id' => 'c1', 'representatives' => [['id' => 'r1', 'media_id' => 1, 'is_pinned' => false]]]],
             'limit' => 10,
             'total' => 1,
             'truncated' => false,
@@ -82,8 +82,45 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
 
         $this->assertInstanceOf(WP_REST_Response::class, $result);
         $data = $result->get_data();
-        $this->assertSame([['id' => 'c1']], $data['clusters']);
+        $this->assertSame('c1', $data['clusters'][0]['id']);
         $this->assertSame(10, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    /**
+     * R2-02: proxy must drop empty-representative rows (schema minItems=1).
+     */
+    public function testNormalizeTopUnlabeledResponseDropsEmptyRepresentativeRows(): void
+    {
+        $response = new WP_REST_Response([
+            'clusters' => [
+                [
+                    'id' => 'cluster-empty-reps',
+                    'label' => null,
+                    'identity_count' => 4,
+                    'representatives' => [],
+                ],
+                [
+                    'id' => 'cluster-kept',
+                    'label' => null,
+                    'identity_count' => 2,
+                    'representatives' => [
+                        ['id' => 'r1', 'media_id' => 1, 'is_pinned' => false],
+                    ],
+                ],
+            ],
+            'limit' => 10,
+            'total' => 2,
+            'truncated' => false,
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $data = $result->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame('cluster-kept', $data['clusters'][0]['id']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
     }

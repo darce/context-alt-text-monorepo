@@ -387,16 +387,9 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $this->assertSame(
             [
-                'clusters' => [
-                    [
-                        'id' => 'cluster-proxy-top',
-                        'label' => null,
-                        'identity_count' => 4,
-                        'representatives' => [],
-                    ],
-                ],
+                'clusters' => [],
                 'limit' => 10,
-                'total' => 1,
+                'total' => 0,
                 'truncated' => false,
                 'data_source' => 'backend_proxy',
             ],

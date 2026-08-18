@@ -136,11 +136,30 @@ class ClusterResponseEnvelopeService {
 				);
 			}
 
+			$kept    = array();
+			$dropped = 0;
+			foreach ( $data['clusters'] as $cluster ) {
+				if ( ! is_array( $cluster ) ) {
+					continue;
+				}
+				$representatives = $cluster['representatives'] ?? null;
+				if ( ! is_array( $representatives ) || array() === $representatives ) {
+					++$dropped;
+					continue;
+				}
+				$kept[] = $cluster;
+			}
+
+			$total = max( 0, (int) $data['total'] );
+			if ( $dropped > 0 ) {
+				$total = max( 0, $total - $dropped );
+			}
+
 			return new WP_REST_Response(
 				array(
-					'clusters' => $data['clusters'],
+					'clusters' => $kept,
 					'limit' => max( 1, (int) $data['limit'] ),
-					'total' => max( 0, (int) $data['total'] ),
+					'total' => $total,
 					'truncated' => $data['truncated'],
 				),
 				$response->get_status()

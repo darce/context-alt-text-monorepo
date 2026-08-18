@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useMemo, useReducer } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+import { APP_LINK_PARAMS, APP_LINK_VALUES } from '../../navigation/appLinks';
 
 type ClusterPanelMode = 'none' | 'label' | 'review';
 
@@ -32,13 +35,70 @@ export interface ClusterPanelContextValue {
 
 const ClusterPanelContext = createContext<ClusterPanelContextValue | null>(null);
 
-export const ClusterPanelProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [clusterPanel, dispatchClusterPanel] = useReducer(clusterPanelReducer, {
-    mode: 'none',
-    clusterId: null,
-  });
+/** UXW2-4: `panel=review&cluster=<id>` is the review panel's deep-link state (NAV-11). */
+const readReviewFromParams = (searchParams: URLSearchParams): ClusterPanelState => {
+  const clusterId = searchParams.get(APP_LINK_PARAMS.cluster);
+  if (searchParams.get(APP_LINK_PARAMS.panel) === APP_LINK_VALUES.panelReview && clusterId) {
+    return { mode: 'review', clusterId };
+  }
+  return { mode: 'none', clusterId: null };
+};
 
-  const value = useMemo<ClusterPanelContextValue>(() => ({ clusterPanel, dispatchClusterPanel }), [clusterPanel]);
+export const ClusterPanelProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [clusterPanel, dispatch] = useReducer(clusterPanelReducer, searchParams, readReviewFromParams);
+  const stateRef = React.useRef(clusterPanel);
+  stateRef.current = clusterPanel;
+
+  // URL → state: back/forward navigation and external writers. Reload is covered
+  // by the reducer initializer; our own writes echo back here as no-ops because
+  // the reducer has already applied the same transition.
+  React.useEffect(() => {
+    const fromUrl = readReviewFromParams(searchParams);
+    const current = stateRef.current;
+    if (fromUrl.mode === 'review' && fromUrl.clusterId) {
+      if (current.mode !== 'review' || current.clusterId !== fromUrl.clusterId) {
+        dispatch({ type: 'open_review', clusterId: fromUrl.clusterId });
+      }
+    } else if (current.mode === 'review') {
+      dispatch({ type: 'close' });
+    }
+  }, [searchParams]);
+
+  // State → URL: one setSearchParams write per transition, touching only the
+  // panel/cluster keys (UXW2-4; rq= and friends keep their own owners).
+  const dispatchClusterPanel = React.useCallback<React.Dispatch<ClusterPanelAction>>(
+    (action) => {
+      const next = clusterPanelReducer(stateRef.current, action);
+      dispatch(action);
+      const currentPanel = searchParams.get(APP_LINK_PARAMS.panel);
+      const currentCluster = searchParams.get(APP_LINK_PARAMS.cluster);
+      if (next.mode === 'review' && next.clusterId) {
+        if (currentPanel !== APP_LINK_VALUES.panelReview || currentCluster !== next.clusterId) {
+          const clusterId = next.clusterId;
+          setSearchParams((prev) => {
+            const params = new URLSearchParams(prev);
+            params.set(APP_LINK_PARAMS.panel, APP_LINK_VALUES.panelReview);
+            params.set(APP_LINK_PARAMS.cluster, clusterId);
+            return params;
+          });
+        }
+      } else if (currentPanel === APP_LINK_VALUES.panelReview) {
+        setSearchParams((prev) => {
+          const params = new URLSearchParams(prev);
+          params.delete(APP_LINK_PARAMS.panel);
+          params.delete(APP_LINK_PARAMS.cluster);
+          return params;
+        });
+      }
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const value = useMemo<ClusterPanelContextValue>(
+    () => ({ clusterPanel, dispatchClusterPanel }),
+    [clusterPanel, dispatchClusterPanel],
+  );
 
   return <ClusterPanelContext.Provider value={value}>{children}</ClusterPanelContext.Provider>;
 };

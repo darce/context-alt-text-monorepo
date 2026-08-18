@@ -29,6 +29,7 @@ use AltContext\Cli\DescriptionCommand;
 use AltContext\Cli\DescriptionUsageCommand;
 use AltContext\Cli\MirrorIntegrityCommand;
 use AltContext\Cli\ResetProjectionCommand;
+use AltContext\Cli\BindUnboundLabelsCommand;
 use AltContext\Cli\XmpBackfillCommand;
 use AltContext\Cli\DescriptionRefreshCommand;
 use AltContext\Media\XmpPersistenceFactory;
@@ -156,6 +157,7 @@ if (defined('WP_CLI') && WP_CLI) {
     require_once ACX_PLUGIN_DIR . 'src/cli/class-description-refresh-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-xmp-backfill-command.php';
     require_once ACX_PLUGIN_DIR . 'src/cli/class-reset-projection-command.php';
+    require_once ACX_PLUGIN_DIR . 'src/cli/class-bind-unbound-labels-command.php';
 }
 
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
@@ -297,6 +299,7 @@ function acx_register_cli_commands(): void
     WP_CLI::add_command('acx description-usage', new DescriptionUsageCommand());
     WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
     WP_CLI::add_command('acx reset-projection', new ResetProjectionCommand());
+    WP_CLI::add_command('acx bind-unbound-labels', new BindUnboundLabelsCommand());
     WP_CLI::add_command('alt-context describe', new DescriptionCommand());
 }
 

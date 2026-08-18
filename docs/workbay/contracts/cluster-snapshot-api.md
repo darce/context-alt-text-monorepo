@@ -97,6 +97,7 @@ Timeout expectations:
 - `suggested_label_source` values: `"identity"`, `"roster"`, `"similar_cluster"`, `"none"`. Null when no inference was attempted.
 - `suggested_label_confidence` is a float in `[0.0, 1.0]`. Null when no inference was attempted.
 - Plugin stale-row cleanup deletes only non-curated rows absent from incoming snapshot.
+- **Label authority (UXW2-4):** a human cluster label (not NULL, not `''`, not `cluster-%`) MUST have a bound `person_id`. Snapshot merge backfills `acx_persons` + bind for label-only rows in the current batch. `cluster_label` on media-identities is the person name or the auto label.
 - Representative metadata semantics:
   - `representative_id` identifies the currently selected backend representative for the cluster.
   - `is_pinned=true` means that representative was explicitly user-selected upstream.

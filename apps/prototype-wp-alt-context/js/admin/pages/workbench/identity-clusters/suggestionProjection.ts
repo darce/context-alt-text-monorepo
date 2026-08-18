@@ -4,8 +4,11 @@ import { queryKeys } from '../../../api/queryKeys';
 import type {
   ClusterSuggestion,
   IdentityBatchSuggestionsResponse,
+  PendingMergeSuggestionsResponse,
+  PendingNameSuggestionsResponse,
   PendingSuggestion,
 } from '../../../api/recognition';
+import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
 export const PROJECTION_TOP_K = 5;
@@ -341,6 +344,65 @@ export const removePendingSuggestionFromCache = (queryClient: QueryClient, sugge
       }
       // COR-3 (rg-015): no envelope total to decrement; loaded count follows items.
       return { ...current, items: filtered };
+    },
+  );
+};
+
+/**
+ * UXW2-2 (B6): optimistically drop every loaded review row that references a
+ * cluster once that cluster is labelled / person-committed / merged away.
+ * Backend suggestion curation lags the local write (outbox push), so without
+ * this the queue header count holds (or rises) until the next natural refetch.
+ * Covers all four review caches: assignment reviewPage rows by clusterId,
+ * namePending rows by cluster_id, mergePending rows on either side, and
+ * topUnlabeled rows (any tenant key). No envelope totals exist (COR-3), so
+ * only `items`/`suggestions`/`clusters` arrays are rewritten — never a total.
+ */
+export const dropClusterFromReviewCaches = (queryClient: QueryClient, clusterId: string): void => {
+  queryClient.setQueryData<{ items: ProjectedSuggestion[]; dataSource?: unknown } | undefined>(
+    queryKeys.suggestions.projection.reviewPage(0),
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.items.filter((item) => item.clusterId !== clusterId);
+      return filtered.length === current.items.length ? current : { ...current, items: filtered };
+    },
+  );
+
+  queryClient.setQueryData<PendingNameSuggestionsResponse | undefined>(
+    queryKeys.suggestions.namePending(),
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.suggestions.filter((item) => item.cluster_id !== clusterId);
+      return filtered.length === current.suggestions.length ? current : { ...current, suggestions: filtered };
+    },
+  );
+
+  queryClient.setQueryData<PendingMergeSuggestionsResponse | undefined>(
+    queryKeys.suggestions.mergePending(),
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.suggestions.filter(
+        (item) => item.cluster_a_id !== clusterId && item.cluster_b_id !== clusterId,
+      );
+      return filtered.length === current.suggestions.length ? current : { ...current, suggestions: filtered };
+    },
+  );
+
+  // topUnlabeled keys are tenant-scoped; prefix-match covers every tenant.
+  queryClient.setQueriesData<TopUnlabeledClustersResponse | undefined>(
+    { queryKey: [...queryKeys.clusters.all, 'top-unlabeled'] },
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      const filtered = current.clusters.filter((cluster) => cluster.id !== clusterId);
+      return filtered.length === current.clusters.length ? current : { ...current, clusters: filtered };
     },
   );
 };

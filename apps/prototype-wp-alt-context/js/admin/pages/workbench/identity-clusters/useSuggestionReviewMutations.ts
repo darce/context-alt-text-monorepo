@@ -28,7 +28,7 @@ import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
 import { resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
-import { invalidateSuggestionProjection } from './suggestionProjection';
+import { dropClusterFromReviewCaches, invalidateSuggestionProjection } from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
@@ -173,6 +173,21 @@ export const useSuggestionReviewMutations = ({
     api.recordMergeSurvivor(retiredId, survivorId);
   }, []);
 
+  /**
+   * UXW2-2 (B6): after a merge accept, drop the retired source cluster from the
+   * review caches. Only the authoritative response id is used — never the
+   * client-rank fallback (rg-015: no guessed provenance).
+   */
+  const dropRetiredMergeCluster = React.useCallback(
+    (response: PendingMergeSuggestion) => {
+      const retiredId = response.source_cluster_id;
+      if (typeof retiredId === 'string' && retiredId !== '') {
+        dropClusterFromReviewCaches(queryClient, retiredId);
+      }
+    },
+    [queryClient],
+  );
+
   const [hold, setHold] = React.useState<CommitHoldState>({
     phase: 'idle',
     kind: null,
@@ -265,23 +280,6 @@ export const useSuggestionReviewMutations = ({
           return current;
         }
         const filtered = current.suggestions.filter((item) => item.id !== suggestionId);
-        if (filtered.length === current.suggestions.length) {
-          return current;
-        }
-        return { ...current, suggestions: filtered };
-      });
-    },
-    [queryClient],
-  );
-
-  /** BR-29: person-commit success drops namePending rows for the committed cluster. */
-  const removeNameSuggestionForCluster = React.useCallback(
-    (clusterId: string) => {
-      queryClient.setQueryData<PendingNameSuggestionsResponse | undefined>(namePendingKey, (current) => {
-        if (!current) {
-          return current;
-        }
-        const filtered = current.suggestions.filter((item) => item.cluster_id !== clusterId);
         if (filtered.length === current.suggestions.length) {
           return current;
         }
@@ -402,6 +400,7 @@ export const useSuggestionReviewMutations = ({
         const response = await fireCommitApi(kind, suggestionId);
         if (kind === 'acceptMerge' && response) {
           recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+          dropRetiredMergeCluster(response as PendingMergeSuggestion);
         }
         applySuccessSideEffects(kind, suggestionId);
         failedHoldRef.current = null;
@@ -429,7 +428,7 @@ export const useSuggestionReviewMutations = ({
         committingRef.current = false;
       }
     },
-    [applySuccessSideEffects, fireCommitApi, recordMergeSurvivorFromSuggestion, setHoldSafe],
+    [applySuccessSideEffects, dropRetiredMergeCluster, fireCommitApi, recordMergeSurvivorFromSuggestion, setHoldSafe],
   );
 
   const flushHeldInternal = React.useCallback(
@@ -771,8 +770,10 @@ export const useSuggestionReviewMutations = ({
         // row and clobbers the optimistic BR-29 removal below (row reappears). refetchType
         // 'none' lets the optimistic drop win; a later natural refetch reconciles post-curation.
         void queryClient.invalidateQueries({ queryKey: namePendingKey, refetchType: 'none' });
-        // BR-29: drop namePending rows for this cluster immediately (async curation lag).
-        removeNameSuggestionForCluster(request.clusterId);
+        // BR-29 + UXW2-2 (B6): drop this cluster's rows from ALL review caches
+        // immediately (assignment/name/merge/topUnlabeled) — async curation lag
+        // otherwise leaves the header count pointing at already-committed work.
+        dropClusterFromReviewCaches(queryClient, request.clusterId);
         setPersonCommitSafe({
           phase: 'succeeded',
           clusterId: request.clusterId,
@@ -790,7 +791,7 @@ export const useSuggestionReviewMutations = ({
         personCommittingRef.current = false;
       }
     },
-    [queryClient, removeNameSuggestionForCluster, setPersonCommitSafe],
+    [queryClient, setPersonCommitSafe],
   );
 
   const schedulePersonCommit = React.useCallback(
@@ -964,6 +965,7 @@ export const useSuggestionReviewMutations = ({
     mutationFn: acceptMergeSuggestion,
     onSuccess: (data, suggestionId) => {
       recordMergeSurvivorFromSuggestion(data);
+      dropRetiredMergeCluster(data);
       removeMergeSuggestionFromCache(suggestionId);
       void queryClient.invalidateQueries({ queryKey: mergePendingKey });
       invalidateMediaIdentities();

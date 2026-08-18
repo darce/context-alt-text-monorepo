@@ -57,14 +57,14 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
   it('disables rescan and shows empty copy when the cluster has no identities', () => {
     render(<ClusterDrawerPanel {...baseProps} identities={[]} />);
 
-    expect(screen.getByText('No identities found for this cluster.')).toBeInTheDocument();
+    expect(screen.getByText('No faces found in this face group.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rescan with sensitive settings' })).toBeDisabled();
   });
 
   it('shows loading copy and disables rescan while detail is loading / rescanning', () => {
     const { rerender } = render(<ClusterDrawerPanel {...baseProps} isDetailLoading identities={[]} />);
 
-    expect(screen.getByText('Loading identities…')).toBeInTheDocument();
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
 
     rerender(<ClusterDrawerPanel {...baseProps} isRescanning />);
     expect(screen.getByRole('button', { name: 'Rescanning…' })).toBeDisabled();

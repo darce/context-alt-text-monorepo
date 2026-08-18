@@ -102,7 +102,7 @@ test('keyboard member-fix loop: Move to… → pick target → role=status (≥2
   expect(box!.height, 'Move to… min height ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
 
   if (await moveButton.isDisabled()) {
-    await expect(moveButton).toHaveAttribute('title', /No other clusters available/i);
+    await expect(moveButton).toHaveAttribute('title', /No other face groups available/i);
     test.skip(true, 'Only one cluster present — empty-target disabled-with-reason path covered by unit tests');
     return;
   }
@@ -111,7 +111,7 @@ test('keyboard member-fix loop: Move to… → pick target → role=status (≥2
   await expect(moveButton).toBeFocused();
   await page.keyboard.press('Enter');
 
-  const picker = drawer.getByRole('listbox', { name: /Choose a target cluster/i });
+  const picker = drawer.getByRole('listbox', { name: /Choose a target face group/i });
   await expect(picker).toBeVisible();
   const firstOption = picker.getByRole('option').first();
   await expect(firstOption).toBeFocused();
@@ -119,5 +119,5 @@ test('keyboard member-fix loop: Move to… → pick target → role=status (≥2
 
   const status = drawer.getByTestId('cluster-drawer-reassign-status');
   await expect(status).toHaveAttribute('role', 'status');
-  await expect(status).toContainText(/Moving identity|Moved identity/i);
+  await expect(status).toContainText(/Moving face|Moved face/i);
 });

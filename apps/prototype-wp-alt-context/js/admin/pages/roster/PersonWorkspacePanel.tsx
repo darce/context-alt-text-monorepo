@@ -217,7 +217,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
       <header className="acx-roster__person-workspace-header">
         <h3>{entry.name}</h3>
         <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('%d clusters assigned', 'alt-context'), entry.cluster_count)}
+          {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
         </p>
         <p className="acx-roster__person-workspace-meta">
           {sprintf(__('Projection status: %s', 'alt-context'), entry.projection_status)}
@@ -232,14 +232,14 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
 
       <div className="acx-roster__person-workspace-summary">
         <section aria-labelledby="acx-person-workspace-clusters">
-          <h4 id="acx-person-workspace-clusters">{__('Grouped cluster detail', 'alt-context')}</h4>
+          <h4 id="acx-person-workspace-clusters">{__('Face group detail', 'alt-context')}</h4>
           <p>
             {entry.cluster_count === 0
-              ? __('No curated clusters are grouped under this person yet.', 'alt-context')
+              ? __('No face groups are assigned to this person yet.', 'alt-context')
               : sprintf(
                   _n(
-                    '%d curated cluster is currently grouped under this person.',
-                    '%d curated clusters are currently grouped under this person.',
+                    '%d face group is currently assigned to this person.',
+                    '%d face groups are currently assigned to this person.',
                     entry.cluster_count,
                     'alt-context',
                   ),
@@ -262,8 +262,8 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
         </section>
       </div>
 
-      <section aria-label={__('Assigned cluster evidence', 'alt-context')} role="region">
-        <h4>{__('Assigned cluster evidence', 'alt-context')}</h4>
+      <section aria-label={__('Face evidence', 'alt-context')} role="region">
+        <h4>{__('Face evidence', 'alt-context')}</h4>
         <div className="acx-roster__person-workspace-scrubber">
           <PersonFacePreview face={selectedFace} onOpenLightbox={setLightbox} />
           <PersonFaceMetadataPanel face={selectedFace} />
@@ -297,16 +297,16 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
         {entry.clusters.length > 0 ? (
           <div>
             {entry.clusters.map((cluster, index) => {
-              const clusterLabel = sprintf(__('Cluster %d', 'alt-context'), index + 1);
+              const clusterLabel = sprintf(__('Face group %d', 'alt-context'), index + 1);
               const representativeAlt = sprintf(
-                __('Representative face for Cluster %d', 'alt-context'),
+                __('Representative face for face group %d', 'alt-context'),
                 index + 1,
               );
               const clusterFaces = faces.filter((face) => face.clusterIndex === index);
               return (
                 <section key={cluster.cluster_id} role="region" aria-label={clusterLabel}>
                   <h5>{clusterLabel}</h5>
-                  <p>{sprintf(__('%d projected instances', 'alt-context'), cluster.instances.length)}</p>
+                  <p>{sprintf(__('%d faces', 'alt-context'), cluster.instances.length)}</p>
                   {cluster.representative_identity?.media_url ? (
                     renderEvidenceMedia({
                       mediaUrl: cluster.representative_identity.media_url,
@@ -345,7 +345,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
             })}
           </div>
         ) : (
-          <p>{__('Assigned cluster evidence will appear after the next projection refresh.', 'alt-context')}</p>
+          <p>{__('Face evidence will appear after the next refresh.', 'alt-context')}</p>
         )}
       </section>
 

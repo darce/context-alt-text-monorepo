@@ -437,7 +437,7 @@ describe('RosterPage route container (E21-9 single surface)', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Assigned cluster')).toBeInTheDocument();
+    expect(await screen.findByText('Assigned face group')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Open person review/i })).toHaveAttribute(
       'href',
       '#/roster?person=person-uuid-detail',

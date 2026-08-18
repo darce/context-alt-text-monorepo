@@ -12,6 +12,19 @@
 - `job-manage-person` — Open person workspace / manage entry
 - `job-cluster-review` — Review recognition cluster in drawer
 
+## Vocabulary (say / don't say)
+
+Controlled vocabulary for all Roster surfaces (NAV-13), enforced by `js/admin/__tests__/banned-vocabulary.test.tsx`:
+
+| Say | Don't say |
+| --- | --- |
+| face / faces | identity / identities, instance / instances, projected instances |
+| face group | cluster (unnamed recognition grouping) |
+| person | identity, roster entry (in operator copy) |
+| review queue (Workbench) | needs-assignment rail |
+
+Backend write units stay `cluster`/`identity` in code and API contracts; only operator-facing copy uses the plain-language nouns.
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -26,11 +39,13 @@
 ```
 +------------------------------------------------------------+
 | Roster (People)  [screen]  #/roster                        |
-| People-first roster: entries table, needs-assignment queu… |
+| People-first roster: entries table + Workbench review CTA  |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Roster entries table (content) states=[default,loadin… |
-|   - Needs assignment / unassigned faces (queue) states=[d… |
+|   - Unnamed faces CTA -> Workbench review queue (content)  |
+|     (needs-assignment rail RETIRED UXW2-4; queue lives in  |
+|     the Workbench, Roster links out with server count)     |
 |   - Projection status gate notices (status) states=[defau… |
 |   - Person workspace host (other) states=[default,empty]   |
 |   - Cluster drawer host (other) states=[default,empty]     |
@@ -153,7 +168,7 @@ flowchart TD
 
 ## Open questions
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
-- Should needs-assignment be its own screen_id or remain a zone on roster-shell?
+- ~~Should needs-assignment be its own screen_id or remain a zone on roster-shell?~~ Resolved (UXW2-4): rail retired; needs-assignment lives only in the Workbench review queue (`#/workbench?tab=scan&rq=assignment.all.0`), Roster keeps a CTA card.
 - Cluster drawer max_candidates=8 — confirm product top-k policy
 
 ## Not doing

@@ -1,6 +1,10 @@
 /**
  * E21-5 Slice 3 — person-commit card chrome copy (sr-007 + HAI-05).
  * Human-facing strings; banned-vocabulary tests assert these stay jargon-free.
+ *
+ * UXW2-3: naming a face always creates/binds a roster person, so the copy says
+ * "Save name" — the roster is a consequence, not a decision. The misleading
+ * "Just label — don't add to roster" tertiary path is retired (INT-06).
  */
 
 import { toRoster } from '../../../navigation/appLinks';
@@ -9,29 +13,20 @@ import { toRoster } from '../../../navigation/appLinks';
 export const MODEL_OUTPUT_DISCLOSURE =
   'Suggested by face matching based on similarity — confirm before treating it as fact.';
 
-/** Tertiary label-only path (routes open_label → ClusterLabelingPanel). */
-export const JUST_LABEL_COPY = "Just label — don't add to roster";
-
 /** Success confirm affordance — generic roster root (person deep-link via toRosterPerson). */
 export const VIEW_IN_ROSTER_COPY = 'View in roster →';
 
 export const VIEW_IN_ROSTER_HREF = toRoster();
 
-export const PERSON_COMMIT_CONFIRM_COPY = 'Add to roster';
+export const PERSON_COMMIT_CONFIRM_COPY = 'Save name';
 
-export const PERSON_COMMIT_COMMITTING_COPY = 'Adding to roster…';
+export const PERSON_COMMIT_COMMITTING_COPY = 'Saving name…';
 
 export const PERSON_COMMIT_FAILURE_COPY =
-  'Could not add to roster. Retry to try again.';
+  'Could not save the name. Retry to try again.';
 
-export const PERSON_COMMIT_SUCCESS_COPY = 'Added to roster.';
+export const PERSON_COMMIT_SUCCESS_COPY = 'Name saved.';
 
-export const PERSON_COMMIT_COMBOBOX_ARIA = 'Commit to roster entry';
+export const PERSON_COMMIT_COMBOBOX_ARIA = 'Name this person';
 
-export const PERSON_COMMIT_PLACEHOLDER = 'Choose or create a person…';
-
-/**
- * BR-35: always-available create action (call-site; shared combobox only offers
- * Create on zero substring matches). `%s` is the typed name.
- */
-export const PERSON_COMMIT_CREATE_NEW_COPY = 'Create new person "%s"';
+export const PERSON_COMMIT_PLACEHOLDER = 'Type a name…';

@@ -349,14 +349,17 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 
-	public function validate_roster_candidates_top_k( $value, $request, $param ): bool {
+	public function validate_roster_candidates_top_k( $value, $request, $param ): bool|WP_Error {
 		if ( ! is_numeric( $value ) ) {
-			return false;
+			return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
 		}
 		$int = (int) $value;
-		return $int >= self::ROSTER_CANDIDATES_TOP_K_MIN
+		if ( $int >= self::ROSTER_CANDIDATES_TOP_K_MIN
 			&& $int <= self::ROSTER_CANDIDATES_TOP_K_MAX
-			&& (float) $value === (float) $int;
+			&& (float) $value === (float) $int ) {
+			return true;
+		}
+		return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
 	}
 
 	public function get_roster_candidates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -370,7 +373,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( null === $raw_top_k || '' === $raw_top_k ) {
 			$raw_top_k = 10;
 		}
-		if ( ! $this->validate_roster_candidates_top_k( $raw_top_k, $request, 'top_k' ) ) {
+		$valid_top_k = $this->validate_roster_candidates_top_k( $raw_top_k, $request, 'top_k' );
+		if ( $valid_top_k instanceof WP_Error ) {
+			return $valid_top_k;
+		}
+		if ( ! $valid_top_k ) {
 			return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
 		}
 		$top_k = (int) $raw_top_k;

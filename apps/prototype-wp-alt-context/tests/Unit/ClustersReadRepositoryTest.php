@@ -138,4 +138,36 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString('c.is_user_confirmed = 0', $wpdb->queries[0]);
     }
+
+    public function testLookupPersonIdsForClustersIsTenantScopedAndJoinsPersons(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'aaaaaaaa-bbbb-cccc-dddd-000000000111',
+                'person_id' => 42,
+                'name' => 'Ada Lovelace',
+            ],
+        ];
+
+        $rows = $this->repository->lookup_person_ids_for_clusters(
+            self::currentTenantId(),
+            ['aaaaaaaa-bbbb-cccc-dddd-000000000111', 'bbbbbbbb-cccc-dddd-eeee-000000000222']
+        );
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('aaaaaaaa-bbbb-cccc-dddd-000000000111', $rows[0]['cluster_uuid']);
+        $this->assertSame(42, $rows[0]['person_id']);
+        $this->assertSame('Ada Lovelace', $rows[0]['name']);
+        $this->assertCount(1, $wpdb->queries);
+        $sql = $wpdb->queries[0];
+        $this->assertStringContainsString('FROM `wp_acx_clusters`', $sql);
+        $this->assertStringContainsString('LEFT JOIN `wp_acx_persons`', $sql);
+        $this->assertStringContainsString('cluster_uuid', $sql);
+        $this->assertStringContainsString('person_id', $sql);
+        $this->assertStringContainsString('tenant_id', $sql);
+        $this->assertStringContainsString("'" . self::currentTenantId() . "'", $sql);
+        $this->assertStringContainsString("'aaaaaaaa-bbbb-cccc-dddd-000000000111'", $sql);
+        $this->assertStringContainsString("'bbbbbbbb-cccc-dddd-eeee-000000000222'", $sql);
+    }
 }

@@ -7,6 +7,13 @@ namespace AltContext\Sovereign\Repositories;
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 
+use function array_fill;
+use function array_filter;
+use function array_map;
+use function array_unique;
+use function array_values;
+use function count;
+use function implode;
 use function is_array;
 use function is_numeric;
 use function is_object;
@@ -374,5 +381,85 @@ class ClustersReadRepository {
 		}
 
 		return $clusters;
+	}
+
+	/**
+	 * Tenant-scoped cluster_uuid → person_id + acx_persons.name for roster-candidates mapping.
+	 *
+	 * @param list<string> $cluster_uuids
+	 * @return list<array{cluster_uuid:string,person_id:?int,name:?string}>
+	 */
+	public function lookup_person_ids_for_clusters( string $tenant_id, array $cluster_uuids ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_uuids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static function ( $uuid ): string {
+							return trim( (string) $uuid );
+						},
+						$cluster_uuids
+					),
+					static function ( string $uuid ): bool {
+						return '' !== $uuid;
+					}
+				)
+			)
+		);
+		if ( array() === $normalized_uuids ) {
+			return array();
+		}
+
+		$persons_table = $this->resolve_persons_table_name();
+		$placeholders  = implode( ',', array_fill( 0, count( $normalized_uuids ), '%s' ) );
+		$sql           = $this->prepare_projection_read_query(
+			"SELECT c.cluster_uuid, c.person_id, p.name
+			 FROM %i c
+			 LEFT JOIN %i p ON c.person_id = p.id
+			 WHERE c.tenant_id = %s AND c.cluster_uuid IN ({$placeholders})",
+			array_merge(
+				array( $this->table_name, $persons_table, $normalized_tenant_id ),
+				$normalized_uuids
+			)
+		);
+
+		$this->clear_query_error();
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.lookup_person_ids_for_clusters', $rows, true );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$mapped = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $uuid ) {
+				continue;
+			}
+			$person_id = $row['person_id'] ?? null;
+			$name      = $row['name'] ?? null;
+			$mapped[]  = array(
+				'cluster_uuid' => $uuid,
+				'person_id'    => ( null !== $person_id && '' !== (string) $person_id ) ? (int) $person_id : null,
+				'name'         => is_string( $name ) && '' !== $name ? $name : null,
+			);
+		}
+
+		return $mapped;
 	}
 }

@@ -6,19 +6,25 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/../sovereign/class-projection-query-exception.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-read-repository.php';
 
+use AltContext\Sovereign\ProjectionQueryException;
+use AltContext\Sovereign\Repositories\ClustersReadRepository;
 use stdClass;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
-use function array_fill;
 use function array_keys;
 use function array_values;
 use function count;
-use function implode;
 use function is_array;
+use function is_int;
+use function is_numeric;
+use function is_object;
+use function is_string;
 use function range;
 use function sanitize_text_field;
 use function sprintf;
@@ -28,6 +34,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
 	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
+	private const ROSTER_CANDIDATES_TOP_K_MIN = 1;
+	private const ROSTER_CANDIDATES_TOP_K_MAX = 50;
+
+	private ?ClustersReadRepository $clusters_read_repository;
+
+	public function __construct( ?ClustersReadRepository $clusters_read_repository = null ) {
+		$this->clusters_read_repository = $clusters_read_repository;
+	}
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -202,9 +216,12 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 				'args'                => array(
 					'top_k' => array(
-						'type'        => 'integer',
-						'default'     => 10,
-						'description' => 'Maximum ranked candidates to return (service max 50).',
+						'type'              => 'integer',
+						'default'           => 10,
+						'minimum'           => self::ROSTER_CANDIDATES_TOP_K_MIN,
+						'maximum'           => self::ROSTER_CANDIDATES_TOP_K_MAX,
+						'validate_callback' => array( $this, 'validate_roster_candidates_top_k' ),
+						'description'       => 'Maximum ranked candidates to return (1-50). Forwarded verbatim; not absint-clamped.',
 					),
 				),
 			)
@@ -330,6 +347,16 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 
+	public function validate_roster_candidates_top_k( $value, $request, $param ): bool {
+		if ( ! is_numeric( $value ) ) {
+			return false;
+		}
+		$int = (int) $value;
+		return $int >= self::ROSTER_CANDIDATES_TOP_K_MIN
+			&& $int <= self::ROSTER_CANDIDATES_TOP_K_MAX
+			&& (float) $value === (float) $int;
+	}
+
 	public function get_roster_candidates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 
@@ -337,43 +364,53 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
+		$raw_top_k = $request->get_param( 'top_k' );
+		if ( null === $raw_top_k || '' === $raw_top_k ) {
+			$raw_top_k = 10;
+		}
+		if ( ! $this->validate_roster_candidates_top_k( $raw_top_k, $request, 'top_k' ) ) {
+			return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
+		}
+		$top_k = (int) $raw_top_k;
+
 		$query = array(
 			'tenant_id' => $this->get_tenant_id(),
-			'top_k'     => absint( $request->get_param( 'top_k' ) ?? 10 ),
+			'top_k'     => $top_k,
 		);
 
 		$response = $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s/roster-candidates', $cluster_id ),
 			array(),
-			$query
+			$query,
+			self::REQUEST_CLASS_POST_SCAN_READ
 		);
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
 		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'candidates'  => array(),
-					'data_source' => self::DATA_SOURCE_ENDPOINT_ERROR,
-				),
-				200
+			return new WP_Error(
+				'recognition_endpoint_error',
+				'Recognition roster-candidates endpoint is unavailable.',
+				array( 'status' => 502 )
 			);
 		}
 		if ( $this->is_proxy_transport_unreachable( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'candidates'  => array(),
-					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
-				),
-				200
+			return new WP_Error(
+				'recognition_unavailable',
+				'Recognition service is unreachable.',
+				array( 'status' => 503 )
 			);
 		}
 
 		if ( $response instanceof WP_REST_Response ) {
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
-				$response->set_data( $this->attach_roster_entry_ids( $data ) );
+				try {
+					$response->set_data( $this->attach_roster_entry_ids( $data ) );
+				} catch ( ProjectionQueryException $exception ) {
+					return ProjectionQueryException::to_rest_error( 'get_roster_candidates' );
+				}
 			}
 		}
 
@@ -381,7 +418,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * Map python labelled cluster_id → local acx_persons.id. Never invents total/limit.
+	 * Map python labelled cluster_id → local acx_persons.id. Collapse to one row
+	 * per roster_entry_id (max similarity wins, keep its band). Name from acx_persons.
+	 * Unmapped rows keep roster_entry_id null (uncommittable). Never invents total/limit.
 	 *
 	 * @param array<string,mixed> $payload
 	 * @return array<string,mixed>
@@ -403,57 +442,57 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			}
 		}
 
-		$person_by_cluster = $this->lookup_person_ids_for_clusters( array_values( $cluster_ids ) );
-		foreach ( $candidates as $index => $candidate ) {
+		$lookup            = $this->clusters_read_repository()->lookup_person_ids_for_clusters(
+			$this->get_tenant_id(),
+			array_values( $cluster_ids )
+		);
+		$person_by_cluster = array();
+		$name_by_cluster   = array();
+		foreach ( $lookup as $row ) {
+			$uuid = sanitize_text_field( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $uuid ) {
+				continue;
+			}
+			$person_by_cluster[ $uuid ] = $row['person_id'] ?? null;
+			if ( isset( $row['name'] ) && is_string( $row['name'] ) && '' !== $row['name'] ) {
+				$name_by_cluster[ $uuid ] = $row['name'];
+			}
+		}
+
+		$collapsed   = array();
+		$seen_person = array();
+		foreach ( $candidates as $candidate ) {
 			if ( ! is_array( $candidate ) ) {
 				continue;
 			}
-			$uuid = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
-			$person_id = $person_by_cluster[ $uuid ] ?? null;
-			$candidates[ $index ]['roster_entry_id'] = null !== $person_id ? (int) $person_id : null;
+			$uuid                              = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
+			$person_id                         = $person_by_cluster[ $uuid ] ?? null;
+			$person_id                         = is_int( $person_id ) ? $person_id : null;
+			$candidate['roster_entry_id']      = $person_id;
+			if ( isset( $name_by_cluster[ $uuid ] ) ) {
+				$candidate['name'] = $name_by_cluster[ $uuid ];
+			}
+			if ( null !== $person_id ) {
+				if ( isset( $seen_person[ $person_id ] ) ) {
+					continue;
+				}
+				$seen_person[ $person_id ] = true;
+			}
+			$collapsed[] = $candidate;
 		}
-		$payload['candidates'] = $candidates;
+		$payload['candidates'] = $collapsed;
 		return $payload;
 	}
 
-	/**
-	 * @param list<string> $cluster_ids
-	 * @return array<string,int>
-	 */
-	private function lookup_person_ids_for_clusters( array $cluster_ids ): array {
-		if ( array() === $cluster_ids ) {
-			return array();
+	private function clusters_read_repository(): ClustersReadRepository {
+		if ( null === $this->clusters_read_repository ) {
+			global $wpdb;
+			$table = ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) )
+				? $wpdb->prefix . 'acx_clusters'
+				: 'wp_acx_clusters';
+			$this->clusters_read_repository = new ClustersReadRepository( $table );
 		}
-
-		global $wpdb;
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
-			return array();
-		}
-
-		$table        = $wpdb->prefix . 'acx_clusters';
-		$placeholders = implode( ',', array_fill( 0, count( $cluster_ids ), '%s' ) );
-		$sql          = $wpdb->prepare(
-			"SELECT cluster_uuid, person_id FROM %i WHERE cluster_uuid IN ({$placeholders})",
-			$table,
-			...$cluster_ids
-		);
-		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		if ( ! is_array( $rows ) ) {
-			return array();
-		}
-
-		$mapped = array();
-		foreach ( $rows as $row ) {
-			if ( ! is_array( $row ) ) {
-				continue;
-			}
-			$uuid = sanitize_text_field( (string) ( $row['cluster_uuid'] ?? '' ) );
-			if ( '' === $uuid || ! isset( $row['person_id'] ) || '' === (string) $row['person_id'] ) {
-				continue;
-			}
-			$mapped[ $uuid ] = (int) $row['person_id'];
-		}
-		return $mapped;
+		return $this->clusters_read_repository;
 	}
 
 	public function get_pending_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {

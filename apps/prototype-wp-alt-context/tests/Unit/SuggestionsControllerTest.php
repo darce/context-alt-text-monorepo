@@ -881,8 +881,23 @@ class SuggestionsControllerTest extends TestCase
 
         $this->assertCount(1, $definitions);
         $this->assertSame('GET', $definitions[0]['args']['methods'] ?? null);
-        $this->assertSame('integer', $definitions[0]['args']['args']['top_k']['type'] ?? null);
-        $this->assertSame(10, $definitions[0]['args']['args']['top_k']['default'] ?? null);
+        $this->assertSame(
+            [$this->controller, 'can_manage_recognition'],
+            $definitions[0]['args']['permission_callback'] ?? null
+        );
+        $topK = $definitions[0]['args']['args']['top_k'] ?? [];
+        $this->assertSame('integer', $topK['type'] ?? null);
+        $this->assertSame(10, $topK['default'] ?? null);
+        $this->assertSame(1, $topK['minimum'] ?? null);
+        $this->assertSame(50, $topK['maximum'] ?? null);
+        $this->assertArrayHasKey('validate_callback', $topK);
+        $validate = $topK['validate_callback'];
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $this->assertFalse($validate(-5, $request, 'top_k'));
+        $this->assertFalse($validate(0, $request, 'top_k'));
+        $this->assertFalse($validate(51, $request, 'top_k'));
+        $this->assertTrue($validate(1, $request, 'top_k'));
+        $this->assertTrue($validate(50, $request, 'top_k'));
     }
 
     public function testGetRosterCandidatesForwardsTopKAndMapsRosterEntryId(): void
@@ -900,13 +915,20 @@ class SuggestionsControllerTest extends TestCase
                     'suggestion_ceiling' => 0.55,
                     'similarity_threshold' => 0.55,
                 ],
+                'quality_flag' => 'ok',
+                'probe_face_count' => 2,
                 'candidates' => [
                     [
                         'cluster_id' => $clusterId,
                         'name' => 'Ada',
                         'similarity' => 0.81,
                         'band' => 'strong',
-                        'quality_flag' => 'ok',
+                    ],
+                    [
+                        'cluster_id' => 'bbbbbbbb-cccc-dddd-eeee-000000000222',
+                        'name' => 'Orphan cluster',
+                        'similarity' => 0.60,
+                        'band' => 'possible',
                     ],
                 ],
             ], JSON_THROW_ON_ERROR),
@@ -917,6 +939,7 @@ class SuggestionsControllerTest extends TestCase
             [
                 'cluster_uuid' => $clusterId,
                 'person_id' => 42,
+                'name' => 'Ada Lovelace',
             ],
         ];
 
@@ -935,6 +958,7 @@ class SuggestionsControllerTest extends TestCase
             '/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates',
             $calls[0]['url']
         );
+        $this->assertSame(10, $calls[0]['args']['timeout'] ?? null, 'R1-07: post_scan_read timeout, not ui_read 2s');
 
         $query = [];
         $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
@@ -945,8 +969,131 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame(42, $data['candidates'][0]['roster_entry_id'] ?? null);
         $this->assertSame($clusterId, $data['candidates'][0]['cluster_id'] ?? null);
+        $this->assertSame('Ada Lovelace', $data['candidates'][0]['name'] ?? null);
+        $this->assertArrayHasKey('roster_entry_id', $data['candidates'][1]);
+        $this->assertNull($data['candidates'][1]['roster_entry_id']);
+        $this->assertSame('Orphan cluster', $data['candidates'][1]['name'] ?? null);
         $this->assertArrayNotHasKey('total', $data);
         $this->assertArrayNotHasKey('limit', $data);
         $this->assertSame('opencv-sface+cv5@128d/l2/cosine', $data['model_id'] ?? null);
+        $this->assertSame('ok', $data['quality_flag'] ?? null);
+
+        $this->assertNotEmpty($wpdb->queries);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('wp_acx_clusters', $sql);
+        $this->assertStringContainsString('cluster_uuid', $sql);
+        $this->assertStringContainsString('person_id', $sql);
+        $this->assertStringContainsString('tenant_id', $sql);
+        $this->assertStringContainsString($clusterId, $sql);
+        $this->assertStringContainsString('bbbbbbbb-cccc-dddd-eeee-000000000222', $sql);
+        $this->assertStringContainsString(self::currentTenantId(), $sql);
+    }
+
+    public function testGetRosterCandidatesCollapsesDuplicateRosterEntryIds(): void
+    {
+        $winner = 'aaaaaaaa-bbbb-cccc-dddd-000000000111';
+        $loser = 'bbbbbbbb-cccc-dddd-eeee-000000000222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 2,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    [
+                        'cluster_id' => $winner,
+                        'name' => 'Ada-cluster-a',
+                        'similarity' => 0.91,
+                        'band' => 'strong',
+                    ],
+                    [
+                        'cluster_id' => $loser,
+                        'name' => 'Ada-cluster-b',
+                        'similarity' => 0.70,
+                        'band' => 'possible',
+                    ],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $winner, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+            ['cluster_uuid' => $loser, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 10);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['candidates']);
+        $this->assertSame(42, $data['candidates'][0]['roster_entry_id']);
+        $this->assertSame(0.91, $data['candidates'][0]['similarity']);
+        $this->assertSame('strong', $data['candidates'][0]['band']);
+        $this->assertSame('Ada Lovelace', $data['candidates'][0]['name']);
+        $this->assertSame($winner, $data['candidates'][0]['cluster_id']);
+    }
+
+    public function testGetRosterCandidatesRejectsInvalidTopKWithoutSignFlip(): void
+    {
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', -5);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_top_k', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertSame([], $this->getHttpCalls());
+
+        $request->set_param('top_k', 0);
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_top_k', $response->get_error_code());
+    }
+
+    public function testGetRosterCandidatesUnavailableIs503WithoutFabricatedEnvelope(): void
+    {
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(503, $response->get_error_data()['status'] ?? null);
+        $this->assertArrayNotHasKey('total', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
+    }
+
+    public function testGetRosterCandidatesEndpointErrorIs502WithoutFabricatedEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"detail":"boom"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertArrayNotHasKey('total', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
     }
 }

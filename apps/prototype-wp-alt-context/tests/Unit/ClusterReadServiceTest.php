@@ -242,16 +242,10 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame([], $host->proxy_calls, 'Sync-state wipe with surviving rows must serve local, never proxy.');
         $this->assertSame([], $syncJob->performCalls, 'Newly-qualifying read must not run an inline pull.');
         $this->assertSame([], $syncJob->bypassCalls);
-        $this->assertNotEmpty($GLOBALS['__ac_scheduled']);
-        $tenant_only = false;
-        foreach ($GLOBALS['__ac_scheduled'] as $key => $event) {
-            $this->assertIsString($key);
-            $this->assertStringStartsWith(self::BOOTSTRAP_HOOK . '::', $key);
-            if (($event['args'] ?? []) === ['tenant-1']) {
-                $tenant_only = true;
-            }
-        }
-        $this->assertTrue($tenant_only, 'Newly-qualifying path must still schedule the tenant bootstrap.');
+        $this->assertCount(2, $GLOBALS['__ac_scheduled']);
+        $args = array_column(array_values($GLOBALS['__ac_scheduled']), 'args');
+        $this->assertContains(['tenant-1'], $args);
+        $this->assertContains(['tenant-1', ['cluster-1']], $args);
     }
 
     public function testListClusterLabelsLocalProjectionUsesEnvelopeService(): void

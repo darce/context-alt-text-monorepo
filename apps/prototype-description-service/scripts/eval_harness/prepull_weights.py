@@ -5,14 +5,19 @@ VRAM-budget errors, and stack skips stay identical to the planner. This
 module never calls the network itself: ``execute=False`` (default) is a
 dry-run; ``execute=True`` shells out through an injected runner.
 
-A local size>0 check is not an integrity check. Revision pins and
-``verify_revisions`` remain the integrity surface.
+``already_present`` is a local size probe against pinned ``artifact_gb`` /
+``mmproj_gb`` (present iff ``size_bytes >= 0.90 * expected_gb * 1e9``).
+When the registry has no size for an artifact, presence requires size > 0
+and a size-unverified note is recorded — never silently. This is not an
+integrity check. ``verify_revisions`` checks REMOTE revision listings
+only; it never stats local files.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -44,6 +49,9 @@ from scripts.eval_harness.bakeoff_runner import (
 )
 
 DEFAULT_MARGIN_GB = 5.0
+PRESENT_SIZE_RATIO = 0.90
+BYTES_PER_GB = 1e9
+DOWNLOAD_TIMEOUT_S = 3600  # per huggingface-cli job; hung download → failed (rg-007)
 
 
 class DownloadStatus(StrEnum):
@@ -53,6 +61,15 @@ class DownloadStatus(StrEnum):
     SKIPPED_PRESENT = "skipped_present"
     DOWNLOADED = "downloaded"
     FAILED = "failed"
+
+
+class SkipReason(StrEnum):
+    """Why a sealed roster row is not a download job (sr-007, AGT-06)."""
+
+    EXCLUDED_BY_ONLY = "excluded by --only"
+
+
+SIZE_UNVERIFIED_NOTE = "size unverified: registry has no pinned size for this artifact"
 
 
 class DiskBudgetError(Exception):
@@ -75,6 +92,7 @@ class DownloadJob:
     local_dir: str
     size_gb: float
     argv: tuple[str, ...]
+    file_expected_gb: tuple[float | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -94,6 +112,7 @@ class DownloadResult:
     status: DownloadStatus
     returncode: int | None
     argv: tuple[str, ...]
+    note: str | None = None
 
 
 def plan_downloads(
@@ -112,15 +131,24 @@ def plan_downloads(
         models_dir=models_dir,
         only=only,
     )
-    return [_job_from_plan(plan, models_dir=models_dir) for plan in plans]
+    by_id = {entry.id: entry for entry in roster.entries}
+    return [_job_from_plan(plan, models_dir=models_dir, entry=by_id[plan.candidate_id]) for plan in plans]
 
 
 def list_skips(
     registry: BakeoffCandidateRegistry,
     jobs: Sequence[DownloadJob],
+    *,
+    only: Sequence[str] | None = None,
 ) -> list[tuple[str, str]]:
-    """Name every unplanned registry row (AGT-06). ``--only`` filters are omitted."""
+    """Name every unplanned registry row (AGT-06).
+
+    Every sealed id is a job or a named skip. Rows dropped by ``--only``
+    carry ``SkipReason.EXCLUDED_BY_ONLY``; never ``continue`` past an
+    unplanned competing llama_cpp row without naming it.
+    """
     planned = {job.candidate_id for job in jobs}
+    wanted = set(only) if only is not None else None
     budget_gb = float(registry.hardware_target.usable_vram_budget_gb)
     skips: list[tuple[str, str]] = []
     for entry in registry.entries:
@@ -129,22 +157,32 @@ def list_skips(
         try:
             reason = _skip_reason(entry, planned, budget_gb)
         except SkipNotesInconsistentError:
-            continue
+            if wanted is not None and entry.id not in wanted:
+                reason = SkipReason.EXCLUDED_BY_ONLY
+            else:
+                raise
         if reason is not None:
-            skips.append((entry.id, reason))
+            skips.append((entry.id, str(reason)))
     return skips
 
 
-def already_present(job: DownloadJob) -> bool:
-    """True when every expected file exists under ``local_dir`` with size > 0.
+def already_present(job: DownloadJob, *, notes: list[str] | None = None) -> bool:
+    """True when every expected file meets the pinned-size presence probe.
 
-    This is not an integrity check — only a local presence probe so
-    idempotent re-runs skip work. Pins live on the registry revision.
+    Present iff ``size_bytes >= 0.90 * expected_gb * 1e9``. When the
+    registry has no size for an artifact, present requires size > 0 and a
+    size-unverified note is recorded. Not an integrity check — pins live
+    on the registry revision; ``verify_revisions`` lists REMOTE files only.
     """
-    for name in job.files:
+    expecteds = job.file_expected_gb
+    for idx, name in enumerate(job.files):
         path = Path(job.local_dir) / name
-        if not path.is_file() or path.stat().st_size <= 0:
+        expected = expecteds[idx] if idx < len(expecteds) else None
+        present, note = _file_is_present(path, expected)
+        if not present:
             return False
+        if note is not None and notes is not None:
+            notes.append(f"{job.candidate_id}: {name} {note}")
     return True
 
 
@@ -156,9 +194,12 @@ def check_disk_budget(
     disk_usage: Callable[[str], Any] | None = None,
 ) -> DiskBudget:
     """Return budget; raise ``DiskBudgetError`` naming both numbers when not ok."""
+    margin = float(margin_gb)
+    if margin < 0 or not math.isfinite(margin):
+        raise ValueError(f"margin_gb must be a finite number >= 0, got {margin_gb!r}")
     usage_fn = disk_usage if disk_usage is not None else shutil.disk_usage
     missing = [job for job in jobs if not already_present(job)]
-    required_gb = sum(job.size_gb for job in missing) + float(margin_gb)
+    required_gb = sum(job.size_gb for job in missing) + margin
     free_gb = float(usage_fn(_existing_path(models_dir)).free) / float(1024**3)
     budget = DiskBudget(required_gb=required_gb, free_gb=free_gb, ok=required_gb <= free_gb)
     if not budget.ok:
@@ -180,13 +221,15 @@ def run_downloads(
     run = runner if runner is not None else subprocess.run
     results: list[DownloadResult] = []
     for job in jobs:
-        if already_present(job):
+        presence_notes: list[str] = []
+        if already_present(job, notes=presence_notes):
             results.append(
                 DownloadResult(
                     candidate_id=job.candidate_id,
                     status=DownloadStatus.SKIPPED_PRESENT,
                     returncode=None,
                     argv=job.argv,
+                    note="; ".join(presence_notes) if presence_notes else None,
                 )
             )
             continue
@@ -220,14 +263,14 @@ def main(argv: list[str] | None = None) -> int:
         help="opt-in: run huggingface-cli for jobs that are not already present",
     )
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--margin-gb", type=float, default=DEFAULT_MARGIN_GB)
+    parser.add_argument("--margin-gb", type=_parse_margin_gb, default=DEFAULT_MARGIN_GB)
     args = parser.parse_args(argv)
 
     try:
         registry = load_bakeoff_candidates()
         only = _parse_only(args.only)
         jobs = plan_downloads(registry, models_dir=args.models_dir, only=only)
-        skips = list_skips(registry, jobs)
+        skips = list_skips(registry, jobs, only=only)
     except (
         RegistryError,
         UnsupportedStackError,
@@ -265,7 +308,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _job_from_plan(plan: Any, *, models_dir: str) -> DownloadJob:
+def _parse_margin_gb(value: str) -> float:
+    """Reject negative and non-finite ``--margin-gb`` at parse time (rg-008)."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid --margin-gb {value!r}") from exc
+    if parsed < 0 or not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError(f"--margin-gb must be a finite number >= 0, got {value!r}")
+    return parsed
+
+
+def _job_from_plan(plan: Any, *, models_dir: str, entry: Any) -> DownloadJob:
     gguf = _argv_flag(plan.serve_argv, "--model").rsplit("/", 1)[-1]
     mmproj = _argv_flag(plan.serve_argv, "--mmproj").rsplit("/", 1)[-1]
     files = (gguf, mmproj)
@@ -283,6 +337,7 @@ def _job_from_plan(plan: Any, *, models_dir: str) -> DownloadJob:
         "--local-dir",
         local_dir,
     )
+    mmproj_gb = entry.recipe.mmproj_gb
     return DownloadJob(
         candidate_id=plan.candidate_id,
         repo=plan.repo,
@@ -291,6 +346,10 @@ def _job_from_plan(plan: Any, *, models_dir: str) -> DownloadJob:
         local_dir=local_dir,
         size_gb=plan.total_gb,
         argv=argv,
+        file_expected_gb=(
+            float(entry.artifact_gb),
+            float(mmproj_gb) if mmproj_gb is not None else None,
+        ),
     )
 
 
@@ -309,7 +368,7 @@ def _execute_one(
     log: Callable[[str], None],
 ) -> DownloadResult:
     try:
-        completed = runner(list(job.argv), check=False)
+        completed = runner(list(job.argv), check=False, timeout=DOWNLOAD_TIMEOUT_S)
         returncode = getattr(completed, "returncode", None)
     except Exception as exc:
         log(f"FAIL {job.candidate_id}: {exc}")
@@ -344,11 +403,26 @@ def _execute_one(
     )
 
 
+def _file_is_present(path: Path, expected_gb: float | None) -> tuple[bool, str | None]:
+    if not path.is_file():
+        return False, None
+    size = path.stat().st_size
+    if expected_gb is None:
+        if size <= 0:
+            return False, None
+        return True, SIZE_UNVERIFIED_NOTE
+    threshold = PRESENT_SIZE_RATIO * float(expected_gb) * BYTES_PER_GB
+    return size >= threshold, None
+
+
 def _missing_files(job: DownloadJob) -> list[str]:
     missing: list[str] = []
-    for name in job.files:
+    expecteds = job.file_expected_gb
+    for idx, name in enumerate(job.files):
         path = Path(job.local_dir) / name
-        if not path.is_file() or path.stat().st_size <= 0:
+        expected = expecteds[idx] if idx < len(expecteds) else None
+        present, _note = _file_is_present(path, expected)
+        if not present:
             missing.append(name)
     return missing
 
@@ -380,6 +454,7 @@ def _payload_json(
         row = asdict(job)
         row["files"] = list(job.files)
         row["argv"] = list(job.argv)
+        row["file_expected_gb"] = list(job.file_expected_gb)
         job_rows.append(row)
     return {
         "jobs": job_rows,

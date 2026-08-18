@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
+from typing import Any
 
 import httpx
 import pytest
@@ -27,6 +29,7 @@ from scripts.eval_harness.bakeoff import (
     _empty_warmup,
     _extract_caption,
     _extract_usage,
+    _gpu_sampling_disabled,
     _run_warmup,
     _stamp_pipeline_provenance,
     _stamp_timing_and_gpu,
@@ -34,7 +37,12 @@ from scripts.eval_harness.bakeoff import (
     build_parser,
 )
 from scripts.eval_harness.bakeoff import main as bakeoff_main
-from scripts.eval_harness.bench_capture import CaptureStatus, collect_item_latencies
+from scripts.eval_harness.bench_capture import (
+    CaptureStatus,
+    PerGpuSemantics,
+    VramSampler,
+    collect_item_latencies,
+)
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
@@ -906,3 +914,64 @@ def test_items_without_latency_excludes_error_items() -> None:
     assert items_with_error == 1
     assert record["timing"]["items_without_latency"] == n_items - len(latencies) - items_with_error
     assert record["timing"]["items_without_latency"] == 1
+
+
+def _unavailable_vram_record() -> dict[str, Any]:
+    def missing(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+        raise FileNotFoundError("nvidia-smi")
+
+    sampler = VramSampler(interval_s=0.05, runner=missing)
+    sampler.start()
+    return sampler.stop()
+
+
+def _measured_900_100_probe_record() -> dict[str, Any]:
+    """Existing 900/100 probe fixture from bench_capture (VLM6-RV5-L-03)."""
+    remaining = ["900, 8000\n100, 8000\n", "100, 8000\n1000, 8000\n"]
+
+    def runner(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+        stdout = remaining.pop(0) if remaining else ""
+        return CompletedProcess(args=["nvidia-smi"], returncode=0, stdout=stdout, stderr="")
+
+    sampler = VramSampler(interval_s=0.05, runner=runner)
+    sampler._sample()
+    sampler._sample()
+    return sampler.stop()
+
+
+def test_gpu_sampling_disabled_key_parity_with_vram_sampler_branches() -> None:
+    """VLM6-RV5-U-01 / OBS-04 / rg-015: disabled gpu block matches VramSampler keys.
+
+    Mutation: dropping any one key from the disabled dict fails the set-equality
+    (or shared-key) assertions below.
+    """
+    disabled = _gpu_sampling_disabled()
+    unavailable = _unavailable_vram_record()
+    measured = _measured_900_100_probe_record()
+
+    assert set(disabled) == set(unavailable)
+    # Measured adds interval_s and drops reason; every shared key must be present.
+    shared = set(unavailable) & set(measured)
+    assert set(disabled) == shared | (set(unavailable) - set(measured))
+    assert shared <= set(disabled)
+    assert shared <= set(measured)
+
+    rec: dict[str, Any] = {"items": []}
+    _stamp_timing_and_gpu(
+        rec,
+        warmup=_empty_warmup(),
+        cold_load_s=None,
+        gpu=_gpu_sampling_disabled(),
+    )
+    assert rec["gpu"]["gpu_count"] is None
+    assert rec["gpu"]["per_gpu_used_mb_at_peak"] is None
+    assert rec["gpu"]["per_gpu_peak_used_mb"] is None
+    assert rec["gpu"]["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
+    assert rec["gpu"]["reason"] == "sampling disabled"
+    assert rec["gpu"]["status"] == CaptureStatus.UNAVAILABLE
+    assert rec["gpu"]["peak_used_mb"] is None
+    assert rec["gpu"]["total_mb"] is None
+
+    for key in list(disabled):
+        mutated = {k: v for k, v in disabled.items() if k != key}
+        assert set(mutated) != set(unavailable)

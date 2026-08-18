@@ -722,16 +722,24 @@ def test_plan_and_report_argv_use_python3_not_bare_python() -> None:
     assert "python3 -m scripts.eval_harness.build_bakeoff_report" in script
 
 
+_POLL_SECONDS_BREAK = '[ "${SECONDS}" -ge "${READY_TIMEOUT_S}" ]'
+_POLL_ATTEMPT_FOR = re.compile(r"\bfor\s+\S+\s+in\s+")
+
+
 def test_emit_shell_ready_poll_bounds_elapsed_wall_clock(tmp_path) -> None:
-    # VLM6-RV4-Q2-02 / L-04: rg-007 bound on elapsed wall clock, not attempts.
-    timeout_s = 3
-    poll_s = 2
+    # VLM6-RV5-Q3-01: rg-007 wall-clock cap, not a two-attempt for-loop (TEST-15).
+    # timeout=8/sleep=3 is ~13s for this test alone; 5/1 still overshoots a
+    # 2-attempt for-loop (elapsed>=timeout-1) and keeps the file under ~15s.
+    timeout_s = 5
+    stub_sleep_s = 1
     plans = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)
     script = emit_shell(plans, incumbent_runs={}, ready_timeout_s=timeout_s)
     assert f"READY_TIMEOUT_S={timeout_s}" in script
-    assert "seq 1 " not in script
-    assert "SECONDS" in script or "_ready_t0=$(date +%s)" in script
     poll = _ready_poll_block(script)
+    assert "while true" in poll
+    assert _POLL_SECONDS_BREAK in poll
+    assert _POLL_ATTEMPT_FOR.search(poll) is None, poll
+    assert "seq 1 " not in poll
     snippet = "\n".join(
         [
             "set -euo pipefail",
@@ -743,9 +751,14 @@ def test_emit_shell_ready_poll_bounds_elapsed_wall_clock(tmp_path) -> None:
     )
     stub_bin = tmp_path / "stub"
     stub_bin.mkdir()
+    hits = tmp_path / "curl_hits"
     curl = stub_bin / "curl"
-    curl.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
+    curl.write_text(
+        f'#!/bin/sh\nprintf x >> "{hits}"\nsleep {stub_sleep_s}\nexit 1\n',
+        encoding="utf-8",
+    )
     curl.chmod(0o755)
+    slack = stub_sleep_s + READY_SLEEP_S + 1
     started = time.monotonic()
     ran = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", snippet],
@@ -753,12 +766,15 @@ def test_emit_shell_ready_poll_bounds_elapsed_wall_clock(tmp_path) -> None:
         capture_output=True,
         text=True,
         env={"PATH": f"{stub_bin}:/usr/bin:/bin"},
-        timeout=20,
+        timeout=timeout_s + slack + 2,
     )
     elapsed = time.monotonic() - started
     assert ran.returncode == 0, ran.stderr + ran.stdout
     assert "READY=0" in ran.stdout
-    assert elapsed <= timeout_s + poll_s + READY_SLEEP_S + 1
+    assert elapsed <= timeout_s + slack
+    assert elapsed >= timeout_s - 1
+    curl_hits = hits.read_text(encoding="utf-8").count("x") if hits.exists() else 0
+    assert curl_hits >= 2
 
 
 def test_emit_shell_runtime_preflight_failure_is_nonfatal_per_candidate(tmp_path) -> None:

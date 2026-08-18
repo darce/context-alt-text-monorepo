@@ -300,6 +300,7 @@ def test_cli_default_on_sealed_registry_plans_llama_cpp_only(
     assert ids == [
         "minicpm-v-45",
         "qwen38-27b",
+        "qwen36-27b",
         "kimi-vl-a3b",
         "gemma-4-12b",
         "minicpm-v-46",
@@ -574,16 +575,17 @@ def test_emit_shell_runtime_build_preflight_refuses_under_versioned_host() -> No
         )
 
 
-def test_sealed_qwen38_emit_shell_has_lower_bound_preflight() -> None:
+def test_sealed_qwen_pair_emit_shell_has_lower_bound_preflight() -> None:
     registry = load_bakeoff_candidates()
     plans = build_plans(registry, **_PLAN_KW)
     floored = [plan for plan in plans if plan.min_runtime_build]
-    assert [plan.candidate_id for plan in floored] == ["qwen38-27b"]
-    assert floored[0].min_runtime_build == "b6887"
-    assert floored[0].min_runtime_build_is_lower_bound is True
+    assert [plan.candidate_id for plan in floored] == ["qwen38-27b", "qwen36-27b"]
+    for plan in floored:
+        assert plan.min_runtime_build == "b6887"
+        assert plan.min_runtime_build_is_lower_bound is True
     script = emit_shell(plans, incumbent_runs={})
     _assert_runtime_build_preflight(
         script,
-        floored_ids=["qwen38-27b"],
-        lower_bound_ids=["qwen38-27b"],
+        floored_ids=["qwen38-27b", "qwen36-27b"],
+        lower_bound_ids=["qwen38-27b", "qwen36-27b"],
     )

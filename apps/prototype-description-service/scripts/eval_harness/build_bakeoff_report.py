@@ -41,7 +41,7 @@ def _load_manifest(path: str) -> dict[int, dict[str, Any]]:
 
 
 def _index_run(path: str) -> dict[int, dict[str, Any]]:
-    """media_id -> {surfaces, latency_s, model_calls, error}."""
+    """media_id -> {surfaces, latency_s, model_calls, tokens, error}."""
     rec = json.loads(Path(path).read_text())
     out: dict[int, dict[str, Any]] = {}
     for item in rec.get("items", []):
@@ -60,9 +60,26 @@ def _index_run(path: str) -> dict[int, dict[str, Any]]:
             "caption": describe.get("alt_text_long"),
             "latency_s": latency,
             "model_calls": calls,
+            "tokens": describe.get("tokens"),
             "error": item.get("error"),
         }
     return out
+
+
+def _tokens_label(tokens: Any) -> str:
+    """Render the per-image token roll-up, or '' when the server reported none.
+
+    An incomplete roll-up is marked with a trailing ``+`` rather than shown as
+    if it were the whole image's cost.
+    """
+    if not isinstance(tokens, dict):
+        return ""
+    total = tokens.get("total_tokens")
+    completion = tokens.get("completion_tokens")
+    if not isinstance(total, int) or not isinstance(completion, int) or total <= 0:
+        return ""
+    partial = "+" if not tokens.get("complete") else ""
+    return f" · {total}{partial} tok ({completion} out)"
 
 
 def _thumb_data_uri(image_path: Path, px: int) -> str | None:
@@ -169,7 +186,10 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, 
             # Deterministic per-image cost = flat instance rate x inference seconds.
             cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/img'
                     if hourly_rate is not None and isinstance(lat_v, (int, float)) else "")
-            perf = f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)</span>'
+            perf = (
+                f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)'
+                f'{html.escape(_tokens_label(s.get("tokens")))}</span>'
+            )
         blocks.append(
             f'<div class="run"><div class="runhead"><span class="model">{html.escape(label)}</span>{perf}</div>{body}</div>'
         )

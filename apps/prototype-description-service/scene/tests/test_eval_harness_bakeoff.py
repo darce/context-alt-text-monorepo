@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
+from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption, _extract_usage, _sum_usage
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
@@ -279,6 +279,75 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
 
 
 # --- Slice 3: extraction + transport failure modes ---
+
+
+# --- Token usage capture (quality vs speed vs token-usage axis) ---
+
+
+def _usage_transport(usage: object) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body: dict = {"choices": [{"message": {"content": "A caption."}}]}
+        if usage is not None:
+            body["usage"] = usage
+        return httpx.Response(200, json=body)
+
+    return httpx.MockTransport(handler)
+
+
+def _usage_client(usage: object) -> BakeoffClient:
+    return BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        model_version="Q4_K_M",
+        transport=_usage_transport(usage),
+    )
+
+
+def test_usage_is_captured_per_pass_and_rolled_up() -> None:
+    usage = {"prompt_tokens": 1500, "completion_tokens": 120, "total_tokens": 1620}
+    describe = _describe(_usage_client(usage), {"caption": "A picnic."})
+    assert describe["tokens"] == {
+        "prompt_tokens": 1500,
+        "completion_tokens": 120,
+        "total_tokens": 1620,
+        "model_calls": 1,
+        "passes_missing_usage": 0,
+        "complete": True,
+    }
+
+
+def test_usage_absent_is_reported_as_incomplete_not_guessed() -> None:
+    tokens = _describe(_usage_client(None), {"caption": "A picnic."})["tokens"]
+    assert tokens["total_tokens"] == 0
+    assert tokens["passes_missing_usage"] == 1
+    assert tokens["complete"] is False
+
+
+def test_malformed_usage_is_rejected_wholesale() -> None:
+    # A partial or wrongly-typed usage block must not be half-trusted.
+    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": 5}}) is None
+    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": "5", "total_tokens": 15}}) is None
+    assert _extract_usage({"usage": {"prompt_tokens": True, "completion_tokens": 5, "total_tokens": 15}}) is None
+    assert _extract_usage({}) is None
+
+
+def test_sum_usage_adds_every_pass_and_flags_a_gap() -> None:
+    passes = [
+        {"pass": "describe_facts", "usage": {"prompt_tokens": 1500, "completion_tokens": 300, "total_tokens": 1800}},
+        {"pass": "ground_weave", "usage": {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}},
+    ]
+    assert _sum_usage(passes) == {
+        "prompt_tokens": 2400,
+        "completion_tokens": 410,
+        "total_tokens": 2810,
+        "model_calls": 2,
+        "passes_missing_usage": 0,
+        "complete": True,
+    }
+    gapped = _sum_usage([*passes, {"pass": "compress_short", "usage": None}])
+    assert gapped["total_tokens"] == 2810
+    assert gapped["model_calls"] == 3
+    assert gapped["complete"] is False
 
 
 def test_extract_caption_reasoning_only_names_reasoning_content() -> None:

@@ -1,9 +1,12 @@
 # VLM-6 Slice 2 candidate registry.
-# 13 candidates + 2 incumbent anchors. Revision-pinned. Fail-fast validated.
-# qwen36-27b roster row swapped for Qwen3.8-27B GGUF UD-Q4_K_XL (17.9GB).
+# 14 candidates + 2 incumbent anchors. Revision-pinned. Fail-fast validated.
 # VLM6-S2A-01: kimi-vl-a3b repinned to a real Q4_K_M GGUF; deepseek-vl2-small
 # (unservable on A10 -- no quantized build exists, bf16 > 24GB) replaced by
-# gemma-4-12b. Sealed count unchanged at 13.
+# gemma-4-12b.
+# VLM6-S2A-02: qwen36-27b runs alongside qwen38-27b as a generation pair.
+# Qwen3.7 has no open weights, so 3.6 is the previous open generation. Both
+# rows carry the same quant and the same serving recipe so the quality / speed
+# / token-usage delta is attributable to the generation, not the recipe.
 schema: acx-bakeoff-candidates/v1
 task_ref: VLM-6
 hardware_target:
@@ -11,7 +14,7 @@ hardware_target:
   vram_gb: 24
   usable_vram_budget_gb: 20
 sealed:
-  candidates: 13
+  candidates: 14
   incumbent_anchors: 2
 entries:
   - id: minicpm-v-45
@@ -67,7 +70,7 @@ entries:
     prompt_template: v3
     tiers: [gpu_async]
     reasoning_tuned: true
-    notes: "Swapped from qwen36-27b; Unsloth GGUF UD-Q4_K_XL 17.9GB + mmproj-F16."
+    notes: "Current generation of the Qwen pair; Unsloth GGUF UD-Q4_K_XL 17.9GB + mmproj-F16."
     recipe:
       stack: llama_cpp
       ctx_size: 8192
@@ -75,6 +78,31 @@ entries:
       parallel: 1
       extra_flags: ["--no-think"]
       gguf: Qwen3.8-27B-UD-Q4_K_XL.gguf
+      mmproj: mmproj-F16.gguf
+      min_runtime_build: b6887
+      min_runtime_build_is_lower_bound: true
+
+  - id: qwen36-27b
+    role: candidate
+    competing: true
+    model_id: Qwen3.6-27B
+    repo: unsloth/Qwen3.6-27B-GGUF
+    revision: "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
+    quant: UD-Q4_K_XL
+    artifact: Qwen3.6-27B-UD-Q4_K_XL.gguf
+    artifact_gb: 17.6
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "Previous open generation of the Qwen pair (3.7 has no open weights). Recipe mirrors qwen38-27b."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+      gguf: Qwen3.6-27B-UD-Q4_K_XL.gguf
       mmproj: mmproj-F16.gguf
       min_runtime_build: b6887
       min_runtime_build_is_lower_bound: true

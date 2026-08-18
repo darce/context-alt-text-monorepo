@@ -71,7 +71,9 @@ const crossFamilyQueryKey = (target: string, tenantId = 'tenant-1'): readonly un
 };
 
 const expectProjectionInvalidated = (invalidateSpy: ReturnType<typeof vi.spyOn>): void => {
-  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.projection.all });
+  expect(invalidateSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ queryKey: queryKeys.suggestions.projection.all }),
+  );
 };
 
 const expectCrossFamilyPresent = (
@@ -81,7 +83,7 @@ const expectCrossFamilyPresent = (
 ): void => {
   const targets = SUGGESTION_PROJECTION_INVALIDATION_EVENTS[event].keptCrossFamilyTargets;
   for (const target of targets) {
-    expect(spy).toHaveBeenCalledWith({ queryKey: crossFamilyQueryKey(target, tenantId) });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: crossFamilyQueryKey(target, tenantId) }));
   }
 };
 

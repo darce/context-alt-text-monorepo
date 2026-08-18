@@ -27,8 +27,13 @@ import {
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
-import { resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
-import { dropClusterFromReviewCaches, invalidateSuggestionProjection } from './suggestionProjection';
+import { authoritativeMergeSurvivor, resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
+import {
+  dropClusterFromReviewCaches,
+  invalidateReviewCachesWithoutRefetch,
+  invalidateSuggestionProjection,
+  REVIEW_DROP_MODE,
+} from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
@@ -174,16 +179,16 @@ export const useSuggestionReviewMutations = ({
   }, []);
 
   /**
-   * UXW2-2 (B6): after a merge accept, drop the retired source cluster from the
-   * review caches. Only the authoritative response id is used — never the
-   * client-rank fallback (rg-015: no guessed provenance).
+   * UXW2-2-R1-21: retire only the topology-checked source id from
+   * authoritativeMergeSurvivor. Foreign/malformed ids → no drop (invalidation only).
    */
   const dropRetiredMergeCluster = React.useCallback(
     (response: PendingMergeSuggestion) => {
-      const retiredId = response.source_cluster_id;
-      if (typeof retiredId === 'string' && retiredId !== '') {
-        dropClusterFromReviewCaches(queryClient, retiredId);
+      const resolved = authoritativeMergeSurvivor(response);
+      if (!resolved) {
+        return;
       }
+      dropClusterFromReviewCaches(queryClient, resolved.retiredId, { mode: REVIEW_DROP_MODE.MERGE });
     },
     [queryClient],
   );
@@ -334,18 +339,23 @@ export const useSuggestionReviewMutations = ({
         case 'acceptMerge':
           // BR-18: drop from cache before invalidation so the card leaves the queue immediately.
           removeMergeSuggestionFromCache(suggestionId);
-          void queryClient.invalidateQueries({ queryKey: mergePendingKey });
+          invalidateReviewCachesWithoutRefetch(queryClient);
           invalidateMediaIdentities();
-          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
           break;
         case 'rejectMerge':
           removeMergeSuggestionFromCache(suggestionId);
           void queryClient.invalidateQueries({ queryKey: mergePendingKey });
           break;
-        case 'acceptName':
+        case 'acceptName': {
+          const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+          const named = names?.suggestions.find((item) => item.id === suggestionId);
+          if (named?.cluster_id) {
+            dropClusterFromReviewCaches(queryClient, named.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
+          }
           removeNameSuggestionFromCache(suggestionId);
-          void queryClient.invalidateQueries({ queryKey: namePendingKey });
+          invalidateReviewCachesWithoutRefetch(queryClient);
           break;
+        }
         case 'rejectName':
           removeNameSuggestionFromCache(suggestionId);
           void queryClient.invalidateQueries({ queryKey: namePendingKey });
@@ -759,21 +769,13 @@ export const useSuggestionReviewMutations = ({
           newEntryName: request.newEntryName,
         });
         // BR-28: clusterLabelSetClear kept targets (extras allowed).
-        void invalidateSuggestionProjection(queryClient);
-        void queryClient.invalidateQueries({ queryKey: mergePendingKey });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+        // S2-02 [CON-05] / R1-16: mark review feeds stale WITHOUT an immediate refetch.
+        // Backend curation lags the write; refetch-now restores the dropped row.
+        invalidateReviewCachesWithoutRefetch(queryClient);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels(), refetchType: 'none' });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-        // S2-02 [CON-05]: mark namePending stale WITHOUT an immediate refetch. Backend
-        // curation lags the commit, so a refetch-now returns the just-committed cluster's
-        // row and clobbers the optimistic BR-29 removal below (row reappears). refetchType
-        // 'none' lets the optimistic drop win; a later natural refetch reconciles post-curation.
-        void queryClient.invalidateQueries({ queryKey: namePendingKey, refetchType: 'none' });
-        // BR-29 + UXW2-2 (B6): drop this cluster's rows from ALL review caches
-        // immediately (assignment/name/merge/topUnlabeled) — async curation lag
-        // otherwise leaves the header count pointing at already-committed work.
-        dropClusterFromReviewCaches(queryClient, request.clusterId);
+        dropClusterFromReviewCaches(queryClient, request.clusterId, { mode: REVIEW_DROP_MODE.LABEL });
         setPersonCommitSafe({
           phase: 'succeeded',
           clusterId: request.clusterId,
@@ -967,9 +969,8 @@ export const useSuggestionReviewMutations = ({
       recordMergeSurvivorFromSuggestion(data);
       dropRetiredMergeCluster(data);
       removeMergeSuggestionFromCache(suggestionId);
-      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
+      invalidateReviewCachesWithoutRefetch(queryClient);
       invalidateMediaIdentities();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
   });
 
@@ -984,8 +985,13 @@ export const useSuggestionReviewMutations = ({
   const acceptNameMutation = useMutation({
     mutationFn: acceptNameSuggestion,
     onSuccess: (_data, suggestionId) => {
+      const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+      const named = names?.suggestions.find((item) => item.id === suggestionId);
+      if (named?.cluster_id) {
+        dropClusterFromReviewCaches(queryClient, named.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
+      }
       removeNameSuggestionFromCache(suggestionId);
-      void queryClient.invalidateQueries({ queryKey: namePendingKey });
+      invalidateReviewCachesWithoutRefetch(queryClient);
     },
   });
 
@@ -999,11 +1005,37 @@ export const useSuggestionReviewMutations = ({
 
   const bulkAcceptMutation = useMutation({
     mutationFn: bulkAcceptSuggestions,
-    onSuccess: () => {
-      void invalidateSuggestionProjection(queryClient);
-      void queryClient.invalidateQueries({ queryKey: namePendingKey });
-      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    onSuccess: (_data, request) => {
+      if (request.suggestion_type === 'name') {
+        const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+        for (const item of names?.suggestions ?? []) {
+          if ((item.confidence_score ?? 0) >= request.min_confidence) {
+            dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
+          }
+        }
+      } else if (request.suggestion_type === 'assignment') {
+        const page = queryClient.getQueryData<SuggestionReviewPage>(
+          queryKeys.suggestions.projection.reviewPage(0),
+        );
+        const dropped = new Set<string>();
+        for (const item of page?.items ?? []) {
+          if (item.similarity >= request.min_confidence) {
+            const sourceId = item.sourceClusterId;
+            if (sourceId && !dropped.has(sourceId)) {
+              dropped.add(sourceId);
+              dropClusterFromReviewCaches(queryClient, sourceId, { mode: REVIEW_DROP_MODE.LABEL });
+            }
+          }
+        }
+      } else if (request.suggestion_type === 'merge') {
+        const merges = queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey);
+        for (const item of merges?.suggestions ?? []) {
+          if (item.similarity >= request.min_confidence) {
+            dropRetiredMergeCluster(item);
+          }
+        }
+      }
+      invalidateReviewCachesWithoutRefetch(queryClient);
     },
   });
 

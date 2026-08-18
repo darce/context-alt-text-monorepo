@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import {
   fetchClusterMembers,
@@ -14,6 +15,8 @@ import {
   type ClusterListResponse,
   type ClusterMembersResponse,
 } from '../../../../api/recognition';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
+import type { TopUnlabeledClustersResponse } from '../../../../api/recognition/types/cluster';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
 
@@ -165,6 +168,59 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
+  });
+
+  it('R1-17: merge success drops result.source_id from topUnlabeled', async () => {
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    vi.mocked(mergeCluster).mockResolvedValue({
+      source_id: 'source-cluster-id',
+      source_label: 'Source',
+      target_id: 'target-cluster-id',
+      target_label: 'Slate Willow',
+      identities_moved: 1,
+      moved_identity_ids: ['id-1'],
+      target_identity_count: 11,
+    });
+    const { queryClient } = renderPanel();
+    const topKey = queryKeys.clusters.topUnlabeled('t');
+    queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
+      clusters: [
+        {
+          id: 'source-cluster-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'target-cluster-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 10,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    await selectOrCreateName('Slate Willow');
+    await userEvent.click(screen.getByRole('button', { name: 'Merge into cluster "Slate Willow"' }));
+    await waitFor(() => {
+      expect(mergeCluster).toHaveBeenCalled();
+    });
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((cluster) => cluster.id),
+    ).toEqual(['target-cluster-id']);
   });
 
   it('offers rename-anyway without merge when only a person collides (no unique cluster target)', async () => {

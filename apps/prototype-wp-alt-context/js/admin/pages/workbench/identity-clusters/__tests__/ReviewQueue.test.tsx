@@ -40,6 +40,8 @@ import {
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { dropClusterFromReviewCaches, REVIEW_DROP_MODE } from '../suggestionProjection';
+import { WorkbenchFindingsPanel } from '../WorkbenchFindingsPanel';
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
@@ -307,7 +309,7 @@ describe('ReviewQueue', () => {
 
     await screen.findByRole('button', { name: 'Yes' });
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
   });
 
   it('navigates with prev/next without changing index on accept (PR-54 live-queue semantics)', async () => {
@@ -354,7 +356,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Face label + question both render the name — assert via card textContent.
     expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
 
@@ -362,13 +364,13 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Previous review item' }));
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
     });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
 
     await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
     await waitFor(() => {
@@ -376,7 +378,7 @@ describe('ReviewQueue', () => {
     });
     // BR-08: index stays at head; next card occupies the slot after removal.
     await waitFor(() => {
-      expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      expect(screen.getByText('1 of 1 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
   });
@@ -522,20 +524,20 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // BR-14: two KIND chips only — no third "All" button.
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     expect(await screen.findByText('Are these the same person?')).toBeInTheDocument();
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 1')).toBeInTheDocument();
+    expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
 
     // Toggle active chip → unfiltered/all.
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     await waitFor(() => {
-      expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
@@ -908,7 +910,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
     expect(screen.getByText('panel-mode')).toBeInTheDocument();
@@ -917,7 +919,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
   });
 
   it('announces card transitions via role=status live region', async () => {
@@ -1186,7 +1188,7 @@ describe('ReviewQueue', () => {
     // Full queue: [Alex, c1, c2, c3, c4] — index 3 is cluster-c3.
     await waitFor(() => {
       expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
-      expect(screen.getByText('4 of 5')).toBeInTheDocument();
+      expect(screen.getByText('4 of 5 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
     });
   });
@@ -1237,7 +1239,7 @@ describe('ReviewQueue', () => {
     });
     // Still on first merge card (failure leaves item at head).
     expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Persistent failure alert.
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
@@ -1246,7 +1248,7 @@ describe('ReviewQueue', () => {
 
     await user.click(screen.getByRole('button', { name: 'Next review item' }));
     await waitFor(() => {
-      expect(screen.getByText('2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
     });
     // Stale pending-focus must not auto-focus the primary after Next.
     expect(screen.getByRole('button', { name: 'Yes' })).not.toHaveFocus();
@@ -1528,7 +1530,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText('Are these the same person?');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Merge suggestion 1 of 2/);
     expect(card).toHaveAccessibleName(/Are these the same person\?/);
@@ -1567,7 +1569,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByRole('button', { name: 'Yes' });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Face suggestion 1 of 2/);
   });
@@ -1606,22 +1608,21 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Suggested name:/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
   });
 
-  // UXW2-2 (B6): labelling a cluster from the panel must drop that cluster's
-  // rows from the loaded review caches, so the header count tracks labelling
-  // on panel close without waiting for backend curation (rg-015: no invented
-  // totals — the count is the loaded rows, and the loaded rows must shrink).
-  it('header count decrements after a label commit panel round-trip without a refetch', async () => {
+  // UXW2-2-R1-15/28/29: label from the real XOR composition (queue unmounts
+  // while the panel is open). Fetchers keep returning the pre-curation rows;
+  // the header copy must stay decremented after remount.
+  it('header count decrements after a label commit remount with stale fetchers', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 25,
       offset: 0,
     });
-    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+    const staleNames = {
       suggestions: [
         {
           id: 'name-x',
@@ -1644,7 +1645,8 @@ describe('ReviewQueue', () => {
       ],
       limit: 25,
       offset: 0,
-    });
+    };
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue(staleNames);
     vi.mocked(listRecognitionClusters).mockResolvedValue({
       clusters: [],
       limit: 10,
@@ -1652,12 +1654,16 @@ describe('ReviewQueue', () => {
       truncated: false,
     });
 
-    const { queryClient } = renderQueue();
+    const { queryClient, unmount } = renderQueue();
     const countEl = () => document.querySelector('.acx-review-queue__count');
-    await waitFor(() => expect(countEl()).toHaveTextContent('2'));
-    vi.mocked(fetchPendingNameSuggestions).mockClear();
+    const positionEl = () => document.querySelector('.acx-review-queue__position');
+    await waitFor(() => expect(countEl()).toHaveTextContent('2 left to review on this page'));
+    expect(countEl()?.textContent).toBe('2 left to review on this page');
+    expect(positionEl()?.textContent).toBe('1 of 2 on this page');
+    expect(countEl()?.textContent).not.toMatch(/\(loaded\)|cluster/i);
 
-    // Open the labelling panel (ScanTabContent mounts it over the queue).
+    unmount();
+
     const panel = render(
       <QueryClientProvider client={queryClient}>
         <ClusterLabelingPanel clusterId="cluster-x" onClose={vi.fn()} onLabel={vi.fn()} />
@@ -1665,21 +1671,123 @@ describe('ReviewQueue', () => {
     );
     const user = userEvent.setup();
     await user.click(await screen.findByRole('combobox', { name: 'Name' }));
-    const search = screen.getByPlaceholderText('Search people...');
-    await user.type(search, 'Zed Newperson');
-    const createButton = screen.queryByRole('button', { name: /Create "/i });
-    if (createButton) {
-      await user.click(createButton);
-    }
+    await user.type(screen.getByPlaceholderText('Search people...'), 'Zed Newperson');
+    await user.click(screen.getByRole('button', { name: 'Create "Zed Newperson"' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(updateClusterLabel).toHaveBeenCalledWith('cluster-x', 'Zed Newperson', expect.any(AbortSignal)),
     );
-
-    // Close the panel; the queue count must already reflect the labelled cluster.
     panel.unmount();
-    await waitFor(() => expect(countEl()).toHaveTextContent('1'));
-    expect(fetchPendingNameSuggestions).not.toHaveBeenCalled();
+
+    render(withQueueProviders(queryClient, <ReviewQueueHarness />));
+    await waitFor(() => expect(countEl()?.textContent).toBe('1 left to review on this page'));
+    expect(positionEl()?.textContent).toBe('1 of 1 on this page');
+  });
+
+  it('R1-22: queue header and findings unlabeled count agree after a drop', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-x',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'cluster-y',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 3,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-2', media_id: 2, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewQueueHarness />
+          <WorkbenchFindingsPanel />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+    expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
+
+    dropClusterFromReviewCaches(queryClient, 'cluster-x', { mode: REVIEW_DROP_MODE.LABEL });
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
+    });
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('R1-29: filtered header uses shown copy, not a false remaining total', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 's-1',
+          identity_id: 'id-1',
+          suggested_cluster_id: 'c1',
+          representative_similarity: 0.9,
+          cluster_label: 'Maria',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 's-2',
+          identity_id: 'id-2',
+          suggested_cluster_id: 'c2',
+          representative_similarity: 0.4,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByTestId('acx-review-card');
+    expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+      '2 left to review on this page',
+    );
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe('2 shown');
+    });
+    expect(document.querySelector('.acx-review-queue__position')?.textContent).toBe('1 of 2 shown');
   });
 
   it('BR-41: CLUSTER card receives queue ordinal from position chrome', async () => {
@@ -1725,7 +1833,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-review-card');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Cluster review 1 of 2/);
   });
@@ -2246,7 +2354,7 @@ describe('ReviewQueue', () => {
 
     const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
     expect(error).toHaveAttribute('role', 'alert');
-    expect(error).toHaveTextContent('Unable to load unlabeled clusters.');
+    expect(error).toHaveTextContent('Unable to load unlabeled groups.');
     expect(within(error).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
     expect(screen.queryByText('This cluster is no longer available.')).not.toBeInTheDocument();
@@ -2327,7 +2435,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       const statuses = screen.getAllByRole('status');
       expect(
-        statuses.some((node) => within(node).queryByText('Unable to load unlabeled clusters.')),
+        statuses.some((node) => within(node).queryByText('Unable to load unlabeled groups.')),
       ).toBe(true);
     });
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
@@ -2413,7 +2521,7 @@ describe('ReviewQueue', () => {
     // The live region must announce the outage AND the filtered-empty hint.
     await waitFor(() => {
       const live = document.querySelector('.acx-review-queue__live');
-      expect(live).toHaveTextContent('Unable to load unlabeled clusters.');
+      expect(live).toHaveTextContent('Unable to load unlabeled groups.');
       expect(live).toHaveTextContent('No items match the current filters.');
     });
 
@@ -3228,7 +3336,7 @@ describe('ReviewQueue', () => {
 
       await screen.findByText(/Is this/);
       // 2 assignments + 1 merge
-      expect(screen.getByText('1 of 3')).toBeInTheDocument();
+      expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
         'false',
@@ -3237,7 +3345,7 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // strong-1 (0.50) only — merge-1 excluded from bands (BR-60); weak-1 dropped
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
@@ -3248,7 +3356,7 @@ describe('ReviewQueue', () => {
       // KIND ∩ band: Close matches ∩ Strong → still only strong-1
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
 
@@ -3256,14 +3364,14 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // assignment only: strong + weak
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 shown')).toBeInTheDocument();
       });
 
       // Merge stays reachable under band=all via its KIND chip.
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       // Merge ∩ strong band → empty (merge similarity is a different domain).
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
@@ -3363,7 +3471,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
@@ -3371,7 +3479,7 @@ describe('ReviewQueue', () => {
       // Activate strong band → queue shows only s-strong; selection still 2.
       await user.click(screen.getByTestId('apply-strong-band'));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
       // BR-63: split copy — selection extends beyond the active filter view.
@@ -3528,7 +3636,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
 
@@ -3578,7 +3686,7 @@ describe('ReviewQueue', () => {
 
       renderQueue({ initialBand: 'weaker' });
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/WeakPerson/);
       expect(screen.getByRole('button', { name: 'Weaker matches' })).toHaveAttribute(

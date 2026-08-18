@@ -81,6 +81,12 @@ export interface ProjectedSuggestion {
   suggestionId?: string;
   identityId: string;
   clusterId: string;
+  /**
+   * Identity's current/source group when the payload supplies it. Distinct from
+   * `clusterId` (suggested target). Used so label-drops do not hide unfinished
+   * identity→target assignment work (UXW2-2-R1-26).
+   */
+  sourceClusterId?: string;
   label?: string | null;
   similarity: number;
   identityCount?: number;
@@ -201,6 +207,10 @@ export const fromPendingRow = (row: PendingSuggestion): ProjectedSuggestion => {
   }
   if (row.resolution !== undefined) {
     projected.resolution = row.resolution;
+  }
+  const sourceClusterId = row.identity_cluster_id;
+  if (typeof sourceClusterId === 'string' && sourceClusterId !== '') {
+    projected.sourceClusterId = sourceClusterId;
   }
   const enrichment = buildEnrichment(row);
   if (enrichment !== undefined) {
@@ -348,24 +358,189 @@ export const removePendingSuggestionFromCache = (queryClient: QueryClient, sugge
   );
 };
 
+export const REVIEW_DROP_SCOPE = {
+  ASSIGNMENT: 'assignment',
+  NAME: 'name',
+  MERGE: 'merge',
+  TOP_UNLABELED: 'topUnlabeled',
+} as const;
+
+export type ReviewDropScope = (typeof REVIEW_DROP_SCOPE)[keyof typeof REVIEW_DROP_SCOPE];
+
+export const REVIEW_DROP_MODE = {
+  LABEL: 'label',
+  MERGE: 'merge',
+} as const;
+
+export type ReviewDropMode = (typeof REVIEW_DROP_MODE)[keyof typeof REVIEW_DROP_MODE];
+
+const LABEL_DROP_SCOPES = [
+  REVIEW_DROP_SCOPE.ASSIGNMENT,
+  REVIEW_DROP_SCOPE.NAME,
+  REVIEW_DROP_SCOPE.TOP_UNLABELED,
+] as const;
+
+const MERGE_DROP_SCOPES = [
+  REVIEW_DROP_SCOPE.ASSIGNMENT,
+  REVIEW_DROP_SCOPE.NAME,
+  REVIEW_DROP_SCOPE.MERGE,
+  REVIEW_DROP_SCOPE.TOP_UNLABELED,
+] as const;
+
+const reviewDropTombstones = new WeakMap<QueryClient, Map<ReviewDropScope, Set<string>>>();
+
+const tombstoneSetFor = (queryClient: QueryClient, scope: ReviewDropScope): Set<string> => {
+  let byScope = reviewDropTombstones.get(queryClient);
+  if (!byScope) {
+    byScope = new Map();
+    reviewDropTombstones.set(queryClient, byScope);
+  }
+  let ids = byScope.get(scope);
+  if (!ids) {
+    ids = new Set();
+    byScope.set(scope, ids);
+  }
+  return ids;
+};
+
+export const tombstoneReviewGroup = (
+  queryClient: QueryClient,
+  clusterId: string,
+  scopes: readonly ReviewDropScope[],
+): void => {
+  for (const scope of scopes) {
+    tombstoneSetFor(queryClient, scope).add(clusterId);
+  }
+};
+
+export const isReviewGroupTombstoned = (
+  queryClient: QueryClient,
+  scope: ReviewDropScope,
+  clusterId: string,
+): boolean => reviewDropTombstones.get(queryClient)?.get(scope)?.has(clusterId) === true;
+
+/** Drop a tombstone once a post-curation refetch no longer returns that group. */
+export const pruneReviewDropTombstones = (
+  queryClient: QueryClient,
+  scope: ReviewDropScope,
+  presentIds: Iterable<string>,
+): void => {
+  const ids = reviewDropTombstones.get(queryClient)?.get(scope);
+  if (!ids) {
+    return;
+  }
+  const present = new Set(presentIds);
+  for (const id of [...ids]) {
+    if (!present.has(id)) {
+      ids.delete(id);
+    }
+  }
+};
+
+export const assignmentRowTouchesDroppedGroup = (
+  item: ProjectedSuggestion,
+  clusterId: string,
+  mode: ReviewDropMode,
+): boolean => {
+  if (mode === REVIEW_DROP_MODE.MERGE) {
+    return item.clusterId === clusterId || item.sourceClusterId === clusterId;
+  }
+  // Label/commit: only the identity's current/source group is resolved.
+  // item.clusterId is the suggested target (E21-5 3870) and stays reviewable.
+  return item.sourceClusterId === clusterId;
+};
+
+export const applyAssignmentTombstones = <T extends { items: ProjectedSuggestion[] }>(
+  queryClient: QueryClient,
+  page: T,
+): T => {
+  const filtered = page.items.filter((item) => {
+    if (
+      item.sourceClusterId &&
+      isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.ASSIGNMENT, item.sourceClusterId)
+    ) {
+      return false;
+    }
+    // Merge-retired groups cannot remain as a suggested target.
+    if (isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.MERGE, item.clusterId)) {
+      return false;
+    }
+    return true;
+  });
+  return filtered.length === page.items.length ? page : { ...page, items: filtered };
+};
+
+export const applyNameTombstones = (
+  queryClient: QueryClient,
+  page: PendingNameSuggestionsResponse,
+): PendingNameSuggestionsResponse => {
+  const filtered = page.suggestions.filter(
+    (item) => !isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.NAME, item.cluster_id),
+  );
+  return filtered.length === page.suggestions.length ? page : { ...page, suggestions: filtered };
+};
+
+export const applyMergeTombstones = (
+  queryClient: QueryClient,
+  page: PendingMergeSuggestionsResponse,
+): PendingMergeSuggestionsResponse => {
+  const filtered = page.suggestions.filter(
+    (item) =>
+      !isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.MERGE, item.cluster_a_id) &&
+      !isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.MERGE, item.cluster_b_id),
+  );
+  return filtered.length === page.suggestions.length ? page : { ...page, suggestions: filtered };
+};
+
+export const applyTopUnlabeledTombstones = (
+  queryClient: QueryClient,
+  page: TopUnlabeledClustersResponse,
+): TopUnlabeledClustersResponse => {
+  const filtered = page.clusters.filter(
+    (cluster) => !isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.TOP_UNLABELED, cluster.id),
+  );
+  if (filtered.length === page.clusters.length) {
+    return page;
+  }
+  const removed = page.clusters.length - filtered.length;
+  return {
+    ...page,
+    clusters: filtered,
+    total: Math.max(0, page.total - removed),
+    has_clusters: filtered.length > 0,
+  };
+};
+
 /**
- * UXW2-2 (B6): optimistically drop every loaded review row that references a
- * cluster once that cluster is labelled / person-committed / merged away.
- * Backend suggestion curation lags the local write (outbox push), so without
- * this the queue header count holds (or rises) until the next natural refetch.
- * Covers all four review caches: assignment reviewPage rows by clusterId,
- * namePending rows by cluster_id, mergePending rows on either side, and
- * topUnlabeled rows (any tenant key). No envelope totals exist (COR-3), so
- * only `items`/`suggestions`/`clusters` arrays are rewritten — never a total.
+ * UXW2-2 (B6) + R1-15/23/26: optimistically drop review rows for a resolved group
+ * and tombstone the id so a remount refetch of still-uncurated rows cannot restore it.
+ *
+ * Label/commit (`mode: 'label'`): namePending + topUnlabeled + assignment rows whose
+ * *source* group is the labelled id. Merge suggestions stay — naming does not
+ * resolve a merge. Assignment rows keyed only as a suggested *target* stay.
+ *
+ * Merge (`mode: 'merge'`): also drops mergePending rows on either side and assignment
+ * rows whose suggested target or source is the retired id.
+ *
+ * topUnlabeled `total` is decremented by the number of rows actually removed from
+ * that same loaded envelope (never guessed).
  */
-export const dropClusterFromReviewCaches = (queryClient: QueryClient, clusterId: string): void => {
+export const dropClusterFromReviewCaches = (
+  queryClient: QueryClient,
+  clusterId: string,
+  options: { mode?: ReviewDropMode } = {},
+): void => {
+  const mode = options.mode ?? REVIEW_DROP_MODE.LABEL;
+  const scopes = mode === REVIEW_DROP_MODE.MERGE ? MERGE_DROP_SCOPES : LABEL_DROP_SCOPES;
+  tombstoneReviewGroup(queryClient, clusterId, scopes);
+
   queryClient.setQueryData<{ items: ProjectedSuggestion[]; dataSource?: unknown } | undefined>(
     queryKeys.suggestions.projection.reviewPage(0),
     (current) => {
       if (!current) {
         return current;
       }
-      const filtered = current.items.filter((item) => item.clusterId !== clusterId);
+      const filtered = current.items.filter((item) => !assignmentRowTouchesDroppedGroup(item, clusterId, mode));
       return filtered.length === current.items.length ? current : { ...current, items: filtered };
     },
   );
@@ -381,20 +556,21 @@ export const dropClusterFromReviewCaches = (queryClient: QueryClient, clusterId:
     },
   );
 
-  queryClient.setQueryData<PendingMergeSuggestionsResponse | undefined>(
-    queryKeys.suggestions.mergePending(),
-    (current) => {
-      if (!current) {
-        return current;
-      }
-      const filtered = current.suggestions.filter(
-        (item) => item.cluster_a_id !== clusterId && item.cluster_b_id !== clusterId,
-      );
-      return filtered.length === current.suggestions.length ? current : { ...current, suggestions: filtered };
-    },
-  );
+  if (mode === REVIEW_DROP_MODE.MERGE) {
+    queryClient.setQueryData<PendingMergeSuggestionsResponse | undefined>(
+      queryKeys.suggestions.mergePending(),
+      (current) => {
+        if (!current) {
+          return current;
+        }
+        const filtered = current.suggestions.filter(
+          (item) => item.cluster_a_id !== clusterId && item.cluster_b_id !== clusterId,
+        );
+        return filtered.length === current.suggestions.length ? current : { ...current, suggestions: filtered };
+      },
+    );
+  }
 
-  // topUnlabeled keys are tenant-scoped; prefix-match covers every tenant.
   queryClient.setQueriesData<TopUnlabeledClustersResponse | undefined>(
     { queryKey: [...queryKeys.clusters.all, 'top-unlabeled'] },
     (current) => {
@@ -402,9 +578,38 @@ export const dropClusterFromReviewCaches = (queryClient: QueryClient, clusterId:
         return current;
       }
       const filtered = current.clusters.filter((cluster) => cluster.id !== clusterId);
-      return filtered.length === current.clusters.length ? current : { ...current, clusters: filtered };
+      if (filtered.length === current.clusters.length) {
+        return current;
+      }
+      const removed = current.clusters.length - filtered.length;
+      return {
+        ...current,
+        clusters: filtered,
+        total: Math.max(0, current.total - removed),
+        has_clusters: filtered.length > 0,
+      };
     },
   );
+};
+
+/** S2-02: mark review feeds stale without refetching still-uncurated rows. */
+export const invalidateReviewCachesWithoutRefetch = (queryClient: QueryClient): void => {
+  void queryClient.invalidateQueries({
+    queryKey: queryKeys.suggestions.projection.all,
+    refetchType: 'none',
+  });
+  void queryClient.invalidateQueries({
+    queryKey: queryKeys.suggestions.mergePending(),
+    refetchType: 'none',
+  });
+  void queryClient.invalidateQueries({
+    queryKey: queryKeys.suggestions.namePending(),
+    refetchType: 'none',
+  });
+  void queryClient.invalidateQueries({
+    queryKey: queryKeys.clusters.all,
+    refetchType: 'none',
+  });
 };
 
 /**

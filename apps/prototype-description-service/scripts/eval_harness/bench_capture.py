@@ -30,6 +30,17 @@ class CaptureStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class PerGpuSemantics(StrEnum):
+    """How per-GPU used-MB arrays relate to the aggregate peak (sr-007, OBS-05).
+
+    ``SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE``: ``per_gpu_used_mb_at_peak`` is the
+    per-row used-MB vector from the sample that set ``peak_used_mb``. Independent
+    per-index high-water lives on ``per_gpu_peak_used_mb``.
+    """
+
+    SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE = "snapshot_at_aggregate_peak_sample"
+
+
 class LoadLoop(StrEnum):
     """How the harness issues load (PERF-03, sr-007).
 
@@ -132,14 +143,20 @@ def collect_item_latencies(record: Mapping[str, Any]) -> list[float]:
 class VramSampler:
     """Background ``nvidia-smi`` peak-used sampler (OBS-05 high-water mark).
 
-    ``stop()`` emits one internally consistent observation: ``gpu_count``,
-    ``total_mb``, and ``per_gpu_peak_used_mb`` are snapshotted from the same
-    sample that set ``peak_used_mb`` (row-count changes across samples must
-    not mix per-index maxima with a different topology). ``runner`` is
-    injectable for tests. Missing binary, errors, or zero samples yield
-    ``status=unavailable`` plus a one-line ``reason`` — never a fabricated
-    0 MB (rg-015, AGT-06). Non-finite ``interval_s`` is rejected at
-    construction (rg-008).
+    ``stop()`` emits two per-GPU arrays that answer different questions:
+
+    * ``per_gpu_used_mb_at_peak``: used-MB per GPU from the same sample that
+      set ``peak_used_mb``. Internally consistent with ``gpu_count`` and
+      ``total_mb`` (row-count changes must not mix a peak-sample snapshot with
+      a different topology). ``per_gpu_semantics`` names this rule.
+    * ``per_gpu_peak_used_mb``: independent per-index high-water across all
+      samples. Length is the max GPU index seen (1-based slot count), which
+      can exceed ``gpu_count`` when topology shrinks after an earlier sample.
+
+    ``runner`` is injectable for tests. Missing binary, errors, or zero samples
+    yield ``status=unavailable`` plus a one-line ``reason`` — never a fabricated
+    0 MB (rg-015, AGT-06). Unavailable still carries ``per_gpu_semantics`` and
+    null arrays. Non-finite ``interval_s`` is rejected at construction (rg-008).
     """
 
     def __init__(
@@ -157,6 +174,7 @@ class VramSampler:
         self._peak_used: int | None = None
         self._total: int | None = None
         self._gpu_count: int | None = None
+        self._per_gpu_at_peak: list[int] = []
         self._per_gpu_peak: list[int] = []
         self._samples = 0
         self._reason: str | None = None
@@ -211,11 +229,16 @@ class VramSampler:
         sample_used = sum(used_vals)
         sample_total = sum(total_vals)
         self._samples += 1
+        for i, used in enumerate(used_vals):
+            if i == len(self._per_gpu_peak):
+                self._per_gpu_peak.append(used)
+            elif used > self._per_gpu_peak[i]:
+                self._per_gpu_peak[i] = used
         if self._peak_used is None or sample_used > self._peak_used:
             self._peak_used = sample_used
             self._total = sample_total
             self._gpu_count = len(used_vals)
-            self._per_gpu_peak = list(used_vals)
+            self._per_gpu_at_peak = list(used_vals)
         return False
 
     def stop(self) -> dict[str, Any]:
@@ -231,7 +254,9 @@ class VramSampler:
                 "peak_used_mb": None,
                 "total_mb": None,
                 "gpu_count": None,
+                "per_gpu_used_mb_at_peak": None,
                 "per_gpu_peak_used_mb": None,
+                "per_gpu_semantics": PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE,
                 "samples": 0,
                 "reason": self._reason or "zero samples",
             }
@@ -241,7 +266,9 @@ class VramSampler:
             "peak_used_mb": self._peak_used,
             "total_mb": self._total,
             "gpu_count": self._gpu_count,
+            "per_gpu_used_mb_at_peak": list(self._per_gpu_at_peak),
             "per_gpu_peak_used_mb": list(self._per_gpu_peak),
+            "per_gpu_semantics": PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE,
             "samples": self._samples,
             "interval_s": self.interval_s,
         }

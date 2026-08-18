@@ -1069,13 +1069,6 @@ def _nonneg_int_arg(raw: str) -> int:
     return value
 
 
-def _nonneg_float_arg(raw: str) -> float:
-    value = float(raw)
-    if value < 0:
-        raise argparse.ArgumentTypeError("must be >= 0")
-    return value
-
-
 def _nonneg_finite_float_arg(raw: str) -> float:
     value = float(raw)
     if not math.isfinite(value) or value < 0:

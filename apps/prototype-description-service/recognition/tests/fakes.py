@@ -193,6 +193,35 @@ class FakeClusterRepository:
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
 
+    async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list, str | None]:
+        cluster = self.clusters.get(cluster_id)
+        if cluster is None:
+            return [], None
+        embeddings = []
+        model: str | None = None
+        for rep in getattr(cluster, "representatives", None) or []:
+            embedding = getattr(rep, "embedding", None)
+            if embedding is None:
+                continue
+            embeddings.append(np.asarray(embedding, dtype=np.float32))
+            model = getattr(rep, "embedding_model", None) or model
+        return embeddings, model
+
+    async def get_member_fallback_embeddings_with_model(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list, str | None]:
+        return [], None
+
+    async def get_labeled_with_representatives(self, tenant_id: str):
+        labeled = []
+        for cluster in self.clusters.values():
+            if cluster.tenant_id != tenant_id:
+                continue
+            if not cluster.label or not cluster.user_confirmed:
+                continue
+            labeled.append((cluster, list(getattr(cluster, "representatives", None) or [])))
+        return labeled
+
     async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[FakeClusterForRepo]:
         return [self.clusters[cluster_id] for cluster_id in cluster_ids if cluster_id in self.clusters]
 

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/roster-candidates-response.schema.json",
+  "title": "Roster Candidates Response",
+  "description": "PROV-06 typed payload for GET /recognition/clusters/{cluster_id}/roster-candidates. Candidates are labelled clusters; PHP maps cluster_id to roster_entry_id.",
+  "type": "object",
+  "required": [
+    "model_id",
+    "embedding_model",
+    "computed_at",
+    "reference_face_count",
+    "thresholds",
+    "candidates"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "model_id": {
+      "type": "string",
+      "description": "Embedding-space identifier that produced the ranking scores."
+    },
+    "embedding_model": {
+      "type": "string",
+      "description": "Same space as model_id; repeated so consumers can bind FIR23-01 without guessing."
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this ranking was computed. Similarity is not a stable person attribute."
+    },
+    "reference_face_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of probe representatives used in the comparison."
+    },
+    "thresholds": {
+      "type": "object",
+      "required": ["suggestion_floor", "suggestion_ceiling", "similarity_threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "suggestion_floor": {
+          "type": "number"
+        },
+        "suggestion_ceiling": {
+          "type": "number"
+        },
+        "similarity_threshold": {
+          "type": "number"
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "description": "Server-ranked labelled clusters. Order is similarity descending.",
+      "items": {
+        "type": "object",
+        "required": ["cluster_id", "name", "similarity", "band", "quality_flag"],
+        "additionalProperties": false,
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "similarity": {
+            "type": "number",
+            "description": "Ranking cosine only; not a calibrated probability."
+          },
+          "band": {
+            "type": "string",
+            "enum": ["strong", "possible", "none"]
+          },
+          "quality_flag": {
+            "type": "string",
+            "enum": ["ok", "low_quality"]
+          },
+          "roster_entry_id": {
+            "type": ["integer", "null"],
+            "description": "Local acx_persons.id filled by the WordPress passthrough; absent on the python wire."
+          }
+        }
+      }
+    }
+  }
+}

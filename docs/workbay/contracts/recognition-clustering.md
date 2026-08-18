@@ -558,6 +558,31 @@ Request body:
 
 Response: `SuggestionResponse`.
 
+### GET /recognition/clusters/{cluster_id}/roster-candidates
+
+Rank labelled clusters against an unlabeled probe. Schema:
+`packages/shared-contracts/schemas/roster-candidates-response.schema.json`.
+
+Query: `top_k` (default 10, min 1, max 50; reject-not-clamp).
+
+200 body is PROV-06 typed:
+
+- `model_id` / `embedding_model` — FIR23-01 space of the ranking rows.
+- `computed_at` — ranking timestamp; similarity is not a stable person attribute.
+- `probe_face_count` — probe representatives (or member-fallback faces) used.
+- `reference_face_count` — same-space labelled reference vectors actually compared.
+- `quality_flag` — probe-level `ok` | `low_quality` | `occluded` (reserved; never fabricated). Unknown values → treat as `low_quality`. When not `ok`, every candidate `band` is capped at `possible` (frontend must not show Strong for a low-quality probe). `fatal_quality_floor` / `fatal_confidence_floor` gate; missing metrics fail closed to `low_quality`.
+- `thresholds` — live `suggestion_floor` / `suggestion_ceiling` / `similarity_threshold`.
+- `candidates[]` — labelled clusters, similarity DESC then `cluster_id` ASC. Negative cosine is `band=none` (floor is `-1.0`, not `0.0`). Dimension-mismatched reps are skipped. Same-space guard is the in-process FIR23-01 helper (`embedding_space.same_space_vector`); unlike label inference there is no MediaIdentity SQL fallback because `get_labeled_with_representatives` eager-loads identity — unresolved models are excluded.
+
+PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`:
+
+- Proxy class `post_scan_read` (10s, breaker off).
+- Maps `cluster_id` → `roster_entry_id` via tenant-scoped `ClustersReadRepository.lookup_person_ids_for_clusters` (`AND tenant_id = %s`).
+- Collapses to one row per `roster_entry_id` (max similarity wins, keep that row's band). `name` is `acx_persons.name` when mapped.
+- `roster_entry_id: null` rows are kept and flagged uncommittable (no person to commit to).
+- Degraded/offline: HTTP 502 (endpoint_error / refused 3xx) or 503 (unreachable / overloaded). Do not return a 200 `{candidates:[], data_source}` envelope — that is not schema-conformant and is indistinguishable from an empty roster.
+
 ## Media identities
 
 ### GET /recognition/media/identities

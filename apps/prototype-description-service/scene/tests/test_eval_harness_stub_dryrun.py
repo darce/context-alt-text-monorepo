@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -79,6 +80,9 @@ def _captions(record: dict[str, Any]) -> list[str]:
     return [item["describe"]["alt_text_draft"] for item in record["items"]]
 
 
+_STUB_CAPTION = re.compile(r"Stub caption [0-9a-f]{12}\.")
+
+
 @pytest.fixture
 def live_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ACX_EVAL_LIVE", "1")
@@ -145,6 +149,9 @@ def test_bakeoff_main_dry_run_writes_scoreable_record(
     record = json.loads(out_path.read_text())
     assert record["provenance"]["base_url"] == base_url
     assert len(record["items"]) == 3
+    captions = _captions(record)
+    assert all(_STUB_CAPTION.fullmatch(caption) for caption in captions)
+    assert captions[0] != captions[1]
     for item in record["items"]:
         assert item["error"] is None
         describe = item["describe"]
@@ -190,7 +197,9 @@ def test_dry_run_captions_are_deterministic(tmp_path: Path, live_env: None, monk
         first = json.loads(outs[0].read_text())
         second = json.loads(outs[1].read_text())
         assert _captions(first) == _captions(second)
-        assert all(caption.strip() for caption in _captions(first))
+        first_captions = _captions(first)
+        assert all(_STUB_CAPTION.fullmatch(caption) for caption in first_captions)
+        assert first_captions[0] != first_captions[1]
     finally:
         server.shutdown()
         server.server_close()
@@ -203,7 +212,7 @@ def test_fail_every_trips_bounded_stall_and_writes_aborted_record(
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images_dir))
     out_path = tmp_path / "run-stall.json"
     aborted_path = out_path.with_name(out_path.stem + "-aborted.json")
-    server, base_url = serve_in_thread("127.0.0.1", 0, model_id="stub", fail_every=1)
+    server, base_url = serve_in_thread("127.0.0.1", 0, model_id="stub", fail_every=2)
     try:
         with pytest.raises(SystemExit, match="BoundedStallError") as exc_info:
             bakeoff.main(
@@ -216,6 +225,8 @@ def test_fail_every_trips_bounded_stall_and_writes_aborted_record(
                     str(manifest_path),
                     "--out",
                     str(out_path),
+                    "--warmup",
+                    "0",
                     "--stall-limit",
                     "1",
                     "--timeout",
@@ -231,5 +242,7 @@ def test_fail_every_trips_bounded_stall_and_writes_aborted_record(
     record = json.loads(aborted_path.read_text())
     assert record["aborted"] is True
     assert record["items"]
-    assert record["items"][0]["error"]
+    errors = [bool(item.get("error")) for item in record["items"]]
+    assert True in errors
+    assert False in errors
     assert not out_path.exists()

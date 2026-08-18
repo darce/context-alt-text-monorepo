@@ -11,10 +11,11 @@ from typing import Any
 import httpx
 import pytest
 
-from scripts.eval_harness.bakeoff import BakeoffClient
+from scripts.eval_harness.bakeoff import BakeoffClient, _stamp_timing_and_gpu
 from scripts.eval_harness.bakeoff import main as bakeoff_main
 from scripts.eval_harness.bench_capture import (
     CaptureStatus,
+    LoadLoop,
     VramSampler,
     collect_item_latencies,
     summarize_latencies,
@@ -60,6 +61,24 @@ def test_summarize_latencies_empty_is_none_not_zero() -> None:
     }
 
 
+def test_summarize_latencies_nearest_rank_n5_p50() -> None:
+    """TEST-15: N=5 p50 = ceil(0.5*5) = 3. ``int`` would yield 2."""
+    assert summarize_latencies([1.0, 2.0, 3.0, 4.0, 5.0])["p50_s"] == 3.0
+
+
+def test_summarize_latencies_nearest_rank_n10_p99_is_max() -> None:
+    """TEST-15: N=10 p99 = ceil(0.99*10) = 10 (= max). ``int`` would yield 9."""
+    values = [float(n) for n in range(1, 11)]
+    summary = summarize_latencies(values)
+    assert summary["p99_s"] == 10.0
+    assert summary["p99_s"] == summary["max_s"]
+
+
+def test_summarize_latencies_nearest_rank_n4_p50() -> None:
+    """TEST-15: N=4 p50 = ceil(0.5*4) = 2."""
+    assert summarize_latencies([1.0, 2.0, 3.0, 4.0])["p50_s"] == 2.0
+
+
 def test_collect_item_latencies_sums_passes_and_skips_none() -> None:
     record = {
         "items": [
@@ -83,16 +102,40 @@ def test_collect_item_latencies_sums_passes_and_skips_none() -> None:
     assert collect_item_latencies(record) == [2.0, 0.5, 0.4]
 
 
+def test_collect_item_latencies_excludes_error_items() -> None:
+    """rg-015: timeouts / CircuitOpen must not enter per_item percentiles."""
+    record: dict[str, Any] = {
+        "items": [
+            {"latency_s": 1.0, "error": None},
+            {"latency_s": 900.0, "error": "TimeoutError: timed out"},
+            {"latency_s": 0.001, "error": "CircuitOpenError: circuit open"},
+            {"latency_s": None, "error": None},
+        ]
+    }
+    assert collect_item_latencies(record) == [1.0]
+    _stamp_timing_and_gpu(
+        record,
+        warmup={"requests": 0, "succeeded": 0, "failed": 0, "elapsed_s": 0.0},
+        cold_load_s=None,
+        gpu={"status": CaptureStatus.UNAVAILABLE},
+    )
+    assert record["timing"]["per_item"]["n"] == 1
+    assert record["timing"]["items_with_error"] == 2
+    assert record["timing"]["items_without_latency"] == 1
+    assert record["timing"]["loop"] == LoadLoop.CLOSED_SERIAL
+    assert "open_loop" not in record["timing"]
+
+
 def _csv_runner(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
     return CompletedProcess(
         args=["nvidia-smi"],
         returncode=0,
-        stdout="100, 24576\n250, 24576\n",
+        stdout="250, 24576\n",
         stderr="",
     )
 
 
-def test_vram_sampler_peak_is_max_across_csv_lines() -> None:
+def test_vram_sampler_single_gpu_peak() -> None:
     sampler = VramSampler(interval_s=0.05, runner=_csv_runner)
     sampler.start()
     result = sampler.stop()
@@ -100,8 +143,31 @@ def test_vram_sampler_peak_is_max_across_csv_lines() -> None:
     assert result["status"] == CaptureStatus.MEASURED
     assert result["peak_used_mb"] == 250
     assert result["total_mb"] == 24576
+    assert result["gpu_count"] == 1
+    assert result["per_gpu_peak_used_mb"] == [250]
     assert result["samples"] >= 1
     assert result["interval_s"] == 0.05
+
+
+def _dual_csv_runner(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
+    return CompletedProcess(
+        args=["nvidia-smi"],
+        returncode=0,
+        stdout="10000, 24576\n10000, 24576\n",
+        stderr="",
+    )
+
+
+def test_vram_sampler_dual_gpu_sums_used_and_totals() -> None:
+    """Sharded 10+10 GiB must not collapse to max(used) on one card."""
+    sampler = VramSampler(interval_s=0.05, runner=_dual_csv_runner)
+    sampler.start()
+    result = sampler.stop()
+    assert result["status"] == CaptureStatus.MEASURED
+    assert result["peak_used_mb"] == 20000
+    assert result["total_mb"] == 49152
+    assert result["gpu_count"] == 2
+    assert result["per_gpu_peak_used_mb"] == [10000, 10000]
 
 
 def test_vram_sampler_missing_binary_is_unavailable() -> None:
@@ -187,17 +253,34 @@ def _install_transport(monkeypatch: pytest.MonkeyPatch, transport: httpx.BaseTra
     monkeypatch.setattr(BakeoffClient, "__init__", wrapped)
 
 
+def _fail_first_n_transport(fail_first: int, captured: list[dict[str, Any]]) -> httpx.MockTransport:
+    seen = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["n"] += 1
+        captured.append({"path": request.url.path, "n": seen["n"]})
+        if seen["n"] <= fail_first:
+            return httpx.Response(500, json={"error": "not ready"})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "A caption."}}]},
+        )
+
+    return httpx.MockTransport(handler)
+
+
 def _run_bakeoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     extra: list[str],
     *,
     captured: list[dict[str, Any]] | None = None,
+    transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
     monkeypatch.setenv("ACX_EVAL_LIVE", "1")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path))
     captured = captured if captured is not None else []
-    _install_transport(monkeypatch, _counting_transport(captured))
+    _install_transport(monkeypatch, transport or _counting_transport(captured))
     manifest = _write_manifest(tmp_path)
     out = tmp_path / "run.json"
     bakeoff_main(
@@ -226,13 +309,39 @@ def test_bakeoff_warmup_issues_extra_requests_before_scored(tmp_path: Path, monk
     )
     assert len(captured) == 4  # 2 warmup + 2 scored (single-pass)
     assert record["timing"]["per_item"]["n"] == 2
-    assert record["timing"]["warmup"] == {"requests": 2, "elapsed_s": record["timing"]["warmup"]["elapsed_s"]}
-    assert record["timing"]["warmup"]["elapsed_s"] >= 0
+    warmup = record["timing"]["warmup"]
+    assert warmup["requests"] == 2
+    assert warmup["succeeded"] == 2
+    assert warmup["failed"] == 0
+    assert warmup["elapsed_s"] >= 0
     assert record["timing"]["cold_load_s"] == 12.5
-    assert record["timing"]["open_loop"] is True
+    assert record["timing"]["loop"] == LoadLoop.CLOSED_SERIAL
+    assert "open_loop" not in record["timing"]
     assert record["timing"]["concurrency"] == 1
+    assert record["timing"]["items_with_error"] == 0
     assert record["gpu"]["status"] == CaptureStatus.UNAVAILABLE
     assert record["gpu"]["reason"] == "sampling disabled"
+
+
+def test_bakeoff_warmup_does_not_open_scoring_breaker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Warm-up 500s must not trip the scoring client's 3-strike breaker."""
+    captured: list[dict[str, Any]] = []
+    record = _run_bakeoff(
+        tmp_path,
+        monkeypatch,
+        ["--warmup", "3", "--vram-sample-interval-s", "0", "--stall-limit", "5"],
+        captured=captured,
+        transport=_fail_first_n_transport(3, captured),
+    )
+    assert len(record["items"]) == 2
+    assert all(item.get("error") is None for item in record["items"])
+    assert record["timing"]["per_item"]["n"] == 2
+    assert record["timing"]["items_with_error"] == 0
+    assert not any("CircuitOpen" in str(item.get("error") or "") for item in record["items"])
+    warmup = record["timing"]["warmup"]
+    assert warmup["requests"] == 3
+    assert warmup["succeeded"] == 0
+    assert warmup["failed"] == 3
 
 
 def test_bakeoff_gpu_unavailable_when_nvidia_smi_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

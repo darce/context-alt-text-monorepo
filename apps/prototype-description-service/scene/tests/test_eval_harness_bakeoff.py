@@ -310,9 +310,7 @@ def _usage_client(usage: object) -> BakeoffClient:
     )
 
 
-_PASS1_FACTS = (
-    '{"people":[],"setting":"garden","action":"sitting","legible_text":[],"atmosphere":"bright"}'
-)
+_PASS1_FACTS = '{"people":[],"setting":"garden","action":"sitting","legible_text":[],"atmosphere":"bright"}'
 
 
 def _sequenced_usage_transport(responses: list[tuple[str, object]]) -> httpx.MockTransport:
@@ -344,9 +342,7 @@ def test_usage_is_captured_per_pass_and_rolled_up() -> None:
         model_id="qwen3-vl-4b-instruct",
         model_version="Q4_K_M",
         two_pass=True,
-        transport=_sequenced_usage_transport(
-            [(_PASS1_FACTS, usage_facts), ("A caption.", usage_weave)]
-        ),
+        transport=_sequenced_usage_transport([(_PASS1_FACTS, usage_facts), ("A caption.", usage_weave)]),
     )
     describe = _describe(client, {"caption": "A picnic."})
     assert [p["pass"] for p in describe["passes"]] == ["describe_facts", "ground_weave"]
@@ -428,9 +424,7 @@ def test_sum_usage_adds_every_pass_and_flags_a_gap() -> None:
         "complete": False,
     }
     # BR-05 contract: zero passes carried usage → count fields are None, not 0.
-    absent = _sum_usage(
-        [{"pass": "describe_facts", "usage": None}, {"pass": "ground_weave", "usage": None}]
-    )
+    absent = _sum_usage([{"pass": "describe_facts", "usage": None}, {"pass": "ground_weave", "usage": None}])
     assert absent == {
         "prompt_tokens": None,
         "completion_tokens": None,
@@ -487,6 +481,22 @@ def test_instance_shape_absent_by_default() -> None:
     assert args.instance_shape is None
     provenance = _stamp_from_cli([])
     assert "instance_shape" not in provenance
+
+
+def test_cold_load_s_rejects_nan() -> None:
+    """--cold-load-s must not write NaN into the run-record JSON."""
+    parser = build_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--cold-load-s", "nan"])
+    assert excinfo.value.code == 2
+
+
+def test_cold_load_s_rejects_inf_and_negative() -> None:
+    parser = build_parser()
+    for raw in ("inf", "-inf", "-5"):
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--cold-load-s", raw])
+        assert excinfo.value.code == 2, raw
 
 
 def test_extract_caption_reasoning_only_names_reasoning_content() -> None:
@@ -582,8 +592,9 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries})
+    manifest = GoldenManifest.model_validate(
+        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries}
+    )
     client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
     try:
         with pytest.raises(BoundedStallError) as excinfo:

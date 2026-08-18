@@ -30,6 +30,12 @@ def _load_module():
 pz = _load_module()
 
 
+def _reset_wordlist():
+    loader = getattr(pz, "_load_wordlist", None)
+    if loader is not None and hasattr(loader, "cache_clear"):
+        loader.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _mint_key():
     # Several builders hash through the mint key. Pin a fixed one so alias words
@@ -38,6 +44,20 @@ def _mint_key():
     pz._KEY = "t" * 64
     yield
     pz._KEY = previous
+
+
+@pytest.fixture(autouse=True)
+def _test_wordlist(tmp_path, monkeypatch):
+    # Tests must not inherit the host wordlist (BR-20/26). An empty or missing
+    # /usr/share/dict/words would make every `_Passes` construct raise after
+    # the fail-fast, and a full host list would make residue a property of the
+    # machine. Invented fixture names are not in this list.
+    path = tmp_path / "priv1-unit-wordlist"
+    path.write_text("the\na\nof\nrose\nfaith\nivy\nself\nbrook\n", encoding="utf-8")
+    monkeypatch.setenv("PRIV1_WORDLIST", str(path))
+    _reset_wordlist()
+    yield path
+    _reset_wordlist()
 
 
 @pytest.fixture
@@ -868,3 +888,240 @@ def test_apply_and_verify_both_recheck_the_shipped_map_vocabulary():
     verify_src = src[src.index("def cmd_verify") : src.index("def main")]
     assert "_assert_map_vocab_disjoint" in apply_src
     assert "_assert_map_vocab_disjoint" in verify_src
+# --- wordlist fail-fast and pin, PRIV-1-BR-20 + PRIV-1-BR-26 --------------
+
+
+def test_absent_wordlist_raises_rather_than_widening_given_name(mapping, monkeypatch, tmp_path):
+    # The finding: a missing file became an empty exclusion set, so every
+    # ordinary-word given name entered the rewrite. Fail closed, and name
+    # both the resolved path and the override so an operator can recover.
+    missing = tmp_path / "no-such-words"
+    monkeypatch.setenv("PRIV1_WORDLIST", str(missing))
+    _reset_wordlist()
+    with pytest.raises(SystemExit, match="PRIV1_WORDLIST") as exc:
+        pz._given_name_regex(mapping)
+    assert str(missing) in str(exc.value)
+
+
+@pytest.mark.parametrize("body", ["", "\n\n  \n"])
+def test_empty_wordlist_raises(mapping, monkeypatch, tmp_path, body):
+    empty = tmp_path / "empty-words"
+    empty.write_text(body, encoding="utf-8")
+    monkeypatch.setenv("PRIV1_WORDLIST", str(empty))
+    _reset_wordlist()
+    with pytest.raises(SystemExit, match="PRIV1_WORDLIST") as exc:
+        pz._given_name_regex(mapping)
+    assert str(empty) in str(exc.value)
+
+
+def test_priv1_wordlist_env_is_honoured_and_count_is_printed(mapping, monkeypatch, tmp_path):
+    wl = tmp_path / "custom-words"
+    wl.write_text("ryanne\ncalderre\n", encoding="utf-8")
+    monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
+    _reset_wordlist()
+    _rx, resolved, _deferred = pz._given_name_regex(mapping)
+    assert "ryanne" not in resolved
+    assert "calderre" not in resolved
+    words, digest, path = pz._load_wordlist()
+    assert Path(path) == wl
+    assert len(words) == 2
+    assert pz._wordlist_line() == f"wordlist: 2 words (sha256 {digest[:12]}..)"
+
+
+def test_wordlist_sha256_mismatch_fails_verify(monkeypatch, tmp_path):
+    wl = tmp_path / "words"
+    body = b"alpha\nbeta\n"
+    wl.write_bytes(body)
+    monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
+    _reset_wordlist()
+    live = hashlib.sha256(body).hexdigest()
+    recorded = "ab" * 32
+    with pytest.raises(SystemExit, match="sha256") as exc:
+        pz._assert_wordlist_pin({"wordlist": {"path": str(wl), "sha256": recorded, "count": 2}})
+    msg = str(exc.value)
+    assert live in msg
+    assert recorded in msg
+
+
+def test_map_without_wordlist_block_warns_and_does_not_fail(capsys):
+    mapping = {"entries": []}
+    pz._assert_wordlist_pin(mapping)
+    captured = capsys.readouterr()
+    assert "warning" in captured.out.lower()
+    assert "wordlist" in captured.out.lower()
+    assert "wordlist" not in mapping, "absent means absent (rg-015); do not invent the field"
+
+
+def test_matching_wordlist_pin_is_silent(monkeypatch, tmp_path, capsys):
+    # Pair for the two tests above: a pin check that always raised would
+    # satisfy the mismatch test, and one that always warned would satisfy
+    # the legacy-map test.
+    wl = tmp_path / "words"
+    wl.write_text("alpha\n", encoding="utf-8")
+    monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
+    _reset_wordlist()
+    _, digest, path = pz._load_wordlist()
+    pz._assert_wordlist_pin({"wordlist": {"path": path, "sha256": digest, "count": 1}})
+    assert "warning" not in capsys.readouterr().out.lower()
+
+
+def test_validate_map_does_not_invent_a_wordlist_block():
+    mapping = {
+        "schema": "priv1-alias-map/2",
+        "key_fingerprint": pz._key_fingerprint(),
+        "entries": [
+            {
+                "real_name": "Zyllora Elm",
+                "alias": "Amber Falcon",
+                "alias_slug": "amber_falcon",
+                "original_slug": "zyllora-elm",
+                "tokens": 2,
+            }
+        ],
+    }
+    pz._validate_map(mapping)
+    assert "wordlist" not in mapping
+
+
+def test_build_map_records_wordlist_block(tmp_path, monkeypatch):
+    roster = tmp_path / "roster.json"
+    roster.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {"bucket": "personal", "name": "Zyllora Elm", "slug": "zyllora-elm"},
+                    {"bucket": "celebs", "name": "Marlow Vensk", "slug": "marlow_vensk"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    # build_map records `roster_source` as a path relative to REPO.
+    monkeypatch.setattr(pz, "REPO", tmp_path)
+    monkeypatch.setattr(pz, "ROSTER", roster)
+    mapping = pz.build_map()
+    assert "wordlist" in mapping
+    rec = mapping["wordlist"]
+    assert set(rec) == {"path", "sha256", "count"}
+    assert rec["count"] >= 1
+    assert rec["sha256"] == hashlib.sha256(Path(rec["path"]).read_bytes()).hexdigest()
+
+
+def test_apply_and_verify_emit_wordlist_and_ambiguous_stem_measurements():
+    src = _SCRIPT.read_text(encoding="utf-8")
+    apply_src = src[src.index("def cmd_apply") : src.index("def cmd_verify")]
+    verify_src = src[src.index("def cmd_verify") : src.index("def main")]
+    plan_src = src[src.index("def build_map") : src.index("def load_map")]
+    assert "_wordlist_line" in apply_src
+    assert "_wordlist_line" in verify_src
+    assert "_ambiguous_stem_line" in apply_src
+    assert "_ambiguous_stem_line" in verify_src
+    # Both commands pin it, not just verify. `apply`'s rewrite decisions read
+    # the same wordlist -- the given-name pass excludes dictionary words -- so a
+    # list that drifted since `plan` makes apply rewrite a different token set
+    # than the map's recorded provenance describes, and nothing downstream can
+    # see it: the map still carries the old digest, and verify re-derives its
+    # residue pattern from the same drifted list (CARD-08/CARD-11).
+    assert "_assert_wordlist_pin" in verify_src
+    assert "_assert_wordlist_pin" in apply_src
+    assert "wordlist" in plan_src
+
+
+# --- ambiguous dictionary-word stems, PRIV-1-BR-15 ------------------------
+
+
+_AMBIGUOUS_STEM_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Zyllora Brook",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "zyllora-brook",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+        {
+            "real_name": "Calderre Brook",
+            "alias": "Cobalt Harbor",
+            "alias_slug": "cobalt_harbor",
+            "original_slug": "calderre-brook",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        },
+    ]
+}
+
+
+def test_ambiguous_dictionary_stem_is_reported_as_residue(monkeypatch, tmp_path):
+    # One stem token, two identities, and the token is a dictionary word.
+    # Media-stem skips it (ambiguous); given-name skips it (wordlist);
+    # `_family_words` never sees it. The name stays in the stem and must
+    # show up in residue — that is the finding. Rewrite stays a no-op.
+    wl = tmp_path / "words"
+    wl.write_text("brook\n", encoding="utf-8")
+    monkeypatch.setenv("PRIV1_WORDLIST", str(wl))
+    _reset_wordlist()
+    passes = pz._Passes(_AMBIGUOUS_STEM_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "photos/brook-pool-04.jpg"
+    hits = passes.residue(text, ".md")
+    assert hits.get("media_ambiguous", 0) > 0
+    assert sum(hits.values()) > 0
+    out, counts, unresolved = passes.rewrite(text, ".md")
+    assert out == text, "rewrite must still refuse an ambiguous stem"
+    assert counts["media"] == 0
+    assert "brook" in unresolved
+
+
+def test_ambiguous_stem_line_is_count_and_reason_never_the_token():
+    # CARD-07: a loud guard is worth nothing if the loud path names the
+    # token. Zero is a measurement too.
+    assert pz._ambiguous_stem_line(0) == (
+        "ambiguous media stems: 0 left unresolved (token maps to >1 identity)"
+    )
+    one = pz._ambiguous_stem_line(1)
+    assert one == "ambiguous media stems: 1 left unresolved (token maps to >1 identity)"
+    assert "brook" not in one
+
+
+# --- percent-encoded separators, PRIV-1-BR-21 -----------------------------
+
+
+# First token is two letters so the given-name pass cannot rewrite it
+# on its own. With the shared Ryanne fixture, `ryanne%20wistmoor` is
+# rewritten to `amber%20wistmoor` by the bare-token pass — the URL
+# separator never fired and the test would go green on the wrong pass.
+# `%20` sits against a digit on the surname's left, so NBL also refuses
+# `wistmoor` as a bare token. Only the multi-token pass can see this.
+_URL_MAPPING = {
+    "entries": [
+        {
+            "real_name": "Al Wistmoor",
+            "alias": "Amber Falcon",
+            "alias_slug": "amber_falcon",
+            "original_slug": "al-wistmoor",
+            "slug_was_name_derived": True,
+            "tokens": 2,
+        }
+    ]
+}
+
+
+def test_percent_encoded_space_in_url_is_rewritten():
+    passes = pz._Passes(_URL_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "https://example.test/gallery/al%20wistmoor"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert "wistmoor" not in out.lower()
+    assert "amber%20falcon" in out.lower()
+    assert counts["name"] == 1
+    assert passes.residue(text, ".md").get("name") == 1
+    assert passes.residue(out, ".md") == {}
+
+
+def test_double_encoded_percent_20_is_left_alone():
+    # `%2520` is a different encoding, not a case of `%20`. Out of scope.
+    passes = pz._Passes(_URL_MAPPING, identities=_UNIT_NONPERSONAL)
+    text = "https://example.test/gallery/al%2520wistmoor"
+    out, counts, _u = passes.rewrite(text, ".md")
+    assert out == text
+    assert counts["name"] == 0
+    assert passes.residue(text, ".md") == {}

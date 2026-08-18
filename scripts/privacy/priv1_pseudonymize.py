@@ -542,6 +542,7 @@ def build_map() -> dict:
         "personal_identities": len(entries),
         "celeb_identities_left_intact": len(celeb_names),
         "entries": entries,
+        "wordlist": _wordlist_record(),
     }
 
 
@@ -648,16 +649,33 @@ def _multi_token_regex(mapping: dict, singles: bool = False) -> tuple[re.Pattern
     by_key = {}
     parts = []
     for e in sorted(multi, key=lambda e: -len(e["real_name"])):
-        parts.append(re.escape(e["real_name"]).replace(r"\ ", r"[\s_\-]+"))
-        by_key[re.sub(r"[^a-z0-9]+", " ", e["real_name"].lower()).strip()] = e
+        # `%20` is a URL-encoded space. `%2520` is a double-encoded
+        # percent sequence — a different string, not a case of `%20` —
+        # and is out of scope.
+        parts.append(re.escape(e["real_name"]).replace(r"\ ", r"(?:[\s_\-]+|%20)+"))
+        by_key[_name_key(e["real_name"])] = e
     if not parts:
         raise SystemExit("alias map contains no multi-token names")
     return re.compile(NBL + r"(?:" + "|".join(parts) + r")" + NBR, re.IGNORECASE), by_key
 
 
+def _name_key(text: str) -> str:
+    """Normalise a matched name so separators, including `%20`, collapse.
+
+    `%2520` is left intact: it is a different encoding, not a case of `%20`.
+    Collapsing `%20` first keeps `first%20last` keyed as `first last`;
+    without that the `%` and the digits become their own tokens and the
+    lookup misses, so rewrite would leave a match residue cannot ignore.
+    """
+    collapsed = re.sub(r"%20", " ", text, flags=re.IGNORECASE)
+    return re.sub(r"[^a-z0-9]+", " ", collapsed.lower()).strip()
+
+
 def _render(alias: str, matched: str) -> str:
     """Mirror the matched token's separator and case so paths/slugs stay valid."""
-    sep_match = re.search(r"[\s_\-]", matched)
+    # `%20` is a separator, not a bare token. Prefer it so `first%20last`
+    # keeps the encoded space rather than collapsing to the alias's first word.
+    sep_match = re.search(r"%20|[\s_\-]", matched, flags=re.IGNORECASE)
     words = alias.split()
     if sep_match is None:
         # A bare token must stay a bare token. Expanding a single-token name into
@@ -681,7 +699,7 @@ def _substitute(text: str, rx: re.Pattern, by_key: dict) -> tuple[str, int]:
         nonlocal count
         if _inside_hex_run(m.string, m.start(), m.end()):
             return m.group(0)
-        key = re.sub(r"[^a-z0-9]+", " ", m.group(0).lower()).strip()
+        key = _name_key(m.group(0))
         entry = by_key.get(key)
         if entry is None:
             return m.group(0)
@@ -903,7 +921,81 @@ def _media_stem_pass(text: str, index: dict) -> tuple[str, int, set[str]]:
     return _MEDIA_PATH_RX.sub(repl, text), count, unresolved
 
 
-_DICT = Path("/usr/share/dict/words")
+_WORDLIST_ENV = "PRIV1_WORDLIST"
+_DEFAULT_WORDLIST = Path("/usr/share/dict/words")
+
+
+def _resolved_wordlist_path() -> Path:
+    override = os.environ.get(_WORDLIST_ENV)
+    if override:
+        return Path(override)
+    return _DEFAULT_WORDLIST
+
+
+@lru_cache(maxsize=1)
+def _load_wordlist() -> tuple[frozenset[str], str, str]:
+    """Load the exclusion wordlist. Fail closed if missing or empty (rg-008).
+
+    Returns ``(words, sha256 hex, resolved path)``. Cached so builders,
+    ``plan``, ``apply`` and ``verify`` share one load. Tests that change
+    ``$PRIV1_WORDLIST`` must ``cache_clear()``.
+    """
+    path = _resolved_wordlist_path()
+    if not path.is_file():
+        raise SystemExit(
+            f"wordlist not found: {path}. "
+            f"Set {_WORDLIST_ENV} to a readable non-empty word list "
+            f"(default {_DEFAULT_WORDLIST})."
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise SystemExit(
+            f"wordlist unreadable: {path} ({exc}). "
+            f"Set {_WORDLIST_ENV} to a readable non-empty word list "
+            f"(default {_DEFAULT_WORDLIST})."
+        ) from exc
+    words = {w.strip().lower() for w in raw.decode(errors="ignore").splitlines() if w.strip()}
+    if not words:
+        raise SystemExit(
+            f"wordlist is empty: {path}. "
+            f"Set {_WORDLIST_ENV} to a readable non-empty word list "
+            f"(default {_DEFAULT_WORDLIST})."
+        )
+    return frozenset(words), hashlib.sha256(raw).hexdigest(), str(path)
+
+
+def _wordlist_record() -> dict:
+    words, digest, path = _load_wordlist()
+    return {"path": path, "sha256": digest, "count": len(words)}
+
+
+def _wordlist_line() -> str:
+    words, digest, _path = _load_wordlist()
+    return f"wordlist: {len(words)} words (sha256 {digest[:12]}..)"
+
+
+def _assert_wordlist_pin(mapping: dict) -> None:
+    """Fail verify when the live wordlist is not the one the map recorded.
+
+    A map minted before this field existed must keep working: warn, do
+    not fail, and do not invent the field (rg-015).
+    """
+    recorded = mapping.get("wordlist")
+    if recorded is None:
+        print("warning: alias map has no wordlist block; residue depends on the host wordlist")
+        return
+    _words, digest, _path = _load_wordlist()
+    expected = recorded.get("sha256")
+    if expected != digest:
+        raise SystemExit(
+            f"wordlist sha256 mismatch: map has {expected}, live wordlist is {digest}"
+        )
+
+
+def _ambiguous_stem_line(n: int) -> str:
+    """Count and reason only — never the token itself (CARD-07)."""
+    return f"ambiguous media stems: {n} left unresolved (token maps to >1 identity)"
 
 
 def _family_words(by_token: dict[str, set[str]]) -> dict[str, str]:
@@ -996,9 +1088,7 @@ def _given_name_regex(mapping: dict, protected_tokens: set[str] | None = None) -
     nothing is measuring (CARD-11). Callers print it.
     """
     protected = _nonpersonal_tokens() if protected_tokens is None else protected_tokens
-    words = set()
-    if _DICT.is_file():
-        words = {w.strip().lower() for w in _DICT.read_text(errors="ignore").splitlines()}
+    words, _digest, _path = _load_wordlist()
     by_token: dict[str, set[str]] = {}
     deferred: set[str] = set()
     for entry in mapping["entries"]:
@@ -1178,9 +1268,15 @@ class _Passes:
             found["slug"] = n
         if self.quoted_rx is not None and suffix == ".json" and (n := len(self.quoted_rx.findall(text))):
             found["single"] = n
-        _out, n_media, _unresolved = _media_stem_pass(text, self.token_index)
+        _out, n_media, unresolved = _media_stem_pass(text, self.token_index)
         if n_media:
             found["media"] = n_media
+        if unresolved:
+            # Ambiguous stems are not rewritten, but they are residue: a
+            # dictionary-word token that maps to two identities is skipped
+            # here and never reaches `_family_words`. Counting the skip
+            # moves the gap into verify's exit code (BR-15).
+            found["media_ambiguous"] = len(unresolved)
         if self.given_rx is not None and (n := visible(self.given_rx)):
             found["given"] = n
         if self.concat_rx is not None and (n := visible(self.concat_rx)):
@@ -1378,6 +1474,7 @@ def cmd_apply(args) -> int:
     mapping = load_map()
     _assert_roster_is_covered(mapping)
     _assert_map_vocab_disjoint(mapping)
+    _assert_wordlist_pin(mapping)
     passes = _Passes(mapping)
     files = _tracked_files()
 
@@ -1456,11 +1553,11 @@ def cmd_apply(args) -> int:
         print(f"  RENAME {old} -> {new}")
     for rel, old, new, n in repins:
         print(f"  REPIN  {rel} {old[:12]}.. -> {new[:12]}.. (x{n})")
-    if all_unresolved:
-        print(f"  media stems left alone (token maps to >1 identity): {sorted(all_unresolved)}")
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
+    print(f"  {_wordlist_line()}")
+    print(f"  {_ambiguous_stem_line(len(all_unresolved))}")
     if out_of_scope:
         print(f"  OUT OF SCOPE -- scanned, deliberately not rewritten ({len(out_of_scope)} files):")
         for rel, hits in sorted(out_of_scope, key=lambda r: -sum(r[1].values()))[:20]:
@@ -1486,6 +1583,7 @@ def cmd_verify(args) -> int:
     # for them (CARD-11).
     _assert_roster_is_covered(mapping)
     _assert_map_vocab_disjoint(mapping)
+    _assert_wordlist_pin(mapping)
     passes = _Passes(mapping)
 
     residue: list[tuple[str, dict[str, int]]] = []
@@ -1524,6 +1622,8 @@ def cmd_verify(args) -> int:
     if passes.given_deferred:
         print(f"  bare tokens left alone (also carried by a non-personal identity): {passes.given_deferred}")
     print(f"  {_concat_exclusion_line(passes.concat_dropped)}")
+    print(f"  {_wordlist_line()}")
+    print(f"  {_ambiguous_stem_line(sum(h.get('media_ambiguous', 0) for _rel, h in residue))}")
     print(
         f"in-scope residue: {len(residue)} files / {sum(sum(h.values()) for h in (x[1] for x in residue))} occ; "
         f"paths: {len(path_residue)}; free-text: {len(free_text)}; unscannable in-scope: {len(undeclared)} "

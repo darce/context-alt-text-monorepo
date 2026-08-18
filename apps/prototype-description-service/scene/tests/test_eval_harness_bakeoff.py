@@ -22,13 +22,18 @@ import pytest
 
 from scripts.eval_harness.bakeoff import (
     BakeoffClient,
+    _clone_bakeoff_client,
+    _empty_warmup,
     _extract_caption,
     _extract_usage,
+    _run_warmup,
     _stamp_pipeline_provenance,
+    _stamp_timing_and_gpu,
     _sum_usage,
     build_parser,
 )
 from scripts.eval_harness.bakeoff import main as bakeoff_main
+from scripts.eval_harness.bench_capture import CaptureStatus, collect_item_latencies
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
@@ -774,3 +779,116 @@ def test_unknown_eval_mode_rejected_at_construction() -> None:
             transport=_chat_transport([]),
             eval_mode="name_ablation",  # requires entry_traits
         )
+
+
+def test_vram_sample_interval_s_rejects_nan_and_inf() -> None:
+    """rg-008: --vram-sample-interval-s must use the finite parser (sibling of --cold-load-s)."""
+    parser = build_parser()
+    for raw in ("nan", "inf", "-inf"):
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--vram-sample-interval-s", raw])
+        assert excinfo.value.code == 2, raw
+
+
+def test_clone_bakeoff_client_propagates_transport() -> None:
+    """_clone_bakeoff_client must copy transport= so warmup stays on MockTransport."""
+    transport = _chat_transport([])
+    client = BakeoffClient(
+        base_url="http://candidate.test:8080",
+        model_id="qwen3-vl-4b-instruct",
+        transport=transport,
+    )
+    try:
+        clone = _clone_bakeoff_client(client)
+        try:
+            assert isinstance(clone._client._transport, httpx.MockTransport)
+        finally:
+            clone.close()
+    finally:
+        client.close()
+
+
+def _mini_bakeoff_manifest(tmp_path: Path, n: int = 2) -> GoldenManifest:
+    entries = []
+    for i in range(n):
+        (tmp_path / f"img{i}.jpg").write_bytes(b"fake image bytes")
+        entries.append(
+            {
+                "path": f"img{i}.jpg",
+                "sha256": f"{i}" * 64,
+                "media_id": 7 + i,
+                "face_count": 0,
+                "present_identities": [],
+                "context_pack": {"caption": f"caption-{i}"},
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": False},
+                "provenance": {"source": "fixture", "license": "fixture"},
+            }
+        )
+    return GoldenManifest.model_validate(
+        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": [], "entries": entries}
+    )
+
+
+def test_run_warmup_isolates_failures_from_scoring_client(tmp_path: Path) -> None:
+    """L-03: _run_warmup / _clone_bakeoff_client / _empty_warmup isolation.
+
+    First 3 MockTransport hits return 500; scoring must still complete with
+    items_with_error == 0 (clone has its own breaker).
+    """
+    seen = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        seen["n"] += 1
+        if seen["n"] <= 3:
+            return httpx.Response(500, json={"error": "not ready"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "A caption."}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=transport)
+    manifest = _mini_bakeoff_manifest(tmp_path, n=2)
+    try:
+        assert _run_warmup(client, manifest, str(tmp_path), 0) == _empty_warmup()
+        warmup = _run_warmup(client, manifest, str(tmp_path), 3)
+        assert warmup["requests"] == 3
+        assert warmup["succeeded"] == 0
+        assert warmup["failed"] == 3
+        assert "elapsed_s" in warmup
+        record = fetch_run_record(manifest, str(tmp_path), client, head_sha="deadbeef")
+        _stamp_timing_and_gpu(
+            record,
+            warmup=warmup,
+            cold_load_s=None,
+            gpu={"status": CaptureStatus.UNAVAILABLE},
+        )
+        assert record["timing"]["warmup"]["requests"] == 3
+        assert record["timing"]["warmup"]["succeeded"] == 0
+        assert record["timing"]["warmup"]["failed"] == 3
+        assert record["timing"]["items_with_error"] == 0
+        assert all(item.get("error") is None for item in record["items"])
+    finally:
+        client.close()
+
+
+def test_items_without_latency_excludes_error_items() -> None:
+    """L-03 / TEST-15: items_without_latency = n_items - len(latencies) - items_with_error."""
+    record: dict = {
+        "items": [
+            {"latency_s": 1.0, "error": None},
+            {"latency_s": 9.0, "error": "TimeoutError: timed out"},
+            {"latency_s": None, "error": None},
+        ]
+    }
+    _stamp_timing_and_gpu(
+        record,
+        warmup=_empty_warmup(),
+        cold_load_s=None,
+        gpu={"status": CaptureStatus.UNAVAILABLE},
+    )
+    latencies = collect_item_latencies(record)
+    n_items = 3
+    items_with_error = record["timing"]["items_with_error"]
+    assert items_with_error == 1
+    assert record["timing"]["items_without_latency"] == n_items - len(latencies) - items_with_error
+    assert record["timing"]["items_without_latency"] == 1

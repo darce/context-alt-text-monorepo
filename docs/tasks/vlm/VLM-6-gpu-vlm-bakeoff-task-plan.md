@@ -297,7 +297,7 @@ Proof:
 - [ ] Registry complete: 14 candidates + 2 incumbent anchors, revision-pinned, recipes + tiers
 - [ ] Runner dry-run green against stub server; VRAM/timing capture verified
 - [ ] Per-stack smoke gate passed (llama.cpp, vLLM, HF Transformers each ran one real inference)
-- [ ] Weight pre-pull script ready; grunt work offloaded via `/offload`
+- [ ] Weight pre-pull script ready; grunt work offloaded via `/offload` (`scripts/eval_harness/prepull_weights.py`)
 
 ### Checklist for Slice 3: GPU bake-off window
 

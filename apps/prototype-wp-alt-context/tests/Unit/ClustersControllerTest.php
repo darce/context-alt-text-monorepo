@@ -74,6 +74,7 @@ class ClustersControllerTest extends TestCase
     public function testTopUnlabeledClustersHydrateThumbnailFallbacksFromLocalProjection(): void
     {
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+        $GLOBALS['__ac_attachment_urls'][102] = 'http://example.test/media/102.jpg';
 
         $clustersRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -86,7 +87,7 @@ class ClustersControllerTest extends TestCase
                     [
                         'cluster_uuid' => 'cluster-1',
                         'label' => null,
-                        'identity_count' => 1,
+                        'identity_count' => 2,
                     ],
                 ];
             }
@@ -98,7 +99,14 @@ class ClustersControllerTest extends TestCase
                 return [
                     'cluster-1' => [
                         [
+                            'identity_uuid' => 'identity-1',
                             'media_id' => 101,
+                            'cluster_uuid' => 'cluster-1',
+                            'distance' => 0.0,
+                        ],
+                        [
+                            'identity_uuid' => 'identity-2',
+                            'media_id' => 102,
                             'cluster_uuid' => 'cluster-1',
                             'distance' => 0.0,
                         ],
@@ -173,6 +181,7 @@ class ClustersControllerTest extends TestCase
                 'limit' => 10,
                 'total' => 0,
                 'truncated' => false,
+                'repair_pending' => false,
                 'singleton_count' => 0,
                 'has_clusters' => false,
                 'data_source' => 'local_projection',

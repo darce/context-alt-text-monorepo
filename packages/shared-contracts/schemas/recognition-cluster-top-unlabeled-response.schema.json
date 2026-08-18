@@ -114,7 +114,11 @@
     },
     "truncated": {
       "type": "boolean",
-      "description": "Whether additional unlabeled clusters exist beyond this response."
+      "description": "Whether additional unlabeled clusters exist beyond this response. Paging only — invariant filtering does not set this flag."
+    },
+    "repair_pending": {
+      "type": "boolean",
+      "description": "True when this response requested targeted projection repair or dropped invariant-failing rows. Drives the review-queue Resync affordance."
     },
     "singleton_count": {
       "type": "integer",

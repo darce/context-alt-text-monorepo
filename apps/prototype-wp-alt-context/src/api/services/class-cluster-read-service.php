@@ -15,9 +15,11 @@ use WP_REST_Response;
 
 use function absint;
 use function array_merge;
+use function array_slice;
 use function array_unique;
 use function array_values;
 use function count;
+use function sort;
 use function is_array;
 use function is_bool;
 use function is_numeric;
@@ -38,6 +40,7 @@ class ClusterReadService {
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
 	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
 	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
+	public const TARGETED_REPAIR_ID_CEILING = 25;
 	/**
 	 * Per-cluster sample size for list / top-unlabeled cards. Canonical value
 	 * lives on the repository interface (PREVIEW_IDENTITIES_PER_CLUSTER); do not
@@ -177,21 +180,27 @@ class ClusterReadService {
 				$tenant_id,
 				$preview_limit
 			);
-			$this->schedule_repair_from_mapper(
-				$tenant_id,
-				$this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id )
-			);
-			$total = count( $unlabeled_items );
-			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
-				$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] );
+			$mapper_ids = $this->dependencies->cluster_mapper->requested_repair_cluster_ids();
+			$extra_ids  = array();
+			if ( count( $mapper_ids ) < self::TARGETED_REPAIR_ID_CEILING ) {
+				$extra_ids = $this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id );
 			}
+			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids );
+			$dropped = $this->dependencies->cluster_mapper->dropped_cluster_count();
+			$total   = count( $unlabeled_items );
+			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
+				$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] - $dropped );
+			}
+			$fetched_page = count( $sovereign_data['clusters'] );
+			$repair_pending = array() !== $mapper_ids || $dropped > 0 || array() !== $extra_ids;
 
 			return new WP_REST_Response(
 				array(
 					'clusters' => $unlabeled_items,
 					'limit' => $limit,
 					'total' => $total,
-					'truncated' => $total > count( $unlabeled_items ),
+					'truncated' => $fetched_page >= $limit,
+					'repair_pending' => $repair_pending,
 					'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 					'has_clusters' => $has_clusters,
 					'data_source' => $this->dependencies->config->data_source_local_projection,
@@ -412,6 +421,8 @@ class ClusterReadService {
 			}
 		}
 		$normalized = array_values( array_unique( $normalized ) );
+		sort( $normalized );
+		$normalized = array_slice( $normalized, 0, self::TARGETED_REPAIR_ID_CEILING );
 		if ( array() === $normalized ) {
 			return;
 		}

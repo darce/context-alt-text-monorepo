@@ -291,15 +291,12 @@ class ClustersControllerTest extends TestCase
         $this->assertSame([], $data['clusters']);
 
         // The drifted cluster is named on a scheduled event (R1-07). A
-        // tenant-wide bootstrap may also be scheduled when the gate is stale.
+        // tenant-wide bootstrap is also scheduled because last_updated is null (stale).
         $events = $this->scheduledBootstrapEvents();
-        $this->assertNotEmpty($events);
-        $targeted = array_values(array_filter(
-            $events,
-            static fn (array $event): bool => ($event['args'][1] ?? null) === ['cluster-needs-members']
-        ));
-        $this->assertCount(1, $targeted);
-        $this->assertSame(self::currentTenantId(), $targeted[0]['args'][0]);
+        $this->assertCount(2, $events);
+        $args = array_column(array_values($events), 'args');
+        $this->assertContains([self::currentTenantId()], $args);
+        $this->assertContains([self::currentTenantId(), ['cluster-needs-members']], $args);
     }
 
     public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void
@@ -1232,15 +1229,12 @@ class ClustersControllerTest extends TestCase
         $this->assertFalse($data['truncated']);
 
         // The drifted cluster is named on a scheduled event (R1-07). A
-        // tenant-wide bootstrap may also be scheduled when the gate is stale.
+        // tenant-wide bootstrap is also scheduled because last_updated is null (stale).
         $events = $this->scheduledBootstrapEvents();
-        $this->assertNotEmpty($events);
-        $targeted = array_values(array_filter(
-            $events,
-            static fn (array $event): bool => ($event['args'][1] ?? null) === ['cluster-needs-members']
-        ));
-        $this->assertCount(1, $targeted);
-        $this->assertSame(self::currentTenantId(), $targeted[0]['args'][0]);
+        $this->assertCount(2, $events);
+        $args = array_column(array_values($events), 'args');
+        $this->assertContains([self::currentTenantId()], $args);
+        $this->assertContains([self::currentTenantId(), ['cluster-needs-members']], $args);
     }
 
     public function testGetClusterMembersUsesRepositoryTotalMetadataBeforeFallbackCount(): void
@@ -1665,11 +1659,10 @@ class ClustersControllerTest extends TestCase
         $this->assertFalse($syncSpy->performedBypass, 'Stale read must not pull inline via perform_bypass_cooldown()');
 
         $events = $this->scheduledBootstrapEvents();
-        $this->assertNotSame([], $events);
-        $this->assertContains(
-            [self::currentTenantId()],
-            array_column(array_values($events), 'args')
-        );
+        $this->assertCount(2, $events);
+        $args = array_column(array_values($events), 'args');
+        $this->assertContains([self::currentTenantId()], $args);
+        $this->assertContains([self::currentTenantId(), ['cluster-stale']], $args);
 
         // Stale data is still served immediately, off the convergence path.
         $data = $response->get_data();
@@ -1795,11 +1788,62 @@ class ClustersControllerTest extends TestCase
         // so the read path issues zero HTTP requests even with a null job.
         $this->assertSame([], $this->getHttpCalls());
         $events = $this->scheduledBootstrapEvents();
-        $this->assertNotSame([], $events);
-        $this->assertContains(
-            [self::currentTenantId()],
-            array_column(array_values($events), 'args')
+        $this->assertCount(2, $events);
+        $args = array_column(array_values($events), 'args');
+        $this->assertContains([self::currentTenantId()], $args);
+        $this->assertContains([self::currentTenantId(), ['cluster-no-sync']], $args);
+    }
+
+    /**
+     * R2-05: a single top-unlabeled read schedules at most one tenant heal
+     * plus one targeted repair event. An unbounded-scheduling mutant fails.
+     */
+    public function testListTopUnlabeledReadSchedulesAtMostTwoBootstrapEvents(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-a',
+                        'label' => null,
+                        'identity_count' => 7,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-b',
+                        'label' => null,
+                        'identity_count' => 5,
+                    ],
+                ];
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            new NullIdentityMembersRepository(),
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 1;
+                }
+            },
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
         );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $events = $this->scheduledBootstrapEvents();
+        $this->assertLessThanOrEqual(2, count($events));
+        $this->assertCount(2, $events);
     }
 }
 

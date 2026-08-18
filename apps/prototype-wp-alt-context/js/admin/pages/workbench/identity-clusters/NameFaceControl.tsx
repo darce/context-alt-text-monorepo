@@ -113,6 +113,10 @@ interface NameFaceControlProps {
   onCancel?: () => void;
   isPending?: boolean;
   disabled?: boolean;
+  /** Override for the input's disabled state (defaults to isPending). */
+  inputDisabled?: boolean;
+  /** Suppress the built-in result-count live region (surface renders its own). */
+  hideStatusAnnouncement?: boolean;
   commitLabel: string;
   pendingLabel?: string;
   placeholder?: string;
@@ -142,6 +146,8 @@ export const NameFaceControl = ({
   onCancel,
   isPending = false,
   disabled = false,
+  inputDisabled,
+  hideStatusAnnouncement = false,
   commitLabel,
   pendingLabel,
   placeholder,
@@ -157,6 +163,7 @@ export const NameFaceControl = ({
 }: NameFaceControlProps): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null);
   const isDisabled = isPending || disabled;
+  const isInputDisabled = disabled || (inputDisabled ?? isPending);
 
   useEffect(() => {
     if (autoFocus) {
@@ -249,7 +256,7 @@ export const NameFaceControl = ({
           onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder ?? __('Enter a name…', 'alt-context')}
-          disabled={isDisabled}
+          disabled={isInputDisabled}
           aria-label={ariaLabel}
           aria-describedby={hint ? hintId : undefined}
         />
@@ -327,9 +334,11 @@ export const NameFaceControl = ({
         {hint}
       </div>
 
-      <p className={`${classPrefix}__result-count`} role="status" aria-live="polite">
-        {resultCountAnnouncement}
-      </p>
+      {hideStatusAnnouncement ? null : (
+        <p className={`${classPrefix}__result-count`} role="status" aria-live="polite">
+          {resultCountAnnouncement}
+        </p>
+      )}
 
       <div className={`${classPrefix}__edit-actions`}>
         <button

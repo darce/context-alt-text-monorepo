@@ -19,7 +19,7 @@ import {
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
-import { Combobox, type ComboboxOption } from '../../../../components/ui/combobox';
+import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { unavailableImageName } from '../../../../components/ui/faceThumbDisplay';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
@@ -29,11 +29,12 @@ import {
   findCollisionsForLabel,
   NAMING_GROUP_ALL_LABELS,
   namingOptionValue,
-  parseNamingOptionValue,
   uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
   type NamingOption,
 } from './buildNamingOptions';
+import { NameFaceControl } from './NameFaceControl';
+import { isReservedLabel, RESERVED_LABEL_MESSAGE } from './reservedLabel';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
@@ -100,24 +101,6 @@ const withTimeout = async <T,>(
   }
 };
 
-const renderNamingOption = (option: ComboboxOption): React.ReactNode => {
-  const source =
-    option.source === 'person' || option.source === 'cluster'
-      ? option.source
-      : parseNamingOptionValue(String(option.value))?.source;
-  const sourceLabel = source === 'person' ? __('Person', 'alt-context') : __('Cluster', 'alt-context');
-  return (
-    <span className="acx-naming-option">
-      <span className="acx-naming-option__label">{option.label}</span>
-      {source && (
-        <span className={`acx-badge acx-badge--source acx-badge--source-${source}`} data-source={source}>
-          {sourceLabel}
-        </span>
-      )}
-    </span>
-  );
-};
-
 export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -127,8 +110,6 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const [showAllAnnouncement, setShowAllAnnouncement] = useState<string | null>(null);
   const memberGridRef = useRef<HTMLDivElement | null>(null);
   const wasExpandingRef = useRef(false);
-  /** Combobox calls onValueChange after onSelect; skip clearing the guard for that echo. */
-  const skipGuardClearOnNextValueRef = useRef(false);
   const queryClient = useQueryClient();
 
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
@@ -140,7 +121,6 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setAllowRenameAnyway(false);
     setLastMerge(null);
     setShowAllAnnouncement(null);
-    skipGuardClearOnNextValueRef.current = false;
   }, [clusterId]);
 
   const handleLabelSuccess = (label: string) => {
@@ -348,19 +328,16 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = labelInput.trim();
+  const submitLabel = async (rawLabel: string) => {
+    const trimmed = rawLabel.trim();
     if (!trimmed) {
       return;
     }
     setError(null);
 
     // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
-    if (!isHumanLabeledTarget(trimmed)) {
-      setError(
-        __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-      );
+    if (isReservedLabel(trimmed)) {
+      setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
       return;
     }
 
@@ -383,6 +360,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitLabel(labelInput);
+  };
+
   const clearError = () => {
     if (error) {
       setError(null);
@@ -391,10 +373,6 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
 
   const handleTypedValueChange = (value: string) => {
     setLabelInput(value);
-    if (skipGuardClearOnNextValueRef.current) {
-      skipGuardClearOnNextValueRef.current = false;
-      return;
-    }
     setAllowRenameAnyway(false);
     clearError();
     if (duplicateGuard) {
@@ -407,8 +385,6 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     if (!matched) {
       return;
     }
-    // Combobox also fires onValueChange(label) after onSelect — don't clear the guard we arm here.
-    skipGuardClearOnNextValueRef.current = true;
     setLabelInput(matched.label);
     setAllowRenameAnyway(false);
     clearError();
@@ -588,33 +564,29 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           className="acx-cluster-labeling-panel__form"
         >
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
-          <div className="acx-cluster-labeling-panel__input-group">
-            <Combobox
-              id="cluster-label-input"
-              options={comboboxOptions}
-              value={labelInput}
-              onSelect={handleSelectOption}
-              onValueChange={handleTypedValueChange}
-              onCreate={handleTypedValueChange}
-              placeholder={__('Enter name...', 'alt-context')}
-              searchPlaceholder={__('Search people...', 'alt-context')}
-              ariaLabel={__('Name', 'alt-context')}
-              disabled={mergeMutation.isPending}
-              isLoading={rosterLoading}
-              renderOption={renderNamingOption}
-            />
-            <button
-              type="submit"
-              className="button button-primary"
-              disabled={!labelInput.trim() || labelMutation.isPending || mergeMutation.isPending}
-            >
-              {labelMutation.isPending
-                ? __('Saving...', 'alt-context')
-                : mergeMutation.isPending
-                  ? __('Merging...', 'alt-context')
-                  : __('Save', 'alt-context')}
-            </button>
-          </div>
+          <NameFaceControl
+            options={comboboxOptions}
+            value={labelInput}
+            onValueChange={handleTypedValueChange}
+            onCommit={(resolution) => {
+              void submitLabel(resolution.name);
+            }}
+            onOptionConfirm={(option) => handleSelectOption(String(option.value))}
+            isPending={labelMutation.isPending || mergeMutation.isPending}
+            inputDisabled={mergeMutation.isPending}
+            disabled={mergeMutation.isPending}
+            commitLabel={__('Save', 'alt-context')}
+            pendingLabel={
+              labelMutation.isPending ? __('Saving...', 'alt-context') : __('Merging...', 'alt-context')
+            }
+            placeholder={__('Enter name...', 'alt-context')}
+            ariaLabel={__('Name', 'alt-context')}
+            inputId="cluster-label-input"
+            autoFocus={false}
+            hideStatusAnnouncement
+            className="acx-cluster-labeling-panel__input-group"
+            classPrefix="acx-cluster-labeling-panel"
+          />
 
           <p className="acx-cluster-labeling-panel__result-count" role="status" aria-live="polite">
             {resultCountAnnouncement}

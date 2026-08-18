@@ -9,7 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
-import { isHumanLabeledTarget } from './suggestionProjection';
+import { isReservedLabel, RESERVED_LABEL_MESSAGE } from './reservedLabel';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
 
@@ -111,10 +111,8 @@ export const useClusterSaveAction = ({
         return false;
       }
       // BR-55: shared sink rejects reserved machine labels (defense-in-depth).
-      if (!isHumanLabeledTarget(trimmed)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(trimmed)) {
+        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
         return false;
       }
       if (editableClusterId) {
@@ -154,10 +152,8 @@ export const useClusterSaveAction = ({
       }
 
       // BR-55: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
-      if (!isHumanLabeledTarget(canonical)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(canonical)) {
+        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
         return;
       }
 
@@ -228,10 +224,8 @@ export const useClusterSaveAction = ({
       }
 
       // BR-49: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
-      if (!isHumanLabeledTarget(trimmed)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(trimmed)) {
+        setError(__(RESERVED_LABEL_MESSAGE, 'alt-context'));
         return;
       }
 

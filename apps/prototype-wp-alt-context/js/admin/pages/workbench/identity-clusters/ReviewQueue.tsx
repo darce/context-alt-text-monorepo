@@ -1919,7 +1919,7 @@ const CurrentCard = ({
           );
         }
         return (
-          <p className="acx-review-queue__empty">{__('This cluster is no longer available.', 'alt-context')}</p>
+          <p className="acx-review-queue__empty">{__('These faces are no longer available.', 'alt-context')}</p>
         );
       }
       return (

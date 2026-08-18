@@ -2169,7 +2169,7 @@ describe('ReviewQueue', () => {
     expect(error).toHaveTextContent('Unable to load unlabeled clusters.');
     expect(within(error).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
-    expect(screen.queryByText('This cluster is no longer available.')).not.toBeInTheDocument();
+    expect(screen.queryByText('These faces are no longer available.')).not.toBeInTheDocument();
   });
 
   // UI-05: Retry must re-invoke the top-unlabeled query (not a decorative button).

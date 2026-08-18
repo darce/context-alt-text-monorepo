@@ -73,7 +73,7 @@ export const ClusterReviewPanel = ({
       setShowAllAnnouncement(
         sprintf(
           /* translators: %d: total member count */
-          __('All %d members shown', 'alt-context'),
+          __('All %d faces shown', 'alt-context'),
           total,
         ),
       );
@@ -113,7 +113,7 @@ export const ClusterReviewPanel = ({
   return (
     <div className="acx-cluster-review-panel">
       <div className="acx-cluster-review-panel__header">
-        <h2>{__('Review Cluster', 'alt-context')}</h2>
+        <h2>{__('Review these faces', 'alt-context')}</h2>
         <button type="button" className="acx-close-button" onClick={onClose} aria-label={__('Close', 'alt-context')}>
           ×
         </button>
@@ -121,10 +121,10 @@ export const ClusterReviewPanel = ({
 
       <div className="acx-cluster-review-panel__content">
         {isLoading ? (
-          <p>{__('Loading members...', 'alt-context')}</p>
+          <p>{__('Loading faces...', 'alt-context')}</p>
         ) : isError ? (
           <div className="acx-cluster-review-panel__error" role="alert" data-testid="acx-cluster-members-error">
-            <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+            <p>{__('Unable to load faces.', 'alt-context')}</p>
             <button type="button" className="button" onClick={() => refetch()}>
               {__('Retry', 'alt-context')}
             </button>
@@ -143,15 +143,15 @@ export const ClusterReviewPanel = ({
                         bbox: member.bbox,
                       }}
                       size="lg"
-                      alt={__('Cluster member', 'alt-context')}
+                      alt={__('Face', 'alt-context')}
                       className="acx-cluster-member-card__image"
                     />
                     <button
                       type="button"
                       className="acx-cluster-member-card__remove"
                       onClick={() => handleRemove(member.identity_id)}
-                      aria-label={__('Remove from cluster', 'alt-context')}
-                      title={__('Remove from cluster', 'alt-context')}
+                      aria-label={__('Remove this face', 'alt-context')}
+                      title={__('Remove this face', 'alt-context')}
                     >
                       ×
                     </button>
@@ -175,7 +175,7 @@ export const ClusterReviewPanel = ({
                   data-total={total}
                 >
                   {isExpanding
-                    ? __('Loading all members…', 'alt-context')
+                    ? __('Loading all faces…', 'alt-context')
                     : sprintf(
                         /* translators: %d: total member count */
                         __('Show all (%d)', 'alt-context'),
@@ -191,7 +191,7 @@ export const ClusterReviewPanel = ({
             ) : null}
           </>
         ) : (
-          <p>{__('No members found.', 'alt-context')}</p>
+          <p>{__('No faces found.', 'alt-context')}</p>
         )}
       </div>
 
@@ -207,16 +207,16 @@ export const ClusterReviewPanel = ({
           <DialogOverlay />
           <DialogContent>
             <div className="acx-queue-modal">
-              <DialogTitle>{__('Remove cluster member', 'alt-context')}</DialogTitle>
+              <DialogTitle>{__('Remove this face', 'alt-context')}</DialogTitle>
               <DialogDescription>
-                {__('Are you sure you want to remove this person from the cluster?', 'alt-context')}
+                {__('Are you sure you want to remove this face from the group?', 'alt-context')}
               </DialogDescription>
               <div className="acx-queue-modal__actions">
                 <button type="button" className="button" onClick={handleCancelRemoval}>
                   {__('Cancel', 'alt-context')}
                 </button>
                 <button type="button" className="button button-primary" onClick={handleConfirmRemoval}>
-                  {__('Remove member', 'alt-context')}
+                  {__('Remove this face', 'alt-context')}
                 </button>
               </div>
             </div>

@@ -65,6 +65,14 @@ const BANNED_STRINGS = [
   'Managed Identities',
 ] as const;
 
+/**
+ * UXW2-3: engineering vocabulary banned as whole words from the rendered
+ * workbench review surfaces changed in this lane (ClusterReviewPanel headline /
+ * member rows / removal dialog). Scoped here instead of BANNED_STRINGS so the
+ * Roster/ops page sweeps keep passing until their owning lanes extend the ban.
+ */
+const BANNED_REVIEW_SURFACE_WORDS = [/\bclusters?\b/i, /\bidentities\b/i, /\binstances?\b/i] as const;
+
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 vi.mock('@wordpress/i18n', () => ({
@@ -442,6 +450,33 @@ vi.mock('../pages/workbench/DeadLetterPanel', () => ({
   DeadLetterPanel: () => null,
 }));
 
+// UXW2-3: one-member fixture so the review panel paints its real member-row copy.
+vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => ({
+  useShowAllClusterMembers: () => ({
+    members: [
+      {
+        identity_id: 'identity-1',
+        media_id: 1,
+        similarity: 0.9,
+        confidence: 0.9,
+        bbox: null,
+        thumb_url: null,
+        media_url: null,
+        attachment_url: null,
+      },
+    ],
+    isLoading: false,
+    isError: false,
+    truncated: false,
+    total: 1,
+    isFullyLoaded: true,
+    isExpanding: false,
+    expandError: null,
+    showAll: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
+
 import { DashboardPage } from '../pages/DashboardPage';
 import { DescribeRunApplyView } from '../pages/DescribeRunApplyView';
 import { DescriptionHistoryPage } from '../pages/DescriptionHistoryPage';
@@ -591,6 +626,25 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface).toContain(confirmTabCopy.CONFIRM_NO_JOB_ZERO_STATE);
     expect(surface.toLowerCase()).not.toContain('embeddings');
     expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  /**
+   * UXW2-3: rendered workbench review surfaces (the lane-changed ones) carry no
+   * "cluster"/"identities"/"instances" wording. ClusterReviewPanel is not mounted
+   * by any PAGE_SWEEP fixture (ScanTabContent is mocked), so it renders here.
+   */
+  it('workbench review panel renders without engineering vocabulary', async () => {
+    const { ClusterReviewPanel } = await import('../pages/workbench/identity-clusters/ClusterReviewPanel');
+    const { container } = render(
+      wrap(<ClusterReviewPanel clusterId="cluster-1" onClose={() => undefined} />),
+    );
+    const text = collectVisibleText(container);
+
+    for (const pattern of BANNED_REVIEW_SURFACE_WORDS) {
+      expect(text).not.toMatch(pattern);
+    }
+    expect(text).toContain('Review these faces');
+    expect(text).not.toMatch(UUID_REGEX);
   });
 
   /**

@@ -9,6 +9,26 @@
 - Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
 
+## Vocabulary
+
+Controlled say/don't-say list for operator-facing workbench copy (UXW2-3; NAV-13/NAV-14).
+Engineering terms stay legal in code identifiers, `acx_*` CSS classes, and job ids — never in
+rendered strings on the review surfaces. Roster page and dashboard/jobs/ops surfaces are owned
+by other lanes and are not yet covered by this list.
+
+| Don't say | Say | Notes |
+| --- | --- | --- |
+| cluster | face group (unnamed) / person (once named) | A cluster the operator has not named yet is "these faces" / "this face group"; after naming it is the person |
+| identities / instances | faces | Members of a group are faces |
+| Review Cluster | Review these faces | Panel headline + review triggers |
+| %d faces in cluster | %d faces | Count of member faces on a review card |
+| Skip this cluster for now | Skip these faces for now | |
+| Unnamed cluster | Unnamed face group | Merge suggestion sides |
+| first/second cluster | first/second group | Merge suggestion alt text + context |
+| This cluster is no longer available. | These faces are no longer available. | Queue empty-item fallback |
+| Cluster member / Remove from cluster | Face / Remove this face | Review panel member rows + removal dialog |
+| Just label — don't add to roster | (removed) | Naming always creates/binds a roster person; the roster is a consequence, not a decision |
+
 ## Jobs
 
 - `job-cluster-recognize` — Cluster & recognize faces (build/refresh clusters, run recognition)

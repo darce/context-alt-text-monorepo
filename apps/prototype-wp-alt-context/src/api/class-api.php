@@ -795,18 +795,19 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		// Curated dissociation: preserve curation confirmation while clearing assignment.
+		// Return faces to the unlabeled queue: persons own human labels (DATA-14).
 		$now = current_time( 'mysql' );
 		$dissociation_result = $wpdb->update(
 			$table_clusters,
 			array(
 				'person_id'         => null,
-				'curation_state'    => 'confirmed',
-				'is_user_confirmed' => 1,
+				'label'             => null,
+				'curation_state'    => 'uncurated',
+				'is_user_confirmed' => 0,
 				'updated_at'        => $now,
 			),
 			array( 'person_id' => $id ),
-			array( null, '%s', '%d', '%s' ),
+			array( null, null, '%s', '%d', '%s' ),
 			array( '%d' )
 		);
 		if ( false === $dissociation_result ) {
@@ -850,6 +851,21 @@ class Api {
 				if ( ! $queued ) {
 					$this->rollback_database_transaction();
 					return new WP_Error( 'acx_db_error', __( 'Could not queue cluster unbind replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+				}
+
+				$label_cleared = $this->enqueue_curation_operation(
+					'cluster_label_updated',
+					'cluster',
+					$cluster_uuid,
+					max( 1, $cluster_revision ),
+					array(
+						'cluster_uuid' => $cluster_uuid,
+						'label'        => null,
+					)
+				);
+				if ( ! $label_cleared ) {
+					$this->rollback_database_transaction();
+					return new WP_Error( 'acx_db_error', __( 'Could not queue cluster label-clear replay operation.', 'alt-context' ), array( 'status' => 500 ) );
 				}
 			}
 		}

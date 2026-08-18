@@ -198,8 +198,9 @@ class PersonCrudTest extends TestCase
         // Verify soft dissociation on clusters
         $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
         $this->assertStringContainsString('person_id = NULL', $dissociateQuery);
-        $this->assertStringContainsString("curation_state = 'confirmed'", $dissociateQuery);
-        $this->assertStringContainsString('is_user_confirmed = 1', $dissociateQuery);
+        $this->assertStringContainsString('label = NULL', $dissociateQuery);
+        $this->assertStringContainsString("curation_state = 'uncurated'", $dissociateQuery);
+        $this->assertStringContainsString('is_user_confirmed = 0', $dissociateQuery);
         $this->assertStringContainsString('person_id = 1', $dissociateQuery);
 
         // Verify person deletion
@@ -210,6 +211,68 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString("'person_deleted'", $outboxInsert);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testDeletePersonClearsHumanLabelAndReturnsClusterToUnlabeledQueue(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $clusterUuid = 'cluster-tory-6731';
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Tory Guzman',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 2,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Tory Guzman',
+                'person_id' => 1,
+                'curation_state' => 'confirmed',
+                'is_user_confirmed' => 1,
+                'identity_count' => 3,
+                'local_revision' => 4,
+            ],
+        ];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+
+        $response = $this->api->delete_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertTrue($response->get_data()['deleted']);
+
+        $cluster = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($cluster['label']);
+        $this->assertNull($cluster['person_id']);
+        $this->assertSame(0, (int) $cluster['is_user_confirmed']);
+
+        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters SET');
+        $this->assertStringContainsString('label = NULL', $dissociateQuery);
+        $this->assertStringContainsString('is_user_confirmed = 0', $dissociateQuery);
+
+        $outboxJoined = implode("\n", array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+        ));
+        $this->assertStringContainsString("'cluster_person_unbound'", $outboxJoined);
+        $this->assertStringContainsString("'cluster_label_updated'", $outboxJoined);
+
+        $qualifiesForUnlabeled = (int) $cluster['is_user_confirmed'] === 0
+            && ($cluster['label'] === null || $cluster['label'] === '' || str_starts_with((string) $cluster['label'], 'cluster-'))
+            && (int) $cluster['identity_count'] >= 2
+            && ($cluster['curation_state'] === null || $cluster['curation_state'] !== 'dismissed');
+        $this->assertTrue($qualifiesForUnlabeled, 'dissociated cluster must match list_top_unlabeled predicate');
+
+        $wpdb->mockResults = $qualifiesForUnlabeled ? [$cluster] : [];
+        $rows = (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
+            ->list_top_unlabeled(self::currentTenantId(), 10);
+        $this->assertCount(1, $rows);
+        $this->assertSame($clusterUuid, $rows[0]['cluster_uuid']);
     }
 
     public function testCommitRosterClusterMarksClusterAsCuratedAndQueuesOutboxEvent(): void

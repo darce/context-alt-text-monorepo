@@ -12,6 +12,13 @@ use RuntimeException;
 
 class ClusterFacadeTest extends TestCase {
 
+	public function test_preview_fetch_limit_is_one_past_preview_cap(): void {
+		$this->assertSame(
+			IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER + 1,
+			IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT
+		);
+	}
+
 	public function test_list_top_unlabeled_orchestrates_repositories(): void {
 		$clusters_repo = $this->createMock( ClustersRepositoryInterface::class );
 		$members_repo  = $this->createMock( IdentityMembersRepositoryInterface::class );
@@ -40,7 +47,7 @@ class ClusterFacadeTest extends TestCase {
 
 		$members_repo->expects( $this->once() )
 			->method( 'list_for_cluster_uuids' )
-			->with( ['uuid-1'], IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER )
+			->with( ['uuid-1'], IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT )
 			->willReturn( $members );
 
 		$result = $facade->list_top_unlabeled( $tenant_id, $limit );

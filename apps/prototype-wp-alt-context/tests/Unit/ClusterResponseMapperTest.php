@@ -203,6 +203,7 @@ class ClusterResponseMapperTest extends TestCase
                 ['identity_uuid' => 'id-2', 'attachment_id' => 2],
                 ['identity_uuid' => 'id-3', 'attachment_id' => 3],
                 ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ['identity_uuid' => 'id-5', 'attachment_id' => 5],
             ],
         ];
 
@@ -218,7 +219,9 @@ class ClusterResponseMapperTest extends TestCase
         );
 
         $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['sample_identities']);
         $this->assertSame([], $GLOBALS['__ac_error_log']);
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
     }
 
     public function testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit(): void
@@ -369,7 +372,7 @@ class ClusterResponseMapperTest extends TestCase
     }
 
     /**
-     * Preview cap hit (observed 4, projected 9) is truncation, not drift.
+     * R1-12: observed > cap is truncation. Fetch probe returns cap+1.
      */
     public function testMapTopUnlabeledKeepsProjectedCountWhenPreviewIsTruncated(): void
     {
@@ -378,14 +381,49 @@ class ClusterResponseMapperTest extends TestCase
         $payload = $this->mapper->map_top_unlabeled_clusters(
             [
                 [
-                    'cluster_uuid' => 'cluster-truncated-9-4',
+                    'cluster_uuid' => 'cluster-truncated-9-5',
                     'label' => '',
                     'identity_count' => 9,
                     'is_user_confirmed' => 0,
                 ],
             ],
             [
-                'cluster-truncated-9-4' => [
+                'cluster-truncated-9-5' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    /**
+     * R1-12: observed == cap after a cap+1 fetch is exact, not truncation.
+     */
+    public function testMapTopUnlabeledTreatsObservedEqualToCapAsExactCount(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-exact-4',
+                    'label' => '',
+                    'identity_count' => 9,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-exact-4' => [
                     ['identity_uuid' => 'id-1', 'attachment_id' => 1],
                     ['identity_uuid' => 'id-2', 'attachment_id' => 2],
                     ['identity_uuid' => 'id-3', 'attachment_id' => 3],
@@ -396,9 +434,9 @@ class ClusterResponseMapperTest extends TestCase
             4
         );
 
-        $this->assertSame(9, $payload[0]['identity_count']);
-        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
-        $this->assertSame([], $GLOBALS['__ac_error_log']);
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-exact-4', $this->mapper->requested_repair_cluster_ids());
     }
 
     public function testMapClusterListIncludesPinnedRepresentativeState(): void

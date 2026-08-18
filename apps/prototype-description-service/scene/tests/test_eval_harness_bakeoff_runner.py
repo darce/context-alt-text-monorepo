@@ -20,6 +20,8 @@ from scripts.eval_harness.bakeoff_candidates import (
     load_bakeoff_candidates,
 )
 from scripts.eval_harness.bakeoff_runner import (
+    READY_ATTEMPTS,
+    READY_SLEEP_S,
     SKIP_REASON_NOT_COMPETING,
     SKIP_REASON_STACK,
     SKIP_REASON_VRAM,
@@ -132,8 +134,7 @@ def _mutate_entry(
     **updates: Any,
 ) -> BakeoffCandidateRegistry:
     entries = [
-        entry.model_copy(update=updates, deep=True) if entry.id == entry_id else entry
-        for entry in registry.entries
+        entry.model_copy(update=updates, deep=True) if entry.id == entry_id else entry for entry in registry.entries
     ]
     return registry.model_copy(update={"entries": entries})
 
@@ -236,7 +237,10 @@ def test_emit_shell_is_bash_n_clean_and_mentions_incumbents(tmp_path) -> None:
         assert plan.out_path in script
     assert "/records/florence-anchor.json" in script
     assert "/records/qwen-anchor.json" in script
-    assert "seq 1 40" in script
+    assert f"seq 1 {READY_ATTEMPTS}" in script
+    assert READY_ATTEMPTS == 600
+    assert READY_SLEEP_S == 1
+    assert f"sleep {READY_SLEEP_S}" in script
     assert "--max-time" in script
     assert "trap" in script
     assert 'kill "${_serve_pid}" 2>/dev/null || true' in script
@@ -350,9 +354,7 @@ def test_report_argv_round_trips_through_report_parser() -> None:
     parsed = build_bakeoff_report.build_parser().parse_args(argv[3:])
     assert parsed.manifest == _PLAN_KW["manifest"]
     assert parsed.limit == 646
-    assert parsed.run == [
-        f"{plan.candidate_id}={plan.out_path}" for plan in plans
-    ] + [
+    assert parsed.run == [f"{plan.candidate_id}={plan.out_path}" for plan in plans] + [
         "florence-anchor=/records/florence-anchor.json",
         "qwen-anchor=/records/qwen-anchor.json",
     ]
@@ -492,9 +494,7 @@ def test_emit_shell_download_hint_includes_artifacts() -> None:
 
 
 def test_mmproj_gb_from_recipe_not_placeholder() -> None:
-    registry = _registry(
-        [_entry("gemma-like", artifact_gb=7.2, recipe=_recipe(mmproj_gb=0.18))]
-    )
+    registry = _registry([_entry("gemma-like", artifact_gb=7.2, recipe=_recipe(mmproj_gb=0.18))])
     plan = build_plans(registry, **_PLAN_KW)[0]
     assert plan.total_gb == pytest.approx(7.38)
 
@@ -609,7 +609,7 @@ def test_sealed_qwen_pair_emit_shell_has_lower_bound_preflight() -> None:
 def test_emit_shell_stamps_cold_load_and_leaves_warmup_to_bakeoff() -> None:
     script = emit_shell(build_plans(_sample_registry(), **_PLAN_KW), incumbent_runs={})
     assert "_t0=$(date +%s.%N)" in script
-    assert '_cold=$(python -c "import time;print(round(time.time()-$_t0,3))")' in script
+    assert '_cold=$(python3 -c "import time;print(round(time.time()-$_t0,1))")' in script
     assert '--cold-load-s "${_cold}"' in script
     assert "# warm-up:" in script
     assert "bakeoff --warmup" in script
@@ -624,7 +624,69 @@ def test_emit_shell_echoes_nvidia_smi_sanity_after_run() -> None:
     assert "command -v nvidia-smi" in script
     assert "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits" in script
     run_at = script.find('--cold-load-s "${_cold}"')
-    smi_at = script.find("nvidia-smi --query-gpu=memory.used", run_at)
+    smi_at = script.find("nvidia-smi --query-gpu=memory.used")
     kill_at = script.find('kill "${_serve_pid}"', smi_at)
     assert run_at != -1 and smi_at != -1 and kill_at != -1
-    assert run_at < smi_at < kill_at
+    assert smi_at < kill_at
+
+
+def test_emit_shell_polls_every_second_and_stamps_cold_inside_ready_branch() -> None:
+    # VLM6-RV3-Q2-02: first /v1/models success stamps _cold before break, 0.1s resolution.
+    script = emit_shell(build_plans(_registry([_entry("alpha")]), **_PLAN_KW), incumbent_runs={})
+    assert f"sleep {READY_SLEEP_S}" in script
+    assert READY_SLEEP_S == 1
+    assert f"seq 1 {READY_ATTEMPTS}" in script
+    assert READY_ATTEMPTS == 600
+    ready_at = script.find("_ready=1")
+    cold_at = script.find("_cold=$(python3 -c")
+    break_at = script.find("break", ready_at)
+    assert ready_at != -1 and cold_at != -1 and break_at != -1
+    assert ready_at < cold_at < break_at
+    assert "round(time.time()-$_t0,1)" in script
+    assert "round(time.time()-$_t0,3)" not in script
+    assert "cold-load resolution" in script
+    assert 'if [ -n "${_cold}" ]' in script
+    assert '|| _cold=""' in script
+
+
+def test_emit_shell_cold_stamp_uses_python3_and_survives_without_python(tmp_path) -> None:
+    # VLM6-RV3-Q4-02: no bare `python -c`; missing measurement is empty, never a crash.
+    plans = build_plans(_registry([_entry("alpha")]), **_PLAN_KW)
+    script = emit_shell(plans, incumbent_runs={})
+    assert "python -c" not in script
+    assert "python3 -c" in script
+    path = tmp_path / "plan.sh"
+    path.write_text(script, encoding="utf-8")
+    syntax = subprocess.run(["bash", "-n", str(path)], check=False, capture_output=True, text=True)
+    assert syntax.returncode == 0, syntax.stderr
+
+    lines = script.splitlines()
+    start = next(idx for idx, line in enumerate(lines) if line.startswith("for _i in"))
+    end = next(idx for idx, line in enumerate(lines) if idx > start and line == "done")
+    poll = "\n".join(lines[start : end + 1])
+    snippet = "\n".join(
+        [
+            "set -euo pipefail",
+            "_t0=$(date +%s.%N)",
+            "_serve_pid=$$",
+            '_cold=""',
+            poll,
+            'if [ -n "${_cold}" ]; then echo "COLD=${_cold}"; else echo COLD_EMPTY; fi',
+        ]
+    )
+    stub_bin = tmp_path / "stub"
+    stub_bin.mkdir()
+    curl = stub_bin / "curl"
+    curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    curl.chmod(0o755)
+    ran = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{stub_bin}:/usr/bin:/bin"},
+    )
+    assert ran.returncode == 0, ran.stderr + ran.stdout
+    assert ran.stdout.startswith("COLD=")
+    stamped = ran.stdout.strip().removeprefix("COLD=")
+    assert re.fullmatch(r"\d+\.\d", stamped), stamped

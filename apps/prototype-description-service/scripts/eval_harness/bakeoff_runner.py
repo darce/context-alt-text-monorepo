@@ -30,8 +30,9 @@ DEFAULT_OUT_DIR = "out"
 DEFAULT_MODELS_DIR = "/opt/models"
 MMPROJ_ESTIMATE_GB = 1.0
 REPORT_LIMIT = 646
-READY_ATTEMPTS = 40
-READY_SLEEP_S = 15
+READY_ATTEMPTS = 600
+READY_SLEEP_S = 1
+# 600 * 1s keeps the same ~10 min ceiling as 40 * 15s.
 _CLIENT_ONLY_FLAGS = frozenset({"--no-think"})
 _REPORT_MODULE = "scripts.eval_harness.build_bakeoff_report"
 _BAKEOFF_MODULE = "scripts.eval_harness.bakeoff"
@@ -120,10 +121,7 @@ def build_plans(
     requested = set(only) if only is not None else None
     plans: list[CandidatePlan] = []
     for entry in selected:
-        if (
-            entry.recipe.stack is not ServingStack.LLAMA_CPP
-            and (requested is None or entry.id not in requested)
-        ):
+        if entry.recipe.stack is not ServingStack.LLAMA_CPP and (requested is None or entry.id not in requested):
             continue
         plans.append(
             _plan_candidate(
@@ -138,13 +136,34 @@ def build_plans(
     return plans
 
 
+def _emit_ready_poll_lines(models_url: str) -> list[str]:
+    """Bounded /v1/models poll; stamp ``_cold`` on first success (rg-015)."""
+    return [
+        '_cold=""',
+        "_ready=0",
+        f"for _i in $(seq 1 {READY_ATTEMPTS}); do",
+        f"  if curl -sf --max-time 6 {shlex.quote(models_url)} >/dev/null; then",
+        "    _ready=1",
+        "    # cold-load resolution: ±1s poll interval; first /v1/models success, rounded to 0.1s (rg-015)",
+        '    _cold=$(python3 -c "import time;print(round(time.time()-$_t0,1))") || _cold=""',
+        "    break",
+        "  fi",
+        '  kill -0 "$_serve_pid" 2>/dev/null || break',
+        f"  sleep {READY_SLEEP_S}",
+        "done",
+    ]
+
+
 def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
-    """Lines for a ready candidate: cold-load stamp, bakeoff run, VRAM sanity."""
-    run_line = f"{shlex.join(plan.run_argv)} --cold-load-s \"${{_cold}}\""
+    """Lines for a ready candidate: bakeoff run (optional cold-load), VRAM sanity."""
+    run_base = shlex.join(plan.run_argv)
     return [
         "  # warm-up: bakeoff --warmup runs inside the run argv; this shell does not send extra requests",
-        '  _cold=$(python -c "import time;print(round(time.time()-$_t0,3))")',
-        f"  if ! {run_line}; then",
+        "  _cold_flag=()",
+        '  if [ -n "${_cold}" ]; then',
+        '    _cold_flag=(--cold-load-s "${_cold}")',
+        "  fi",
+        f'  if ! {run_base} "${{_cold_flag[@]}}"; then',
         f'    echo "candidate {plan.candidate_id} fetch FAILED" >&2',
         "    _fail=$((_fail + 1))",
         "  fi",
@@ -191,15 +210,7 @@ def emit_shell(plans: Sequence[CandidatePlan], *, incumbent_runs: Mapping[str, s
         lines.append("_t0=$(date +%s.%N)")
         lines.append(f"{shlex.join(plan.serve_argv)} &")
         lines.append("_serve_pid=$!")
-        lines.append("_ready=0")
-        lines.append(f"for _i in $(seq 1 {READY_ATTEMPTS}); do")
-        lines.append(f"  if curl -sf --max-time 6 {shlex.quote(models_url)} >/dev/null; then")
-        lines.append("    _ready=1")
-        lines.append("    break")
-        lines.append("  fi")
-        lines.append('  kill -0 "$_serve_pid" 2>/dev/null || break')
-        lines.append(f"  sleep {READY_SLEEP_S}")
-        lines.append("done")
+        lines.extend(_emit_ready_poll_lines(models_url))
         lines.append('if [ "${_ready}" -ne 1 ]; then')
         lines.append(f'  echo "candidate {plan.candidate_id} never became ready" >&2')
         lines.append("  _fail=$((_fail + 1))")
@@ -297,9 +308,7 @@ def _select_competing(
                 f"known ids: {', '.join(known)}. "
                 "Pass an id from bakeoff_candidates.yaml."
             )
-        not_competing = [
-            candidate_id for candidate_id in only if candidate_id not in competing_ids
-        ]
+        not_competing = [candidate_id for candidate_id in only if candidate_id not in competing_ids]
         if not_competing:
             raise NotCompetingError(
                 f"candidate id {not_competing[0]!r} is not competing; "
@@ -329,8 +338,7 @@ def _plan_candidate(
         )
     if not entry.recipe.gguf or not entry.recipe.mmproj:
         raise UnsupportedStackError(
-            f"candidate {entry.id!r} is llama_cpp but missing gguf/mmproj; "
-            "pin both filenames in the registry recipe."
+            f"candidate {entry.id!r} is llama_cpp but missing gguf/mmproj; pin both filenames in the registry recipe."
         )
 
     total_gb = _entry_total_gb(entry)
@@ -412,11 +420,10 @@ def _emit_runtime_build_preflight(plan: CandidatePlan) -> list[str]:
         f"# preflight: {cid} requires llama.cpp {required}",
         "_build=$(llama-server --version 2>&1 | grep -oE 'b[0-9]+' | head -1) || _build=\"\"",
         'if [ -z "${_build}" ]; then',
-        f'  echo "candidate {cid}: cannot parse llama-server runtime build '
-        f'(required {required}, observed empty)" >&2',
+        f'  echo "candidate {cid}: cannot parse llama-server runtime build (required {required}, observed empty)" >&2',
         "  exit 1",
         "fi",
-        '_obs=${_build#b}',
+        "_obs=${_build#b}",
         f"_req={req_digits}",
         'if [ "${_obs}" -lt "${_req}" ]; then',
         f'  echo "candidate {cid}: runtime build ${{_build}} is older than required '
@@ -542,23 +549,16 @@ def _parse_incumbent_runs(
 ) -> dict[str, str]:
     if not specs:
         return {}
-    incumbents = {
-        entry.id: entry
-        for entry in registry.entries
-        if entry.role is CandidateRole.INCUMBENT
-    }
+    incumbents = {entry.id: entry for entry in registry.entries if entry.role is CandidateRole.INCUMBENT}
     parsed: dict[str, str] = {}
     for spec in specs:
         if "=" not in spec:
-            raise UnknownIncumbentError(
-                f"--incumbent-run must be ID=PATH, got {spec!r}"
-            )
+            raise UnknownIncumbentError(f"--incumbent-run must be ID=PATH, got {spec!r}")
         incumbent_id, run_path = spec.split("=", 1)
         if incumbent_id not in incumbents:
             known = ", ".join(sorted(incumbents))
             raise UnknownIncumbentError(
-                f"--incumbent-run id {incumbent_id!r} is not a registry incumbent; "
-                f"incumbent ids: {known}"
+                f"--incumbent-run id {incumbent_id!r} is not a registry incumbent; incumbent ids: {known}"
             )
         parsed[incumbent_id] = run_path
     return parsed
@@ -591,8 +591,7 @@ def _skip_reason(
     if _entry_total_gb(entry) > budget_gb:
         return SKIP_REASON_VRAM
     raise SkipNotesInconsistentError(
-        f"candidate {entry.id!r} is not planned but has no skip reason; "
-        "planner and skip notes disagree"
+        f"candidate {entry.id!r} is not planned but has no skip reason; planner and skip notes disagree"
     )
 
 
@@ -603,11 +602,7 @@ def _emit_skip_notes(
     planned = {plan.candidate_id for plan in plans}
     budget_gb = float(registry.hardware_target.usable_vram_budget_gb)
     roster = list(registry.entries)
-    skipped = [
-        (entry, reason)
-        for entry in roster
-        if (reason := _skip_reason(entry, planned, budget_gb)) is not None
-    ]
+    skipped = [(entry, reason) for entry in roster if (reason := _skip_reason(entry, planned, budget_gb)) is not None]
     for entry, reason in skipped:
         print(f"skip {entry.id} ({reason})", file=sys.stderr)
     print(
@@ -621,14 +616,8 @@ def _print_table(plans: Sequence[CandidatePlan]) -> None:
         print("no competing candidates selected")
         return
     headers = ("candidate_id", "model_id", "total_gb", "out_path")
-    rows = [
-        (plan.candidate_id, plan.model_id, f"{plan.total_gb:.1f}", plan.out_path)
-        for plan in plans
-    ]
-    widths = [
-        max(len(header), max(len(row[idx]) for row in rows))
-        for idx, header in enumerate(headers)
-    ]
+    rows = [(plan.candidate_id, plan.model_id, f"{plan.total_gb:.1f}", plan.out_path) for plan in plans]
+    widths = [max(len(header), max(len(row[idx]) for row in rows)) for idx, header in enumerate(headers)]
     print("  ".join(header.ljust(widths[idx]) for idx, header in enumerate(headers)))
     for row in rows:
         print("  ".join(row[idx].ljust(widths[idx]) for idx in range(len(headers))))

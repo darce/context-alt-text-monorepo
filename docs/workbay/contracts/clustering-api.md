@@ -293,7 +293,7 @@ Response (envelope):
 Notes:
 
 - The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source }` on this route.
-- `backend_proxy` envelopes drop any cluster whose `representatives` is empty or absent before the response is returned (same `minItems: 1` invariant as `local_projection`). Dropped rows are subtracted from `total`; `truncated` is not set from that filter.
+- `backend_proxy` envelopes drop any cluster whose `representatives` is empty or absent before the response is returned (same `minItems: 1` invariant as `local_projection`). Dropped rows are subtracted from `total`; `truncated` is not set from that filter. Any dropped invariant row sets `repair_pending: true` (same rule as the local-projection leg).
 - Returns clusters from **sovereign local projection** when available.
 - When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope. If the upstream backend still emits a legacy bare array, the proxy normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false` before tagging the response with `data_source: "backend_proxy"`. That fallback is best-effort only: without canonical upstream envelope metadata the proxy cannot detect hidden truncation, so bare-array fallback responses never report `truncated=true`.
 - A partial envelope such as `{ "clusters": [...], "limit": 10 }` without `total` or `truncated` is a contract violation. The proxy surfaces that upstream failure as `502 invalid_top_unlabeled_envelope` instead of inventing the missing metadata.

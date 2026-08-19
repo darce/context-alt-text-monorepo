@@ -161,6 +161,7 @@ class ClusterResponseEnvelopeService {
 					'limit' => max( 1, (int) $data['limit'] ),
 					'total' => $total,
 					'truncated' => $data['truncated'],
+					'repair_pending' => $dropped > 0,
 				),
 				$response->get_status()
 			);

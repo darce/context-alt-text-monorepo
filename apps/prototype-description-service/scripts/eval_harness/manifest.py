@@ -1159,8 +1159,8 @@ def load_manifest(
             f"golden manifest not found: {manifest_path} (expected scene/tests/seed/golden.json; see seed/README.md)"
         )
     try:
-        raw = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -1357,8 +1357,8 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
             f"legacy manifest not found: {manifest_path}"
         )
     try:
-        raw = json.loads(manifest_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
         raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):

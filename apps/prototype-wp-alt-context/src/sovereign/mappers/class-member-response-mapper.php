@@ -96,7 +96,20 @@ class MemberResponseMapper {
 	}
 
 	private function normalize_cluster_label( array $member_row ): ?string {
+		$person = trim( (string) ( $member_row['person_name'] ?? '' ) );
+		if ( '' !== $person ) {
+			return $person;
+		}
+
 		$label = trim( (string) ( $member_row['cluster_label'] ?? '' ) );
-		return '' !== $label ? $label : null;
+		if ( '' === $label ) {
+			return null;
+		}
+
+		if ( $this->is_reserved_label_shape( $label ) ) {
+			return $label;
+		}
+
+		return null;
 	}
 }

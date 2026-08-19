@@ -77,6 +77,35 @@ class MemberResponseMapperTest extends TestCase
         $this->assertTrue($payload['202'][0]['is_pinned']);
     }
 
+    public function testMapMediaIdentitiesAppliesLabelAuthorityOnLocalProjectionRows(): void
+    {
+        $payload = $this->mapper->map_media_identities([
+            [
+                'identity_uuid' => 'unbound',
+                'attachment_id' => 22,
+                'cluster_label' => 'Tory Guzman',
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+            [
+                'identity_uuid' => 'auto',
+                'attachment_id' => 22,
+                'cluster_label' => 'cluster-abcdef01',
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+            [
+                'identity_uuid' => 'bound',
+                'attachment_id' => 22,
+                'cluster_label' => 'stale',
+                'person_name' => 'Ada Lovelace',
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+        ]);
+
+        $this->assertNull($payload['22'][0]['cluster_label']);
+        $this->assertSame('cluster-abcdef01', $payload['22'][1]['cluster_label']);
+        $this->assertSame('Ada Lovelace', $payload['22'][2]['cluster_label']);
+    }
+
     public function testMapClusterMembersTreatsSyntheticClusterLabelsAsAutoLabels(): void
     {
         $rows = [

@@ -124,6 +124,49 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame('Ada Lovelace', $faces[2]['cluster_label']);
     }
 
+    public function testProxyMediaIdentitiesAppliesLabelAuthorityOnHttpPayload(): void
+    {
+        $membersRepo = new NullIdentityMembersRepository();
+        $syncRepo = new NullSyncStateRepository();
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'identities_by_media' => [
+                    '22' => [
+                        [
+                            'identity_id' => 'unbound',
+                            'media_id' => 22,
+                            'cluster_label' => 'Tory Guzman',
+                        ],
+                        [
+                            'identity_id' => 'auto',
+                            'media_id' => 22,
+                            'cluster_label' => 'cluster-abcdef01',
+                        ],
+                        [
+                            'identity_id' => 'bound',
+                            'media_id' => 22,
+                            'cluster_label' => 'stale',
+                            'person_name' => 'Ada Lovelace',
+                        ],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $faces = $response->get_data()['identities_by_media']['22'];
+        $this->assertNull($faces[0]['cluster_label']);
+        $this->assertSame('cluster-abcdef01', $faces[1]['cluster_label']);
+        $this->assertSame('Ada Lovelace', $faces[2]['cluster_label']);
+    }
+
     public function testMediaIdentitiesReturnsEmptyPayloadWhenProxyUnavailable(): void
     {
         $membersRepo = new class() extends NullIdentityMembersRepository {

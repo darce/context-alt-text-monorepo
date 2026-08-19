@@ -18,6 +18,12 @@ use WP_Error;
  */
 class PersonResolutionService {
 
+	private ?string $table_prefix;
+
+	public function __construct( ?string $table_prefix = null ) {
+		$this->table_prefix = $table_prefix;
+	}
+
 	/**
 	 * Trim + Unicode case-fold. No diacritic folding ("José" ≠ "Jose").
 	 */
@@ -60,7 +66,7 @@ class PersonResolutionService {
 			);
 		}
 
-		$table_persons = $wpdb->prefix . 'acx_persons';
+		$table_persons = $this->persons_table();
 		$existing      = $this->find_by_normalized_name( $table_persons, $normalized );
 		if ( null !== $existing ) {
 			return $existing;
@@ -243,7 +249,7 @@ class PersonResolutionService {
 		for ( $suffix = 2; $suffix <= 99; $suffix++ ) {
 			$candidate = $base . ' (' . $suffix . ')';
 			$normalized = self::normalize_name( $candidate );
-			$existing   = $this->find_by_normalized_name( $GLOBALS['wpdb']->prefix . 'acx_persons', $normalized );
+			$existing   = $this->find_by_normalized_name( $this->persons_table(), $normalized );
 			if ( null !== $existing ) {
 				continue;
 			}
@@ -252,10 +258,19 @@ class PersonResolutionService {
 		}
 
 		return new WP_Error(
-			'acx_db_error',
+			'acx_name_collision',
 			__( 'Could not create a distinct person for the colliding label.', 'alt-context' ),
-			array( 'status' => 500 )
+			array( 'status' => 409 )
 		);
+	}
+
+	private function persons_table(): string {
+		if ( is_string( $this->table_prefix ) && '' !== $this->table_prefix ) {
+			return $this->table_prefix . 'acx_persons';
+		}
+
+		global $wpdb;
+		return $wpdb->prefix . 'acx_persons';
 	}
 
 	/**

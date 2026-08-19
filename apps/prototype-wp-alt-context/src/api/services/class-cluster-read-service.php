@@ -408,13 +408,10 @@ class ClusterReadService {
 	}
 
 	/**
-	 * @param list<string> $extra_ids
+	 * @param list<string> $ids
+	 * @return list<string>
 	 */
-	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array() ): void {
-		$ids = array_merge(
-			$this->dependencies->cluster_mapper->requested_repair_cluster_ids(),
-			$extra_ids
-		);
+	private function normalize_repair_cluster_ids( array $ids ): array {
 		$normalized = array();
 		foreach ( $ids as $cluster_id ) {
 			$id = sanitize_text_field( (string) $cluster_id );
@@ -422,9 +419,29 @@ class ClusterReadService {
 				$normalized[] = $id;
 			}
 		}
-		$normalized = array_values( array_unique( $normalized ) );
-		sort( $normalized );
-		$normalized = array_slice( $normalized, 0, self::TARGETED_REPAIR_ID_CEILING );
+
+		return array_values( array_unique( $normalized ) );
+	}
+
+	/**
+	 * Mapper-requested ids take the ceiling first; extras top up only if room remains.
+	 *
+	 * @param list<string> $extra_ids
+	 */
+	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array() ): void {
+		$mapper_ids = $this->normalize_repair_cluster_ids(
+			$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
+		);
+		$mapper_ids = array_slice( $mapper_ids, 0, self::TARGETED_REPAIR_ID_CEILING );
+		$room       = self::TARGETED_REPAIR_ID_CEILING - count( $mapper_ids );
+		$top_up     = array();
+		if ( $room > 0 ) {
+			$top_up = $this->normalize_repair_cluster_ids( $extra_ids );
+			$top_up = array_values( array_diff( $top_up, $mapper_ids ) );
+			sort( $top_up );
+			$top_up = array_slice( $top_up, 0, $room );
+		}
+		$normalized = array_merge( $mapper_ids, $top_up );
 		if ( array() === $normalized ) {
 			return;
 		}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterApi';
@@ -181,6 +181,46 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
     renderRosterPage('/');
 
     expect(screen.getByTestId('roster-review-cta')).toHaveTextContent('7 face groups waiting');
+    expect(within(screen.getByTestId('roster-review-cta')).getByRole('status')).toHaveTextContent(
+      '7 face groups waiting',
+    );
+  });
+
+  it('uses a singular waiting count for total === 1', () => {
+    mockedUseTopUnlabeledTotal.mockReturnValue(1);
+
+    renderRosterPage('/');
+
+    const status = within(screen.getByTestId('roster-review-cta')).getByRole('status');
+    expect(status).toHaveTextContent('1 face group waiting');
+    expect(status).not.toHaveTextContent(/face groups waiting/);
+  });
+
+  it('mounts an empty status live region before the count resolves (A11Y-21)', () => {
+    mockedUseTopUnlabeledTotal.mockReturnValue(null);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const Harness = () => (
+      <MemoryRouter initialEntries={['/']}>
+        <QueryClientProvider client={queryClient}>
+          <RosterPage />
+        </QueryClientProvider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(<Harness />);
+
+    const cta = screen.getByTestId('roster-review-cta');
+    const status = within(cta).getByRole('status');
+    expect(status).toBeInTheDocument();
+    expect(status).toHaveTextContent('');
+
+    mockedUseTopUnlabeledTotal.mockReturnValue(7);
+    rerender(<Harness />);
+
+    const next = within(screen.getByTestId('roster-review-cta')).getByRole('status');
+    expect(next).toBe(status);
+    expect(status).toHaveTextContent('7 face groups waiting');
   });
 
   it('never invents a total when the count is unknown (rg-015)', () => {

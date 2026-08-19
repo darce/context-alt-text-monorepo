@@ -2751,8 +2751,38 @@ if (!isset($GLOBALS['wpdb'])) {
                 );
             }
 
+            $distinctColumn = $parsed['distinct'] ?? null;
+            if (is_string($distinctColumn) && $distinctColumn !== '') {
+                $seen = [];
+                $deduped = [];
+                foreach ($rows as $row) {
+                    $key = (string) ($row[$distinctColumn] ?? '');
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $deduped[] = $row;
+                }
+                $rows = $deduped;
+            }
+
+            $windowTotal = ($parsed['windowCount'] ?? false) ? count($rows) : null;
+
             if ($parsed['limit'] !== null) {
                 $rows = array_slice($rows, 0, $parsed['limit']);
+            }
+
+            if ($windowTotal !== null) {
+                $column = is_string($distinctColumn) && $distinctColumn !== '' ? $distinctColumn : 'label';
+                return array_map(
+                    static function (array $row) use ($windowTotal, $column): array {
+                        return [
+                            'label' => $row[$column] ?? null,
+                            'total_count' => $windowTotal,
+                        ];
+                    },
+                    $rows
+                );
             }
 
             if ($parsed['select'] === '*') {
@@ -2774,56 +2804,93 @@ if (!isset($GLOBALS['wpdb'])) {
             );
         }
 
-        /** @return array{select:string,table:string,conditions:array<int,array<string,mixed>>,orderBy:?string,orderDirection:string,limit:?int}|null */
+        /** @return array{select:string,table:string,conditions:array<int,array<string,mixed>>,orderBy:?string,orderDirection:string,limit:?int,distinct:?string,windowCount:bool}|null */
         private function parseSelectQuery(string $query): ?array
         {
             $matches = [];
-            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
-                return null;
+            if (preg_match(
+                '/^SELECT\s+COUNT\(\*\)\s+OVER\(\)\s+AS\s+total_count,\s+(?:\w+\.)?label\s+FROM\s+\(\s*SELECT\s+DISTINCT\s+label\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?\s*\)\s+\w+(?:\s+LIMIT\s+(?P<limit>\d+))?$/i',
+                $query,
+                $matches
+            ) === 1) {
+                return [
+                    'select' => 'DISTINCT label',
+                    'table' => $matches['table'],
+                    'conditions' => $this->parseWhereConditions((string) ($matches['where'] ?? '')),
+                    'orderBy' => isset($matches['order']) && $matches['order'] !== '' ? $matches['order'] : null,
+                    'orderDirection' => strtoupper($matches['direction'] ?? 'ASC'),
+                    'limit' => isset($matches['limit']) && $matches['limit'] !== '' ? (int) $matches['limit'] : null,
+                    'distinct' => 'label',
+                    'windowCount' => true,
+                ];
             }
 
-            $conditions = [];
-            if (isset($matches['where']) && $matches['where'] !== '') {
-                $parts = preg_split('/\s+AND\s+/i', trim($matches['where']));
-                if (is_array($parts)) {
-                    foreach ($parts as $part) {
-                        $condition = trim($part);
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IN\s*\((?P<values>.+)\)$/i', $condition, $conditionMatches) === 1) {
-                            $values = array_map(
-                                static fn(string $value): string => trim($value, " '\t\n\r\0\x0B"),
-                                explode(',', $conditionMatches['values'])
-                            );
-                            $values = array_values(array_filter($values, static fn(string $value): bool => $value !== ''));
-                            $conditions[] = ['type' => 'in', 'column' => $conditionMatches['column'], 'values' => $values];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => $conditionMatches['value']];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+LIKE\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'like', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NULL$/i', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'null', 'column' => $conditionMatches['column'], 'value' => ''];
-                        }
-                    }
-                }
+            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
+                return null;
             }
 
             return [
                 'select' => trim($matches['select']),
                 'table' => $matches['table'],
-                'conditions' => $conditions,
+                'conditions' => $this->parseWhereConditions((string) ($matches['where'] ?? '')),
                 'orderBy' => isset($matches['order']) && $matches['order'] !== '' ? $matches['order'] : null,
                 'orderDirection' => strtoupper($matches['direction'] ?? 'ASC'),
                 'limit' => isset($matches['limit']) && $matches['limit'] !== '' ? (int) $matches['limit'] : null,
+                'distinct' => null,
+                'windowCount' => false,
             ];
+        }
+
+        /** @return array<int,array<string,mixed>> */
+        private function parseWhereConditions(string $where): array
+        {
+            $conditions = [];
+            if ($where === '') {
+                return $conditions;
+            }
+
+            $parts = preg_split('/\s+AND\s+/i', trim($where));
+            if (!is_array($parts)) {
+                return $conditions;
+            }
+
+            foreach ($parts as $part) {
+                $condition = trim($part);
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IN\s*\((?P<values>.+)\)$/i', $condition, $conditionMatches) === 1) {
+                    $values = array_map(
+                        static fn(string $value): string => trim($value, " '\t\n\r\0\x0B"),
+                        explode(',', $conditionMatches['values'])
+                    );
+                    $values = array_values(array_filter($values, static fn(string $value): bool => $value !== ''));
+                    $conditions[] = ['type' => 'in', 'column' => $conditionMatches['column'], 'values' => $values];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => $conditionMatches['value']];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+LIKE\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'like', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NOT\s+NULL$/i', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'not_null', 'column' => $conditionMatches['column'], 'value' => ''];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NULL$/i', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'null', 'column' => $conditionMatches['column'], 'value' => ''];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+!=\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'neq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                }
+            }
+
+            return $conditions;
         }
 
         /** @param array<int,array<string,mixed>> $conditions */
@@ -2848,6 +2915,12 @@ if (!isset($GLOBALS['wpdb'])) {
                     }
                 }
                 if ($condition['type'] === 'null' && $value !== null) {
+                    return false;
+                }
+                if ($condition['type'] === 'not_null' && $value === null) {
+                    return false;
+                }
+                if ($condition['type'] === 'neq' && (string) $value === (string) $condition['value']) {
                     return false;
                 }
             }

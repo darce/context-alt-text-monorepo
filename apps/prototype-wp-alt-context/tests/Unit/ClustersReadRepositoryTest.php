@@ -58,6 +58,30 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertSame(['Ada Lovelace'], $names);
     }
 
+    public function testListLabelsDedupsBeforeLimitAndCountsDistinctLabels(): void
+    {
+        global $wpdb;
+
+        $tenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            ['cluster_uuid' => 'c-alice-1', 'tenant_id' => $tenant, 'label' => 'Alice', 'person_id' => 1],
+            ['cluster_uuid' => 'c-alice-2', 'tenant_id' => $tenant, 'label' => 'Alice', 'person_id' => 2],
+            ['cluster_uuid' => 'c-alice-3', 'tenant_id' => $tenant, 'label' => 'Alice', 'person_id' => 3],
+            ['cluster_uuid' => 'c-bob', 'tenant_id' => $tenant, 'label' => 'Bob', 'person_id' => 4],
+            ['cluster_uuid' => 'c-carol', 'tenant_id' => $tenant, 'label' => 'Carol', 'person_id' => 5],
+            ['cluster_uuid' => 'c-dana', 'tenant_id' => $tenant, 'label' => 'Dana', 'person_id' => 6],
+        ];
+
+        $labels = $this->repository->list_labels($tenant, '', 3);
+        $names = array_map(static fn(array $row): string => (string) ($row['label'] ?? ''), $labels);
+
+        $this->assertSame(['Alice', 'Bob', 'Carol'], $names, 'LIMIT 3 must apply after DISTINCT, not to duplicate rows');
+        $this->assertCount(3, $labels);
+        $this->assertSame(4, (int) ($labels[0]['total_count'] ?? 0), 'total_count must be the distinct-label set, not the page size');
+        $this->assertSame(4, (int) ($labels[1]['total_count'] ?? 0));
+        $this->assertSame(4, (int) ($labels[2]['total_count'] ?? 0));
+    }
+
     public function testListForTenantJoinsPersonsTable(): void
     {
         global $wpdb;

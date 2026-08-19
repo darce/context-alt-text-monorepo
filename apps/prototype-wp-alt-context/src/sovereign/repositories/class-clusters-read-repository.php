@@ -56,7 +56,7 @@ class ClustersReadRepository {
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != '' AND c.label LIKE %s
@@ -73,7 +73,7 @@ class ClustersReadRepository {
 			);
 		} elseif ( $labeled_only ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != ''
@@ -89,7 +89,7 @@ class ClustersReadRepository {
 			);
 		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label LIKE %s
@@ -106,7 +106,7 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s
@@ -238,12 +238,12 @@ class ClustersReadRepository {
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label 
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
 				WHERE c.tenant_id = %s
 					AND c.is_user_confirmed = 0
-					AND (c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%'))
+					AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
 					AND c.identity_count >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
 				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
@@ -281,7 +281,7 @@ class ClustersReadRepository {
 			FROM %i c
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
-				AND (c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%'))
+				AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
 				AND c.identity_count <= 1
 				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')",
 			array(
@@ -311,7 +311,7 @@ class ClustersReadRepository {
 
 		$persons_table = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-			"SELECT c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%') THEN c.label ELSE NULL END as label 
+			"SELECT c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
 			 WHERE c.cluster_uuid = %s 

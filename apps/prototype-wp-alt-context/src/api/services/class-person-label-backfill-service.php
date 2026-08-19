@@ -151,7 +151,7 @@ class PersonLabelBackfillService {
 				AND person_id IS NULL
 				AND label IS NOT NULL
 				AND label <> ''
-				AND NOT (label LIKE 'cluster-%%' OR label LIKE 'cluster\\_%%')
+				AND NOT {$this->reserved_label_sql_predicate('label')}
 			LIMIT %d",
 			array( $table, $tenant_id, $limit )
 		);

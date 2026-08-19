@@ -1797,6 +1797,9 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['name-1', 'name-low']);

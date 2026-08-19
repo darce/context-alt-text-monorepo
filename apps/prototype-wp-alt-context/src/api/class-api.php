@@ -885,7 +885,14 @@ class Api {
 					),
 					array( '%d', '%s' )
 				);
-				if ( false === $result || 1 !== (int) $result ) {
+				if ( false === $result ) {
+					return new WP_Error(
+						'acx_db_error',
+						__( 'Could not delete person from database.', 'alt-context' ),
+						array( 'status' => 500 )
+					);
+				}
+				if ( 0 === (int) $result ) {
 					return new WP_Error(
 						'acx_person_not_found',
 						__( 'Person not found.', 'alt-context' ),

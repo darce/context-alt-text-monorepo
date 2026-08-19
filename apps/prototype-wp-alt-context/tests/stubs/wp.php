@@ -2279,6 +2279,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $updateResults = [];
         /** @var array<string,mixed> Per-table override for update() (checked before defaultUpdateResult). */
         public array $updateResultsByTable = [];
+        /** @var array<string,mixed> Per-table override for delete() (checked before the computed count). */
+        public array $deleteResultsByTable = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
         /** @var array<string,array<int,string>> */
@@ -2701,6 +2703,13 @@ if (!isset($GLOBALS['wpdb'])) {
 
             $this->queries[] = $sql;
 
+            if (array_key_exists($table, $this->deleteResultsByTable)) {
+                $override = $this->deleteResultsByTable[$table];
+                if ($override === false || $override === null) {
+                    return $override;
+                }
+            }
+
             if (isset($this->tableRows[$table])) {
                 $before = count($this->tableRows[$table]);
                 $this->tableRows[$table] = array_values(array_filter(
@@ -3101,6 +3110,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
             $this->updateResultsByTable = [];
+            $this->deleteResultsByTable = [];
             $this->tableRows = [];
             $this->tableColumns = [];
             $this->tableIndexes = [];

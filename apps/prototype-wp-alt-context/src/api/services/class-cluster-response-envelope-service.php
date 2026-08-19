@@ -136,12 +136,31 @@ class ClusterResponseEnvelopeService {
 				);
 			}
 
+			$kept    = array();
+			$dropped = 0;
+			foreach ( $data['clusters'] as $cluster ) {
+				if ( ! is_array( $cluster ) ) {
+					continue;
+				}
+				$representatives = $cluster['representatives'] ?? null;
+				if ( ! is_array( $representatives ) || array() === $representatives ) {
+					++$dropped;
+					continue;
+				}
+				// Plugin owns the emitted envelope: backfill label_state the same
+				// way local mapping does when older upstream rows omit the key.
+				$kept[] = $this->cluster_mapper->ensure_emitted_label_state( $cluster );
+			}
+
+			$total = max( 0, (int) $data['total'] );
+
 			return new WP_REST_Response(
 				array(
-					'clusters' => $data['clusters'],
+					'clusters' => $kept,
 					'limit' => max( 1, (int) $data['limit'] ),
-					'total' => max( 0, (int) $data['total'] ),
+					'total' => $total,
 					'truncated' => $data['truncated'],
+					'repair_pending' => $dropped > 0,
 				),
 				$response->get_status()
 			);

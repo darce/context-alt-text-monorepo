@@ -6,7 +6,11 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/../sovereign/class-projection-query-exception.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-read-repository.php';
 
+use AltContext\Sovereign\ProjectionQueryException;
+use AltContext\Sovereign\Repositories\ClustersReadRepository;
 use stdClass;
 use WP_Error;
 use WP_REST_Request;
@@ -14,17 +18,38 @@ use WP_REST_Response;
 
 use function absint;
 use function array_keys;
+use function array_slice;
+use function array_values;
 use function count;
 use function is_array;
+use function is_int;
+use function is_numeric;
+use function is_object;
+use function is_string;
+use function is_wp_error;
 use function range;
 use function sanitize_text_field;
 use function sprintf;
+use function stripos;
+use function usort;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_BACKEND_PROXY = RecognitionDataSource::BACKEND_PROXY;
 	private const DATA_SOURCE_ENDPOINT_ERROR = RecognitionDataSource::ENDPOINT_ERROR;
 	private const DATA_SOURCE_UNAVAILABLE = RecognitionDataSource::UNAVAILABLE;
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
+	private const ROSTER_CANDIDATES_TOP_K_MIN = 1;
+	private const ROSTER_CANDIDATES_TOP_K_MAX = 50;
+	/** Coupled to recognition.application.suggestions.roster_candidates.MAX_ROSTER_CANDIDATES_TOP_K (roster_candidates.py:19). */
+	private const ROSTER_CANDIDATES_PYTHON_WINDOW = 50;
+	private const INVALID_TOP_K_CODE = 'invalid_top_k';
+	private const INVALID_TOP_K_MESSAGE = 'top_k must be an integer between %d and %d.';
+
+	private ?ClustersReadRepository $clusters_read_repository;
+
+	public function __construct( ?ClustersReadRepository $clusters_read_repository = null ) {
+		$this->clusters_read_repository = $clusters_read_repository;
+	}
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -192,6 +217,30 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/roster-candidates',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_roster_candidates' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'top_k' => array(
+						'type'        => 'integer',
+						'default'     => 10,
+						'minimum'     => self::ROSTER_CANDIDATES_TOP_K_MIN,
+						'maximum'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
+						'description' => sprintf(
+							'People-grain cap (%d-%d) applied after PHP collapses upstream cluster rows to one row per roster person. Not forwarded upstream: PHP always requests the full %d-row cluster-grain window.',
+							self::ROSTER_CANDIDATES_TOP_K_MIN,
+							self::ROSTER_CANDIDATES_TOP_K_MAX,
+							self::ROSTER_CANDIDATES_PYTHON_WINDOW
+						),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/suggestions/bulk-accept',
 			array(
 				'methods'             => 'POST',
@@ -308,6 +357,218 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	private function validate_roster_candidates_top_k( $value ): bool|WP_Error {
+		if ( ! is_numeric( $value ) ) {
+			return $this->invalid_top_k_error();
+		}
+		$int = (int) $value;
+		if ( $int >= self::ROSTER_CANDIDATES_TOP_K_MIN
+			&& $int <= self::ROSTER_CANDIDATES_TOP_K_MAX
+			&& (float) $value === (float) $int ) {
+			return true;
+		}
+		return $this->invalid_top_k_error();
+	}
+
+	private function invalid_top_k_error(): WP_Error {
+		return new WP_Error(
+			self::INVALID_TOP_K_CODE,
+			sprintf(
+				self::INVALID_TOP_K_MESSAGE,
+				self::ROSTER_CANDIDATES_TOP_K_MIN,
+				self::ROSTER_CANDIDATES_TOP_K_MAX
+			),
+			array( 'status' => 400 )
+		);
+	}
+
+	/**
+	 * Drift-only: PHP always sends ROSTER_CANDIDATES_PYTHON_WINDOW, so an
+	 * upstream 400 whose detail names top_k means the two caps drifted.
+	 * Never classify by status range — 404/401/403/429 and other 400s pass
+	 * through with their upstream status and detail.
+	 */
+	private function is_roster_candidates_top_k_drift( WP_REST_Response|WP_Error $response ): bool {
+		if ( is_wp_error( $response ) || 400 !== $response->get_status() ) {
+			return false;
+		}
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return false;
+		}
+		$detail = $data['detail'] ?? null;
+		return is_string( $detail ) && false !== stripos( $detail, 'top_k' );
+	}
+
+	public function get_roster_candidates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		$raw_top_k = $request->get_param( 'top_k' );
+		if ( null === $raw_top_k || '' === $raw_top_k ) {
+			$raw_top_k = 10;
+		}
+		$valid_top_k = $this->validate_roster_candidates_top_k( $raw_top_k );
+		if ( $valid_top_k instanceof WP_Error ) {
+			return $valid_top_k;
+		}
+		$top_k = (int) $raw_top_k;
+
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+			// Cluster-grain window: fetch the Python max so a person split across
+			// N clusters cannot starve later people before PHP collapses + slices.
+			'top_k'     => self::ROSTER_CANDIDATES_PYTHON_WINDOW,
+		);
+
+		$response = $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/clusters/%s/roster-candidates', $cluster_id ),
+			array(),
+			$query,
+			self::REQUEST_CLASS_POST_SCAN_READ
+		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
+		if ( $this->is_proxy_redirect_refused( $response )
+			|| $this->is_proxy_endpoint_error( $response )
+			|| $this->is_roster_candidates_top_k_drift( $response ) ) {
+			return new WP_Error(
+				'recognition_endpoint_error',
+				'Recognition roster-candidates endpoint is unavailable.',
+				array( 'status' => 502 )
+			);
+		}
+		if ( $this->is_proxy_transport_unreachable( $response ) ) {
+			return new WP_Error(
+				'recognition_unavailable',
+				'Recognition service is unreachable.',
+				array( 'status' => 503 )
+			);
+		}
+
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				try {
+					$response->set_data( $this->attach_roster_entry_ids( $data, $top_k ) );
+				} catch ( ProjectionQueryException $exception ) {
+					return ProjectionQueryException::to_rest_error( 'get_roster_candidates' );
+				}
+			}
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Map python labelled cluster_id → local acx_persons.id. Collapse to one row
+	 * per roster_entry_id (max similarity wins, keep that row's band + name).
+	 * Re-sort committable first, then similarity DESC, cluster_id ASC, then
+	 * slice people-grain top_k. Unmapped rows keep roster_entry_id null
+	 * (uncommittable) and do not occupy top_k slots ahead of committable rows.
+	 * Never invents total/limit.
+	 *
+	 * @param array<string,mixed> $payload
+	 * @return array<string,mixed>
+	 */
+	private function attach_roster_entry_ids( array $payload, int $top_k ): array {
+		$candidates = $payload['candidates'] ?? null;
+		if ( ! is_array( $candidates ) || array() === $candidates ) {
+			return $payload;
+		}
+
+		$cluster_ids = array();
+		foreach ( $candidates as $candidate ) {
+			if ( ! is_array( $candidate ) ) {
+				continue;
+			}
+			$uuid = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
+			if ( '' !== $uuid ) {
+				$cluster_ids[ $uuid ] = $uuid;
+			}
+		}
+
+		$lookup            = $this->clusters_read_repository()->lookup_person_ids_for_clusters(
+			$this->get_tenant_id(),
+			array_values( $cluster_ids )
+		);
+		$person_by_cluster = array();
+		$name_by_cluster   = array();
+		foreach ( $lookup as $row ) {
+			$uuid = sanitize_text_field( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $uuid ) {
+				continue;
+			}
+			$person_by_cluster[ $uuid ] = $row['person_id'] ?? null;
+			if ( isset( $row['name'] ) && is_string( $row['name'] ) && '' !== $row['name'] ) {
+				$name_by_cluster[ $uuid ] = $row['name'];
+			}
+		}
+
+		$collapsed        = array();
+		$index_by_person  = array();
+		foreach ( $candidates as $candidate ) {
+			if ( ! is_array( $candidate ) ) {
+				continue;
+			}
+			$uuid                         = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
+			$person_id                    = $person_by_cluster[ $uuid ] ?? null;
+			$person_id                    = is_int( $person_id ) ? $person_id : null;
+			$candidate['roster_entry_id'] = $person_id;
+			if ( isset( $name_by_cluster[ $uuid ] ) ) {
+				$candidate['name'] = $name_by_cluster[ $uuid ];
+			}
+			if ( null !== $person_id && isset( $index_by_person[ $person_id ] ) ) {
+				$existing_idx = $index_by_person[ $person_id ];
+				$existing_sim = (float) ( $collapsed[ $existing_idx ]['similarity'] ?? -INF );
+				$incoming_sim = (float) ( $candidate['similarity'] ?? -INF );
+				if ( $incoming_sim > $existing_sim ) {
+					$collapsed[ $existing_idx ] = $candidate;
+				}
+				continue;
+			}
+			if ( null !== $person_id ) {
+				$index_by_person[ $person_id ] = count( $collapsed );
+			}
+			$collapsed[] = $candidate;
+		}
+
+		usort(
+			$collapsed,
+			static function ( array $left, array $right ): int {
+				$left_null  = null === ( $left['roster_entry_id'] ?? null );
+				$right_null = null === ( $right['roster_entry_id'] ?? null );
+				if ( $left_null !== $right_null ) {
+					return $left_null ? 1 : -1;
+				}
+				$sim = ( (float) ( $right['similarity'] ?? 0 ) ) <=> ( (float) ( $left['similarity'] ?? 0 ) );
+				if ( 0 !== $sim ) {
+					return $sim;
+				}
+				return ( (string) ( $left['cluster_id'] ?? '' ) ) <=> ( (string) ( $right['cluster_id'] ?? '' ) );
+			}
+		);
+
+		$payload['candidates'] = array_slice( $collapsed, 0, $top_k );
+		return $payload;
+	}
+
+	private function clusters_read_repository(): ClustersReadRepository {
+		if ( null === $this->clusters_read_repository ) {
+			global $wpdb;
+			$table = ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) )
+				? $wpdb->prefix . 'acx_clusters'
+				: 'wp_acx_clusters';
+			$this->clusters_read_repository = new ClustersReadRepository( $table );
+		}
+		return $this->clusters_read_repository;
 	}
 
 	public function get_pending_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {

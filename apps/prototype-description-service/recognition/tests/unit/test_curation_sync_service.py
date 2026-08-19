@@ -642,3 +642,31 @@ async def test_cluster_label_updated_conflicts_when_expected_base_is_stale(db_se
         "dismissed": False,
         "label": "Newer",
     }
+
+
+@pytest.mark.asyncio
+async def test_cluster_label_updated_with_null_label_clears_backend_label(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Tory Guzman", identity_count=2)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    service = CurationSyncService(session=db_session, job_service=FakeJobService())
+
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_label_updated",
+            entity_key=str(cluster.id),
+            idempotency_key="label-clear-null",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id), "label": None},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert result.status == "acknowledged"
+    assert cluster.label is None

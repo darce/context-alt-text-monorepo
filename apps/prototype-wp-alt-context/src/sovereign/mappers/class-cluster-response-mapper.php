@@ -18,6 +18,39 @@ use function trim;
 class ClusterResponseMapper {
 	use MapsResponseFields;
 
+	/** @var list<string> */
+	private array $requested_repair_cluster_ids = array();
+
+	private int $dropped_cluster_count = 0;
+
+	/**
+	 * Cluster UUIDs whose identity_count was rewritten from a non-truncated
+	 * member shortfall. Callers schedule a bounded targeted repair.
+	 *
+	 * @return list<string>
+	 */
+	public function requested_repair_cluster_ids(): array {
+		return $this->requested_repair_cluster_ids;
+	}
+
+	public function dropped_cluster_count(): int {
+		return $this->dropped_cluster_count;
+	}
+
+	/**
+	 * Guarantee schema-required label_state on a plugin-owned cluster envelope.
+	 * Keep a non-empty upstream string; otherwise derive person|unlabeled|unbound
+	 * from label/person so older proxy payloads cannot omit the key.
+	 *
+	 * @param array<string,mixed> $cluster
+	 * @return array<string,mixed>
+	 */
+	public function ensure_emitted_label_state( array $cluster ): array {
+		$cluster['label_state'] = $this->resolve_emitted_label_state( $cluster );
+
+		return $cluster;
+	}
+
 	/**
 	 * @param array<int,array<string,mixed>> $cluster_rows
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
@@ -27,6 +60,8 @@ class ClusterResponseMapper {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function map_cluster_list( array $cluster_rows, array $members_by_cluster, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -52,6 +87,8 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	public function map_cluster_detail( array $cluster_row, array $member_rows, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		return $this->map_cluster_summary( $cluster_row, $member_rows, true, $preview_limit );
 	}
 
@@ -79,6 +116,8 @@ class ClusterResponseMapper {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function map_top_unlabeled_clusters( array $cluster_rows, array $members_by_cluster, string $tenant_id, ?int $preview_limit = null ): array {
+		$this->requested_repair_cluster_ids = array();
+		$this->dropped_cluster_count        = 0;
 		if ( null !== $preview_limit ) {
 			$members_by_cluster = $this->densify_members_for_cluster_rows( $cluster_rows, $members_by_cluster );
 		}
@@ -96,21 +135,37 @@ class ClusterResponseMapper {
 				$members = $members_by_cluster[ $cluster_id ];
 			}
 
+			$members_loaded   = isset( $members_by_cluster[ $cluster_id ] );
+			$identity_count   = $this->resolve_identity_count( $row, $members, $members_loaded, $preview_limit );
+			$preview_members  = $this->slice_members_to_preview( $members, $preview_limit );
+
+			// Queue invariant: never serve a <2-member row when members were loaded (R1-03 / R2-08).
+			if ( $members_loaded && count( $preview_members ) < 2 ) {
+				++$this->dropped_cluster_count;
+				continue;
+			}
+
 			$representatives = array();
-			foreach ( array_slice( $members, 0, 4 ) as $member_row ) {
+			foreach ( $preview_members as $member_row ) {
 				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
 			}
 
-			$label_state = $this->resolve_label_state( $row );
+			// Emit-time invariant (R6-04): identity_count must cover the
+			// served representatives. Resolve already aims at this; clamp
+			// so a violating payload cannot leave the mapper.
+			$identity_count = max( $identity_count, count( $representatives ) );
+
+			$label_flags = $this->resolve_label_flags( $row );
 
 			$results[] = array(
 				'id' => $cluster_id,
 				'tenant_id' => $tenant_id,
-				'label' => $label_state['label'],
-				'is_labeled' => $label_state['is_labeled'],
-				'is_auto_label' => $label_state['is_auto_label'],
-				'identity_count' => $this->resolve_identity_count( $row, $members, isset( $members_by_cluster[ $cluster_id ] ), $preview_limit ),
-				'user_confirmed' => $label_state['user_confirmed'],
+				'label' => $label_flags['label'],
+				'label_state' => $this->resolve_emitted_label_state( $row ),
+				'is_labeled' => $label_flags['is_labeled'],
+				'is_auto_label' => $label_flags['is_auto_label'],
+				'identity_count' => $identity_count,
+				'user_confirmed' => $label_flags['user_confirmed'],
 				'suggested_label' => isset( $row['suggested_label'] ) && '' !== $row['suggested_label'] ? (string) $row['suggested_label'] : null,
 				'suggested_label_source' => isset( $row['suggested_label_source'] ) && '' !== $row['suggested_label_source'] ? (string) $row['suggested_label_source'] : null,
 				'suggested_label_confidence' => isset( $row['suggested_label_confidence'] ) && '' !== $row['suggested_label_confidence'] ? (float) $row['suggested_label_confidence'] : null,
@@ -129,9 +184,10 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	private function map_cluster_summary( array $cluster_row, array $member_rows, bool $members_loaded, ?int $preview_limit = null ): array {
-		$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
-		$label_state = $this->resolve_label_state( $cluster_row );
-		$members    = array_values( $member_rows );
+		$cluster_id     = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+		$label_flags    = $this->resolve_label_flags( $cluster_row );
+		$identity_count = $this->resolve_identity_count( $cluster_row, $member_rows, $members_loaded, $preview_limit );
+		$members        = $this->slice_members_to_preview( array_values( $member_rows ), $preview_limit );
 
 		$sample_members = array_slice( $members, 0, 4 );
 		$member_ids     = array();
@@ -153,9 +209,10 @@ class ClusterResponseMapper {
 
 		return array(
 			'id' => $cluster_id,
-			'label' => $label_state['label'],
-			'is_auto_label' => $label_state['is_auto_label'],
-			'identity_count' => $this->resolve_identity_count( $cluster_row, $members, $members_loaded, $preview_limit ),
+			'label' => $label_flags['label'],
+			'label_state' => $this->resolve_emitted_label_state( $cluster_row ),
+			'is_auto_label' => $label_flags['is_auto_label'],
+			'identity_count' => $identity_count,
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
@@ -253,32 +310,59 @@ class ClusterResponseMapper {
 			$projected_count = max( 0, (int) $cluster_row['identity_count'] );
 			$observed_count  = count( $member_rows );
 			if ( $members_loaded && $projected_count !== $observed_count ) {
-				// Cap-hit with more projected than observed is intentional preview
-				// truncation, not drift — log only genuine shortfalls (OBS-08).
-				$is_expected_truncation = null !== $preview_limit
+				$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+				// Cap-hit: a cap+1 fetch returning more than the cap is
+				// truncation. observed == cap is exact (R1-12).
+				$is_truncated = null !== $preview_limit
 					&& $preview_limit > 0
-					&& $observed_count === $preview_limit
-					&& $projected_count > $observed_count;
+					&& $observed_count > $preview_limit;
 
-				if ( ! $is_expected_truncation ) {
-					Telemetry::log_line(
-						sprintf(
-							'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
-							trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) ),
-							$projected_count,
-							$observed_count
-						)
-					);
-					if ( 0 === $observed_count ) {
-						return 0;
+				if ( $is_truncated ) {
+					// Stale-low projected during truncation: observed is a
+					// lower bound, not an exact count (R2-07). Never publish
+					// identity_count below the served preview length.
+					// Request repair only when projected is provably stale-low
+					// (R6-01). A healthy oversized cluster (projected > cap)
+					// is expected truncation of a cap+1 fetch, not livelock.
+					if ( $projected_count <= $preview_limit && '' !== $cluster_id ) {
+						$this->requested_repair_cluster_ids[] = $cluster_id;
 					}
+					return max( $projected_count, $preview_limit );
 				}
+
+				Telemetry::log_line(
+					sprintf(
+						'[acx] cluster identity count mismatch for %s: projected=%d observed=%d',
+						$cluster_id,
+						$projected_count,
+						$observed_count
+					)
+				);
+				// Non-truncated drift in either direction, including a
+				// total member wipe (observed=0). Members are SoR (REF-09).
+				if ( '' !== $cluster_id ) {
+					$this->requested_repair_cluster_ids[] = $cluster_id;
+				}
+				return $observed_count;
 			}
 
 			return $projected_count;
 		}
 
 		return count( $member_rows );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $member_rows
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function slice_members_to_preview( array $member_rows, ?int $preview_limit ): array {
+		$members = array_values( $member_rows );
+		if ( null === $preview_limit || $preview_limit <= 0 || count( $members ) <= $preview_limit ) {
+			return $members;
+		}
+
+		return array_slice( $members, 0, $preview_limit );
 	}
 
 	/**
@@ -318,10 +402,13 @@ class ClusterResponseMapper {
 	}
 
 	/**
+	 * Presentation flags. Distinct from the three-valued `label_state` string
+	 * (`person | unlabeled | unbound`) emitted by resolve_emitted_label_state().
+	 *
 	 * @param array<string,mixed> $cluster_row
 	 * @return array{label: ?string, is_labeled: bool, is_auto_label: bool, user_confirmed: bool}
 	 */
-	private function resolve_label_state( array $cluster_row ): array {
+	private function resolve_label_flags( array $cluster_row ): array {
 		$label          = $this->normalize_label( $cluster_row );
 		$user_confirmed = $this->resolve_user_confirmed_flag( $cluster_row );
 		$is_auto_label  = '' !== $label && ! $user_confirmed && $this->looks_like_system_defined_label( $label );

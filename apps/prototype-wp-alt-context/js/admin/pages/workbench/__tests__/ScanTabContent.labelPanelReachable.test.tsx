@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ClusterPanelProvider } from '../ClusterPanelContext';
@@ -31,7 +32,7 @@ vi.mock('../../../hooks/useScrollRestoration', () => ({
 vi.mock('../../../hooks/useWorkbenchFilters', () => ({
   useWorkbenchFilters: () => ({
     queueState: { index: 0, kind: 'all', band: 'all' },
-    setQueueState: vi.fn(),
+    dispatchQueue: vi.fn(),
   }),
 }));
 
@@ -112,9 +113,11 @@ describe('ScanTabContent labeling panel reachability (UXW2-3-R3-01)', () => {
 
   it('curate control mounts the labeling panel Name combobox', async () => {
     render(
-      <ClusterPanelProvider>
-        <ScanTabContent />
-      </ClusterPanelProvider>,
+      <MemoryRouter>
+        <ClusterPanelProvider>
+          <ScanTabContent />
+        </ClusterPanelProvider>
+      </MemoryRouter>,
     );
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));

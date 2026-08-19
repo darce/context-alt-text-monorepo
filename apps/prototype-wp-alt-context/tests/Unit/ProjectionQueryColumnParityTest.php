@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Support\DetectsSystemDefinedLabels;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
 
@@ -293,13 +294,13 @@ class ProjectionQueryColumnParityTest extends TestCase
         $derivedUnits = [];
         foreach ($extraction['units'] as $unit) {
             if (
-                str_contains($unit['sql'], 'FROM (SELECT DISTINCT')
-                && str_contains($unit['sql'], 'filtered')
+                str_contains($unit['sql'], 'SELECT DISTINCT label FROM')
+                && str_contains($unit['sql'], 'reserved_label_sql_predicate')
             ) {
                 $this->assertSame(
                     'prepare_projection_read_query',
                     $unit['method'],
-                    'list_labels derived-table SQL must arrive via prepare_projection_read_query'
+                    'list_labels SQL must arrive via prepare_projection_read_query'
                 );
                 $derivedUnits[] = $unit;
             }
@@ -307,7 +308,7 @@ class ProjectionQueryColumnParityTest extends TestCase
 
         $this->assertNotEmpty(
             $derivedUnits,
-            'production list_labels derived-table SQL must be present in the extracted corpus (FIX-4)'
+            'production list_labels SQL must be present in the extracted corpus (FIX-4)'
         );
 
         $interiorLabels = 0;
@@ -505,6 +506,53 @@ PHP;
         $this->assertContains('assigned_at', $ids);
         $this->assertContains('name', $ids);
         $this->assertContains('label', $ids);
+    }
+
+    /**
+     * R3-04: interpolating {$this->projected_cluster_label_sql()} / reserved
+     * predicate hides the trait body from extractPrepareQueryUnits. Invoke the
+     * trait and scan the expanded fragment so a column added inside the trait
+     * fails the DDL predicate by name.
+     */
+    public function testExpandedTraitLabelSqlFragmentsReferenceDeclaredColumns(): void
+    {
+        $ddlColumnsByTable = $this->parseProjectionDdlColumns();
+        $bound = $this->boundColumnsFromExpandedTraitLabelSql();
+
+        $this->assertNotEmpty(
+            $bound,
+            'expanded trait label SQL must yield column refs — scanner hole if empty'
+        );
+
+        $missing = [];
+        foreach ($bound as $ref) {
+            $declared = $ddlColumnsByTable[$ref['table']] ?? null;
+            if ($declared === null) {
+                $missing[] = sprintf(
+                    '%s: %s.%s (table not in projection DDL)',
+                    $ref['file'],
+                    $ref['table'],
+                    $ref['column']
+                );
+                continue;
+            }
+            if (! in_array($ref['column'], $declared, true)) {
+                $missing[] = sprintf(
+                    '%s: %s.%s not in declared columns [%s]',
+                    $ref['file'],
+                    $this->displayTableName($ref['table']),
+                    $ref['column'],
+                    implode(', ', $declared)
+                );
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $missing,
+            'Expanded trait label SQL references columns absent from projection DDL. Missing: '
+            . implode(' | ', $missing)
+        );
     }
 
     /**
@@ -891,6 +939,10 @@ PHP;
             }
         }
 
+        foreach ($this->boundColumnsFromExpandedTraitLabelSql() as $ref) {
+            $bound[] = $ref;
+        }
+
         return [
             'bound' => $bound,
             'skipped' => $skipped,
@@ -903,6 +955,60 @@ PHP;
             'census_count' => $censusCount,
             'bypasses' => $bypasses,
         ];
+    }
+
+    /**
+     * Expand DetectsSystemDefinedLabels SQL helpers and bind their columns.
+     * Call-site interpolations leave {$this->...} in the extracted unit, so the
+     * trait body is otherwise invisible (R3-04).
+     *
+     * @return list<array{file:string,table:string,column:string,alias:string}>
+     */
+    private function boundColumnsFromExpandedTraitLabelSql(): array
+    {
+        $host = new class() {
+            use DetectsSystemDefinedLabels;
+
+            public function reserved(string $column): string
+            {
+                return $this->reserved_label_sql_predicate($column);
+            }
+
+            public function projected(string $personCol = 'p.name', string $labelCol = 'c.label'): string
+            {
+                return $this->projected_cluster_label_sql($personCol, $labelCol);
+            }
+        };
+
+        $basename = 'trait-detects-system-defined-labels.php';
+        $aliasMap = [
+            'p' => 'acx_persons',
+            'c' => 'acx_clusters',
+        ];
+        $bound = [];
+
+        foreach ([$host->reserved('label'), $host->projected()] as $sql) {
+            foreach ($this->collectAliasQualifiedRefs($sql, $aliasMap, $basename) as $item) {
+                if (($item['kind'] ?? '') === 'bound') {
+                    $bound[] = $item['ref'];
+                }
+            }
+            foreach ($this->collectColumnIdentifiersFromFragment($sql) as $id) {
+                $bound[] = [
+                    'file' => $basename,
+                    'table' => $id === 'name' ? 'acx_persons' : 'acx_clusters',
+                    'column' => $id,
+                    'alias' => '',
+                ];
+            }
+        }
+
+        $unique = [];
+        foreach ($bound as $ref) {
+            $unique[$ref['table'] . '.' . $ref['column']] = $ref;
+        }
+
+        return array_values($unique);
     }
 
     /**
@@ -1780,7 +1886,7 @@ PHP;
 
     private function isPlausibleColumnIdentifier(string $id): bool
     {
-        if ($id === '' || str_starts_with($id, '%')) {
+        if ($id === '' || str_starts_with($id, '%') || strtolower($id) === 'this') {
             return false;
         }
         if ($this->isSqlKeyword($id)) {

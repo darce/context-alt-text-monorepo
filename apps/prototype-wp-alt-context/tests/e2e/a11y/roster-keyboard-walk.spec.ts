@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { requireBaseUrl } from '../fixtures/axe';
 import { getAcxAdminRouteUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
+import { discoverUnlabeledClusterId } from '../fixtures/seeded-state';
 
 const ROSTER_SHELL_SELECTOR = '.acx-roster';
 
@@ -56,75 +57,84 @@ test('roster empty state is announced via live region', async ({ page, baseURL }
 });
 
 /**
- * E21-9: full member-fix keyboard loop when a cluster drawer is open.
- * Opens via Needs assignment row (or cluster=<id> deep link). Clusters tab retired.
- * Skips cleanly when the local environment has no openable unlabeled cluster.
+ * UXW2-4: the needs-assignment rail is retired — Roster links to the workbench
+ * review queue instead. Member-fix walks the `cluster=` deep-link shim after
+ * discovering an unlabeled group from the same REST envelope the CTA counts.
  */
-test('keyboard member-fix loop: Move to… → pick target → role=status (≥24px control)', async ({
+test('roster review CTA links to the workbench queue; no rail is rendered', async ({ page, baseURL }) => {
+  await openRoster(requireBaseUrl(baseURL), page);
+
+  const cta = page.getByTestId('roster-review-cta');
+  await expect(cta).toBeVisible();
+  await expect(cta.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
+    'href',
+    '#/workbench?tab=scan&rq=all.all.0',
+  );
+  await expect(page.getByTestId('needs-assignment-section')).toHaveCount(0);
+});
+
+test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy', async ({
   page,
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
   await openRoster(base, page);
 
-  // Primary path: Needs assignment section row opens the in-place cluster drawer.
-  const needsSection = page.getByTestId('needs-assignment-section');
-  await expect(needsSection).toBeVisible();
-  const needsOpen = page
-    .getByTestId('needs-assignment-list')
-    .locator('button.acx-needs-assignment__open')
-    .first();
+  // Seed producer lives in seeded-state.ts: plants acxE2eSeed.unlabeledClusterId
+  // from window.acxE2eSeed or AltContextAdmin.endpoints.recognitionClusters /top-unlabeled.
+  const clusterId = await discoverUnlabeledClusterId(page);
 
-  if ((await needsOpen.count()) > 0) {
-    // Prefer reading cluster id from the workbench deep-link for a reloadable cluster= URL.
-    const workbenchHref =
-      (await needsOpen
-        .locator('xpath=..')
-        .locator('a.acx-needs-assignment__workbench-link')
-        .getAttribute('href')) ?? '';
-    const clusterMatch = /(?:\?|&)cluster=([^&]+)/.exec(workbenchHref);
-    if (clusterMatch?.[1]) {
-      await openRoster(base, page, { cluster: decodeURIComponent(clusterMatch[1]) });
-    } else {
-      await needsOpen.click();
-    }
-  } else {
-    test.skip(true, 'No unlabeled clusters available for member-fix keyboard walk');
+  if (!clusterId) {
+    test.skip(
+      true,
+      'seeded fixture acxE2eSeed.unlabeledClusterId / top-unlabeled row absent — drawer walk needs a live face group',
+    );
     return;
   }
+
+  await openRoster(base, page, { cluster: clusterId });
 
   const drawer = page.locator('.acx-cluster-drawer');
   await expect(drawer).toBeVisible();
+  const close = drawer.getByRole('button', { name: /^Close$/i });
+  await expect(close).toBeVisible();
+  const box = await close.boundingBox();
+  expect(box, 'Close target ≥24×24').not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(24);
+  expect(box!.height).toBeGreaterThanOrEqual(24);
+  await expect(drawer.getByText(/Face moves happen in the Workbench review queue/i)).toBeVisible();
+  await expect(drawer.getByRole('button', { name: /Move to/i })).toHaveCount(0);
 
-  const moveButton = drawer.getByRole('button', { name: /Move to/i }).first();
-  if ((await moveButton.count()) === 0) {
-    test.skip(true, 'No face Move to… control in drawer (empty identities)');
-    return;
+  const interactive = drawer.locator(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  const count = await interactive.count();
+  expect(count).toBeGreaterThan(0);
+  await close.focus();
+  await expect(close).toBeFocused();
+  const visited = new Set<string>();
+  for (let step = 0; step < count + 2; step += 1) {
+    await page.keyboard.press('Tab');
+    const id = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el?.closest('.acx-cluster-drawer')) {
+        return null;
+      }
+      return el.tagName + (el.getAttribute('aria-label') ?? el.textContent ?? '').slice(0, 40);
+    });
+    if (id) {
+      visited.add(id);
+    }
   }
+  expect(visited.size, 'Tab walk visits drawer controls').toBeGreaterThan(0);
+});
 
-  await expect(moveButton).toBeVisible();
-  const box = await moveButton.boundingBox();
-  expect(box, 'Move to… must expose a layout box').not.toBeNull();
-  expect(box!.width, 'Move to… min width ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
-  expect(box!.height, 'Move to… min height ≥24 CSS px (A11Y-14)').toBeGreaterThanOrEqual(24);
-
-  if (await moveButton.isDisabled()) {
-    await expect(moveButton).toHaveAttribute('title', /No other clusters available/i);
-    test.skip(true, 'Only one cluster present — empty-target disabled-with-reason path covered by unit tests');
-    return;
-  }
-
-  await moveButton.focus();
-  await expect(moveButton).toBeFocused();
-  await page.keyboard.press('Enter');
-
-  const picker = drawer.getByRole('listbox', { name: /Choose a target cluster/i });
-  await expect(picker).toBeVisible();
-  const firstOption = picker.getByRole('option').first();
-  await expect(firstOption).toBeFocused();
-  await page.keyboard.press('Enter');
-
-  const status = drawer.getByTestId('cluster-drawer-reassign-status');
-  await expect(status).toHaveAttribute('role', 'status');
-  await expect(status).toContainText(/Moving identity|Moved identity/i);
+test('roster review CTA follows to the workbench default review queue', async ({ page, baseURL }) => {
+  await openRoster(requireBaseUrl(baseURL), page);
+  await page.getByRole('link', { name: /Review in Workbench/i }).click();
+  // Hash SPA: the CTA href is `#/workbench?…`, not a WP `page=` rewrite.
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#/workbench?tab=scan&rq=all.all.0');
+  await expect(page).toHaveURL(/#\/workbench\?tab=scan&rq=all\.all\.0/);
+  await expect(page.locator('.acx-workbench')).toBeVisible();
+  await expect(page.locator('.acx-review-queue')).toBeVisible();
 });

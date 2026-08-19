@@ -4,6 +4,7 @@
       "id": "cluster-top-1",
       "tenant_id": "tenant-1",
       "label": null,
+      "label_state": "unlabeled",
       "is_labeled": false,
       "is_auto_label": true,
       "identity_count": 4,
@@ -32,6 +33,7 @@
   "limit": 10,
   "total": 24,
   "truncated": true,
+  "repair_pending": false,
   "singleton_count": 3,
   "data_source": "local_projection",
   "projection_status": "available"

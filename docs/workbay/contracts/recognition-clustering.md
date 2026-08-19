@@ -280,6 +280,7 @@ Notes:
 - Returns clusters using **tenant-wide size-priority selection**: largest unlabeled clusters across the entire tenant, ordered by `identity_count` descending, then `created_at` descending.
 - Excluded: clusters with `user_confirmed = true`, `dismissed_at` set, `identity_count < min_identity_count`, or auto-generated `cluster-*` labels that have been confirmed.
 - The `min_identity_count` filter defaults to 2, which excludes singletons from the naming queue.
+- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty; `identity_count` reflects observed members when the member set is not truncated. Memberless clusters (stale `identity_count` with 0 `acx_identity_members` rows) are excluded.
 - `representatives` objects include `thumb_url` for UI display.
 
 ### PATCH /recognition/clusters/{cluster_id}
@@ -515,6 +516,62 @@ Request body:
 ```
 
 Response: `SuggestionResponse`.
+
+### GET /recognition/clusters/{cluster_id}/roster-candidates
+
+Query params:
+
+- `tenant_id` (header or query; same tenant scoping as sibling cluster reads)
+- `top_k` (default 10, min 1, max 50; rejected with 400 when out of range — never clamped). Python `top_k` is cluster-grain. PHP `top_k` is people-grain after collapse.
+
+Ranks labelled, user-confirmed clusters (the python-side stand-in for roster persons) against the probe cluster's representatives. Comparison is max-cosine over same-`embedding_model` representative sets only (FIR23-01 / EMB-01). Python has no person table: each candidate is keyed by labelled `cluster_id` + `name` (cluster label). Schema: `packages/shared-contracts/schemas/roster-candidates-response.schema.json`.
+
+200 body is PROV-06 typed:
+
+```json
+{
+  "model_id": "opencv-sface+cv5@128d/l2/cosine",
+  "embedding_model": "opencv-sface+cv5@128d/l2/cosine",
+  "computed_at": "2026-08-18T12:00:00+00:00",
+  "probe_face_count": 1,
+  "reference_face_count": 3,
+  "quality_flag": "ok",
+  "thresholds": {
+    "suggestion_floor": 0.35,
+    "suggestion_ceiling": 0.55,
+    "similarity_threshold": 0.55
+  },
+  "candidates": [
+    {
+      "cluster_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "name": "Ada",
+      "similarity": 0.81,
+      "band": "strong"
+    }
+  ]
+}
+```
+
+- `model_id` / `embedding_model` — FIR23-01 space of the ranking rows.
+- `computed_at` — ranking timestamp; similarity is not a stable person attribute.
+- `probe_face_count` — dim-compatible probe representatives (or member-fallback faces) used.
+- `reference_face_count` — same-space labelled reference vectors actually compared.
+- `quality_flag` — probe-level `ok` | `low_quality` | `occluded` (reserved; never fabricated). Unknown values → treat as `low_quality`. When not `ok`, every candidate `band` is capped at `possible` (frontend must not show Strong for a low-quality probe). `fatal_quality_floor` / `fatal_confidence_floor` gate; missing metrics fail closed to `low_quality`.
+- `thresholds` — live `suggestion_floor` / `suggestion_ceiling` / `similarity_threshold`.
+- `candidates[]` — labelled clusters in **Python cluster-grain** rank order: similarity DESC then `cluster_id` ASC. The PHP passthrough re-ranks after collapse (see the passthrough block). Negative cosine is `band=none` (floor is `-1.0`, not `0.0`). Dimension-mismatched reps are skipped. Same-space guard is the in-process FIR23-01 helper (`embedding_space.same_space_vector`); unlike label inference there is no MediaIdentity SQL fallback because `get_labeled_with_representatives` eager-loads identity — unresolved models are excluded.
+- `band` is computed server-side from the active profile's live floors (`strong` ≥ ceiling, `possible` ∈ [floor, ceiling), `none` < floor). Clients must not invent bands (DRIFT-03). `similarity` is a ranking cosine, not a calibrated probability (CAL-03 / HAI-08 / MEAS-05).
+- Three empties: no usable probe (`probe_face_count` 0 / `reference_face_count` 0 / `quality_flag` `low_quality` / `candidates` []); empty labelled roster (`probe_face_count` > 0 / `reference_face_count` 0 / `ok` / `candidates` []); low-quality probe (bands capped at `possible`). Missing cluster is 404 (PHP passthrough keeps upstream status and `detail`; it is not remapped to 502).
+
+PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`:
+
+- Proxy class `post_scan_read` (10s, breaker off).
+- Maps `cluster_id` → `roster_entry_id` via tenant-scoped `ClustersReadRepository.lookup_person_ids_for_clusters` (`AND tenant_id = %s`).
+- Collapses to one row per `roster_entry_id` (max similarity wins, keep that row's band). `name` is `acx_persons.name` when mapped.
+- PHP always fetches Python `top_k` = `MAX_ROSTER_CANDIDATES_TOP_K` (50; `roster_candidates.py:19`), coupled as PHP `ROSTER_CANDIDATES_PYTHON_WINDOW`. That equality is test-enforced in both suites (`test_php_python_window_matches_python_cap`, `testRosterCandidatesPythonWindowConstantMatchesPythonCapSource`). People-grain `top_k` is applied after collapse so a person split across N clusters cannot starve later people. PHP does not forward the client `top_k` verbatim.
+- `roster_entry_id: null` rows are uncommittable (no person to commit to). They are ranked after every committable row so they do not occupy people-grain `top_k` slots; they appear only if the window still has room.
+- Server rank is people-grain: committable-first, then similarity DESC, then `cluster_id` ASC. Browser/SPA clients must render in payload order and must not re-sort. The PHP roster-entry mapping proxy is required to perform that committable-first re-rank; it is a PHP-layer contract obligation, not a client-side sort.
+- Invalid PHP `top_k` (non-integer, < `ROSTER_CANDIDATES_TOP_K_MIN`, or > `ROSTER_CANDIDATES_TOP_K_MAX`) is validated inside the route callback and returns `WP_Error('invalid_top_k', sprintf('top_k must be an integer between %d and %d.', MIN, MAX), {status: 400})`. Route `args` keep `type`/`minimum`/`maximum` as schema only — there is no `validate_callback`, because WP core `has_valid_params` wraps a callback `WP_Error` into top-level `rest_invalid_param`.
+- Degraded/offline: HTTP 502 (endpoint_error / refused 3xx) or 503 (unreachable / overloaded). Upstream 4xx pass through with their status and `detail` (missing cluster 404; auth 401/403; rate-limit 429 including `Retry-After`). Exception: an upstream 400 whose `detail` names `top_k` (PHP/Python window drift) is classified as endpoint_error 502 — never by status range. Do not return a 200 `{candidates:[], data_source}` envelope — that is not schema-conformant and is indistinguishable from an empty roster.
 
 ## Media identities
 

@@ -179,16 +179,26 @@ class ClustersRepositoryTest extends TestCase
         ]);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("label IS NOT NULL", $sql);
+        $this->assertStringContainsString('THEN p.name', $sql);
         $this->assertStringContainsString("label LIKE", $sql);
     }
 
     public function testListLabelsReturnsBoundedRowsWithTotalCountMetadata(): void
     {
         global $wpdb;
-        $wpdb->mockResults = [
-            ['label' => 'Alice', 'total_count' => 2],
-            ['label' => 'Bob', 'total_count' => 2],
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'c-a',
+                'tenant_id' => 'tenant-labels',
+                'label' => 'Alice',
+                'person_id' => 1,
+            ],
+            [
+                'cluster_uuid' => 'c-b',
+                'tenant_id' => 'tenant-labels',
+                'label' => 'Bob',
+                'person_id' => 2,
+            ],
         ];
 
         $labels = $this->repository->list_labels('tenant-labels', '', 25);
@@ -223,9 +233,11 @@ class ClustersRepositoryTest extends TestCase
         $this->repository->list_top_unlabeled('tenant-top', 7);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("identity_count DESC", $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString(') DESC', $sql);
         $this->assertStringContainsString("c.is_user_confirmed = 0", $sql);
-        $this->assertStringContainsString("c.identity_count >= 2", $sql);
+        $this->assertStringNotContainsString("c.identity_count >= 2", $sql);
+        $this->assertStringContainsString(') >= 2', $sql);
         $this->assertStringContainsString("label IS NULL", $sql);
         $this->assertStringContainsString("curation_state <> 'dismissed'", $sql);
     }
@@ -238,7 +250,7 @@ class ClustersRepositoryTest extends TestCase
         $this->repository->list_top_unlabeled('tenant-auto-labels', 5);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
     }
 
     public function testCountTopUnlabeledSingletonsUsesSingletonPredicate(): void
@@ -251,7 +263,9 @@ class ClustersRepositoryTest extends TestCase
         $this->assertSame(4, $count);
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('COUNT(*)', $sql);
-        $this->assertStringContainsString('c.identity_count <= 1', $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString(') <= 1', $sql);
+        $this->assertStringNotContainsString('c.identity_count <= 1', $sql);
     }
 
     public function testFindByUuidReturnsNullWhenRowMissing(): void
@@ -273,7 +287,9 @@ class ClustersRepositoryTest extends TestCase
 
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
-        $this->assertStringContainsString('COALESCE(p.name, c.label)', $sql);
+        $this->assertStringContainsString('THEN p.name', $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
+        $this->assertStringNotContainsString('COALESCE(p.name, c.label)', $sql);
     }
 
     public function testMergeSnapshotWritesSuggestedLabelColumns(): void

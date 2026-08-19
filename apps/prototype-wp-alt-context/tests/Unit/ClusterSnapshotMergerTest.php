@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Repositories\ClusterSnapshotMerger;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 /**
@@ -12,6 +13,8 @@ use AltContext\Tests\TestCase;
  */
 class ClusterSnapshotMergerTest extends TestCase
 {
+    use FindsSqlQueries;
+
     private ClusterSnapshotMerger $merger;
 
     protected function setUp(): void
@@ -35,8 +38,7 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $query);
         $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
@@ -61,7 +63,7 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString('identity_count = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(identity_count), identity_count)', $query);
         $this->assertStringContainsString('representative_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_id), representative_id)', $query);
         $this->assertStringContainsString('representative_thumb_path = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_thumb_path), representative_thumb_path)', $query);
@@ -90,7 +92,7 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         // normalize_curation_state maps the legacy 'active' to 'uncurated' in the
         // emitted VALUES — guard the coercion, not just the column name.
         $this->assertStringContainsString("'uncurated'", $query);
@@ -120,7 +122,7 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString("'/r.jpg'", $query);
         // VALUES tuple: ..., representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, ...
         $this->assertStringContainsString("'rep-1', 1, 3, 20, 1,", $query);
@@ -145,8 +147,393 @@ class ClusterSnapshotMergerTest extends TestCase
         );
 
         global $wpdb;
-        $query = $wpdb->queries[0];
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString("'acx://cluster/cluster-thumb/media/42'", $query);
+    }
+
+    public function testLabelOnlyUpsertBindsPersonForHumanLabel(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 21;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-human',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Daniel',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-human',
+                    'label' => 'Daniel',
+                    'identity_count' => 4,
+                ],
+            ],
+            14
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts, 'human label-only upsert must create a person');
+        $this->assertStringContainsString("'Daniel'", $personInserts[0]);
+
+        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 21');
+        $this->assertStringContainsString('cluster-human', $bindUpdate);
+    }
+
+    public function testDeleteThenSnapshotMergeDoesNotRecreatePerson(): void
+    {
+        global $wpdb;
+
+        $tenant = self::currentTenantId();
+        $clusterUuid = 'cluster-tory-delete';
+        $wpdb->insert_id = 99;
+        $wpdb->mockRow = [
+            'id' => 4,
+            'name' => 'Tory Guzman',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 2,
+            'tenant_id' => $tenant,
+        ];
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 4,
+                'name' => 'Tory Guzman',
+                'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+                'local_revision' => 2,
+                'tenant_id' => $tenant,
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => $tenant,
+                'label' => 'Tory Guzman',
+                'person_id' => 4,
+                'is_user_confirmed' => 1,
+                'local_revision' => 5,
+                'snapshot_version' => 14,
+                'curation_state' => 'confirmed',
+            ],
+        ];
+
+        $api = new \AltContext\Api\Api();
+        $request = new \WP_REST_Request('DELETE', '/acx/v1/roster/persons/4');
+        $request->set_param('id', 4);
+        $response = $api->delete_person($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $wpdb->mockRow = null;
+        $wpdb->queries = [];
+        $wpdb->insert_id = 100;
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            $tenant,
+            [
+                [
+                    'cluster_uuid' => $clusterUuid,
+                    'label' => 'Tory Guzman',
+                    'identity_count' => 3,
+                ],
+            ],
+            15
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts, 'delete must survive a stale-label snapshot; person must not be recreated');
+        $this->assertNull(
+            $wpdb->tableRows['wp_acx_clusters'][0]['label'],
+            'cleared label must persist as NULL, not an empty string or the stale name'
+        );
+        $this->assertTrue(
+            $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === null
+            || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0
+        );
+    }
+
+    /**
+     * @dataProvider clearedLabelSnapshotVersions
+     */
+    public function testClearedLabelSurvivesSnapshotVersion(int $existingSnapshotVersion, int $mergeVersion): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 99;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-tory',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Tory Guzman',
+                'person_id' => 4,
+                'is_user_confirmed' => 1,
+                'local_revision' => 5,
+                'snapshot_version' => $existingSnapshotVersion,
+            ],
+        ];
+
+        $writer = new \AltContext\Sovereign\Repositories\ClusterCurationWriter('wp_acx_clusters');
+        $writer->reset_curation('cluster-tory', 'tenant-merge');
+        $wpdb->queries = [];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-tory',
+                    'label' => 'Tory Guzman',
+                    'identity_count' => 3,
+                ],
+            ],
+            $mergeVersion
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts, 'locally cleared label must not be backfilled from a stale snapshot');
+        $this->assertTrue(
+            $wpdb->tableRows['wp_acx_clusters'][0]['label'] === null
+            || $wpdb->tableRows['wp_acx_clusters'][0]['label'] === '',
+            'tombstone must keep the cleared label'
+        );
+        $this->assertTrue(
+            $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === null
+            || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0
+        );
+        $upsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
+        $this->assertStringContainsString("VALUES ('cluster-tory', 'tenant-merge', NULLIF('', ''), 'Tory Guzman'", $upsert);
+    }
+
+    /**
+     * @return array<string,array{0:int,1:int}>
+     */
+    public static function clearedLabelSnapshotVersions(): array
+    {
+        return [
+            'older than cleared_rev' => [14, 13],
+            'equal to cleared_rev' => [14, 14],
+            'newer than cleared_rev' => [14, 15],
+            'locally created cluster' => [0, 1],
+        ];
+    }
+
+    public function testNewerSnapshotAfterClearRelabelsCluster(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 100;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-tory',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Tory Guzman',
+                'person_id' => 4,
+                'is_user_confirmed' => 1,
+                'local_revision' => 5,
+                'snapshot_version' => 14,
+            ],
+        ];
+
+        $writer = new \AltContext\Sovereign\Repositories\ClusterCurationWriter('wp_acx_clusters');
+        $writer->reset_curation('cluster-tory', 'tenant-merge');
+        $wpdb->queries = [];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-tory',
+                    'label' => 'Ada Lovelace',
+                    'identity_count' => 3,
+                ],
+            ],
+            15
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts, 'a newer snapshot may re-label only when the incoming label differs');
+        $this->assertStringContainsString("'Ada Lovelace'", $personInserts[0]);
+    }
+
+    public function testBackfillResolvesAgainstStoredLabelWhenIncomingDiffers(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 22;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-stored',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Stored Name',
+                'person_id' => null,
+                'is_user_confirmed' => 1,
+            ],
+        ];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-stored',
+                    'label' => 'Incoming Name',
+                    'identity_count' => 2,
+                ],
+            ],
+            14
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts);
+        $this->assertStringContainsString("'Stored Name'", $personInserts[0]);
+        $this->assertStringNotContainsString("'Incoming Name'", $personInserts[0]);
+    }
+
+    public function testBackfillSkipsReservedStoredLabel(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 23;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-reserved',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'cluster_abcdef01',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-reserved',
+                    'label' => 'cluster_abcdef01',
+                    'identity_count' => 2,
+                ],
+            ],
+            14
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts);
+    }
+
+    public function testBackfillSkipsAlreadyBoundCluster(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 24;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-bound',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Already Bound',
+                'person_id' => 7,
+            ],
+        ];
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-bound',
+                    'label' => 'Already Bound',
+                    'identity_count' => 2,
+                ],
+            ],
+            14
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts);
+    }
+
+    public function testSecondIdenticalSnapshotBatchIsNoOpForBind(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 25;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-once',
+                'tenant_id' => 'tenant-merge',
+                'label' => 'Once',
+                'person_id' => null,
+            ],
+        ];
+
+        $payload = [
+            [
+                'cluster_uuid' => 'cluster-once',
+                'label' => 'Once',
+                'identity_count' => 2,
+            ],
+        ];
+        $this->merger->merge_snapshot_batch_for_tenant('tenant-merge', $payload, 14);
+
+        $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] = 25;
+        $wpdb->queries = [];
+        $this->merger->merge_snapshot_batch_for_tenant('tenant-merge', $payload, 14);
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $updates = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_starts_with($query, 'UPDATE wp_acx_clusters SET person_id')
+            )
+        );
+        $this->assertCount(0, $personInserts);
+        $this->assertCount(0, $updates);
+        $this->assertSame(25, $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
     public function testPrepareSnapshotMergeDeletesStaleNonCuratedRows(): void

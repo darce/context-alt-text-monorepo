@@ -6,13 +6,18 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
+require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-person-resolution-service.php';
 require_once __DIR__ . '/services/class-cluster-person-bind-service.php';
+require_once __DIR__ . '/../support/trait-runs-transactional.php';
+require_once __DIR__ . '/../sovereign/repositories/class-cluster-curation-writer.php';
 require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/interface-targeted-sync-pull-job.php';
+require_once __DIR__ . '/../support/class-telemetry.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
@@ -21,6 +26,8 @@ require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 use AltContext\Api\RecognitionController;
 use AltContext\Api\Services\ClusterPersonBindService;
 use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Support\RunsTransactional;
+use AltContext\Sovereign\Repositories\ClusterCurationWriter;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
@@ -31,6 +38,8 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 use WP_Query;
@@ -68,6 +77,8 @@ use function wp_get_object_terms;
 use function wp_generate_uuid4;
 
 class Api {
+	use RunsTransactional;
+
 	private RecognitionController $recognitionController;
 	private MediaDetailController $mediaDetailController;
 	private SettingsController $settingsController;
@@ -91,11 +102,14 @@ class Api {
 		$this->splitTopologyCommandDrain->register();
 		// E15-37: wp-cron never fires rest_api_init, so the bootstrap-sync handler
 		// must be bound at plugin load or scheduled events dispatch to zero listeners.
-		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 1 );
+		add_action( RecognitionDataSource::BOOTSTRAP_SYNC_HOOK, array( $this, 'handle_bootstrap_sync' ), 10, 2 );
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 
-	public function handle_bootstrap_sync( string $tenant_id ): void {
+	/**
+	 * @param list<string> $cluster_ids
+	 */
+	public function handle_bootstrap_sync( string $tenant_id, array $cluster_ids = array() ): void {
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
 			return;
@@ -104,6 +118,27 @@ class Api {
 		$sync_pull_job = $this->resolve_bootstrap_sync_pull_job();
 		if ( null === $sync_pull_job ) {
 			return;
+		}
+
+		$normalized_ids = array();
+		foreach ( $cluster_ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized_ids[] = $id;
+			}
+		}
+		$normalized_ids = array_values( array_unique( $normalized_ids ) );
+		if ( array() !== $normalized_ids && $sync_pull_job instanceof TargetedSyncPullJobInterface ) {
+			$sync_pull_job->perform_targeted_snapshot( $normalized_tenant_id, $normalized_ids );
+			return;
+		}
+		if ( array() !== $normalized_ids ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] bootstrap sync received %d cluster ids but job is not targeted-capable; falling back to full-tenant sync',
+					count( $normalized_ids )
+				)
+			);
 		}
 
 		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
@@ -602,8 +637,19 @@ class Api {
 
 		$table_name      = $wpdb->prefix . 'acx_persons';
 		$normalized_name = PersonResolutionService::normalize_name( $name );
-		$existing        = $wpdb->get_var(
-			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_name, $normalized_name )
+
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$existing = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+				$table_name,
+				$normalized_name,
+				$tenant_id
+			)
 		);
 		if ( $existing ) {
 			return new WP_Error( 'acx_person_exists', __( 'A person with this name already exists.', 'alt-context' ), array( 'status' => 409 ) );
@@ -620,6 +666,7 @@ class Api {
 			$table_name,
 			array(
 				'person_uuid'     => $person_uuid,
+				'tenant_id'       => $tenant_id,
 				'name'            => $name,
 				'normalized_name' => $normalized_name,
 				'tags'            => wp_json_encode( $tags ),
@@ -627,7 +674,7 @@ class Api {
 				'created_at'      => $now,
 				'updated_at'      => $now,
 			),
-			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		if ( false === $result ) {
@@ -687,8 +734,13 @@ class Api {
 			);
 		}
 
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 			$table_name = $wpdb->prefix . 'acx_persons';
-			$person     = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_name, $id ) );
+			$person     = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id ) );
 
 		if ( ! $person ) {
 			return new WP_Error( 'acx_person_not_found', __( 'Person not found.', 'alt-context' ), array( 'status' => 404 ) );
@@ -704,10 +756,11 @@ class Api {
 			if ( $name !== $person->name ) {
 				$conflict = $wpdb->get_var(
 					$wpdb->prepare(
-						'SELECT id FROM %i WHERE normalized_name = %s AND id != %d',
+						'SELECT id FROM %i WHERE normalized_name = %s AND id != %d AND tenant_id = %s',
 						$table_name,
 						$normalized_name,
-						$id
+						$id,
+						$tenant_id
 					)
 				);
 				if ( $conflict ) {
@@ -737,7 +790,7 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		$result = $wpdb->update( $table_name, $update_data, array( 'id' => $id ), $update_fmt, array( '%d' ) );
+		$result = $wpdb->update( $table_name, $update_data, array( 'id' => $id, 'tenant_id' => $tenant_id ), $update_fmt, array( '%d', '%s' ) );
 
 		if ( false === $result ) {
 			$this->rollback_database_transaction();
@@ -751,9 +804,10 @@ class Api {
 
 		$person_revision_updated = $wpdb->query(
 			$wpdb->prepare(
-				'UPDATE %i SET local_revision = local_revision + 1 WHERE id = %d',
+				'UPDATE %i SET local_revision = local_revision + 1 WHERE id = %d AND tenant_id = %s',
 				$table_name,
-				$id
+				$id,
+				$tenant_id
 			)
 		);
 		if ( false === $person_revision_updated ) {
@@ -762,10 +816,10 @@ class Api {
 		}
 
 		$local_revision = (int) $wpdb->get_var(
-			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE id = %d', $table_name, $id )
+			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id )
 		);
 
-			$updated_person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_name, $id ) );
+			$updated_person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id ) );
 		if ( isset( $updated_person->tags ) && is_string( $updated_person->tags ) ) {
 			$updated_person->tags = json_decode( $updated_person->tags, true );
 		}
@@ -800,111 +854,131 @@ class Api {
 
 		$id = (int) $request->get_param( 'id' );
 
-			$table_persons  = $wpdb->prefix . 'acx_persons';
-			$table_clusters = $wpdb->prefix . 'acx_clusters';
+		$table_persons  = $wpdb->prefix . 'acx_persons';
+		$table_clusters = $wpdb->prefix . 'acx_clusters';
 
-			$person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_persons, $id ) );
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$person = $wpdb->get_row(
+			$wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_persons, $id, $tenant_id )
+		);
 		if ( ! $person ) {
 			return new WP_Error( 'acx_person_not_found', __( 'Person not found.', 'alt-context' ), array( 'status' => 404 ) );
 		}
 
-		$affected_clusters = $wpdb->get_results(
-			$wpdb->prepare( 'SELECT cluster_uuid FROM %i WHERE person_id = %d', $table_clusters, $id ),
-			ARRAY_A
-		);
-		if ( ! $this->begin_database_transaction() ) {
-			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		// Curated dissociation: preserve curation confirmation while clearing assignment.
-		$now = current_time( 'mysql' );
-		$dissociation_result = $wpdb->update(
-			$table_clusters,
-			array(
-				'person_id'         => null,
-				'curation_state'    => 'confirmed',
-				'is_user_confirmed' => 1,
-				'updated_at'        => $now,
-			),
-			array( 'person_id' => $id ),
-			array( null, '%s', '%d', '%s' ),
-			array( '%d' )
-		);
-		if ( false === $dissociation_result ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not dissociate person from clusters.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		if ( is_array( $affected_clusters ) ) {
-			foreach ( $affected_clusters as $cluster_row ) {
-				$cluster_uuid = sanitize_text_field( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
-				if ( '' === $cluster_uuid ) {
-					continue;
-				}
-
-				$revision_updated = $wpdb->query(
+		return $this->run_transactional(
+			function () use ( $wpdb, $id, $person, $table_persons, $table_clusters, $tenant_id ): WP_REST_Response|WP_Error {
+				$affected_clusters = $wpdb->get_results(
 					$wpdb->prepare(
-						'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s',
+						'SELECT cluster_uuid FROM %i WHERE person_id = %d AND tenant_id = %s',
 						$table_clusters,
-						$cluster_uuid
-					)
+						$id,
+						$tenant_id
+					),
+					ARRAY_A
 				);
-				if ( false === $revision_updated ) {
-					$this->rollback_database_transaction();
-					return new WP_Error( 'acx_db_error', __( 'Could not update cluster revision.', 'alt-context' ), array( 'status' => 500 ) );
+				if ( ! is_array( $affected_clusters ) ) {
+					return new WP_Error( 'acx_db_error', __( 'Could not load clusters for person.', 'alt-context' ), array( 'status' => 500 ) );
 				}
 
-				$cluster_revision = (int) $wpdb->get_var(
-					$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_uuid )
-				);
+				$writer      = new ClusterCurationWriter( $table_clusters );
+				$cluster_ids = array();
+				foreach ( $affected_clusters as $cluster_row ) {
+					$cluster_uuid = sanitize_text_field( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+					if ( '' === $cluster_uuid ) {
+						continue;
+					}
 
-				$queued = $this->enqueue_curation_operation(
-					'cluster_person_unbound',
-					'cluster',
-					$cluster_uuid,
-					max( 1, $cluster_revision ),
+					if ( $writer->reset_curation( $cluster_uuid, $tenant_id ) <= 0 ) {
+						return new WP_Error( 'acx_db_error', __( 'Could not dissociate person from clusters.', 'alt-context' ), array( 'status' => 500 ) );
+					}
+
+					$cluster_revision = (int) $wpdb->get_var(
+						$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_uuid )
+					);
+
+					$queued = $this->enqueue_curation_operation(
+						'cluster_person_unbound',
+						'cluster',
+						$cluster_uuid,
+						max( 1, $cluster_revision ),
+						array(
+							'cluster_uuid' => $cluster_uuid,
+							'person_uuid'  => null,
+						)
+					);
+					if ( ! $queued ) {
+						return new WP_Error( 'acx_db_error', __( 'Could not queue cluster unbind replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+					}
+
+					$label_cleared = $this->enqueue_curation_operation(
+						'cluster_label_updated',
+						'cluster',
+						$cluster_uuid,
+						max( 1, $cluster_revision ),
+						array(
+							'cluster_uuid' => $cluster_uuid,
+							'label'        => null,
+						)
+					);
+					if ( ! $label_cleared ) {
+						return new WP_Error( 'acx_db_error', __( 'Could not queue cluster label-clear replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+					}
+
+					$cluster_ids[] = $cluster_uuid;
+				}
+
+				$result = $wpdb->delete(
+					$table_persons,
 					array(
-						'cluster_uuid' => $cluster_uuid,
-						'person_uuid'  => null,
+						'id'        => $id,
+						'tenant_id' => $tenant_id,
+					),
+					array( '%d', '%s' )
+				);
+				if ( false === $result ) {
+					return new WP_Error(
+						'acx_db_error',
+						__( 'Could not delete person from database.', 'alt-context' ),
+						array( 'status' => 500 )
+					);
+				}
+				if ( 0 === (int) $result ) {
+					return new WP_Error(
+						'acx_person_not_found',
+						__( 'Person not found.', 'alt-context' ),
+						array( 'status' => 404 )
+					);
+				}
+
+				$person_local_revision = max( 1, (int) ( $person->local_revision ?? 0 ) + 1 );
+				$queued                = $this->enqueue_curation_operation(
+					'person_deleted',
+					'person',
+					(string) ( $person->person_uuid ?? $id ),
+					$person_local_revision,
+					array(
+						'person_uuid' => (string) ( $person->person_uuid ?? '' ),
+						'person_id'   => $id,
 					)
 				);
 				if ( ! $queued ) {
-					$this->rollback_database_transaction();
-					return new WP_Error( 'acx_db_error', __( 'Could not queue cluster unbind replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+					return new WP_Error( 'acx_db_error', __( 'Could not queue person deletion replay operation.', 'alt-context' ), array( 'status' => 500 ) );
 				}
+
+				return rest_ensure_response(
+					array(
+						'deleted'              => true,
+						'id'                   => $id,
+						'clusters_dissociated' => count( $cluster_ids ),
+						'cluster_ids'          => $cluster_ids,
+					)
+				);
 			}
-		}
-
-		$result = $wpdb->delete( $table_persons, array( 'id' => $id ), array( '%d' ) );
-
-		if ( false === $result ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not delete person from database.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		$person_local_revision = max( 1, (int) ( $person->local_revision ?? 0 ) + 1 );
-
-		$queued = $this->enqueue_curation_operation(
-			'person_deleted',
-			'person',
-			(string) ( $person->person_uuid ?? $id ),
-			$person_local_revision,
-			array(
-				'person_uuid' => (string) ( $person->person_uuid ?? '' ),
-				'person_id'   => $id,
-			)
 		);
-		if ( ! $queued ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not queue person deletion replay operation.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		if ( ! $this->commit_database_transaction() ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		return rest_ensure_response( array( 'deleted' => true, 'id' => $id ) );
 	}
 
 	/**

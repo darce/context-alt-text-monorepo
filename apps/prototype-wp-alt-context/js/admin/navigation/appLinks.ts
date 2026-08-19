@@ -42,6 +42,8 @@ export type AppLinkParam = (typeof APP_LINK_PARAMS)[keyof typeof APP_LINK_PARAMS
 export const APP_LINK_VALUES = {
   advancedOpen: 'open',
   personFilterUnassigned: 'unassigned',
+  /** UXW2-4: `panel=review` (+ `cluster=<id>`) persists the scan-tab review panel. */
+  panelReview: 'review',
   /** WBUX-5 workbench two-pane collapse states (`?panes=`). Default `both` is omitted. */
   panesBoth: 'both',
   panesControlCollapsed: 'control-collapsed',
@@ -75,12 +77,22 @@ export const parsePanes = (raw: string | null | undefined): PanesState =>
 export const serializePanes = (v: PanesState): string | null =>
   v === APP_LINK_VALUES.panesBoth ? null : v;
 
+/** Legal workbench `panel` values: review | conflicts | dead-letter. */
+export type WorkbenchPanelValue =
+  | Exclude<WorkbenchOverlay, null>
+  | typeof APP_LINK_VALUES.panelReview;
+
+export const reviewPanelUrl = (clusterId: string): string =>
+  toWorkbench({ tab: 'scan', panel: APP_LINK_VALUES.panelReview, cluster: clusterId });
+
 export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;
   tab?: WorkbenchTab;
   /** When true or `'open'`, emits `advanced=open`. */
   advanced?: true | typeof APP_LINK_VALUES.advancedOpen;
-  panel?: Exclude<WorkbenchOverlay, null>;
+  panel?: WorkbenchPanelValue;
+  /** Review-panel target; emitted only with `panel=review`. */
+  cluster?: string;
   /** Two-pane collapse; `'both'` (default) is omitted from the href. */
   panes?: PanesState;
 }
@@ -115,6 +127,9 @@ export const toWorkbench = (options: ToWorkbenchOptions = {}): string => {
   }
   if (options.panel !== undefined) {
     params.set(APP_LINK_PARAMS.panel, options.panel);
+  }
+  if (options.panel === APP_LINK_VALUES.panelReview && options.cluster) {
+    params.set(APP_LINK_PARAMS.cluster, options.cluster);
   }
   const panesWire = options.panes !== undefined ? serializePanes(options.panes) : null;
   if (panesWire !== null) {

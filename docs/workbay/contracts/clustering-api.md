@@ -204,6 +204,7 @@ Response (envelope):
     {
       "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
       "label": "Alice",
+      "label_state": "person",
       "is_auto_label": false,
       "identity_count": 5,
       "member_ids": [
@@ -238,7 +239,8 @@ Notes:
 
 - The WordPress proxy always returns the envelope `{ clusters, limit, total, truncated }` on this route. The only compatibility carve-out is a legacy bare-array upstream response; in that case the plugin normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false`.
 - A partial envelope such as `{ "clusters": [...] }` without `limit`, `total`, or `truncated` is a contract violation. The proxy surfaces that upstream failure as a `502 invalid_cluster_list_envelope` response rather than inventing the missing metadata.
-- For unlabeled clusters, `label` may be a synthetic `cluster-*` prefix and `is_auto_label` is `true`.
+- For unlabeled clusters, `label_state` is `"unlabeled"`. `label` may still be a reserved auto label (`cluster-*` / `cluster_*`) with `is_auto_label: true`; the FE must not synthesize `cluster-<hex>` from a null label.
+- `label_state` is the three-valued authority `person | unlabeled | unbound`. `is_auto_label` / `is_labeled` cannot express `unbound`. Cluster detail uses the same summary shape as list items.
 - `suggested_label*` fields may be populated for unlabeled clusters.
 - `user_confirmed` distinguishes user-curated labels from auto-generated ones.
 
@@ -261,6 +263,7 @@ Response (envelope):
       "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
       "tenant_id": "a9c2c2c0f6ef4a1f8d6d7a3f6c9b8e12",
       "label": "cluster-a1b2c3d4",
+      "label_state": "unlabeled",
       "is_labeled": false,
       "is_auto_label": true,
       "identity_count": 8,
@@ -284,6 +287,7 @@ Response (envelope):
   "limit": 10,
   "total": 24,
   "truncated": true,
+  "repair_pending": false,
   "singleton_count": 3,
   "data_source": "local_projection",
   "projection_status": "available"
@@ -292,16 +296,47 @@ Response (envelope):
 
 Notes:
 
-- The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source }` on this route.
+- The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source, repair_pending }` on this route.
+- `backend_proxy` envelopes drop any cluster whose `representatives` is empty or absent before the response is returned (same `minItems: 1` invariant as `local_projection`). Dropped rows set `repair_pending: true` and do not shrink `total`; `truncated` is not set from that filter (same rule as the local-projection leg).
 - Returns clusters from **sovereign local projection** when available.
 - When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope. If the upstream backend still emits a legacy bare array, the proxy normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false` before tagging the response with `data_source: "backend_proxy"`. That fallback is best-effort only: without canonical upstream envelope metadata the proxy cannot detect hidden truncation, so bare-array fallback responses never report `truncated=true`.
 - A partial envelope such as `{ "clusters": [...], "limit": 10 }` without `total` or `truncated` is a contract violation. The proxy surfaces that upstream failure as `502 invalid_top_unlabeled_envelope` instead of inventing the missing metadata.
-- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `limit`, `total: 0`, `truncated: false`, `data_source: "unavailable"`, and `projection_status: "bootstrapping"`.
+- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `limit`, `total: 0`, `truncated: false`, `repair_pending: false`, `data_source: "unavailable"`, and `projection_status: "bootstrapping"`.
 - `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
-- WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
+- WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, `data_source`, and `repair_pending` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - The controller clamps excessive `limit` requests to the canonical `LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT=500` before local or proxied reads, and the response `limit` field reports that effective capped value.
-- Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
+- Clusters with fewer than 2 observed member rows, `is_user_confirmed = true`, or `dismissed_at` set are excluded. Size is `COUNT(acx_identity_members)`, not the stale `identity_count` column. The mapper applies the same `< 2` threshold as the SQL predicate (one threshold only).
+- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty (`minItems: 1`); `identity_count` is the observed member-row count when the preview fetch is not truncated (fetch cap+1 so `observed == 4` is exact and `observed > 4` is truncation). When `observed > cap` the fetch is truncated: `identity_count = max(projected, representatives.length)` and request repair only when the projection is stale-low (`projected <= cap`). A healthy oversized cluster (`projected > cap`) is expected truncation of a cap+1 fetch, not a repair trigger. Do not publish `observed` as an exact count. The queue predicate is backed by `acx_identity_members` rows (`COUNT(m) >= 2`), so a cluster whose members were reprojected away is not served.
+- `total` is the pre-filter qualifying count (`COUNT(*) OVER()` / `total_count`). SQL already excludes `COUNT(m) < 2`; a drop can still happen when the mapper sees an identity_count/member mismatch (empty or singleton representatives after members load). Those drops set `repair_pending` and do not shrink `total`. When `total_count` is absent from the sovereign page, `total` falls back to the pre-drop fetched-row count, not the post-drop served length. `truncated` is true only when more qualifying rows exist beyond this page (`total_count > fetched_page`); mapper drops never set `truncated`. `truncated` is `false` when the column is missing.
+- `repair_pending` is `true` when this page requested targeted projection repair or dropped rows that failed the `< 2` / empty-rep invariant. Frontend Resync / repair live-region key off `repair_pending` (or `total > served.length` with an empty evidence page), never off a page-local zero-evidence count that local_projection can no longer emit.
+
+## GET /recognition/clusters/{cluster_id}
+
+Return one cluster summary from local projection (or the recognition proxy).
+
+Response (cluster summary, same item shape as `GET /recognition/clusters`):
+
+```json
+{
+  "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
+  "label": "Alice",
+  "is_auto_label": false,
+  "identity_count": 5,
+  "member_ids": ["0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f"],
+  "representative_identity": {
+    "media_id": 101,
+    "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 }
+  },
+  "sample_identities": [],
+  "person_uuid": null
+}
+```
+
+Notes:
+
+- `identity_count` is the observed member-row count when the detail fetch is not truncated. The fetch asks for `DEFAULT_CLUSTER_MEMBER_LIMIT+1` (`500+1`) so `observed == 500` is exact and `observed > 500` is truncation; on truncation WordPress republishes the projected column and slices `member_ids` / samples to 500.
+- Truncation rule sits next to the top-unlabeled preview invariant (cap 4, fetch 5). Both treat `observed == cap` as exact after a cap+1 fetch.
 
 ## GET /recognition/clusters/labels
 
@@ -442,6 +477,8 @@ Notes:
 - `data_source: "unavailable"` remains the degraded HTTP `200` response only for non-503 upstream failures (for example other `5xx` or transport errors).
 - Successful backend-proxy responses must resolve to one canonical envelope: either an upstream `identities_by_media` object or a bare array of identity rows that each include `media_id`. Any other `200` payload shape is rejected with `invalid_media_identities_payload` and HTTP `502`.
 - TypeScript consumers now require `data_source` to be present on successful envelopes instead of defaulting missing metadata locally.
+- **Label authority (UXW2-4):** human label ⇒ bound person. On the local-projection path, `cluster_label` / `label` is the person name or the auto label. Auto/reserved labels match `DetectsSystemDefinedLabels::is_reserved_label_shape()`: unicode-whitespace trim, then case-insensitive prefix `cluster-` or `cluster_` (`/^cluster[-_]/i`). `Cluster_ab12ef34` is reserved, not a human name. Unbound human labels are not returned as `label` / `cluster_label`.
+- **`label_state`:** three-valued authority from `DetectsSystemDefinedLabels::projected_cluster_label_state_sql()` / `resolve_cluster_label_state()` — `person` (bound person name present), `unlabeled` (cluster label empty/null or reserved `/^cluster[-_]/i`), `unbound` (human label with no person bind). Local-projection cluster list, cluster detail, top-unlabeled, identity-members, and media-identities payloads emit it (`ClusterResponseMapper`, `MemberResponseMapper`). Distinct from `is_auto_label` / `is_labeled`, which cannot express `unbound`.
 
 ## POST /recognition/clusters/reassign
 
@@ -470,7 +507,7 @@ Response (proxy to `/recognition/clusters/reassign`):
 
 ## PATCH /recognition/clusters/{cluster_id}
 
-Update cluster label.
+Update cluster label. The plugin binds a roster person for a human label.
 
 Request body:
 
@@ -478,7 +515,27 @@ Request body:
 { "label": "Alice" }
 ```
 
-Response: `ClusterResponse`.
+Local and proxy-success responses include:
+
+```json
+{
+  "cluster_id": "...",
+  "label": "Alice",
+  "synced": false,
+  "status": "pending",
+  "person_id": 12,
+  "roster_bound": true
+}
+```
+
+`person_id` and `roster_bound` are omitted when the mutation is a no-op acknowledgement. A failed backend proxy (non-2xx) does not persist a local person.
+
+`roster_bound` is derived from `ClusterCurationWriter::bind_succeeded()` after the person persist:
+
+- `true` when a local cluster row was updated to that person, or was already bound to that person (`BIND_ALREADY_BOUND`).
+- `false` when no local cluster row matched.
+
+On the local path, a genuine bind write failure (`bind_person_to_cluster` returns `false`, including a missing `$wpdb`) is not a `roster_bound: false` flag — it raises HTTP `500` with error code `acx_db_error` before `roster_bound` is written. Do not treat that 500 as a general fail-closed rule for every `roster_bound` writer.
 
 ## POST /recognition/clusters/{source_id}/merge
 
@@ -490,7 +547,20 @@ Request body:
 { "target_cluster_id": "...", "target_label": "Alice" }
 ```
 
-Response: `ClusterResponse` for the target cluster.
+When `target_label` is a human name, the plugin binds a roster person to the target. A successful local or proxy-success response may include:
+
+```json
+{
+  "person_id": 12,
+  "roster_bound": true
+}
+```
+
+`roster_bound` is `true` when the target cluster row was updated or already bound to that person (`BIND_ALREADY_BOUND`), and `false` when no local cluster row matched. On the local path, a bind write failure (`false` from `bind_person_to_cluster`) is HTTP `500` `acx_db_error` — it is not reported as `roster_bound: false`. `person_id` is present on the proxy-success path only.
+
+If the target cluster is already bound to a **different** person, the plugin returns HTTP `409` with error code `cluster_already_bound`. Remedy: unbind the target cluster first, then retry the merge.
+
+Response: `ClusterResponse` for the target cluster (plus the `person_id` / `roster_bound` fields above when a label was supplied).
 
 ## POST /recognition/clusters/{cluster_id}/split
 

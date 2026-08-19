@@ -39,7 +39,13 @@ import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import { invalidateSuggestionProjection, isHumanLabeledTarget } from './suggestionProjection';
+import {
+  dropClusterFromReviewCaches,
+  invalidateReviewCachesWithoutRefetch,
+  invalidateSuggestionProjection,
+  isHumanLabeledTarget,
+  REVIEW_DROP_MODE,
+} from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
 
 interface ClusterLabelingPanelProps {
@@ -138,10 +144,12 @@ export const ClusterLabelingPanel = ({
     setError(null);
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+    // UXW2-2 (B6): the labelled cluster's pending rows leave the review caches
+    // now — backend suggestion curation lags the label write.
+    dropClusterFromReviewCaches(queryClient, clusterId, { mode: REVIEW_DROP_MODE.LABEL });
+    invalidateReviewCachesWithoutRefetch(queryClient);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
     void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-    void invalidateSuggestionProjection(queryClient);
     onLabel(label);
   };
 
@@ -150,9 +158,12 @@ export const ClusterLabelingPanel = ({
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
     setLastMerge(result);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-    void invalidateSuggestionProjection(queryClient);
+    // UXW2-2-R1-21: drop the authoritative retired source, not the local panel id.
+    if (typeof result.source_id === 'string' && result.source_id !== '') {
+      dropClusterFromReviewCaches(queryClient, result.source_id, { mode: REVIEW_DROP_MODE.MERGE });
+    }
+    invalidateReviewCachesWithoutRefetch(queryClient);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
   };
 
   const {

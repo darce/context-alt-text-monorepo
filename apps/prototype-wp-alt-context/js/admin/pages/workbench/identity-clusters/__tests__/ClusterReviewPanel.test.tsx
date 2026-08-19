@@ -2,6 +2,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
@@ -44,6 +45,7 @@ vi.mock('@tanstack/react-query', async () => {
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (text: string, ...values: (string | number)[]) => {
     let index = 0;
     return text
@@ -62,9 +64,11 @@ vi.mock('../../../../api/recognition', async () => {
 });
 
 const PanelProviders = ({ children }: { children: React.ReactNode }) => (
-  <ClusterPanelProvider>
-    <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
-  </ClusterPanelProvider>
+  <MemoryRouter>
+    <ClusterPanelProvider>
+      <MergeSurvivorProvider>{children}</MergeSurvivorProvider>
+    </ClusterPanelProvider>
+  </MemoryRouter>
 );
 
 /** Always-mounted owner (mirrors ScanTabContent): opens the review via the panel
@@ -287,11 +291,11 @@ describe('ClusterReviewPanel', () => {
       expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-envelope');
     });
 
-    expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
       'src',
       'http://example.test/thumb-envelope.jpg',
     );
-    expect(screen.queryByText('No faces found.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No faces in this group.')).not.toBeInTheDocument();
   });
 
   // UI-05: members error must offer retry that re-invokes the members query.
@@ -364,7 +368,7 @@ describe('ClusterReviewPanel', () => {
     await user.click(showAll);
 
     await waitFor(() => {
-      expect(screen.getAllByRole('img', { name: 'Face' })).toHaveLength(2);
+      expect(screen.getAllByRole('img', { name: /Face on media/ })).toHaveLength(2);
     });
     expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
     expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-truncated', {
@@ -404,11 +408,11 @@ describe('ClusterReviewPanel', () => {
       expect(fetchClusterMembersMock).toHaveBeenCalledWith(clusterId);
     });
 
-    expect(screen.getByRole('img', { name: 'Face' }).closest('.acx-cluster-member-card__image')).toBeTruthy();
+    expect(screen.getByRole('img', { name: /Face on media/ }).closest('.acx-cluster-member-card__image')).toBeTruthy();
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText('Remove this face'));
-    await user.click(screen.getByRole('button', { name: 'Remove this face' }));
+    await user.click(screen.getByLabelText('Remove this face from the face group'));
+    await user.click(screen.getByRole('button', { name: 'Remove face' }));
 
     await waitFor(() => {
       expect(removeClusterMemberMock).toHaveBeenCalledWith('identity-1', true);
@@ -444,11 +448,11 @@ describe('ClusterReviewPanel', () => {
       expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-456');
     });
 
-    expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
       'src',
       'http://example.test/media/member-2.jpg',
     );
-    expect(screen.getByRole('img', { name: 'Face' })).not.toHaveClass('acx-cluster-member-card__image');
+    expect(screen.getByRole('img', { name: /Face on media/ })).not.toHaveClass('acx-cluster-member-card__image');
   });
 
   it('prefers a face crop over a generic media thumbnail when bbox data is available', async () => {
@@ -475,7 +479,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
-    expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
       'src',
       'http://example.test/media/member-2b.jpg',
     );
@@ -507,7 +511,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
-    const image = screen.getByRole('img', { name: 'Face' });
+    const image = screen.getByRole('img', { name: /Face on media/ });
     expect(image).toHaveAttribute('src', 'http://example.test/media/member-zero.jpg');
     expect(image).toHaveClass('acx-durable-face-thumb__uncropped');
     expect(screen.queryByText('No image')).not.toBeInTheDocument();
@@ -537,7 +541,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
-    expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
       'src',
       'http://example.test/media/member-positive.jpg',
     );
@@ -568,7 +572,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     expect(screen.getByText('No image')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Face — image unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /Face on media \d+ — image unavailable/ })).toBeInTheDocument();
     expect(container.querySelector('.acx-placeholder:empty')).toBeNull();
   });
 
@@ -578,7 +582,7 @@ describe('ClusterReviewPanel', () => {
 
     renderPanel('cluster-loading');
 
-    expect(screen.getByText('Loading faces...')).toBeInTheDocument();
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
   });
 
   it('shows error message when members cannot be loaded', () => {
@@ -618,12 +622,12 @@ describe('ClusterReviewPanel', () => {
       expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-cancel');
     });
 
-    await user.click(screen.getByLabelText('Remove this face'));
+    await user.click(screen.getByLabelText('Remove this face from the face group'));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(removeClusterMemberMock).not.toHaveBeenCalled();
   });
 
-  it('calls onClose when close button is clicked', async () => {
+  it('calls onClose when Back is clicked (single exit)', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const onClose = vi.fn();
     fetchClusterMembersMock.mockResolvedValue(makeClusterMembersResponse());
@@ -631,7 +635,7 @@ describe('ClusterReviewPanel', () => {
     renderPanel('cluster-close', onClose);
     const user = userEvent.setup();
 
-    await user.click(screen.getByLabelText('Close'));
+    await user.click(screen.getByRole('button', { name: '← Back to Review Suggestions' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -653,7 +657,7 @@ describe('ClusterReviewPanel', () => {
     expect(onFocusQueueRoot).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
     // Criterion 4: no member faces painted for the retired cluster.
-    expect(screen.queryByRole('img', { name: 'Face' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Face on media/ })).not.toBeInTheDocument();
   });
 
   it('retire-while-open with recorded survivor rebinds panel to survivor and announces', async () => {
@@ -699,7 +703,7 @@ describe('ClusterReviewPanel', () => {
     });
     // Remounted on survivor — live membership of the survivor, never the retired id.
     await waitFor(() => {
-      expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+      expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
         'src',
         'http://example.test/survivor.jpg',
       );
@@ -749,7 +753,7 @@ describe('ClusterReviewPanel', () => {
       expect(screen.getByTestId('reducer-cluster-id')).toHaveTextContent('cluster-survivor');
     });
     await waitFor(() => {
-      expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+      expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
         'src',
         'http://example.test/survivor.jpg',
       );
@@ -811,7 +815,7 @@ describe('ClusterReviewPanel', () => {
     const { queryClient } = renderPanel('cluster-stale', onClose);
 
     await waitFor(() => {
-      expect(screen.getByRole('img', { name: 'Face' })).toBeInTheDocument();
+      expect(screen.getByRole('img', { name: /Face on media/ })).toBeInTheDocument();
     });
 
     // Simulate post-merge invalidation → members queries re-run as 404.
@@ -820,7 +824,7 @@ describe('ClusterReviewPanel', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
     });
-    expect(screen.queryByRole('img', { name: 'Face' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Face on media/ })).not.toBeInTheDocument();
     // BR-71: the stale member's thumbnail is gone (can fail if a retired face
     // lingers — unlike the old `queryByText('stale')`, which never matched the
     // src-only URL and so could never fail).
@@ -960,7 +964,7 @@ describe('ClusterReviewPanel', () => {
       expect(screen.getByText(LIVE_TARGET_REBIND_ANNOUNCE)).toHaveAttribute('role', 'status');
     });
     await waitFor(() => {
-      expect(screen.getByRole('img', { name: 'Face' })).toHaveAttribute(
+      expect(screen.getByRole('img', { name: /Face on media/ })).toHaveAttribute(
         'src',
         'http://example.test/late-survivor.jpg',
       );

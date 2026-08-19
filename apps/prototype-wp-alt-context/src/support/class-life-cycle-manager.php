@@ -6,8 +6,12 @@ namespace AltContext\Support;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
+require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
+require_once __DIR__ . '/../api/class-tenant-identity.php';
 
+use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use function array_keys;
 use function defined;
@@ -29,7 +33,17 @@ class LifecycleManager {
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
 	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
+	private const OPTION_HEAL_COMPLETE = 'acx_label_heal_complete';
+	private const OPTION_HEAL_ATTEMPTS = 'acx_label_heal_attempts';
+	private const OPTION_HEAL_BLOCKED_REASON = 'acx_label_heal_blocked_reason';
+	private const MAX_HEAL_ATTEMPTS_PER_LOAD = 1;
+	/**
+	 * Upgrade/activate runs inside a WP request. 5 * BATCH_SIZE(100) = 500 binds
+	 * per load. Remainder resumes via acx_label_heal_complete staying unset.
+	 */
+	private const MAX_HEAL_BATCHES_PER_LOAD = 5;
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
+	private const OPTION_LEGACY_ROSTER_IMPORT_ERROR = 'acx_legacy_roster_import_error';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
@@ -62,14 +76,22 @@ class LifecycleManager {
 	);
 
 	/**
-	 * Legacy UNIQUE on acx_persons.name from pre-E21-9 DDL. dbDelta never DROP
-	 * INDEXes, so this must be removed explicitly (LO-03).
+	 * Legacy UNIQUE indexes on acx_persons that dbDelta will never DROP.
+	 * idx_name: pre-E21-9 UNIQUE on name.
+	 * idx_normalized_name: pre-tenant-scope UNIQUE on normalized_name only.
+	 * dbDelta does not alter same-name indexes, so a column-list change on
+	 * idx_normalized_name is a no-op on existing installs — drop it and let
+	 * CREATE TABLE add idx_tenant_normalized_name.
 	 */
-	private const LEGACY_PERSONS_NAME_UNIQUE_INDEX = 'idx_name';
+	private const LEGACY_PERSONS_UNIQUE_INDEXES = array(
+		'idx_name',
+		'idx_normalized_name',
+	);
 
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
 			add_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array( $this, 'continue_legacy_roster_migration' ) );
+			add_action( 'admin_notices', array( $this, 'render_label_heal_notice' ) );
 		}
 	}
 
@@ -90,6 +112,7 @@ class LifecycleManager {
 		if ( $this->maybe_create_projection_tables() ) {
 			update_option( self::OPTION_SCHEMA_FINGERPRINT, $this->compute_projection_schema_fingerprint() );
 		}
+		$this->maybe_heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
 	}
@@ -123,38 +146,147 @@ class LifecycleManager {
 		$fingerprint         = $this->compute_projection_schema_fingerprint();
 		$version_matches     = get_option( self::OPTION_VERSION ) === ACX_VERSION;
 		$fingerprint_matches = get_option( self::OPTION_SCHEMA_FINGERPRINT ) === $fingerprint;
-		if ( $version_matches && $fingerprint_matches ) {
+		if ( ! $version_matches || ! $fingerprint_matches ) {
+			if ( ! $this->maybe_create_projection_tables() ) {
+				// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
+				Telemetry::log_line(
+					sprintf(
+						'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
+						ACX_VERSION
+					)
+				);
+				$this->maybe_heal_unbound_human_labels();
+				return;
+			}
+			update_option( self::OPTION_VERSION, ACX_VERSION );
+			update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
+		}
+
+		$this->maybe_heal_unbound_human_labels();
+	}
+
+	public function render_label_heal_notice(): void {
+		if ( '1' === (string) get_option( self::OPTION_HEAL_COMPLETE, '' ) ) {
 			return;
 		}
 
-		if ( ! $this->maybe_create_projection_tables() ) {
-			// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
+		if ( false === get_option( self::OPTION_VERSION ) ) {
+			return;
+		}
+
+		$reason = (string) get_option( self::OPTION_HEAL_BLOCKED_REASON, '' );
+		if ( 'tenant_unresolved' === $reason ) {
+			$message = __( 'Alt Context cannot repair unlabeled clusters because tenant identity is unavailable. Configure the tenant, then run `wp acx bind-unbound-labels`.', 'alt-context' );
+		} else {
+			$message = __( 'Alt Context is still repairing unlabeled clusters. If this persists, run `wp acx bind-unbound-labels`.', 'alt-context' );
+		}
+
+		echo '<div class="notice notice-warning" role="status"><p>'
+			. esc_html( $message )
+			. '</p></div>';
+	}
+
+	private function maybe_heal_unbound_human_labels(): void {
+		if ( '1' === (string) get_option( self::OPTION_HEAL_COMPLETE, '' ) ) {
+			return;
+		}
+
+		$attempts = (int) get_option( self::OPTION_HEAL_ATTEMPTS, 0 );
+		if ( $attempts >= self::MAX_HEAL_ATTEMPTS_PER_LOAD ) {
+			// Bounded per load (rg-007). A later request must reset the counter first.
+			delete_option( self::OPTION_HEAL_ATTEMPTS );
+			return;
+		}
+
+		update_option( self::OPTION_HEAL_ATTEMPTS, $attempts + 1 );
+		$this->heal_unbound_human_labels();
+	}
+
+	private function heal_unbound_human_labels(): void {
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			update_option( self::OPTION_HEAL_BLOCKED_REASON, 'tenant_unresolved' );
+			return;
+		}
+
+		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
+
+		$result = $this->run_label_heal( $tenant_id );
+		if ( ! empty( $result['capped'] ) ) {
 			Telemetry::log_line(
 				sprintf(
-					'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
-					ACX_VERSION
+					'[acx] unbound-label heal capped after %d batches; will resume on next load',
+					self::MAX_HEAL_BATCHES_PER_LOAD
 				)
 			);
 			return;
 		}
-		update_option( self::OPTION_VERSION, ACX_VERSION );
-		update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
+
+		if ( ! empty( $result['stalled'] ) ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] unbound-label heal stalled after %d batches; will retry on next load',
+					(int) ( $result['stalls'] ?? 0 )
+				)
+			);
+			return;
+		}
+
+		update_option( self::OPTION_HEAL_COMPLETE, '1' );
+		delete_option( self::OPTION_HEAL_ATTEMPTS );
+	}
+
+	/**
+	 * @return array{stalled:bool,stalls?:int,capped?:bool}
+	 */
+	protected function run_label_heal( string $tenant_id ): array {
+		return $this->create_person_label_backfill_service()->backfill_tenant( $tenant_id );
+	}
+
+	protected function create_person_label_backfill_service(): PersonLabelBackfillService {
+		return new PersonLabelBackfillService( self::MAX_HEAL_BATCHES_PER_LOAD );
+	}
+
+	/**
+	 * Same resolver as Api::create_person — never persist an empty tenant_id.
+	 */
+	protected function resolve_active_tenant_id(): string {
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) ) {
+			return '';
+		}
+
+		return trim( $tenant_id );
 	}
 
 	/**
 	 * Migrates data from legacy WP options to custom tables.
 	 *
 	 * @H-PCRUD-4: Ensure data persistence during upgrade.
+	 * @return \WP_Error|null Explicit error when the import is refused; null otherwise.
 	 */
-	private function migrate_legacy_roster_data(): void {
+	protected function migrate_legacy_roster_data(): ?\WP_Error {
 		$legacy_entries     = get_option( 'acx_roster_entries', array() );
 		$legacy_assignments = get_option( 'acx_roster_assignments', array() );
 
 		if ( empty( $legacy_entries ) && empty( $legacy_assignments ) ) {
 			$this->clear_legacy_roster_migration_schedule();
 			delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
-			return;
+			return null;
 		}
+
+		$tenant_id = $this->resolve_active_tenant_id();
+		if ( '' === $tenant_id ) {
+			$error = new \WP_Error(
+				'acx_legacy_roster_tenant_unresolved',
+				__( 'Tenant identity is unavailable.', 'alt-context' )
+			);
+			update_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR, $error->get_error_code() );
+			Telemetry::log_line( '[acx] legacy roster import aborted: tenant identity is unavailable' );
+			return $error;
+		}
+
+		delete_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR );
 
 		global $wpdb;
 		$table_persons  = $wpdb->prefix . 'acx_persons';
@@ -169,7 +301,7 @@ class LifecycleManager {
 		$migration_complete = true;
 
 		foreach ( \array_slice( (array) $legacy_entries, $entry_offset, $remaining ) as $entry ) {
-			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map ) ) {
+			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map, $tenant_id ) ) {
 				$migration_complete = false;
 				break;
 			}
@@ -180,18 +312,18 @@ class LifecycleManager {
 
 		if ( ! $migration_complete ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		if ( $entry_offset < $entries_count ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		$legacy_entry_names_by_id = $this->index_legacy_entry_names_by_id( (array) $legacy_entries );
 
 		foreach ( \array_slice( (array) $legacy_assignments, $assignment_offset, $remaining, true ) as $cluster_id => $data ) {
-			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $legacy_entry_names_by_id, $table_persons, $table_clusters, $wpdb ) ) {
+			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $legacy_entry_names_by_id, $table_persons, $table_clusters, $wpdb, $tenant_id ) ) {
 				$migration_complete = false;
 				break;
 			}
@@ -202,18 +334,19 @@ class LifecycleManager {
 
 		if ( ! $migration_complete ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		if ( $assignment_offset < $assignments_count ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		$this->clear_legacy_roster_migration_schedule();
 		delete_option( 'acx_roster_entries' );
 		delete_option( 'acx_roster_assignments' );
 		delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
+		return null;
 	}
 
 	public function continue_legacy_roster_migration(): void {
@@ -221,7 +354,7 @@ class LifecycleManager {
 		$this->migrate_legacy_roster_data();
 	}
 
-	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map ): bool {
+	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map, string $tenant_id ): bool {
 		if ( ! is_array( $entry ) || ! isset( $entry['id'], $entry['name'] ) ) {
 			return true;
 		}
@@ -236,7 +369,12 @@ class LifecycleManager {
 		$tags             = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
 		$normalized_name  = PersonResolutionService::normalize_name( $name );
 		$existing_id      = $wpdb->get_var(
-			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+				$table_persons,
+				$normalized_name,
+				$tenant_id
+			)
 		);
 
 		if ( $existing_id ) {
@@ -250,6 +388,7 @@ class LifecycleManager {
 			$table_persons,
 			array(
 				'person_uuid'     => $person_uuid,
+				'tenant_id'       => $tenant_id,
 				'name'            => $name,
 				'normalized_name' => $normalized_name,
 				'tags'            => wp_json_encode( $tags ),
@@ -266,7 +405,7 @@ class LifecycleManager {
 		return true;
 	}
 
-	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, array $legacy_entry_names_by_id, string $table_persons, string $table_clusters, object $wpdb ): bool {
+	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, array $legacy_entry_names_by_id, string $table_persons, string $table_clusters, object $wpdb, string $tenant_id ): bool {
 		if ( ! \is_array( $data ) ) {
 			return true;
 		}
@@ -286,9 +425,10 @@ class LifecycleManager {
 			$legacy_name = $legacy_entry_names_by_id[ $legacy_entry_id ];
 			$existing_id = $wpdb->get_var(
 				$wpdb->prepare(
-					'SELECT id FROM %i WHERE normalized_name = %s',
+					'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
 					$table_persons,
-					PersonResolutionService::normalize_name( $legacy_name )
+					PersonResolutionService::normalize_name( $legacy_name ),
+					$tenant_id
 				)
 			);
 			if ( $existing_id ) {
@@ -297,7 +437,12 @@ class LifecycleManager {
 		} elseif ( '' !== \trim( $new_name ) ) {
 			$normalized_name = PersonResolutionService::normalize_name( $new_name );
 			$existing_id     = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
+				$wpdb->prepare(
+					'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+					$table_persons,
+					$normalized_name,
+					$tenant_id
+				)
 			);
 			if ( $existing_id ) {
 				$final_person_id = (int) $existing_id;
@@ -308,6 +453,7 @@ class LifecycleManager {
 					$table_persons,
 					array(
 						'person_uuid'     => $person_uuid,
+						'tenant_id'       => $tenant_id,
 						'name'            => $new_name,
 						'normalized_name' => $normalized_name,
 						'tags'            => wp_json_encode( array() ),
@@ -460,6 +606,10 @@ class LifecycleManager {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
 		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
+		delete_option( self::OPTION_HEAL_COMPLETE );
+		delete_option( self::OPTION_HEAL_ATTEMPTS );
+		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
+		delete_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
@@ -538,10 +688,13 @@ class LifecycleManager {
 		$conflicts_table             = $prefix . 'acx_sync_conflicts';
 
 		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
-		// collation-folded idx_name. Greenfield — edit CREATE TABLE directly; no migration.
+		// collation-folded idx_name. Tenant-scoped — two tenants may share a name.
+		// Greenfield — edit CREATE TABLE directly; no migration. Index renamed so
+		// dbDelta ADDs the composite unique; legacy idx_normalized_name is DROPped.
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
+			tenant_id varchar(64) NOT NULL,
 			name varchar(255) NOT NULL,
 			normalized_name varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 			tags text DEFAULT '',
@@ -551,7 +704,7 @@ class LifecycleManager {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
-			UNIQUE KEY idx_normalized_name (normalized_name),
+			UNIQUE KEY idx_tenant_normalized_name (tenant_id, normalized_name),
 			UNIQUE KEY idx_person_uuid (person_uuid)
 		) {$charset_collate};";
 
@@ -568,6 +721,8 @@ class LifecycleManager {
 			snapshot_version bigint(20) unsigned NOT NULL,
 			is_user_confirmed tinyint(1) NOT NULL DEFAULT 0,
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
+			label_cleared_revision bigint(20) unsigned DEFAULT NULL,
+			label_cleared_label text NULL,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			last_synced_at datetime NOT NULL,
@@ -874,8 +1029,8 @@ class LifecycleManager {
 			}
 		}
 
-		// LO-03: dbDelta never DROP INDEXes; remove the pre-E21-9 UNIQUE on name.
-		if ( ! $this->drop_legacy_persons_name_unique_index( (string) $wpdb->prefix . 'acx_persons' ) ) {
+		// LO-03: dbDelta never DROP INDEXes; remove retired UNIQUE keys on persons.
+		if ( ! $this->drop_legacy_persons_unique_indexes( (string) $wpdb->prefix . 'acx_persons' ) ) {
 			return false;
 		}
 
@@ -1033,13 +1188,26 @@ class LifecycleManager {
 	}
 
 	/**
-	 * Greenfield cleanup: drop the pre-E21-9 UNIQUE idx_name on acx_persons.name.
-	 * Idempotent — no-op when the index is absent. Verifier stays column-only
+	 * Greenfield cleanup: drop retired UNIQUE indexes on acx_persons.
+	 * Idempotent — no-op when an index is absent. Verifier stays column-only
 	 * (extra indexes do not refuse the stamp; see LO-03 report rationale).
 	 *
 	 * @return bool False only when a probe/drop query errors.
 	 */
-	private function drop_legacy_persons_name_unique_index( string $persons_table ): bool {
+	private function drop_legacy_persons_unique_indexes( string $persons_table ): bool {
+		foreach ( self::LEGACY_PERSONS_UNIQUE_INDEXES as $index_name ) {
+			if ( ! $this->drop_legacy_persons_unique_index( $persons_table, $index_name ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * @return bool False only when a probe/drop query errors.
+	 */
+	private function drop_legacy_persons_unique_index( string $persons_table, string $index_name ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
@@ -1050,8 +1218,7 @@ class LifecycleManager {
 			$wpdb->last_error = '';
 		}
 
-		$index_name = self::LEGACY_PERSONS_NAME_UNIQUE_INDEX;
-		$query      = null;
+		$query = null;
 		if ( method_exists( $wpdb, 'prepare' ) ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder.
 			$query = $wpdb->prepare(

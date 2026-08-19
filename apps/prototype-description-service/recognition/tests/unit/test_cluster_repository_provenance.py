@@ -224,3 +224,58 @@ async def test_get_member_fallback_embeddings_with_model_empty_returns_none_mode
 
     assert embeddings == []
     assert chosen is None
+
+
+@pytest.mark.asyncio
+async def test_get_representative_embeddings_with_quality_returns_aligned_metrics() -> None:
+    """R1-01: quality comes from the same representative+identity rows used for ranking."""
+    emb_keep = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    emb_drop = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    rows = [
+        (emb_drop, _LEGACY, 0.11, 0.12, 0.13),
+        (emb_keep, _PINNED, 0.91, 0.81, 0.71),
+        (emb_keep, _PINNED, 0.92, 0.82, 0.72),
+    ]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(rows))
+    repo = SqlAlchemyClusterRepository(session)
+
+    embeddings, chosen, qualities = await repo.get_representative_embeddings_with_quality("cluster-1")
+
+    assert chosen == _PINNED
+    assert len(embeddings) == 2
+    assert qualities == [(0.91, 0.81, 0.71), (0.92, 0.82, 0.72)]
+
+
+@pytest.mark.asyncio
+async def test_get_member_fallback_embeddings_with_quality_filters_then_limits() -> None:
+    """R2-04: single-model filter, post-filter limit, distinct quality columns."""
+    emb_keep_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    emb_keep_b = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    emb_keep_c = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    emb_drop = np.array([1.0, 1.0, 0.0], dtype=np.float32)
+    rows = [
+        (emb_drop, _LEGACY, 0.11, 0.12, 0.13),
+        (emb_keep_a, _PINNED, 0.91, 0.81, 0.71),
+        (emb_keep_b, _PINNED, 0.92, 0.82, 0.72),
+        (emb_keep_c, _PINNED, 0.93, 0.83, 0.73),
+    ]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_FakeResult(rows))
+    repo = SqlAlchemyClusterRepository(session)
+
+    embeddings, chosen, qualities = await repo.get_member_fallback_embeddings_with_quality(
+        "cluster-1", limit=2
+    )
+
+    assert chosen == _PINNED
+    assert len(embeddings) == 2
+    np.testing.assert_array_equal(embeddings[0], emb_keep_a)
+    np.testing.assert_array_equal(embeddings[1], emb_keep_b)
+    assert qualities == [(0.91, 0.81, 0.71), (0.92, 0.82, 0.72)]
+
+    stmt = session.execute.await_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    assert sql.count("quality_score") == 1, sql
+    assert "confidence" in sql
+

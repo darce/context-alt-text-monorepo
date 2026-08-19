@@ -173,6 +173,11 @@ interface NameFaceControlProps {
   hideStatusAnnouncement?: boolean;
   commitLabel: string;
   pendingLabel?: string;
+  /**
+   * Derive Save as / Create person from resolveNameFaceInput. Unset keeps
+   * commitLabel so Library and labeling-panel callers stay on their static copy.
+   */
+  previewCommit?: boolean;
   placeholder?: string;
   /** Restored Combobox prop: preferred placeholder when searching. */
   searchPlaceholder?: string;
@@ -212,6 +217,7 @@ export const NameFaceControl = ({
   hideStatusAnnouncement = false,
   commitLabel,
   pendingLabel,
+  previewCommit = false,
   placeholder,
   searchPlaceholder,
   ariaLabel,
@@ -278,14 +284,14 @@ export const NameFaceControl = ({
     if (isPending && pendingLabel) {
       return pendingLabel;
     }
-    if (commitResolution?.kind === 'roster') {
+    if (previewCommit && commitResolution?.kind === 'roster') {
       return sprintf(
         /* translators: %s: existing roster person label the commit will bind */
         __('Save as %s', 'alt-context'),
         commitResolution.name,
       );
     }
-    if (commitResolution?.kind === 'create') {
+    if (previewCommit && commitResolution?.kind === 'create') {
       return sprintf(
         /* translators: %s: typed name the commit will create as a new person */
         __('Create person "%s"', 'alt-context'),
@@ -293,7 +299,7 @@ export const NameFaceControl = ({
       );
     }
     return commitLabel;
-  }, [isPending, pendingLabel, commitResolution, commitLabel]);
+  }, [isPending, pendingLabel, previewCommit, commitResolution, commitLabel]);
 
   const ambiguousMatches = React.useMemo(
     () => (value.trim() ? personMatchesFor(options, value) : []),

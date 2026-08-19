@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,7 +45,11 @@ import { WorkbenchFindingsPanel } from '../WorkbenchFindingsPanel';
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
-import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import {
+  HOLD_STATUS_COPY,
+  UNDO_HOLD_MS,
+  useSuggestionReviewMutations,
+} from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
 
@@ -2824,6 +2828,67 @@ describe('ReviewQueue', () => {
 
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
     expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
+  });
+
+  it('R5-07: the queue header count decrements after a full bulk accept', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-1',
+          suggested_name: 'Alex',
+          confidence_score: 0.95,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-2',
+          cluster_id: 'cluster-2',
+          suggested_name: 'Bea',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const { queryClient, container } = renderQueue();
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    const bulkActionRef = { current: false };
+    const { result } = renderHook(
+      () => useSuggestionReviewMutations({ queryClient, bulkActionRef }),
+      {
+        wrapper: ({ children }) => withQueueProviders(queryClient, children),
+      },
+    );
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
   });
 
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.

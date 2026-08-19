@@ -76,7 +76,9 @@ uv run --extra dev python -m scripts.eval_harness.cli score \
 | **2** | argparse / unreadable operator input |
 | **3** | Detection and/or identification **REFUSED** and no `--allow-refused` |
 
-Exit **2** is argparse or unreadable operator input (e.g. missing/unreadable `--run-record` → `score: run record not found/unreadable: <path>`, `EVAL_EXIT_USAGE`). A `ManifestError` on a missing MANIFEST still exits **1** — that class is not usage.
+Exit **2** is argparse or unreadable operator input (e.g. missing/unreadable `--run-record` → `score: run record not found/unreadable: <path-text>`, `EVAL_EXIT_USAGE`). A `ManifestError` on a missing MANIFEST still exits **1** — that class is not usage.
+
+`<path-text>` is UTF-8 filename bytes when the path is decodable; otherwise `undecodable:` plus a `\xHH` (backslashreplace) form so a C-locale argv path is not emitted as `\udc..` surrogates.
 
 Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.
 
@@ -464,7 +466,7 @@ Pre-gate hard failures (no report write for that invocation):
 | --- | --- | --- |
 | identity shape | `ReportError: … identities[…] must be a dict identity row … got str` | Re-fetch or migrate run-record identity rows (code/record lane). |
 | missing args | argparse exit 2 (`--run-record` required) | Pass a real run-record path. |
-| missing/unreadable `--run-record` | `score: run record not found/unreadable: <path>` (exit 2 / `EVAL_EXIT_USAGE`; same class as `draw-eval-split`) | Point at an existing readable record. |
+| missing/unreadable `--run-record` | `score: run record not found/unreadable: <path-text>` (exit 2 / `EVAL_EXIT_USAGE`; same class as `draw-eval-split`; `<path-text>` is UTF-8 bytes or `undecodable:` + `\xHH`) | Point at an existing readable record. |
 
 Exit **2** is argparse **or** unreadable operator input (`--run-record` missing/unreadable). A `ManifestError` on a missing or unreadable `--manifest` still exits **1** — that is not usage/operator-input (the asymmetry is intentional).
 

@@ -3099,8 +3099,11 @@ if (!isset($GLOBALS['wpdb'])) {
 
         private function evaluateSqlAssignment(string $expression, array $row): mixed
         {
-            if (strcasecmp($expression, 'NULL') === 0 || preg_match("/^NULLIF\(\s*''\s*,\s*''\s*\)$/i", $expression) === 1) {
+            if (strcasecmp($expression, 'NULL') === 0) {
                 return null;
+            }
+            if (preg_match("/^NULLIF\(\s*'(?P<value>.*)'\s*,\s*''\s*\)$/i", $expression, $nullIfMatch) === 1) {
+                return $nullIfMatch['value'] === '' ? null : stripslashes($nullIfMatch['value']);
             }
             if (preg_match('/^\'(.*)\'$/', $expression, $match) === 1) {
                 return stripslashes($match[1]);

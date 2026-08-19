@@ -40,7 +40,7 @@
           "identity_count": {
             "type": "integer",
             "minimum": 0,
-            "description": "Observed member-row count when the representative preview is not truncated; may exceed representatives.length only when the preview cap is hit. Always identity_count >= representatives.length."
+            "description": "Observed member-row count when the representative preview is not truncated. When the preview is truncated, identity_count = max(projected, representatives.length). Always identity_count >= representatives.length."
           },
           "user_confirmed": {
             "type": "boolean"

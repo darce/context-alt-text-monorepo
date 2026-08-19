@@ -298,12 +298,12 @@ class ClusterResponseMapper {
 
 				if ( $is_truncated ) {
 					// Stale-low projected during truncation: observed is a
-					// lower bound, not an exact count (R2-07). Republish the
-					// projected column and request repair.
+					// lower bound, not an exact count (R2-07). Never publish
+					// identity_count below the served preview length.
 					if ( $projected_count <= $preview_limit && '' !== $cluster_id ) {
 						$this->requested_repair_cluster_ids[] = $cluster_id;
 					}
-					return $projected_count;
+					return max( $projected_count, $preview_limit );
 				}
 
 				Telemetry::log_line(

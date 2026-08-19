@@ -513,6 +513,66 @@ class ClusterResponseMapperTest extends TestCase
     }
 
     /**
+     * R2-07 residual: truncated stale-low projected (1 or 0) must not go
+     * below representatives.length. Mutant: return $projected_count.
+     */
+    public function testMapTopUnlabeledTruncatedCountNeverBelowPreviewLength(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-one',
+                    'label' => '',
+                    'identity_count' => 1,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-one' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(1, $payload);
+        $this->assertGreaterThanOrEqual(count($payload[0]['representatives']), $payload[0]['identity_count']);
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertContains('cluster-stale-one', $this->mapper->requested_repair_cluster_ids());
+
+        $zero = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-zero',
+                    'label' => '',
+                    'identity_count' => 0,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-zero' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertGreaterThanOrEqual(count($zero[0]['representatives']), $zero[0]['identity_count']);
+        $this->assertSame(4, $zero[0]['identity_count']);
+        $this->assertContains('cluster-stale-zero', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
      * R2-08: SQL excludes <2 members; mapper must drop a 1-member non-truncated row.
      */
     public function testMapTopUnlabeledDropsSingleObservedMemberWhenNotCapTruncated(): void

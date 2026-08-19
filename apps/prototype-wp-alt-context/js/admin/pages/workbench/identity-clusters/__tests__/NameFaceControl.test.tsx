@@ -134,7 +134,7 @@ describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
       screen.getByRole('option', { name: /Ada Lovelace/ }).id,
     );
 
-    await user.keyboard('{Escape}');
+    await user.keyboard('{Escape}{Escape}');
     expect(onCancel).toHaveBeenCalled();
   });
 });
@@ -354,9 +354,11 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
 
     input.focus();
     await user.keyboard('{Escape}');
-    expect(onCancel).toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
     expect(input).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalled();
 
     await user.keyboard('{ArrowDown}');
     expect(input).toHaveAttribute('aria-expanded', 'true');

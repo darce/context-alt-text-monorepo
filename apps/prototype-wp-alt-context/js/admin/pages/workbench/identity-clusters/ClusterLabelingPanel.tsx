@@ -29,7 +29,6 @@ import {
   findCollisionsForLabel,
   NAMING_GROUP_ALL_LABELS,
   namingOptionValue,
-  parseNamingOptionValue,
   uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
   type NamingOption,
@@ -402,14 +401,6 @@ export const ClusterLabelingPanel = ({
   const handleOptionConfirm = (option: ComboboxOption): void => {
     if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
       return;
-    }
-    if (option.source === 'person') {
-      const parsed = parseNamingOptionValue(String(option.value));
-      const rosterEntryId = Number.parseInt(parsed?.id ?? '', 10);
-      if (Number.isFinite(rosterEntryId)) {
-        resolveCommit({ kind: 'roster', rosterEntryId, name: option.label.trim() });
-        return;
-      }
     }
     handleSelectOption(String(option.value));
   };

@@ -44,8 +44,7 @@ const defaultProps = {
 
 const renderControl = (overrides: Partial<React.ComponentProps<typeof NameFaceControl>> = {}) => {
   const onCommit = overrides.onCommit ?? vi.fn();
-  const onOptionConfirm =
-    'onOptionConfirm' in overrides ? overrides.onOptionConfirm : vi.fn();
+  const onOptionConfirm = 'onOptionConfirm' in overrides ? overrides.onOptionConfirm : vi.fn();
   const onValueChange = overrides.onValueChange ?? vi.fn();
   const props: React.ComponentProps<typeof NameFaceControl> = {
     ...defaultProps,
@@ -53,8 +52,8 @@ const renderControl = (overrides: Partial<React.ComponentProps<typeof NameFaceCo
     onValueChange,
     ...overrides,
   };
-  if (!('onOptionConfirm' in overrides) && onOptionConfirm) {
-    props.onOptionConfirm = onOptionConfirm;
+  if (!('onOptionConfirm' in overrides)) {
+    delete props.onOptionConfirm;
   }
   const view = render(<NameFaceControl {...props} />);
   return { ...view, onCommit, onOptionConfirm, onValueChange };
@@ -82,7 +81,8 @@ const TypedNameFace = ({
 
 describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
   it('ArrowDown twice then Enter confirms the second option', async () => {
-    const { onOptionConfirm, onCommit } = renderControl();
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ onOptionConfirm });
     const user = userEvent.setup();
     const input = screen.getByRole('combobox', { name: 'Name this person' });
 
@@ -95,15 +95,18 @@ describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
     input.focus();
     await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
 
-    expect(onOptionConfirm).toHaveBeenCalledTimes(1);
-    expect(onOptionConfirm).toHaveBeenCalledWith(
-      expect.objectContaining({ label: 'Grace Hopper', value: namingOptionValue('person', '2') }),
-    );
-    expect(onCommit).not.toHaveBeenCalled();
+    // Person rows bind via onCommit (R3-12); onOptionConfirm is cluster/suggestion only.
+    expect(onCommit).toHaveBeenCalledWith({
+      kind: 'roster',
+      rosterEntryId: 2,
+      name: 'Grace Hopper',
+    });
+    expect(onOptionConfirm).not.toHaveBeenCalled();
   });
 
   it('Enter with no active option commits the typed value', async () => {
-    const { onCommit, onOptionConfirm } = renderControl({ value: 'Pat Rivera' });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ value: 'Pat Rivera', onOptionConfirm });
     const user = userEvent.setup();
 
     await user.type(screen.getByRole('combobox'), '{Enter}');

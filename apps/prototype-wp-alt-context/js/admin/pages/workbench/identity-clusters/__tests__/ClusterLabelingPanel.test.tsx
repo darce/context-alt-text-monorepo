@@ -1127,6 +1127,62 @@ describe('ClusterLabelingPanel', () => {
   // See PersonCommitControl.test.tsx (curate-group), ReviewQueue.test.tsx
   // (name card reports cluster id), ScanTabContent.labelPanelReachable.test.tsx.
 
+  it('checkmark on the second same-fold person carries that id into the write (UXW2-3-R3-12)', async () => {
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 1,
+            name: 'Alex Carter',
+            person_uuid: 'p1',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+          {
+            id: 2,
+            name: 'Alex\tCarter',
+            person_uuid: 'p2',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    renderPanel();
+    await typePanelName('alex');
+    const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+    expect(confirmOptions).toHaveLength(2);
+    await userEvent.click(confirmOptions[1]);
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledWith(
+        'source-cluster-id',
+        'Alex\tCarter',
+        expect.any(AbortSignal),
+      );
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalledWith(
+      'source-cluster-id',
+      'Alex Carter',
+      expect.any(AbortSignal),
+    );
+  });
+
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
     let release: (() => void) | undefined;
     vi.mocked(listRecognitionClusters).mockImplementation(

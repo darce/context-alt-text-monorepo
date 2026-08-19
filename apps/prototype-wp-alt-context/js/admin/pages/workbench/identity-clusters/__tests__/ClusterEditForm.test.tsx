@@ -118,6 +118,27 @@ describe('ClusterEditForm', () => {
     );
   });
 
+  it('clicking the second of two same-fold people binds that roster id (UXW2-3-R3-12)', async () => {
+    const onPersonSelect = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="alex carter"
+        options={[
+          { value: 'person:1', label: 'Alex Carter', source: 'person', group: 'All Labels' },
+          { value: 'person:2', label: 'ALEX CARTER', source: 'person', group: 'All Labels' },
+        ]}
+        onPersonSelect={onPersonSelect}
+      />,
+    );
+
+    const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+    expect(confirmOptions).toHaveLength(2);
+    fireEvent.click(confirmOptions[1]);
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('ALEX CARTER'));
+    expect(onPersonSelect).not.toHaveBeenCalledWith('Alex Carter');
+  });
+
   it('person-source confirm uses onPersonSelect and never onConfirmSuggestion (PR-16 / FIX-1)', async () => {
     // Predicted first failure: onConfirmSuggestion or onSave called instead of onPersonSelect
     const onSave = vi.fn();

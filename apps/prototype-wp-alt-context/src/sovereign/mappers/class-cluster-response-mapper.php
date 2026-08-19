@@ -136,6 +136,11 @@ class ClusterResponseMapper {
 				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
 			}
 
+			// Emit-time invariant (R6-04): identity_count must cover the
+			// served representatives. Resolve already aims at this; clamp
+			// so a violating payload cannot leave the mapper.
+			$identity_count = max( $identity_count, count( $representatives ) );
+
 			$label_state = $this->resolve_label_state( $row );
 
 			$results[] = array(

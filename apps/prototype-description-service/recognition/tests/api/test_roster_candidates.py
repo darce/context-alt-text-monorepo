@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import jsonschema
 import numpy as np
 from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.roster_candidates import MAX_ROSTER_CANDIDATES_TOP_K
 from recognition.tests.api.conftest import seed_cluster
 
 _SCHEMA_PATH = (
@@ -178,6 +179,23 @@ def test_roster_candidates_rejects_top_k_above_max(api_client, tenant_id, fake_c
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "top_k out of range"
+
+
+def test_roster_candidates_accepts_top_k_at_max(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    resp = api_client.get(
+        f"/recognition/clusters/{cluster.id}/roster-candidates",
+        headers={"X-Tenant-ID": tenant_id},
+        params={"top_k": MAX_ROSTER_CANDIDATES_TOP_K},
+    )
+    assert resp.status_code == 200, resp.text
 
 
 def test_roster_candidates_ranks_labelled_excludes_foreign_tenant_and_validates_schema(

@@ -2,7 +2,7 @@
  * Canonical copy for missing-representative and gated-cluster states.
  * Preview surfaces and repair rows must read this module — do not hardcode.
  */
-import { _n, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { REPRESENTATIVE_IMAGE_UNAVAILABLE } from '../../../../components/ui/faceThumbDisplay';
 
@@ -11,10 +11,13 @@ export const REPRESENTATIVE_VOCABULARY = {
 } as const;
 
 export function repairGatedCount(zeroEvidenceClusterCount: number, unlabeledClusters: number): number {
-  return zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : Math.max(unlabeledClusters, 1);
+  return zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : unlabeledClusters;
 }
 
 export function gatedClusterCopy(count: number, truncated = false): string {
+  if (count <= 0) {
+    return __('Some groups are missing face data', 'alt-context');
+  }
   if (truncated) {
     return sprintf(
       _n(

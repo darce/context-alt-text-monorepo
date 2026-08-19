@@ -194,6 +194,22 @@ describe('buildWorkbenchFindings', () => {
     expect(model.counts.unlabeledClusters).toBe(5);
   });
 
+  it('R3-03: envelope repair_pending wins when total === served length', () => {
+    const served = [makeCluster(), makeCluster({ id: 'top-2', identity_count: 4 })];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: served,
+        topUnlabeledTotal: served.length,
+        topUnlabeledRepairPending: true,
+      }),
+      makeState(),
+    );
+
+    expect(model.repairPending).toBe(true);
+    expect(model.zeroEvidenceClusterCount).toBe(0);
+    expect(model.counts.unlabeledClusters).toBe(served.length);
+  });
+
   it('R2-12: empty served page with server total remaining is repair, not drain', () => {
     const model = buildWorkbenchFindings(
       makeQueues({

@@ -2711,8 +2711,10 @@ describe('ReviewQueue', () => {
 
     expect(await screen.findByRole('button', { name: 'Resync' })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
     const live = screen.getByRole('status');
     expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+    expect(live.textContent).not.toContain('All caught up');
   });
 
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.

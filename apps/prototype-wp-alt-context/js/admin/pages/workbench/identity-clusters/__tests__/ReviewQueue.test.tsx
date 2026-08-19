@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
@@ -231,6 +231,55 @@ const renderQueue = (props: HarnessProps = {}) => {
 
   return { queryClient, ...utils };
 };
+
+type SuggestionReviewMutations = ReturnType<typeof useSuggestionReviewMutations>;
+
+/** Second hook instance on the same QueryClient — ReviewQueue has no bulk-accept chrome. */
+const ReviewMutationDriver = ({
+  readyRef,
+}: {
+  readyRef: React.MutableRefObject<SuggestionReviewMutations | null>;
+}): null => {
+  const queryClient = useQueryClient();
+  const bulkActionRef = React.useRef(false);
+  const mutations = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+  readyRef.current = mutations;
+  return null;
+};
+
+const twoNameSuggestions = [
+  {
+    id: 'name-1',
+    cluster_id: 'cluster-1',
+    suggested_name: 'Alex',
+    confidence_score: 0.95,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+  {
+    id: 'name-2',
+    cluster_id: 'cluster-2',
+    suggested_name: 'Bea',
+    confidence_score: 0.9,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+];
+
+const unlabeledCluster = (id: string, repId: string) => ({
+  id,
+  tenant_id: 'test-tenant-id',
+  label: null,
+  is_labeled: false,
+  is_auto_label: true,
+  identity_count: 4,
+  user_confirmed: false,
+  suggested_label: null,
+  suggested_target_cluster_id: null,
+  representatives: [{ id: repId, media_id: 1, is_pinned: false }],
+});
 
 describe('ReviewQueue', () => {
   afterEach(() => {
@@ -3218,6 +3267,124 @@ describe('ReviewQueue', () => {
     await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // ReviewQueue has no Bulk-accept chrome (queryByText('Bulk accept') is null;
+  // useBulkReviewCommit.ts: "Zero calls to legacy bulk-accept"). Drive the
+  // real bulkAccept mutation against the rendered queue's QueryClient and let
+  // the namePending refetch shrink .acx-review-queue__count.
+  it('R5-07: the queue header count decrements after a full bulk accept', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // acceptNameMutation.onSuccess (not the hold/schedule path) drops the
+  // accepted cluster from namePending + topUnlabeled. Header is both sources.
+  it('R1-24: acceptName mutation decrements the rendered queue header', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [unlabeledCluster('cluster-1', 'rep-1'), unlabeledCluster('cluster-2', 'rep-2')],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '4 left to review on this page',
+      );
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.acceptName.mutateAsync('name-1');
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
     });
   });
 

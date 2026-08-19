@@ -33,4 +33,32 @@ class WpdbStubTest extends TestCase
         $this->assertSame($firstId, $wpdb->tableRows['wp_acx_persons'][0]['id']);
         $this->assertSame($secondId, $wpdb->tableRows['wp_acx_persons'][1]['id']);
     }
+
+    public function testUpdateReturnsZeroWhenNoRowMatches(): void
+    {
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-present',
+                'tenant_id' => 'tenant-a',
+                'label' => 'Ada',
+            ],
+        ];
+
+        $miss = $wpdb->update(
+            'wp_acx_clusters',
+            ['label' => 'Tory'],
+            ['cluster_uuid' => 'cluster-absent', 'tenant_id' => 'tenant-a']
+        );
+        $this->assertSame(0, $miss);
+
+        $hit = $wpdb->update(
+            'wp_acx_clusters',
+            ['label' => 'Tory'],
+            ['cluster_uuid' => 'cluster-present', 'tenant_id' => 'tenant-a']
+        );
+        $this->assertSame(1, $hit);
+        $this->assertSame('Tory', $wpdb->tableRows['wp_acx_clusters'][0]['label']);
+    }
 }

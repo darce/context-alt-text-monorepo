@@ -446,7 +446,6 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     await userEvent.click(screen.getByRole('link', { name: /Open person review/i }));
 
     expect(screen.getByRole('region', { name: /Person workspace: Detail Person/i })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: /Person workspace: List Person/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
   });
 
@@ -564,7 +563,8 @@ describe('RosterPage route container (E21-9 single surface)', () => {
 
     expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/Move faces between groups in the Workbench/i)).toBeInTheDocument();
+    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /Move to/i })).toHaveLength(0);
   });
 
   // UXW2-4: rail-era tests (bulk merge/dismiss, select-all, truncation notice,

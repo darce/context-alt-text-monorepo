@@ -458,7 +458,10 @@ def test_seed_corpus_caption_fixtures_populated():  # VLM-2C S2
 
 
 def test_seed_readme_documents_v2_corpus():  # VLM-2C S4
-    with open(os.path.join(os.path.dirname(__file__), "seed", "README.md")) as handle:
+    with open(
+        os.path.join(os.path.dirname(__file__), "seed", "README.md"),
+        encoding="utf-8",
+    ) as handle:
         readme = handle.read()
     assert "are empty for every entry" not in readme, "stale VLM-2A rubric-empty claim"
     assert "manifest_version" in readme and "base_caption" in readme
@@ -1105,7 +1108,8 @@ def test_retired_face_count_covers_labeled_is_gone():
         "eval_harness",
         "manifest.py",
     )
-    source = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
     assert "_face_count_covers_labeled" not in source
     assert "SUPPORTED_MANIFEST_VERSION = 3" in source
 
@@ -1295,33 +1299,64 @@ _ASCII_LOCALE_ENV = {
 }
 
 
-def test_load_manifest_utf8_under_c_locale():
-    """C-locale subprocess must load golden.json (Breiðamerkurjökull) as UTF-8.
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_load_manifest_utf8_under_c_locale(loader_name):
+    """C-locale subprocess must decode golden.json as UTF-8 on both loaders.
 
-    MUT[drop_manifest_encoding_pin]: bare read_text() → UnicodeDecodeError
-    under LC_ALL=C LANG=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0.
+    MUT[drop_manifest_pin]: bare read_text() at load_manifest → ascii codec.
+    MUT[drop_legacy_pin]: bare read_text() at load_legacy_manifest → ascii codec.
+    Decode runs before the v2 version check; legacy then raises the
+    version-mismatch ManifestError, not an ascii codec error.
     """
     env = os.environ.copy()
     env.update(_ASCII_LOCALE_ENV)
     env.pop("GOLDEN_IMAGES_DIR", None)
     env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     golden = "scene/tests/seed/golden.json"
+    if loader_name == "load_manifest":
+        snippet = (
+            "from scripts.eval_harness.manifest import load_manifest; "
+            f"load_manifest({golden!r}, skip_hash_verification=True)"
+        )
+    else:
+        snippet = f"from scripts.eval_harness.manifest import load_legacy_manifest; load_legacy_manifest({golden!r})"
     proc = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "from scripts.eval_harness.manifest import load_manifest; "
-                f"load_manifest({golden!r}, skip_hash_verification=True)"
-            ),
-        ],
+        [sys.executable, "-c", snippet],
         cwd=str(_SERVICE_ROOT),
         env=env,
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, proc.stderr
-    assert "UnicodeDecodeError" not in proc.stderr
+    if loader_name == "load_manifest":
+        assert proc.returncode == 0, proc.stderr
+        assert "UnicodeDecodeError" not in proc.stderr
+        return
+    message = proc.stderr
+    assert "'ascii'" not in message
+    assert "codec can't decode" not in message.lower()
+    assert "version" in message.lower()
+
+
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_bom_prefixed_manifest_decodes(tmp_path, loader_name):
+    """UTF-8 BOM on an otherwise-valid manifest must not fail decode.
+
+    MUT[utf8_sig_to_utf8]: encoding="utf-8" → ManifestError "Unexpected UTF-8 BOM".
+    """
+    path = tmp_path / "bom.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(_valid_manifest_dict()).encode("utf-8"))
+    loader = load_manifest if loader_name == "load_manifest" else load_legacy_manifest
+    kwargs = {"skip_hash_verification": True} if loader_name == "load_manifest" else {}
+    if loader_name == "load_manifest":
+        manifest = loader(str(path), **kwargs)
+        assert isinstance(manifest, GoldenManifest)
+        return
+    with pytest.raises(ManifestError) as excinfo:
+        loader(str(path), **kwargs)
+    message = str(excinfo.value)
+    assert "UTF-8 BOM" not in message
+    assert "codec" not in message.lower()
+    assert "version" in message.lower()
 
 
 @pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])

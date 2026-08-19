@@ -490,6 +490,7 @@ export const NameFaceControl = ({
               return (
                 <div
                   key={option.value}
+                  role="presentation"
                   className={`${classPrefix}__suggestion-row${
                     selected ? ` ${classPrefix}__suggestion-row--active` : ''
                   }`}
@@ -550,6 +551,7 @@ export const NameFaceControl = ({
                   {!!option.suggestion_id && !!onRejectSuggestion && (
                     <button
                       type="button"
+                      tabIndex={-1}
                       className={`${classPrefix}__suggestion-reject`}
                       onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
                       title={sprintf(__('Reject %s', 'alt-context'), option.label)}

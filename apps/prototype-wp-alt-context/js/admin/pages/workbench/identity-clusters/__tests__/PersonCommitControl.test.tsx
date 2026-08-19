@@ -134,6 +134,12 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     expect(input.tagName).toBe('INPUT');
   });
 
+  it('the name input has a visible associated label (UXW2-3-R3-26)', () => {
+    renderControl();
+    expect(screen.getByLabelText('Name this person')).toBe(screen.getByRole('combobox'));
+    expect(screen.getByText('Name this person').tagName).toBe('LABEL');
+  });
+
   it('no "Just label" tertiary control is present', () => {
     renderControl();
 

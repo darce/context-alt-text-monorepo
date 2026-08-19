@@ -1310,6 +1310,8 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save name' })).not.toBeInTheDocument();
+    expect(document.querySelector('label[for="cluster-label-input"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveFocus();
   });
 
   it('successful label invalidates roster.entries (UXW2-3-R2-04)', async () => {

@@ -178,6 +178,8 @@ interface NameFaceControlProps {
   searchPlaceholder?: string;
   /** Optional; omitted when a visible <label htmlFor> already names the input. */
   ariaLabel?: string;
+  /** Visible label associated via htmlFor={inputId}. */
+  visibleLabel?: string;
   inputId?: string;
   autoFocus?: boolean;
   /** §7 single accent primary marker + accent chrome on the commit button (COL-03). */
@@ -213,6 +215,7 @@ export const NameFaceControl = ({
   placeholder,
   searchPlaceholder,
   ariaLabel,
+  visibleLabel,
   inputId,
   autoFocus = true,
   accentPrimary = false,
@@ -446,6 +449,11 @@ export const NameFaceControl = ({
 
   return (
     <div className={className ?? classPrefix}>
+      {visibleLabel && inputId ? (
+        <label htmlFor={inputId} className={`${classPrefix}__visible-label`}>
+          {visibleLabel}
+        </label>
+      ) : null}
       <div className={`${classPrefix}__input-wrapper`}>
         <input
           ref={inputRef}

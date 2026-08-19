@@ -634,3 +634,26 @@
     font-weight: var(--acx-font-weight-bold);
   }
 }
+
+.acx-roster__review-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--acx-space-12);
+  margin-top: var(--acx-space-24);
+  padding: var(--acx-space-24);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-md);
+  background: var(--acx-color-surface-alt);
+
+  h2 {
+    margin: 0;
+    font-size: var(--acx-text-xl);
+    line-height: var(--acx-leading-tight);
+  }
+
+  p {
+    margin: 0;
+    color: var(--acx-color-text);
+  }
+}

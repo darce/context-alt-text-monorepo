@@ -52,6 +52,8 @@ class ClustersSchemaParityTest extends TestCase
         'snapshot_version',
         'is_user_confirmed',
         'local_revision',
+        'label_cleared_revision',
+        'label_cleared_label',
         'created_at',
         'updated_at',
         'last_synced_at',

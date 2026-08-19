@@ -2277,6 +2277,10 @@ if (!isset($GLOBALS['wpdb'])) {
         public $defaultUpdateResult = 1;
         /** @var array<string,mixed> */
         public array $updateResults = [];
+        /** @var array<string,mixed> Per-table override for update() (checked before defaultUpdateResult). */
+        public array $updateResultsByTable = [];
+        /** @var array<string,mixed> Per-table override for delete() (checked before the computed count). */
+        public array $deleteResultsByTable = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
         /** @var array<string,array<int,string>> */
@@ -2319,6 +2323,12 @@ if (!isset($GLOBALS['wpdb'])) {
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            $applied = $this->applyRawQueryToRows($normalizedSql);
+            if ($applied !== null) {
+                $this->rows_affected = $applied;
+                return $applied;
             }
 
             if (is_int($result)) {
@@ -2571,18 +2581,26 @@ if (!isset($GLOBALS['wpdb'])) {
                 $this->rows_affected = 1;
             }
 
-            if ($this->insert_id === 0) {
-                $this->insert_id = 1;
-            }
-
             if (!isset($this->tableRows[$table])) {
                 $this->tableRows[$table] = [];
             }
 
             $row = $data;
-            if (!array_key_exists('id', $row) && preg_match('/_failures$/', $table) === 1) {
-                $row['id'] = count($this->tableRows[$table]) + 1;
+            $maxStoredId = 0;
+            foreach ($this->tableRows[$table] as $existing) {
+                if (isset($existing['id']) && is_numeric($existing['id'])) {
+                    $maxStoredId = max($maxStoredId, (int) $existing['id']);
+                }
             }
+            $rowCount = count($this->tableRows[$table]);
+            if (!array_key_exists('id', $row)) {
+                if ($this->insert_id > $maxStoredId) {
+                    $row['id'] = $this->insert_id;
+                } else {
+                    $row['id'] = max($this->insert_id, $maxStoredId, $rowCount) + 1;
+                }
+            }
+            $this->insert_id = (int) $row['id'];
 
             $this->tableRows[$table][] = $row;
 
@@ -2623,13 +2641,34 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queries[] = $sql;
 
             $result = $this->defaultUpdateResult;
+            $hasExplicitOverride = false;
+            if (array_key_exists($table, $this->updateResultsByTable)) {
+                $result = $this->updateResultsByTable[$table];
+                $hasExplicitOverride = true;
+            }
             if (array_key_exists($sql, $this->updateResults)) {
                 $result = $this->updateResults[$sql];
+                $hasExplicitOverride = true;
+            }
+            if (!$hasExplicitOverride && ($result === false || $result === null)) {
+                $hasExplicitOverride = true;
             }
 
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (!$hasExplicitOverride && isset($this->tableRows[$table])) {
+                $matched = 0;
+                foreach ($this->tableRows[$table] as $row) {
+                    if ($this->rowMatchesWhere($row, $where)) {
+                        ++$matched;
+                    }
+                }
+                $this->applyUpdateToRows($table, $data, $where);
+                $this->rows_affected = $matched;
+                return $matched;
             }
 
             if (is_int($result)) {
@@ -2664,11 +2703,21 @@ if (!isset($GLOBALS['wpdb'])) {
 
             $this->queries[] = $sql;
 
+            if (array_key_exists($table, $this->deleteResultsByTable)) {
+                $override = $this->deleteResultsByTable[$table];
+                if ($override === false || $override === null) {
+                    return $override;
+                }
+            }
+
             if (isset($this->tableRows[$table])) {
+                $before = count($this->tableRows[$table]);
                 $this->tableRows[$table] = array_values(array_filter(
                     $this->tableRows[$table],
                     fn(array $row): bool => !$this->rowMatchesWhere($row, $where)
                 ));
+
+                return $before - count($this->tableRows[$table]);
             }
 
             return 1;
@@ -2702,8 +2751,38 @@ if (!isset($GLOBALS['wpdb'])) {
                 );
             }
 
+            $distinctColumn = $parsed['distinct'] ?? null;
+            if (is_string($distinctColumn) && $distinctColumn !== '') {
+                $seen = [];
+                $deduped = [];
+                foreach ($rows as $row) {
+                    $key = (string) ($row[$distinctColumn] ?? '');
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $deduped[] = $row;
+                }
+                $rows = $deduped;
+            }
+
+            $windowTotal = ($parsed['windowCount'] ?? false) ? count($rows) : null;
+
             if ($parsed['limit'] !== null) {
                 $rows = array_slice($rows, 0, $parsed['limit']);
+            }
+
+            if ($windowTotal !== null) {
+                $column = is_string($distinctColumn) && $distinctColumn !== '' ? $distinctColumn : 'label';
+                return array_map(
+                    static function (array $row) use ($windowTotal, $column): array {
+                        return [
+                            'label' => $row[$column] ?? null,
+                            'total_count' => $windowTotal,
+                        ];
+                    },
+                    $rows
+                );
             }
 
             if ($parsed['select'] === '*') {
@@ -2725,56 +2804,93 @@ if (!isset($GLOBALS['wpdb'])) {
             );
         }
 
-        /** @return array{select:string,table:string,conditions:array<int,array<string,mixed>>,orderBy:?string,orderDirection:string,limit:?int}|null */
+        /** @return array{select:string,table:string,conditions:array<int,array<string,mixed>>,orderBy:?string,orderDirection:string,limit:?int,distinct:?string,windowCount:bool}|null */
         private function parseSelectQuery(string $query): ?array
         {
             $matches = [];
-            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
-                return null;
+            if (preg_match(
+                '/^SELECT\s+COUNT\(\*\)\s+OVER\(\)\s+AS\s+total_count,\s+(?:\w+\.)?label\s+FROM\s+\(\s*SELECT\s+DISTINCT\s+label\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?\s*\)\s+\w+(?:\s+LIMIT\s+(?P<limit>\d+))?$/i',
+                $query,
+                $matches
+            ) === 1) {
+                return [
+                    'select' => 'DISTINCT label',
+                    'table' => $matches['table'],
+                    'conditions' => $this->parseWhereConditions((string) ($matches['where'] ?? '')),
+                    'orderBy' => isset($matches['order']) && $matches['order'] !== '' ? $matches['order'] : null,
+                    'orderDirection' => strtoupper($matches['direction'] ?? 'ASC'),
+                    'limit' => isset($matches['limit']) && $matches['limit'] !== '' ? (int) $matches['limit'] : null,
+                    'distinct' => 'label',
+                    'windowCount' => true,
+                ];
             }
 
-            $conditions = [];
-            if (isset($matches['where']) && $matches['where'] !== '') {
-                $parts = preg_split('/\s+AND\s+/i', trim($matches['where']));
-                if (is_array($parts)) {
-                    foreach ($parts as $part) {
-                        $condition = trim($part);
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IN\s*\((?P<values>.+)\)$/i', $condition, $conditionMatches) === 1) {
-                            $values = array_map(
-                                static fn(string $value): string => trim($value, " '\t\n\r\0\x0B"),
-                                explode(',', $conditionMatches['values'])
-                            );
-                            $values = array_values(array_filter($values, static fn(string $value): bool => $value !== ''));
-                            $conditions[] = ['type' => 'in', 'column' => $conditionMatches['column'], 'values' => $values];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => $conditionMatches['value']];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+LIKE\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'like', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
-                            continue;
-                        }
-                        if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NULL$/i', $condition, $conditionMatches) === 1) {
-                            $conditions[] = ['type' => 'null', 'column' => $conditionMatches['column'], 'value' => ''];
-                        }
-                    }
-                }
+            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
+                return null;
             }
 
             return [
                 'select' => trim($matches['select']),
                 'table' => $matches['table'],
-                'conditions' => $conditions,
+                'conditions' => $this->parseWhereConditions((string) ($matches['where'] ?? '')),
                 'orderBy' => isset($matches['order']) && $matches['order'] !== '' ? $matches['order'] : null,
                 'orderDirection' => strtoupper($matches['direction'] ?? 'ASC'),
                 'limit' => isset($matches['limit']) && $matches['limit'] !== '' ? (int) $matches['limit'] : null,
+                'distinct' => null,
+                'windowCount' => false,
             ];
+        }
+
+        /** @return array<int,array<string,mixed>> */
+        private function parseWhereConditions(string $where): array
+        {
+            $conditions = [];
+            if ($where === '') {
+                return $conditions;
+            }
+
+            $parts = preg_split('/\s+AND\s+/i', trim($where));
+            if (!is_array($parts)) {
+                return $conditions;
+            }
+
+            foreach ($parts as $part) {
+                $condition = trim($part);
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IN\s*\((?P<values>.+)\)$/i', $condition, $conditionMatches) === 1) {
+                    $values = array_map(
+                        static fn(string $value): string => trim($value, " '\t\n\r\0\x0B"),
+                        explode(',', $conditionMatches['values'])
+                    );
+                    $values = array_values(array_filter($values, static fn(string $value): bool => $value !== ''));
+                    $conditions[] = ['type' => 'in', 'column' => $conditionMatches['column'], 'values' => $values];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'eq', 'column' => $conditionMatches['column'], 'value' => $conditionMatches['value']];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+LIKE\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'like', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NOT\s+NULL$/i', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'not_null', 'column' => $conditionMatches['column'], 'value' => ''];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+IS\s+NULL$/i', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'null', 'column' => $conditionMatches['column'], 'value' => ''];
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s+!=\s+\'(?P<value>.*)\'$/', $condition, $conditionMatches) === 1) {
+                    $conditions[] = ['type' => 'neq', 'column' => $conditionMatches['column'], 'value' => stripslashes($conditionMatches['value'])];
+                }
+            }
+
+            return $conditions;
         }
 
         /** @param array<int,array<string,mixed>> $conditions */
@@ -2801,9 +2917,208 @@ if (!isset($GLOBALS['wpdb'])) {
                 if ($condition['type'] === 'null' && $value !== null) {
                     return false;
                 }
+                if ($condition['type'] === 'not_null' && $value === null) {
+                    return false;
+                }
+                if ($condition['type'] === 'neq' && (string) $value === (string) $condition['value']) {
+                    return false;
+                }
             }
 
             return true;
+        }
+
+        /**
+         * Apply a raw UPDATE (and later INSERT…ON DUPLICATE) against tableRows.
+         *
+         * @return int|null Affected row count, or null when the SQL is not handled.
+         */
+        private function applyRawQueryToRows(string $sql): ?int
+        {
+            if (preg_match(
+                '/^INSERT INTO\s+`?(?P<table>[^\s`]+)`?\s*\((?P<cols>[^)]+)\)\s*VALUES\s*\((?P<values>.*)\)\s*ON DUPLICATE KEY UPDATE/is',
+                $sql,
+                $insertMatches
+            ) === 1) {
+                return $this->applyInsertOnDuplicateToRows(
+                    $insertMatches['table'],
+                    $insertMatches['cols'],
+                    $insertMatches['values']
+                );
+            }
+
+            if (preg_match(
+                '/^UPDATE\s+`?(?P<table>[^\s`]+)`?\s+SET\s+(?P<set>.+?)\s+WHERE\s+(?P<where>.+)$/is',
+                $sql,
+                $matches
+            ) !== 1) {
+                return null;
+            }
+
+            $table = $matches['table'];
+            if (!isset($this->tableRows[$table])) {
+                return null;
+            }
+
+            $assignments = $this->parseSqlAssignmentList($matches['set']);
+            $where = $this->parseSqlWhereEquals($matches['where']);
+            $affected = 0;
+            foreach ($this->tableRows[$table] as $index => $row) {
+                if (!$this->rowMatchesWhere($row, $where)) {
+                    continue;
+                }
+                foreach ($assignments as $column => $expression) {
+                    $this->tableRows[$table][$index][$column] = $this->evaluateSqlAssignment($expression, $this->tableRows[$table][$index]);
+                }
+                ++$affected;
+            }
+
+            return $affected;
+        }
+
+        /** @return array<string,string> */
+        private function parseSqlAssignmentList(string $set): array
+        {
+            $parts = preg_split('/,(?=(?:[^\'"]|\'[^\']*\'|"[^"]*")*$)/', $set);
+            $assignments = [];
+            foreach (is_array($parts) ? $parts : [] as $part) {
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<expr>.+)$/', trim($part), $match) === 1) {
+                    $assignments[$match['column']] = trim($match['expr']);
+                }
+            }
+
+            return $assignments;
+        }
+
+        /** @return array<string,mixed> */
+        private function parseSqlWhereEquals(string $where): array
+        {
+            $conditions = [];
+            $parts = preg_split('/\s+AND\s+/i', trim($where));
+            foreach (is_array($parts) ? $parts : [] as $part) {
+                $part = trim($part);
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $part, $match) === 1) {
+                    $conditions[$match['column']] = stripslashes($match['value']);
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $part, $match) === 1) {
+                    $conditions[$match['column']] = $match['value'];
+                }
+            }
+
+            return $conditions;
+        }
+
+        private function applyInsertOnDuplicateToRows(string $table, string $columnList, string $valueList): int
+        {
+            if (!isset($this->tableRows[$table])) {
+                $this->tableRows[$table] = [];
+            }
+
+            $columns = array_map(
+                static fn(string $column): string => trim($column, " `\t\n\r"),
+                explode(',', $columnList)
+            );
+            $rawValues = $this->splitSqlValueList($valueList);
+            $row = [];
+            foreach ($columns as $index => $column) {
+                $row[$column] = $this->evaluateSqlAssignment($rawValues[$index] ?? 'NULL', []);
+            }
+
+            foreach ($this->tableRows[$table] as $index => $existing) {
+                if (!$this->rowMatchesInsertDuplicateKey($existing, $row)) {
+                    continue;
+                }
+                $userConfirmed = (int) ($existing['is_user_confirmed'] ?? 0) === 1;
+                if (!$userConfirmed && array_key_exists('label', $row)) {
+                    $existing['label'] = $row['label'];
+                }
+                if (!$userConfirmed && array_key_exists('label_cleared_label', $row)) {
+                    $existing['label_cleared_label'] = $row['label_cleared_label'];
+                }
+                if (!$userConfirmed && array_key_exists('label_cleared_revision', $row)) {
+                    $existing['label_cleared_revision'] = $row['label_cleared_revision'];
+                }
+                if (array_key_exists('snapshot_version', $row)) {
+                    $existing['snapshot_version'] = max(
+                        (int) ($existing['snapshot_version'] ?? 0),
+                        (int) $row['snapshot_version']
+                    );
+                }
+                if (array_key_exists('identity_count', $row)) {
+                    $existing['identity_count'] = $row['identity_count'];
+                }
+                $this->tableRows[$table][$index] = $existing;
+                return 2;
+            }
+
+            $this->tableRows[$table][] = $row;
+            return 1;
+        }
+
+        /** @return list<string> */
+        private function splitSqlValueList(string $values): array
+        {
+            $items = [];
+            $current = '';
+            $inQuote = false;
+            $depth = 0;
+            $length = strlen($values);
+            for ($i = 0; $i < $length; $i++) {
+                $ch = $values[$i];
+                if ($ch === "'" && ($i === 0 || $values[$i - 1] !== '\\')) {
+                    if ($depth === 0) {
+                        $inQuote = !$inQuote;
+                    }
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $ch === '(') {
+                    ++$depth;
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $ch === ')') {
+                    $depth = max(0, $depth - 1);
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $depth === 0 && $ch === ',') {
+                    $items[] = trim($current);
+                    $current = '';
+                    continue;
+                }
+                $current .= $ch;
+            }
+            if (trim($current) !== '') {
+                $items[] = trim($current);
+            }
+
+            return $items;
+        }
+
+        private function evaluateSqlAssignment(string $expression, array $row): mixed
+        {
+            if (strcasecmp($expression, 'NULL') === 0) {
+                return null;
+            }
+            if (preg_match("/^NULLIF\(\s*'(?P<value>.*)'\s*,\s*''\s*\)$/i", $expression, $nullIfMatch) === 1) {
+                return $nullIfMatch['value'] === '' ? null : stripslashes($nullIfMatch['value']);
+            }
+            if (preg_match('/^\'(.*)\'$/', $expression, $match) === 1) {
+                return stripslashes($match[1]);
+            }
+            if (is_numeric($expression)) {
+                return str_contains($expression, '.') ? (float) $expression : (int) $expression;
+            }
+            if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*\+\s*(?P<delta>\d+)$/', $expression, $match) === 1) {
+                return (int) ($row[$match['column']] ?? 0) + (int) $match['delta'];
+            }
+            if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?$/', $expression, $match) === 1) {
+                return $row[$match['column']] ?? null;
+            }
+
+            return $expression;
         }
 
         private function applyUpdateToRows(string $table, array $data, array $where): void
@@ -2832,6 +3147,24 @@ if (!isset($GLOBALS['wpdb'])) {
             return true;
         }
 
+        /** @param array<string,mixed> $existing */
+        /** @param array<string,mixed> $incoming */
+        private function rowMatchesInsertDuplicateKey(array $existing, array $incoming): bool
+        {
+            if (array_key_exists('cluster_uuid', $incoming) && array_key_exists('tenant_id', $incoming)) {
+                return (string) ($existing['cluster_uuid'] ?? '') === (string) $incoming['cluster_uuid']
+                    && (string) ($existing['tenant_id'] ?? '') === (string) $incoming['tenant_id'];
+            }
+            if (array_key_exists('cluster_uuid', $incoming)) {
+                return (string) ($existing['cluster_uuid'] ?? '') === (string) $incoming['cluster_uuid'];
+            }
+            if (array_key_exists('id', $incoming)) {
+                return (string) ($existing['id'] ?? '') === (string) $incoming['id'];
+            }
+
+            return false;
+        }
+
         public function reset(): void
         {
             $this->queries = [];
@@ -2852,6 +3185,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->insertResults = [];
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
+            $this->updateResultsByTable = [];
+            $this->deleteResultsByTable = [];
             $this->tableRows = [];
             $this->tableColumns = [];
             $this->tableIndexes = [];

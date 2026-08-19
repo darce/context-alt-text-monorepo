@@ -100,13 +100,13 @@ const collectVisibleAndAccessibleText = (root: HTMLElement): string => {
 };
 
 describe('ClusterDrawerPanel humane cluster labels (E21-16)', () => {
-  it('shows Unnamed cluster for unlabeled drawer title with no uuid hex fragment', () => {
+  it('shows Unnamed face group for unlabeled drawer title with no uuid hex fragment', () => {
     const { container } = render(
       <ClusterDrawerPanel {...baseProps} cluster={unlabeledCluster} />,
     );
 
     const title = container.querySelector('.acx-cluster-drawer__title');
-    expect(title).toHaveTextContent('Unnamed cluster');
+    expect(title).toHaveTextContent('Unnamed face group');
     expect(title).not.toHaveTextContent(HEX_FRAG_A);
     expect(title).not.toHaveTextContent(/^Cluster /);
 
@@ -122,7 +122,7 @@ describe('ClusterDrawerPanel humane cluster labels (E21-16)', () => {
 
     const title = container.querySelector('.acx-cluster-drawer__title');
     expect(title).toHaveTextContent('Alex Rivera');
-    expect(screen.queryByText('Unnamed cluster')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unnamed face group')).not.toBeInTheDocument();
   });
 
   it('shows distinct humane labels for unlabeled reassign targets (no uuid fragments)', () => {
@@ -139,15 +139,15 @@ describe('ClusterDrawerPanel humane cluster labels (E21-16)', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Move to… identity from media/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Move to… face from media/ }));
 
-    const menu = screen.getByRole('menu', { name: 'Choose a target cluster' });
+    const menu = screen.getByRole('menu', { name: 'Choose a target face group' });
     const options = within(menu).getAllByRole('menuitem');
     const optionLabels = options
       .filter((btn) => btn.textContent !== 'Cancel')
       .map((btn) => btn.textContent ?? '');
 
-    expect(optionLabels).toEqual(['Unnamed cluster 1', 'Unnamed cluster 2', 'Jordan Lee']);
+    expect(optionLabels).toEqual(['Unnamed face group 1', 'Unnamed face group 2', 'Jordan Lee']);
     expect(new Set(optionLabels).size).toBe(optionLabels.length);
 
     const menuText = collectVisibleAndAccessibleText(menu);

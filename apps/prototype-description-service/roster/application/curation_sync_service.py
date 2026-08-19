@@ -117,13 +117,17 @@ class CurationSyncService:
         desired_dismissed = self._resolve_desired_dismissed(operation_type)
         current_roster_id = str(cluster.roster_id) if cluster.roster_id is not None else None
         current_dismissed = cluster.dismissed_at is not None
-        current_label = cluster.label or ""
+        current_label = cluster.label
         desired_label = self._resolve_desired_label(operation, operation_type, current_label)
         desired_roster_id = self._resolve_desired_roster_id(operation, operation_type, current_roster_id)
         cluster_backend_version = self._version_from_datetime(cluster.updated_at)
 
         dismissal_matches = desired_dismissed is None or current_dismissed == desired_dismissed
-        if current_roster_id == desired_roster_id and dismissal_matches and current_label == desired_label:
+        if (
+            current_roster_id == desired_roster_id
+            and dismissal_matches
+            and (current_label or "") == (desired_label or "")
+        ):
             result = CurationSyncResult(
                 status="acknowledged",
                 backend_version=cluster_backend_version,
@@ -326,7 +330,7 @@ class CurationSyncService:
         operation_type: str,
         cluster_uuid: UUID,
         roster_id: str | None,
-        label: str,
+        label: str | None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "operation_type": operation_type,
@@ -382,7 +386,7 @@ class CurationSyncService:
             return False
         return None
 
-    def _resolve_desired_label(self, operation: Any, operation_type: str, current_label: str) -> str:
+    def _resolve_desired_label(self, operation: Any, operation_type: str, current_label: str | None) -> str | None:
         if operation_type == "cluster_person_bound":
             payload = self._payload(operation)
             person_name = payload.get("person_name")
@@ -393,8 +397,15 @@ class CurationSyncService:
             return current_label
 
         payload = self._payload(operation)
+        if "label" not in payload:
+            raise ValueError("label is required for cluster_label_updated")
+
         label = payload.get("label")
-        if not isinstance(label, str) or not label.strip():
+        if label is None:
+            return None
+        if not isinstance(label, str):
+            raise ValueError("label must be a string or null for cluster_label_updated")
+        if not label.strip():
             raise ValueError("label is required for cluster_label_updated")
 
         return label.strip()

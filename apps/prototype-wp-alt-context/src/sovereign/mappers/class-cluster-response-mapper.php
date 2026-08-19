@@ -101,16 +101,17 @@ class ClusterResponseMapper {
 				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
 			}
 
-			$label_state = $this->resolve_label_state( $row );
+			$label_flags = $this->resolve_label_flags( $row );
 
 			$results[] = array(
 				'id' => $cluster_id,
 				'tenant_id' => $tenant_id,
-				'label' => $label_state['label'],
-				'is_labeled' => $label_state['is_labeled'],
-				'is_auto_label' => $label_state['is_auto_label'],
+				'label' => $label_flags['label'],
+				'label_state' => $this->resolve_emitted_label_state( $row ),
+				'is_labeled' => $label_flags['is_labeled'],
+				'is_auto_label' => $label_flags['is_auto_label'],
 				'identity_count' => $this->resolve_identity_count( $row, $members, isset( $members_by_cluster[ $cluster_id ] ), $preview_limit ),
-				'user_confirmed' => $label_state['user_confirmed'],
+				'user_confirmed' => $label_flags['user_confirmed'],
 				'suggested_label' => isset( $row['suggested_label'] ) && '' !== $row['suggested_label'] ? (string) $row['suggested_label'] : null,
 				'suggested_label_source' => isset( $row['suggested_label_source'] ) && '' !== $row['suggested_label_source'] ? (string) $row['suggested_label_source'] : null,
 				'suggested_label_confidence' => isset( $row['suggested_label_confidence'] ) && '' !== $row['suggested_label_confidence'] ? (float) $row['suggested_label_confidence'] : null,
@@ -129,9 +130,9 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	private function map_cluster_summary( array $cluster_row, array $member_rows, bool $members_loaded, ?int $preview_limit = null ): array {
-		$cluster_id = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
-		$label_state = $this->resolve_label_state( $cluster_row );
-		$members    = array_values( $member_rows );
+		$cluster_id  = trim( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+		$label_flags = $this->resolve_label_flags( $cluster_row );
+		$members     = array_values( $member_rows );
 
 		$sample_members = array_slice( $members, 0, 4 );
 		$member_ids     = array();
@@ -153,8 +154,9 @@ class ClusterResponseMapper {
 
 		return array(
 			'id' => $cluster_id,
-			'label' => $label_state['label'],
-			'is_auto_label' => $label_state['is_auto_label'],
+			'label' => $label_flags['label'],
+			'label_state' => $this->resolve_emitted_label_state( $cluster_row ),
+			'is_auto_label' => $label_flags['is_auto_label'],
 			'identity_count' => $this->resolve_identity_count( $cluster_row, $members, $members_loaded, $preview_limit ),
 			'member_ids' => $member_ids,
 			'representative_identity' => $representative,
@@ -318,10 +320,13 @@ class ClusterResponseMapper {
 	}
 
 	/**
+	 * Presentation flags. Distinct from the three-valued `label_state` string
+	 * (`person | unlabeled | unbound`) emitted by resolve_emitted_label_state().
+	 *
 	 * @param array<string,mixed> $cluster_row
 	 * @return array{label: ?string, is_labeled: bool, is_auto_label: bool, user_confirmed: bool}
 	 */
-	private function resolve_label_state( array $cluster_row ): array {
+	private function resolve_label_flags( array $cluster_row ): array {
 		$label          = $this->normalize_label( $cluster_row );
 		$user_confirmed = $this->resolve_user_confirmed_flag( $cluster_row );
 		$is_auto_label  = '' !== $label && ! $user_confirmed && $this->looks_like_system_defined_label( $label );

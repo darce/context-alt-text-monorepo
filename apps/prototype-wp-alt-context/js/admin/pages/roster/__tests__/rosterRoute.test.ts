@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_QUEUE_STATE, parseQueueState } from '../../../hooks/workbenchQueueUrl';
 import type { RosterEntry } from '../../../api/rosterApi';
-import { serializeQueueState } from '../../../hooks/workbenchQueueUrl';
 import {
   ROSTER_SURFACE,
-  isUnlabeledCluster,
   parseRosterRoute,
   selectDeterministicDefaultWorkspaceEntry,
   workbenchReviewQueueUrl,
@@ -107,24 +106,24 @@ describe('parseRosterRoute route compat (E21-9 Slice 5a + E21-10 lands-second)',
   });
 });
 
-describe('isUnlabeledCluster + workbench deep link (E21-9 Slice 5b contract)', () => {
-  it('treats empty/absent/whitespace labels as unlabeled', () => {
-    expect(isUnlabeledCluster({ label: '' })).toBe(true);
-    expect(isUnlabeledCluster({ label: '   ' })).toBe(true);
-    expect(isUnlabeledCluster({ label: null })).toBe(true);
-    expect(isUnlabeledCluster({})).toBe(true);
-    expect(isUnlabeledCluster({ label: 'Ada' })).toBe(false);
+describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', () => {
+  it('does not export isUnlabeledCluster (client-side rail predicate retired with the rail)', async () => {
+    const mod = await import('../rosterRoute');
+    expect('isUnlabeledCluster' in mod).toBe(false);
   });
 
   it('deep-links unlabeled clusters into the workbench review queue', () => {
-    // cluster= dropped (jobId precedent): workbench has no cluster reader.
-    expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=assignment.all.0');
-    expect(workbenchReviewQueueUrl()).not.toContain('cluster=');
+    const href = workbenchReviewQueueUrl();
+    expect(href).not.toContain('cluster=');
+    const q = href.indexOf('?');
+    const params = new URLSearchParams(q === -1 ? '' : href.slice(q + 1));
+    expect(parseQueueState(params.get('rq'))).toEqual(DEFAULT_QUEUE_STATE);
   });
 
-  it('encodes rq via serializeQueueState (REF-09, no hand-coded token)', () => {
-    const encoded = serializeQueueState({ kind: 'assignment', band: 'all', index: 0 });
-    expect(encoded).toBe('assignment.all.0');
+  it('encodes rq from the shared queue vocabulary (REF-09, no hand-coded token)', () => {
+    // UXW2-1 REF-09 forbids a literal token; UXW2-4 R1-21 pins the value to the
+    // default queue state so the CTA lands where parseQueueState says it lands.
+    const encoded = `${DEFAULT_QUEUE_STATE.kind}.${DEFAULT_QUEUE_STATE.band}.${DEFAULT_QUEUE_STATE.index}`;
     expect(workbenchReviewQueueUrl()).toBe(`#/workbench?tab=scan&rq=${encoded}`);
   });
 });

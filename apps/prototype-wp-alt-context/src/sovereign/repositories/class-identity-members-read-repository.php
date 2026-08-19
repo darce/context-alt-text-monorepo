@@ -6,6 +6,9 @@ namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
+require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
+
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function absint;
 use function array_fill;
@@ -22,6 +25,7 @@ use function method_exists;
 use function trim;
 
 class IdentityMembersReadRepository {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 	use ResolvesPersonsTableName;
 
@@ -50,12 +54,12 @@ class IdentityMembersReadRepository {
 
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
 			$sql = $this->prepare_projection_read_query(
-				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
-				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
+				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d",
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -68,12 +72,12 @@ class IdentityMembersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s
-				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
+				ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d",
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -129,7 +133,7 @@ class IdentityMembersReadRepository {
 
 		$sql = $this->prepare_projection_read_query(
 			"SELECT * FROM (
-				SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
+				SELECT m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -210,7 +214,7 @@ class IdentityMembersReadRepository {
 		$placeholders  = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$persons_table = $this->resolve_persons_table_name();
 		$sql           = $this->prepare_projection_read_query(
-			"SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+			"SELECT m.*, {$this->projected_cluster_label_select_sql( 'p.name', 'c.label' )}, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			LEFT JOIN %i p ON p.id = c.person_id

@@ -6,6 +6,11 @@ namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
+require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/class-tenant-identity.php';
+
+use AltContext\Api\TenantIdentity;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function array_fill;
 use function array_filter;
@@ -23,6 +28,7 @@ use function method_exists;
 use function trim;
 
 class ClustersReadRepository {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 	use ResolvesPersonsTableName;
 
@@ -59,10 +65,10 @@ class ClustersReadRepository {
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != '' AND c.label LIKE %s
+				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != '' AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
@@ -76,10 +82,10 @@ class ClustersReadRepository {
 			);
 		} elseif ( $labeled_only ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != ''
+				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != ''
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
@@ -92,12 +98,12 @@ class ClustersReadRepository {
 			);
 		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				'SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
-				 LIMIT %d OFFSET %d',
+				 LIMIT %d OFFSET %d",
 				array(
 					$this->table_name,
 					$persons_table,
@@ -109,12 +115,12 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				'SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
-				 LIMIT %d OFFSET %d',
+				 LIMIT %d OFFSET %d",
 				array(
 					$this->table_name,
 					$persons_table,
@@ -153,7 +159,7 @@ class ClustersReadRepository {
 
 		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND label LIKE %s ORDER BY label ASC) filtered LIMIT %d",
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} AND label LIKE %s ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
@@ -163,7 +169,7 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' ORDER BY label ASC) filtered LIMIT %d",
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
@@ -183,12 +189,13 @@ class ClustersReadRepository {
 		$labels = array();
 		foreach ( $rows as $row ) {
 			$label = trim( (string) ( $row['label'] ?? '' ) );
-			if ( '' !== $label ) {
-				$labels[] = array(
-					'label' => $label,
-					'total_count' => max( 0, (int) ( $row['total_count'] ?? 0 ) ),
-				);
+			if ( '' === $label || $this->is_reserved_label_shape( $label ) ) {
+				continue;
 			}
+			$labels[] = array(
+				'label'       => $label,
+				'total_count' => max( 0, (int) ( $row['total_count'] ?? 0 ) ),
+			);
 		}
 
 		return $labels;
@@ -241,12 +248,12 @@ class ClustersReadRepository {
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, COALESCE(p.name, c.label) as label 
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
 				WHERE c.tenant_id = %s
 					AND c.is_user_confirmed = 0
-					AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+					AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
 					AND c.identity_count >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
 				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
@@ -284,7 +291,7 @@ class ClustersReadRepository {
 			FROM %i c
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
-				AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+				AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
 				AND c.identity_count <= 1
 				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')",
 			array(
@@ -312,17 +319,24 @@ class ClustersReadRepository {
 			return null;
 		}
 
+		$tenant_id = trim( (string) ( TenantIdentity::resolve()['value'] ?? '' ) );
+		if ( '' === $tenant_id ) {
+			return null;
+		}
+
 		$persons_table = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-			"SELECT c.*, p.person_uuid, COALESCE(p.name, c.label) as label 
+			"SELECT c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
 			 WHERE c.cluster_uuid = %s 
+			   AND c.tenant_id = %s
 			 LIMIT 1",
 				array(
 					$this->table_name,
 					$persons_table,
 					$normalized_cluster_uuid,
+					$tenant_id,
 				)
 			);
 

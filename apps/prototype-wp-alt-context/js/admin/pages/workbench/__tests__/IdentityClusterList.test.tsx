@@ -960,10 +960,10 @@ describe('IdentityClusterList', () => {
 
     // Wait for the unlabeled button to appear and click it
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /cluster-clust/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Unlabeled identity/i })).toBeInTheDocument();
     });
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /cluster-clust/i })));
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unlabeled identity/i })));
     });
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     await actFlow(async () => {

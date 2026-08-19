@@ -124,6 +124,64 @@ class PersonCrudTest extends TestCase
         $this->assertSame('acx_person_exists', $response->get_error_code());
     }
 
+    public function testCreatePersonAllowsSameNormalizedNameAcrossTenantsAndDedupesWithinTenant(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $tenantA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $tenantB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+        $this->setOption('acx_recognition_tenant_id', $tenantA);
+        $requestA = new WP_REST_Request('POST', '/acx/v1/roster/persons');
+        $requestA->set_param('name', 'Jane Doe');
+        $requestA->set_param('tags', []);
+        $responseA = $this->api->create_person($requestA);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $responseA);
+        $this->assertSame(201, $responseA->get_status());
+        $dataA = $responseA->get_data();
+        $this->assertIsArray($dataA);
+        $this->assertArrayHasKey('id', $dataA);
+        $idA = $dataA['id'];
+
+        $this->setOption('acx_recognition_tenant_id', $tenantB);
+        $requestB = new WP_REST_Request('POST', '/acx/v1/roster/persons');
+        $requestB->set_param('name', 'Jane Doe');
+        $requestB->set_param('tags', []);
+        $responseB = $this->api->create_person($requestB);
+
+        $this->assertInstanceOf(
+            WP_REST_Response::class,
+            $responseB,
+            'tenant B creating Jane Doe must not 409 against tenant A (cross-tenant existence oracle)'
+        );
+        $this->assertSame(201, $responseB->get_status());
+        $dataB = $responseB->get_data();
+        $this->assertIsArray($dataB);
+        $this->assertArrayHasKey('id', $dataB);
+        $idB = $dataB['id'];
+        $this->assertNotSame($idA, $idB, 'tenant B Jane Doe must be a distinct person id');
+
+        $requestBDup = new WP_REST_Request('POST', '/acx/v1/roster/persons');
+        $requestBDup->set_param('name', 'Jane Doe');
+        $responseBDup = $this->api->create_person($requestBDup);
+
+        $this->assertInstanceOf(\WP_Error::class, $responseBDup);
+        $this->assertSame(409, $responseBDup->get_error_data()['status']);
+        $this->assertSame('acx_person_exists', $responseBDup->get_error_code());
+
+        $personsSql = (new \AltContext\Support\LifecycleManager())
+            ->build_projection_schema_statements((string) $wpdb->prefix, '')['acx_persons'] ?? '';
+        $this->assertIsString($personsSql);
+        $this->assertNotSame('', $personsSql);
+        $this->assertMatchesRegularExpression(
+            '/UNIQUE\s+KEY\s+idx_tenant_normalized_name\s*\(\s*tenant_id\s*,\s*normalized_name\s*\)/i',
+            $personsSql,
+            'UNIQUE(normalized_name) alone would reject tenant B Jane Doe after tenant A created it'
+        );
+    }
+
     public function testCreatePersonFailsOnEmptyName(): void
     {
         $this->api->register_routes();
@@ -194,13 +252,9 @@ class PersonCrudTest extends TestCase
         $this->assertNotInstanceOf(\WP_Error::class, $response);
         $data = $response->get_data();
         $this->assertTrue($data['deleted']);
-
-        // Verify soft dissociation on clusters
-        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
-        $this->assertStringContainsString('person_id = NULL', $dissociateQuery);
-        $this->assertStringContainsString("curation_state = 'confirmed'", $dissociateQuery);
-        $this->assertStringContainsString('is_user_confirmed = 1', $dissociateQuery);
-        $this->assertStringContainsString('person_id = 1', $dissociateQuery);
+        $this->assertArrayHasKey('clusters_dissociated', $data);
+        $this->assertArrayHasKey('cluster_ids', $data);
+        $this->assertSame(0, $data['clusters_dissociated']);
 
         // Verify person deletion
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
@@ -210,6 +264,236 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString("'person_deleted'", $outboxInsert);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testDeletePersonClearsHumanLabelAndReturnsClusterToUnlabeledQueue(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $clusterUuid = 'cluster-tory-6731';
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Tory Guzman',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 2,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Tory Guzman',
+                'person_id' => 1,
+                'curation_state' => 'confirmed',
+                'is_user_confirmed' => 1,
+                'identity_count' => 3,
+                'local_revision' => 4,
+            ],
+        ];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+
+        $response = $this->api->delete_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertTrue($data['deleted']);
+        $this->assertSame(1, $data['clusters_dissociated']);
+        $this->assertSame([$clusterUuid], $data['cluster_ids']);
+
+        $cluster = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($cluster['label']);
+        $this->assertNull($cluster['person_id']);
+        $this->assertSame(0, (int) $cluster['is_user_confirmed']);
+
+        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_clusters` SET');
+        $this->assertStringContainsString('label = NULL', $dissociateQuery);
+        $this->assertStringContainsString('is_user_confirmed = 0', $dissociateQuery);
+        $this->assertStringContainsString('label_cleared_revision = snapshot_version', $dissociateQuery);
+
+        $outboxJoined = implode("\n", array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+        ));
+        $this->assertStringContainsString("'cluster_person_unbound'", $outboxJoined);
+        $this->assertStringContainsString("'cluster_label_updated'", $outboxJoined);
+
+        $wpdb->queries = [];
+        $wpdb->mockResults = [];
+        (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
+            ->list_top_unlabeled(self::currentTenantId(), 10);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString('c.identity_count >= 2', $sql);
+    }
+
+    public function testDeletePersonSingletonIsCountedByTopUnlabeledSingletons(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $clusterUuid = 'cluster-singleton';
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Solo',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 1,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Solo',
+                'person_id' => 1,
+                'is_user_confirmed' => 1,
+                'identity_count' => 1,
+                'curation_state' => 'confirmed',
+            ],
+        ];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $wpdb->queries = [];
+        $wpdb->mockVar = 1;
+        $count = (new \AltContext\Sovereign\Repositories\ClustersReadRepository('wp_acx_clusters'))
+            ->count_top_unlabeled_singletons(self::currentTenantId());
+        $this->assertSame(1, $count);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('c.identity_count <= 1', $sql);
+    }
+
+    public function testDeletePersonDoesNotDeleteOtherTenantSharingPersonId(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $currentTenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 7,
+                'tenant_id' => 'other-tenant',
+                'name' => 'Bob',
+                'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                'local_revision' => 1,
+            ],
+            [
+                'id' => 7,
+                'tenant_id' => $currentTenant,
+                'name' => 'Alice',
+                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'local_revision' => 1,
+            ],
+        ];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/7');
+        $request->set_param('id', 7);
+        $response = $this->api->delete_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $remaining = $wpdb->tableRows['wp_acx_persons'];
+        $this->assertCount(1, $remaining);
+        $this->assertSame('other-tenant', $remaining[0]['tenant_id']);
+        $this->assertSame('Bob', $remaining[0]['name']);
+        $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
+        $this->assertStringContainsString('tenant_id =', $deleteQuery);
+        $this->assertSame('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $this->latestOutboxPayload()['person_uuid'] ?? null);
+    }
+
+    public function testDeletePersonSurfacesDatabaseFailureAsServerError(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 1,
+                'tenant_id' => self::currentTenantId(),
+                'name' => 'Broken',
+                'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+                'local_revision' => 1,
+            ],
+        ];
+        $wpdb->deleteResultsByTable['wp_acx_persons'] = false;
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertSame(500, $response->get_error_data()['status']);
+    }
+
+    public function testUpdatePersonDoesNotTouchOtherTenantRow(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $currentTenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 7,
+                'tenant_id' => $currentTenant,
+                'name' => 'Alice',
+                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'local_revision' => 1,
+                'normalized_name' => 'alice',
+            ],
+            [
+                'id' => 7,
+                'tenant_id' => 'other-tenant',
+                'name' => 'Bob',
+                'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                'local_revision' => 4,
+                'normalized_name' => 'bob',
+            ],
+        ];
+
+        $request = new WP_REST_Request('PUT', '/acx/v1/roster/persons/7');
+        $request->set_param('id', 7);
+        $request->set_param('name', 'Alice Renamed');
+
+        $response = $this->api->update_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('Bob', $wpdb->tableRows['wp_acx_persons'][1]['name']);
+        $this->assertSame(4, (int) $wpdb->tableRows['wp_acx_persons'][1]['local_revision']);
+        $this->assertSame('Alice Renamed', $wpdb->tableRows['wp_acx_persons'][0]['name']);
+    }
+
+    public function testDeletePersonSurfacesResetCurationFailure(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Broken',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 1,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-broken',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Broken',
+                'person_id' => 1,
+            ],
+        ];
+        $wpdb->defaultQueryResult = false;
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
     }
 
     public function testCommitRosterClusterMarksClusterAsCuratedAndQueuesOutboxEvent(): void

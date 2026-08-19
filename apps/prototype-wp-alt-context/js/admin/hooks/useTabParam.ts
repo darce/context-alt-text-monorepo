@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { commitSearchParams } from './useWorkbenchFilters';
+
 export const useTabParam = <T extends string>(
   paramName: string,
   defaultValue: T,
@@ -13,14 +15,9 @@ export const useTabParam = <T extends string>(
 
   const setTab = useCallback(
     (value: T) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set(paramName, value);
-          return next;
-        },
-        { replace: true },
-      );
+      commitSearchParams(setSearchParams, (next) => {
+        next.set(paramName, value);
+      });
     },
     [paramName, setSearchParams],
   );

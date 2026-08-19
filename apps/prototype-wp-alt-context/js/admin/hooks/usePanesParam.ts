@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { APP_LINK_PARAMS, parsePanes, serializePanes, type PanesState } from '../navigation/appLinks';
+import { commitSearchParams } from './useWorkbenchFilters';
 
 export type { PanesState };
 
@@ -16,19 +17,14 @@ export const usePanesParam = (): [PanesState, (value: PanesState) => void] => {
 
   const setPanes = useCallback(
     (value: PanesState) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          const wire = serializePanes(value);
-          if (wire === null) {
-            next.delete(APP_LINK_PARAMS.panes);
-          } else {
-            next.set(APP_LINK_PARAMS.panes, wire);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      commitSearchParams(setSearchParams, (next) => {
+        const wire = serializePanes(value);
+        if (wire === null) {
+          next.delete(APP_LINK_PARAMS.panes);
+        } else {
+          next.set(APP_LINK_PARAMS.panes, wire);
+        }
+      });
     },
     [setSearchParams],
   );

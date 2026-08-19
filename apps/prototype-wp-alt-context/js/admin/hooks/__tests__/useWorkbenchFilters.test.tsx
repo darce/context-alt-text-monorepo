@@ -1,10 +1,17 @@
 import type { ChangeEvent } from 'react';
 import { act, render, renderHook, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { QUEUE_ACTION, resetPendingSearchWritesForTests, useWorkbenchFilters } from '../useWorkbenchFilters';
+import { useTabParam } from '../useTabParam';
+import {
+  QUEUE_ACTION,
+  peekPendingSearchWritesForTests,
+  resetPendingSearchWritesForTests,
+  seedPendingSearchWritesForTests,
+  useWorkbenchFilters,
+} from '../useWorkbenchFilters';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/']}>
@@ -251,5 +258,92 @@ describe('useWorkbenchFilters', () => {
     });
 
     expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'strong', index: 0 });
+  });
+
+  it('external navigate after a pending rq write is not resurrected by setCurrentPage (R2-02)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue, setCurrentPage } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            race
+          </button>
+          <button type="button" onClick={() => setCurrentPage(2)}>
+            page
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race').click();
+    });
+    act(() => {
+      screen.getByText('page').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=merge.all.0');
+    expect(screen.getByTestId('loc').textContent).not.toContain('assignment');
+  });
+
+  it('unmounting the last hook instance clears the pending search buffer (R2-02)', () => {
+    const { unmount } = renderHook(() => useWorkbenchFilters(), { wrapper });
+    seedPendingSearchWritesForTests({
+      rq: { kind: 'assignment', band: 'all', index: 0 },
+    });
+    expect(peekPendingSearchWritesForTests().rq).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+    unmount();
+    expect(peekPendingSearchWritesForTests()).toEqual({});
+  });
+
+  it('useTabParam in the same tick merges pending rq instead of ghosting it (R2-02)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setTab] = useTabParam('tab', 'scan', ['scan'] as const);
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setTab('scan');
+            }}
+          >
+            race-tab
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-tab').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
   });
 });

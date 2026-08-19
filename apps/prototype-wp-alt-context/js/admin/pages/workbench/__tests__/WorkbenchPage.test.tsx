@@ -94,9 +94,13 @@ vi.mock('../../../hooks/useRecognitionJobHistory', () => ({
   useRecognitionJobHistory: vi.fn(),
 }));
 
-vi.mock('../../../hooks/useWorkbenchFilters', () => ({
-  useWorkbenchFilters: vi.fn(),
-}));
+vi.mock('../../../hooks/useWorkbenchFilters', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../hooks/useWorkbenchFilters')>();
+  return {
+    ...actual,
+    useWorkbenchFilters: vi.fn(),
+  };
+});
 
 vi.mock('../../../hooks/useJobPersistence', () => ({
   useJobPersistence: vi.fn(),

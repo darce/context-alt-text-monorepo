@@ -44,6 +44,7 @@
   &__suggestion-row:hover &__suggestion-reject,
   &__suggestion-row--active &__suggestion-reject {
     opacity: var(--acx-opacity-visible);
+    pointer-events: auto;
   }
 
   &__suggestion-item {
@@ -83,6 +84,7 @@
     cursor: pointer;
     border-radius: var(--acx-radius-sm);
     opacity: var(--acx-opacity-hidden);
+    pointer-events: none;
     transition: all 0.2s;
     display: flex;
     align-items: center;
@@ -91,6 +93,7 @@
     &:hover,
     &:focus-visible {
       opacity: var(--acx-opacity-visible);
+      pointer-events: auto;
       color: var(--acx-color-danger);
       background-color: var(--acx-color-danger-soft);
     }

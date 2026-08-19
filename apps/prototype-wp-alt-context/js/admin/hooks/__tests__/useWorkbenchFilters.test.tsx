@@ -8,6 +8,8 @@ import { usePanesParam } from '../usePanesParam';
 import { useTabParam } from '../useTabParam';
 import {
   peekPendingSearchWritesForTests,
+  queuePendingPage,
+  reconcilePendingSearchWrites,
   resetPendingSearchWritesForTests,
 } from '../pendingSearchWrites';
 import {
@@ -709,5 +711,25 @@ describe('useWorkbenchFilters', () => {
     });
     expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
     expect(screen.getByTestId('loc').textContent).toContain('advanced=open');
+  });
+
+  it('UXW2-1-R5-01: p buffer with a non-null snapshot is dropped when URL p matches neither pending nor snapshot', () => {
+    queuePendingPage(2, '1');
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: '1' });
+
+    reconcilePendingSearchWrites(new URLSearchParams('p=3'));
+
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-01: p buffer snapshotted from a bare URL is dropped when dest still has no p and pending page is > 1', () => {
+    queuePendingPage(2, null);
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: null });
+
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
   });
 });

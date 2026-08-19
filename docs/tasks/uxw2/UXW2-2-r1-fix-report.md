@@ -190,4 +190,90 @@ R1 mapper/schema commits still on this branch (subject): `fix(sovereign): UXW2-2
 
 ## Undone
 
-R3 residuals remain (proxy goldens emptied; `truncated` page-fullness; stale-low `identity_count`; `|| $dropped > 0` untested; repair-batch sort/priority; event ceiling; proxy `repair_pending`; `total` mix; contract self-contradicts). 
+Closed in R3 below.
+
+---
+
+# UXW2-2 R3 REPORT
+
+Lane cwd. Branch `master` (canonical `feature/uxw2-2`). Cite by subject; SHAs from `git log --format=%H` on this tree. Root `REPORT.md` removed.
+
+Suite: **OK (1807 tests, 8691 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `python3 scripts/check_shared_contract_fixtures.py` green. `php -l` clean on changed PHP. `test ! -f REPORT.md`.
+
+R2-04 verify: `test ! -f apps/prototype-wp-alt-context/tests/Unit/TopUnlabeledSchemaGoldenTest.php` — absent. Replacement: `ClusterTopUnlabeledSchemaConsistencyTest::testMemberlessPayloadFailsMinItems`.
+
+## RED
+
+| Finding | RED proof |
+|---|---|
+| R3-01 / R2-01 / R1-08 | Root `REPORT.md` gone; contract-tracking falsehoods deleted. |
+| R2-02 / R1-06 / R1-09 / R2-12 backend | Mutant A `representatives=[]` on served proxy golden: `UnexpectedValueException: $.clusters[0].representatives minItems`. Mutant B delete `repair_pending`: `Failed asserting that null is true.` (`testTopUnlabeledProxyDropSetsRepairPending`) |
+| R2-06 residual | `testListTopUnlabeledFullLastPageIsNotTruncated`: `Failed asserting that true is false.` |
+| R2-07 residual | `testMapTopUnlabeledTruncatedCountNeverBelowPreviewLength`: `Failed asserting that 1 is equal to 4 or is greater than 4.` |
+| R2-11 residual | Mutant delete `\|\| $dropped > 0`: `Failed asserting that false is true.` |
+| R2-09 | Mutant merge→sort→slice: `Failed asserting that two arrays are identical.` Mutant delete `sort( $top_up )`: `Failed asserting that two arrays are identical.` Mutant delete skip-scan guard: `Failed asserting that 1 is identical to 0.` |
+| R3-04 | `testListTopUnlabeledTotalIsPreFilterQualifyingCount`: `Failed asserting that 1 is identical to 2.` |
+| R3-02 | Same commits as the code that implements each rule. `even if stale-low` / `fetched_page >= limit` gone. |
+| R2-05 | Duplicate `schedule_repair_from_mapper` stayed GREEN (dedupe). Mutant extra `wp_schedule_single_event` (same tenant args): `Failed asserting that actual size 3 matches expected size 2.` |
+| R2-04 | Verify only. File absent. |
+
+## GREEN
+
+`cd apps/prototype-wp-alt-context && composer test`
+**OK (1807 tests, 8691 assertions)**
+
+## Closure
+
+| Finding | Commit (subject) | Test | Mutant / RED |
+|---|---|---|---|
+| R3-01 / R2-01 / R1-08 | `docs: UXW2-2-R3-01 R2-01 R1-08 fold report and drop root REPORT.md` | `git cat-file -e`; `test ! -f REPORT.md` | dead SHAs / contract-tracking falsehoods |
+| R2-02 / R1-06 / R1-09 / R2-12 backend | `fix(api): UXW2-2-R2-02 R1-06 R1-09 R2-12 proxy goldens and repair_pending` | `testProxySuccessGoldenValidatesAgainstSchema` / `testTopUnlabeledProxyDropSetsRepairPending` | `minItems`; `null is true` |
+| R2-06 residual | `fix(api): UXW2-2-R2-06 truncated is total_count greater than fetched_page` | `testListTopUnlabeledFullLastPageIsNotTruncated` | `true is false` |
+| R2-07 residual | `fix(sovereign): UXW2-2-R2-07 truncated identity_count never below preview` + `fix(contracts): UXW2-2-R2-07 restore truncated clustering-api.md tail` | `testMapTopUnlabeledTruncatedCountNeverBelowPreviewLength` | `1 is equal to 4 or is greater than 4` |
+| R2-11 residual | `fix(tests): UXW2-2-R2-11 drop without mapper id sets repair_pending` | `testListTopUnlabeledDropWithoutMapperRepairIdSetsRepairPending` | `false is true` |
+| R2-09 | `fix(api): UXW2-2-R2-09 mapper ids take the repair-batch ceiling` | eviction / sort / skip-scan tests | arrays not identical; `1 is identical to 0` |
+| R3-04 | `fix(api): UXW2-2-R3-04 total is pre-filter qualifying count` | `testListTopUnlabeledTotalIsPreFilterQualifyingCount` | `1 is identical to 2` |
+| R3-02 | same commits as items 2/3/4/7 | contract grep | `even if stale-low` / `fetched_page >= limit` gone |
+| R2-05 | `fix(tests): UXW2-2-R2-05 prove bootstrap event ceiling via call log` | `testListTopUnlabeledReadSchedulesAtMostTwoBootstrapEvents` | call-log size 3≠2 |
+| R2-04 | (verify only) | `test ! -f …/TopUnlabeledSchemaGoldenTest.php` | tautology already gone |
+
+## Decisions
+
+- Proxy goldens carry ≥1 schema-valid served row; empty-rep upstream rows set `repair_pending` on both legs.
+- `truncated` = `total_count > fetched_page` (full last page is not truncated).
+- Truncated `identity_count = max(projected, representatives.length)`.
+- Mapper ids take the repair-batch ceiling; extras top up sorted; skip drift scan at 25 mapper ids.
+- `total` is pre-filter `COUNT(*) OVER()`. Drops (identity_count/member mismatch after SQL `COUNT(m) >= 2`) set `repair_pending` and do not shrink `total`.
+- Event ceiling is the append-only `wp_schedule_single_event` call log, not the keyed cron map.
+
+## Canon IDs
+
+| ID | how |
+|---|---|
+| REF-09 | observed vs projected; one envelope rule both legs |
+| REF-25 | closed remaining R1/R2 gaps |
+| DATA-14 | members SoR; drop still possible after SQL `COUNT(m) >= 2` |
+| TEST-15 | every mutant RED with pasted line |
+| TEST-06 | predicted failure messages captured |
+| RLSE-04 | `repair_pending` is a designed state |
+| OBS-08 | skip-scan + event-volume spy |
+| rg-015 | envelope metadata matches behaviour |
+| rg-005 | `total` / `total_count` column semantics documented |
+
+## Commits (R3, `git log --format=%H`)
+
+- `7d3cd7ce77634819a3e333c114ffa3581854266b` `docs: UXW2-2-R3-01 R2-01 R1-08 fold report and drop root REPORT.md`
+- `f500a5aef59d9e10b598fba79a649c05e205a77a` `fix(api): UXW2-2-R2-02 R1-06 R1-09 R2-12 proxy goldens and repair_pending`
+- `0f4fdbe91a04831aa669c28078a986935bf5cb58` `fix(api): UXW2-2-R2-06 truncated is total_count greater than fetched_page`
+- `489b10e0fa80d442f7d99ab23371104b6cc3874f` `fix(sovereign): UXW2-2-R2-07 truncated identity_count never below preview`
+- `718f1910648c6ca90bdd8f91e79511695acac12a` `fix(contracts): UXW2-2-R2-07 restore truncated clustering-api.md tail`
+- `a3d98ba77c38c55d4e6698576c80e9e7ac460b34` `fix(tests): UXW2-2-R2-11 drop without mapper id sets repair_pending`
+- `05a1bd77df841dc43e09ab6ed6e48966084bcb35` `fix(api): UXW2-2-R2-09 mapper ids take the repair-batch ceiling`
+- `5fe62c00b4fceb5483ea070137e30ec477030abf` `fix(api): UXW2-2-R3-04 total is pre-filter qualifying count`
+- `28e3a2423c9de81c25ee37b18b92dace5ea63946` `fix(tests): UXW2-2-R2-05 prove bootstrap event ceiling via call log`
+
+HEAD at report time (parent of this report commit): `28e3a2423c9de81c25ee37b18b92dace5ea63946`
+
+## Undone
+
+(empty) 

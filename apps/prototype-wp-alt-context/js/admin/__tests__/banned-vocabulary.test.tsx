@@ -71,7 +71,13 @@ const BANNED_STRINGS = [
  * member rows / removal dialog). Scoped here instead of BANNED_STRINGS so the
  * Roster/ops page sweeps keep passing until their owning lanes extend the ban.
  */
-const BANNED_REVIEW_SURFACE_WORDS = [/\bclusters?\b/i, /\bidentities\b/i, /\binstances?\b/i] as const;
+const BANNED_REVIEW_SURFACE_WORDS = [
+  /\bclusters?\b/i,
+  /\bidentities\b/i,
+  /\bidentity\b/i,
+  /\binstances?\b/i,
+  /\binstance\b/i,
+] as const;
 
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -709,8 +715,12 @@ describe('banned vocabulary across js/admin pages', () => {
     ['ClusterEditForm default', 'edit-default'],
     ['PersonCommitControl loading', 'commit-loading'],
     ['PersonCommitControl error', 'commit-error'],
+    ['PersonCommitControl pending', 'commit-pending'],
     ['SuggestionCards default', 'suggestion-default'],
     ['TopClusterCard default', 'top-default'],
+    ['ReviewQueue empty', 'queue-empty'],
+    ['ReviewQueue pending', 'queue-pending'],
+    ['merge-dialog-open', 'merge-dialog-open'],
   ] as const)('%s has no banned review vocabulary', async (_label, state) => {
     const naming = await import('../pages/workbench/identity-clusters/NameFaceControl');
     const edit = await import('../pages/workbench/identity-clusters/ClusterEditForm');
@@ -718,6 +728,9 @@ describe('banned vocabulary across js/admin pages', () => {
     const commit = await import('../pages/workbench/identity-clusters/PersonCommitControl');
     const cards = await import('../pages/workbench/identity-clusters/SuggestionCards');
     const top = await import('../pages/workbench/identity-clusters/TopClusterCard');
+    const queue = await import('../pages/workbench/identity-clusters/ReviewQueue');
+    const undo = await import('../pages/workbench/identity-clusters/MergeUndoBanner');
+    const survivors = await import('../pages/workbench/identity-clusters/MergeSurvivorContext');
     const showAll = await import('../pages/workbench/identity-clusters/useShowAllClusterMembers');
 
     if (state === 'error') {
@@ -777,6 +790,41 @@ describe('banned vocabulary across js/admin pages', () => {
           onCommit={() => undefined}
           onRetry={() => undefined}
         />
+      ) : state === 'commit-pending' ? (
+        <commit.PersonCommitControl
+          clusterId="c1"
+          phase="committing"
+          errorMessage={null}
+          onCommit={() => undefined}
+          onRetry={() => undefined}
+        />
+      ) : state === 'queue-empty' || state === 'queue-pending' ? (
+        <survivors.MergeSurvivorProvider>
+          <queue.ReviewQueue
+            index={0}
+            onIndexChange={() => undefined}
+            kind="all"
+            onKindChange={() => undefined}
+            band="all"
+            onBandChange={() => undefined}
+            selectedIds={new Set()}
+            onSelectedIdsChange={() => undefined}
+          />
+        </survivors.MergeSurvivorProvider>
+      ) : state === 'merge-dialog-open' ? (
+        <undo.MergeUndoBanner
+          mergeResult={{
+            source_id: 's1',
+            source_label: null,
+            target_id: 't1',
+            target_label: null,
+            identities_moved: 1,
+            moved_identity_ids: ['i1'],
+            target_identity_count: 2,
+          }}
+          isReverting={false}
+          onUndo={() => undefined}
+        />
       ) : state === 'suggestion-default' ? (
         <cards.SuggestionCard
           suggestion={{
@@ -816,6 +864,19 @@ describe('banned vocabulary across js/admin pages', () => {
 
     render(wrap(node));
     assertNoBannedReviewWords(document.body);
+  });
+
+  it('ReviewQueue source does not say unlabeled clusters (UXW2-3-R2-06 mutant)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(
+      resolve(here, '../pages/workbench/identity-clusters/ReviewQueue.tsx'),
+      'utf8',
+    );
+    expect(source).toContain('Unable to load unlabeled faces.');
+    expect(source).not.toMatch(/Unable to load unlabeled clusters\./);
   });
 
   /**

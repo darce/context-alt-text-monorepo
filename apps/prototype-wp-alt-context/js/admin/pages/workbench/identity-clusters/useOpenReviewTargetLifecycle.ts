@@ -127,7 +127,7 @@ export const useOpenReviewTargetLifecycle = ({
     if (survivor && survivor !== retiredId) {
       pendingRetireIdRef.current = null;
       handledRef.current = survivor;
-      onAnnounce(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
+      onAnnounce(__('This group was merged — switched to the surviving group.', 'alt-context'));
       setOpenTarget(survivor);
       rebindSyncRef.current = survivor;
     }

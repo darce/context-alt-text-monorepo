@@ -29,12 +29,7 @@ import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
-import {
-  PERSON_COMMIT_FAILURE_COPY,
-  PERSON_COMMIT_SUCCESS_COPY,
-  VIEW_IN_ROSTER_COPY,
-  viewInRosterHref,
-} from './personCommitCopy';
+import { viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
@@ -83,18 +78,6 @@ import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
-
-/**
- * Filtered-empty copy — visual + AT share one string.
- * [COG-03] not a true drain when filters hide work; [A11Y-06] second channel.
- */
-const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
-
-/** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
-const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled faces.';
-
-/** Empty-queue position copy when the projection outage makes the count unmeasurable. */
-const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -407,7 +390,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       selectedIds.size !== filteredSelectedIds.length
         ? sprintf(
             /* translators: 1: total selected review items, 2: selected items within active filters */
-            __(SELECTION_SPLIT_MESSAGE, 'alt-context'),
+            __('%1$d selected — %2$d in current filter', 'alt-context'),
             selectedIds.size,
             filteredSelectedIds.length,
           )
@@ -576,26 +559,26 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // when filters hide real work, AT hears both the failure and the hint
         // that an escape hatch exists, matching the visual (both are rendered).
         if (data.isTopUnlabeledError) {
-          const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
+          const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
           setLiveMessage(
             filteredEmptyWithWork
-              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
               : errorCopy,
           );
         } else if (filteredEmptyWithWork) {
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-          setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
+          setLiveMessage(__('No items match the current filters.', 'alt-context'));
         } else if (findings.zeroEvidenceClusterCount > 0) {
           // REV2-09: the queue is genuinely empty — keep the drain confirmation
           // and name the gated clusters that still need a resync.
           setLiveMessage(
-            `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
+            `${__('All caught up — no items need review', 'alt-context')} ${gatedClusterCopy(
               findings.zeroEvidenceClusterCount,
               findings.topUnlabeledTruncated,
             )}`,
           );
         } else {
-          setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
+          setLiveMessage(__('All caught up — no items need review', 'alt-context'));
         }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
@@ -1007,7 +990,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 ? data.isTopUnlabeledError
                   ? // [A11Y] a bare em dash announces as punctuation and loses the
                     // position entirely; state the unmeasurable count explicitly.
-                    __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
+                    __('Position unavailable', 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
                     /* translators: 1: current 1-based position, 2: total */
@@ -1195,7 +1178,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__failure-message">
-              {data.personCommit.errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+              {data.personCommit.errorMessage ?? __('Could not save the name. Retry to try again.', 'alt-context')}
             </p>
             <button
               type="button"
@@ -1216,10 +1199,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__success-message">
-              {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+              {__('Name saved.', 'alt-context')}
             </p>
             <a className="acx-person-commit__roster-link" href={viewInRosterHref(data.personCommit.personUuid)}>
-              {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+              {__('View in roster →', 'alt-context')}
             </a>
           </div>
         ) : null}
@@ -1257,7 +1240,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1270,7 +1253,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               {filteredEmptyWithWork ? (
                 // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
                 <div className="acx-review-queue__empty">
-                  <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                  <p>{__('No items match the current filters.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1285,7 +1268,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ) : data.isTopUnlabeledError ? null : (
                 <>
                   <p className="acx-review-queue__empty">
-                    {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                    {__('All caught up — no items need review', 'alt-context')}
                   </p>
                   {findings.zeroEvidenceClusterCount > 0 ? (
                     <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
@@ -1325,7 +1308,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1907,7 +1890,7 @@ const CurrentCard = ({
               role="alert"
               data-testid="acx-review-queue-top-unlabeled-error"
             >
-              <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+              <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
               <button type="button" className="button" onClick={onRetryTopUnlabeled}>
                 {__('Retry', 'alt-context')}
               </button>

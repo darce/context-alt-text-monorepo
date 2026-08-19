@@ -821,7 +821,7 @@ describe('IdentityClusterList', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'That cluster is already named Existing Label - nothing to merge.',
+        'That group is already named Existing Label - nothing to merge.',
       );
     });
   });

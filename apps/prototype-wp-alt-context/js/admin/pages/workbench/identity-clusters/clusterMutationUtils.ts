@@ -23,7 +23,7 @@ export const isInvalidTargetClusterError = (message: string): boolean => {
 };
 
 export const getInvalidTargetClusterMessage = (label: string): string =>
-  sprintf(__('That cluster is already named %s - nothing to merge.', 'alt-context'), label);
+  sprintf(__('That group is already named %s - nothing to merge.', 'alt-context'), label);
 
 export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
   if (isAuthExpiredError(error)) {

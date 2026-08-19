@@ -66,7 +66,7 @@
     },
     "candidates": {
       "type": "array",
-      "description": "Server-ranked labelled clusters. Python top_k is cluster-grain. PHP fetches the Python max window (50), collapses to one row per roster_entry_id (max similarity wins, keep that row's band + name), then ranks committable rows (roster_entry_id non-null) before uncommittable ones, then similarity DESC, then cluster_id ASC, then slices people-grain top_k so a person split across N clusters cannot starve later people. Clients must render in payload order and must not re-sort client-side.",
+      "description": "Server-ranked labelled clusters. Python top_k is cluster-grain. PHP fetches the Python max window (50), collapses to one row per roster_entry_id (max similarity wins, keep that row's band + name), then ranks committable rows (roster_entry_id non-null) before uncommittable ones, then similarity DESC, then cluster_id ASC, then slices people-grain top_k so a person split across N clusters cannot starve later people. Browser/SPA clients must render in payload order and must not re-sort. The PHP roster-entry mapping proxy is required to perform that committable-first re-rank; it is a PHP-layer contract obligation, not a client-side sort.",
       "items": {
         "type": "object",
         "required": ["cluster_id", "name", "similarity", "band"],

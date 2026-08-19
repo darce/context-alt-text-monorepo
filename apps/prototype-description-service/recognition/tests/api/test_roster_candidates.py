@@ -402,5 +402,12 @@ def test_schema_and_contract_agree_on_php_candidate_ordering() -> None:
         / "recognition-clustering.md"
     )
     text = contract_path.read_text(encoding="utf-8")
-    php_block = text.split("PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`", 1)[1]
+    heading = "### GET /recognition/clusters/{cluster_id}/roster-candidates"
+    assert heading in text
+    python_body, php_block = text.split(heading, 1)[1].split(
+        "PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`", 1
+    )
+    candidates_line = next(line for line in python_body.splitlines() if "`candidates[]`" in line)
+    assert "Python cluster-grain" in candidates_line
+    assert "people-grain" in php_block
     assert "must not re-sort" in php_block and "client-side" in php_block

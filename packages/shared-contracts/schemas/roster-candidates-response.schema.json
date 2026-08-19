@@ -66,7 +66,7 @@
     },
     "candidates": {
       "type": "array",
-      "description": "Server-ranked labelled clusters. Python top_k is cluster-grain. PHP fetches the Python max window (50), collapses to one row per roster_entry_id (max similarity wins, keep that row's band + name), re-sorts similarity DESC then cluster_id ASC, then slices people-grain top_k so a person split across N clusters cannot starve later people. roster_entry_id null rows are uncommittable and kept flagged.",
+      "description": "Server-ranked labelled clusters. Python top_k is cluster-grain. PHP fetches the Python max window (50), collapses to one row per roster_entry_id (max similarity wins, keep that row's band + name), then ranks committable rows (roster_entry_id non-null) before uncommittable ones, then similarity DESC, then cluster_id ASC, then slices people-grain top_k so a person split across N clusters cannot starve later people. Clients must render in payload order and must not re-sort client-side.",
       "items": {
         "type": "object",
         "required": ["cluster_id", "name", "similarity", "band"],

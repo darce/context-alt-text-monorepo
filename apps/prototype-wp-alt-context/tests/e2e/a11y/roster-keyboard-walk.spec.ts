@@ -110,7 +110,7 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
     if (!response.ok) {
       return null;
     }
-    const payload = (await response.json()) as { clusters?: Array<{ id?: string }> };
+    const payload = (await response.json()) as { clusters?: { id?: string }[] };
     return payload.clusters?.[0]?.id ?? null;
   });
 
@@ -147,7 +147,7 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
     await page.keyboard.press('Tab');
     const id = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null;
-      if (!el || !el.closest('.acx-cluster-drawer')) {
+      if (!el?.closest('.acx-cluster-drawer')) {
         return null;
       }
       return el.tagName + (el.getAttribute('aria-label') ?? el.textContent ?? '').slice(0, 40);

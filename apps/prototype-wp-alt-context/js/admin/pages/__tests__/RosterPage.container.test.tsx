@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
@@ -565,6 +565,31 @@ describe('RosterPage route container (E21-9 single surface)', () => {
     expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
     expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /Move to/i })).toHaveLength(0);
+  });
+
+  it('does not fire a reassign mutation when a face is dragged on the boarded-up cluster= shim', () => {
+    mockedUseClusterDragDrop.mockReturnValue({
+      ...dragDropState,
+      dragPayload: { faceId: 'identity-1', fromClusterId: 'cluster-1' },
+      isDragging: true,
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/?cluster=cluster-1']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
+
+    const face = screen.getByRole('figure', { name: /Face from media 10/i });
+    fireEvent.dragStart(face);
+    const dropzone = screen.queryByText('Drop faces here to remove them from this face group.');
+    if (dropzone) {
+      fireEvent.drop(dropzone);
+    }
+
+    expect(clusterActionState.reassignMutation.mutate).not.toHaveBeenCalled();
   });
 
   // UXW2-4: rail-era tests (bulk merge/dismiss, select-all, truncation notice,

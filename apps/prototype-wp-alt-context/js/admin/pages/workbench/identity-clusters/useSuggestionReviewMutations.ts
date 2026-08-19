@@ -1068,7 +1068,6 @@ export const useSuggestionReviewMutations = ({
 
   return {
     hold,
-    holdAnnounce: HOLD_STATUS_COPY,
     isHoldActive,
     isCommitting,
     isCardActionsDisabled,

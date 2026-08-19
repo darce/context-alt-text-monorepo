@@ -103,7 +103,7 @@ Both mutants reverted. `ReviewQueue.tsx` `git diff` empty after restore.
 ## Stamped lines (sed after last code commit)
 
 - `ReviewQueue.tsx:1536-1539` — COMMITTING / HOLDING `__()` literals still in place.
-- `useSuggestionReviewMutations.ts:37-41` — comments now say tests pin the gettext literals; hook announce still uses `HOLD_STATUS_COPY` (`:1070`).
+- `useSuggestionReviewMutations.ts:37-41` — comments now say tests pin the gettext literals. The hook-returned announce string was a dead HOLDING-only copy and was not consumed by any renderer.
 - `ReviewQueue.test.tsx:45` — imports `HOLD_COMMITTING_STATUS_COPY`.
 - `ReviewQueue.test.tsx:3597` / `:3616` — HOLDING pin unchanged (`toHaveTextContent(HOLD_STATUS_COPY)`).
 - `ReviewQueue.test.tsx:3635` / `:3650-3651` — COMMITTING pin (`HOLD_COMMITTING_STATUS_COPY`, `not.toHaveTextContent('Undo')`).

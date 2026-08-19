@@ -20,6 +20,44 @@ class ClustersReadRepositoryTest extends TestCase
         $this->repository = new ClustersReadRepository('wp_acx_clusters');
     }
 
+    public function testListLabelsExcludesReservedAndUnboundLabels(): void
+    {
+        global $wpdb;
+
+        $tenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'c-auto-dash',
+                'tenant_id' => $tenant,
+                'label' => 'cluster-abcdef01',
+                'person_id' => 1,
+            ],
+            [
+                'cluster_uuid' => 'c-auto-under',
+                'tenant_id' => $tenant,
+                'label' => 'cluster_x',
+                'person_id' => 2,
+            ],
+            [
+                'cluster_uuid' => 'c-unbound',
+                'tenant_id' => $tenant,
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+            [
+                'cluster_uuid' => 'c-bound',
+                'tenant_id' => $tenant,
+                'label' => 'Ada Lovelace',
+                'person_id' => 9,
+            ],
+        ];
+
+        $labels = $this->repository->list_labels($tenant);
+        $names = array_map(static fn(array $row): string => (string) ($row['label'] ?? ''), $labels);
+
+        $this->assertSame(['Ada Lovelace'], $names);
+    }
+
     public function testListForTenantJoinsPersonsTable(): void
     {
         global $wpdb;
@@ -131,7 +169,8 @@ class ClustersReadRepositoryTest extends TestCase
 
         $this->assertCount(1, $wpdb->queries);
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
-        $this->assertStringContainsString("c.label IS NOT NULL AND c.label != ''", $wpdb->queries[0]);
+        $this->assertStringContainsString('THEN p.name', $wpdb->queries[0]);
+        $this->assertStringNotContainsString("c.label IS NOT NULL AND c.label != ''", $wpdb->queries[0]);
         $this->assertStringContainsString('THEN p.name', $wpdb->queries[0]);
     }
 
@@ -176,7 +215,8 @@ class ClustersReadRepositoryTest extends TestCase
 
         $this->assertCount(1, $wpdb->queries);
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
-        $this->assertStringContainsString("c.label IS NOT NULL AND c.label != '' AND c.label LIKE", $wpdb->queries[0]);
+        $this->assertStringContainsString('THEN p.name', $wpdb->queries[0]);
+        $this->assertStringContainsString("c.label LIKE '%Alice%'", $wpdb->queries[0]);
     }
 
     public function testListTopUnlabeledIncludesPersonUuid(): void

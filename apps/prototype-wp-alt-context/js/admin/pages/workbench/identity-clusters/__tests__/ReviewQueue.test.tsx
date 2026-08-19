@@ -178,6 +178,7 @@ interface HarnessProps {
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
   onReview?: (clusterId: string) => void;
+  onLabel?: (clusterId: string) => void;
   /** Expose selection for M2 asserts (optional). */
   selectionRef?: React.MutableRefObject<Set<string>>;
 }
@@ -189,6 +190,7 @@ const ReviewQueueHarness = ({
   emptyStateAnchorRef,
   queueRef,
   onReview,
+  onLabel,
   selectionRef,
 }: HarnessProps): React.JSX.Element => {
   const [index, setIndex] = React.useState(initialIndex);
@@ -211,6 +213,7 @@ const ReviewQueueHarness = ({
       onSelectedIdsChange={setSelectedIds}
       emptyStateAnchorRef={emptyStateAnchorRef}
       onReview={onReview}
+      onLabel={onLabel}
     />
   );
 };
@@ -1735,6 +1738,36 @@ describe('ReviewQueue', () => {
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName('Name suggestion');
     expect(screen.queryByText(/Name suggestion \d+ of \d+/)).toBeNull();
+  });
+
+  it('curate control on a name card reports the cluster id upward (UXW2-3-R3-01)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const onLabel = vi.fn();
+    renderQueue({ onLabel });
+
+    await screen.findByText(/Suggested name:/);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
+    expect(onLabel).toHaveBeenCalledWith('cluster-name-1');
   });
 
   it('shows person-commit as primary on NAME cards with disclosure', async () => {

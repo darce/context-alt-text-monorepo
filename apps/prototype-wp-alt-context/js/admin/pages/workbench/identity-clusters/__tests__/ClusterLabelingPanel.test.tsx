@@ -1,7 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -1125,13 +1121,11 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
 
-  it('ReviewQueue and ScanTab drop dead onLabel / open_label (UXW2-3-R2-07)', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const queue = readFileSync(path.resolve(here, '../ReviewQueue.tsx'), 'utf8');
-    const scan = readFileSync(path.resolve(here, '../../ScanTabContent.tsx'), 'utf8');
-    expect(queue).not.toMatch(/onLabel:\s*_onLabel/);
-    expect(scan).not.toMatch(/type:\s*'open_label'/);
-  });
+  // UXW2-3-R3-01 / R3-13: the R2-07 absence grep (no onLabel / open_label) was a
+  // lock, not a pin. Replacement behaviour: PersonCommitControl "Merge or split
+  // this group" → ReviewQueue onLabel → ScanTabContent dispatch open_label.
+  // See PersonCommitControl.test.tsx (curate-group), ReviewQueue.test.tsx
+  // (name card reports cluster id), ScanTabContent.labelPanelReachable.test.tsx.
 
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
     let release: (() => void) | undefined;

@@ -125,6 +125,8 @@ export interface ReviewQueueProps {
   selectedIds: ReadonlySet<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
   onReview?: (clusterId: string) => void;
+  /** Opens the labeling panel for merge / split / correct-group. */
+  onLabel?: (clusterId: string) => void;
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   /**
@@ -242,6 +244,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       selectedIds,
       onSelectedIdsChange,
       onReview,
+      onLabel,
       emptyStateAnchorRef,
       onCardPrimaryPresenceChange,
     },
@@ -1355,6 +1358,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               personCommitPending={data.personCommitPending}
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
+              onLabel={onLabel}
               onOpenOriginal={(target) => setLightbox(target)}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
@@ -1441,6 +1445,7 @@ interface CurrentCardProps {
   /** BR-48: disable person-commit while bulk hold/sequence is active. */
   isBulkActive: boolean;
   onReview?: (clusterId: string) => void;
+  onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
   clearAdvanceFocus: () => void;
@@ -1577,6 +1582,7 @@ const CurrentCard = ({
   personCommitPending,
   isBulkActive,
   onReview,
+  onLabel,
   onOpenOriginal,
   markAdvanceFocus,
   clearAdvanceFocus,
@@ -1679,6 +1685,7 @@ const CurrentCard = ({
         }
         suggestedCreateName={options?.suggestedCreateName}
         committedPersonUuid={personCommit.personUuid}
+        onCurateGroup={onLabel}
         onCommit={(request) => {
           // BR-27: person-commit success may remove the NAME card — arm advance focus.
           void schedulePersonCommit(request).then((result) => {

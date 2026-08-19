@@ -45,6 +45,8 @@ export interface PersonCommitControlProps {
    * state as the card advances, so no marker is emitted there.
    */
   accentPrimary?: boolean;
+  /** Opens the labeling panel so the operator can merge / split / correct the group. */
+  onCurateGroup?: (clusterId: string) => void;
 }
 
 export const PersonCommitControl = ({
@@ -58,6 +60,7 @@ export const PersonCommitControl = ({
   suggestedCreateName = null,
   committedPersonUuid = null,
   accentPrimary = false,
+  onCurateGroup,
 }: PersonCommitControlProps): React.JSX.Element => {
   const [draft, setDraft] = React.useState('');
   /** BR-59: reserved create-name rejection (inline, same role=alert pattern as commit failure). */
@@ -224,6 +227,17 @@ export const PersonCommitControl = ({
             {__('Retry', 'alt-context')}
           </button>
         </div>
+      ) : null}
+
+      {onCurateGroup ? (
+        <button
+          type="button"
+          className="button button-link acx-person-commit__curate"
+          onClick={() => onCurateGroup(clusterId)}
+          disabled={isBusy}
+        >
+          {__('Merge or split this group', 'alt-context')}
+        </button>
       ) : null}
     </div>
   );

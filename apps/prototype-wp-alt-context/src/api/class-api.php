@@ -588,8 +588,19 @@ class Api {
 
 		$table_name      = $wpdb->prefix . 'acx_persons';
 		$normalized_name = PersonResolutionService::normalize_name( $name );
-		$existing        = $wpdb->get_var(
-			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_name, $normalized_name )
+
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$existing = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+				$table_name,
+				$normalized_name,
+				$tenant_id
+			)
 		);
 		if ( $existing ) {
 			return new WP_Error( 'acx_person_exists', __( 'A person with this name already exists.', 'alt-context' ), array( 'status' => 409 ) );
@@ -600,12 +611,6 @@ class Api {
 
 		if ( ! $this->begin_database_transaction() ) {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
-		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
 		$result = $wpdb->insert(

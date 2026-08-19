@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useOverlayParam } from '../useOverlayParam';
 import { usePanesParam } from '../usePanesParam';
-import { resetPendingSearchWritesForTests } from '../pendingSearchWrites';
+import {
+  queuePendingPage,
+  queuePendingQueueState,
+  resetPendingSearchWritesForTests,
+} from '../pendingSearchWrites';
 
 const wrapperForUrl =
   (url: string) =>
@@ -24,6 +28,11 @@ const useSearchString = (): string => {
 };
 
 describe('usePanesParam', () => {
+  beforeEach(() => {
+    queuePendingQueueState({ kind: 'assignment', band: 'all', index: 0 }, null);
+    queuePendingPage(2, null);
+  });
+
   beforeEach(() => {
     resetPendingSearchWritesForTests();
   });
@@ -64,12 +73,18 @@ describe('usePanesParam', () => {
     });
     expect(result.current.panes).toBe('library-collapsed');
     expect(result.current.search).toContain('panes=library-collapsed');
+    expect(result.current.search).toBe('panes=library-collapsed');
+    expect(result.current.search).not.toContain('rq=');
+    expect(result.current.search).not.toContain('p=');
 
     act(() => {
       result.current.setPanes('both');
     });
     expect(result.current.panes).toBe('both');
     expect(result.current.search).not.toContain('panes=');
+    expect(result.current.search).toBe('');
+    expect(result.current.search).not.toContain('rq=');
+    expect(result.current.search).not.toContain('p=');
   });
 
   // [NAV-11] panes and panel restore independently

@@ -82,7 +82,7 @@ class MediaIdentitiesControllerTest extends TestCase
                     [
                         'identity_uuid' => 'unbound',
                         'attachment_id' => 22,
-                        'cluster_label' => null,
+                        'cluster_label' => 'Tory Guzman',
                         'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
                     ],
                     [

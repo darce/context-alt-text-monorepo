@@ -128,4 +128,4 @@ Baseline at HEAD was `OK (1810 tests, 8703 assertions)`. +16 tests, +60 assertio
 - `fix(tests): UXW2-4 seed tenant rows and keep list SQL literal` (also removed root `REPORT.md`)
 - this report commit
 
-lane SHA (non-portable): `c4bf5f26aa54fbcdee3084902ecb6c62b6d13d77`.
+lane SHA (non-portable): `4e2e7f73e63e96f17b1b5bd863bc98c247fb415b`.

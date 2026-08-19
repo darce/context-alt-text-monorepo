@@ -319,20 +319,19 @@ class PersonCrudTest extends TestCase
         $wpdb->tableRows['wp_acx_persons'] = [
             [
                 'id' => 7,
-                'tenant_id' => $currentTenant,
-                'name' => 'Alice',
-                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-                'local_revision' => 1,
-            ],
-            [
-                'id' => 7,
                 'tenant_id' => 'other-tenant',
                 'name' => 'Bob',
                 'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
                 'local_revision' => 1,
             ],
+            [
+                'id' => 7,
+                'tenant_id' => $currentTenant,
+                'name' => 'Alice',
+                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'local_revision' => 1,
+            ],
         ];
-        $wpdb->mockRow = $wpdb->tableRows['wp_acx_persons'][0];
 
         $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/7');
         $request->set_param('id', 7);
@@ -345,6 +344,32 @@ class PersonCrudTest extends TestCase
         $this->assertSame('Bob', $remaining[0]['name']);
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
         $this->assertStringContainsString('tenant_id =', $deleteQuery);
+        $this->assertSame('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $this->latestOutboxPayload()['person_uuid'] ?? null);
+    }
+
+    public function testDeletePersonSurfacesDatabaseFailureAsServerError(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 1,
+                'tenant_id' => self::currentTenantId(),
+                'name' => 'Broken',
+                'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+                'local_revision' => 1,
+            ],
+        ];
+        $wpdb->deleteResultsByTable['wp_acx_persons'] = false;
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertSame(500, $response->get_error_data()['status']);
     }
 
     public function testUpdatePersonDoesNotTouchOtherTenantRow(): void

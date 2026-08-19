@@ -151,6 +151,11 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
   });
 
+  it('typed Hopper (mid-label) shows Grace Hopper (UXW2-3-R1-07 includes)', () => {
+    renderControl({ value: 'Hopper' });
+    expect(screen.getByRole('option', { name: /Grace Hopper/ })).toBeInTheDocument();
+  });
+
   it('typed Zed shows Zed Offslice; typed Gra does not (UXW2-3-R2-01)', () => {
     const options = [
       ...Array.from({ length: 6 }, (_, index) => person(index + 1, `Suggested ${index}`)),
@@ -197,7 +202,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Gra');
     await user.keyboard('{ArrowDown}');
-    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    await user.click(screen.getByRole('button', { name: 'Create person "Gra"' }));
     expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 2, name: 'Grace Hopper' });
   });
 
@@ -420,6 +425,47 @@ describe('NameFaceControl pending Enter (UXW2-3-R1-04)', () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole('combobox'), '{Enter}');
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
+  it('exact roster match previews Save as the option label', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Ada Lovelace');
+    expect(screen.getByRole('button', { name: 'Save as Ada Lovelace' })).toBeInTheDocument();
+  });
+
+  it('novel name previews Create person with the typed value', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Pat Rivera');
+    expect(screen.getByRole('button', { name: 'Create person "Pat Rivera"' })).toBeInTheDocument();
+  });
+
+  it('two same-fold entries keep commitLabel and do not claim a bind', () => {
+    const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
+    renderControl({ options, value: 'Alex Carter' });
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create person/ })).not.toBeInTheDocument();
+  });
+
+  it('empty value keeps the commitLabel prop', () => {
+    renderControl({ value: '' });
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+  });
+
+  it('pendingLabel wins over the preview while isPending', () => {
+    renderControl({
+      value: 'Ada Lovelace',
+      isPending: true,
+      pendingLabel: 'Saving name…',
+    });
+    expect(screen.getByRole('button', { name: 'Saving name…' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
   });
 });
 

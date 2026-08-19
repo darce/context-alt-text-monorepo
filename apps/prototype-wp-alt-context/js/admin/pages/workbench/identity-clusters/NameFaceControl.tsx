@@ -269,7 +269,31 @@ export const NameFaceControl = ({
     return () => window.clearTimeout(timer);
   }, [matchTotal, isPending, isLoading]);
 
-  const commitButtonLabel = isPending && pendingLabel ? pendingLabel : commitLabel;
+  const commitResolution = React.useMemo(
+    () => resolveNameFaceInput(options, value),
+    [options, value],
+  );
+
+  const commitButtonLabel = React.useMemo(() => {
+    if (isPending && pendingLabel) {
+      return pendingLabel;
+    }
+    if (commitResolution?.kind === 'roster') {
+      return sprintf(
+        /* translators: %s: existing roster person label the commit will bind */
+        __('Save as %s', 'alt-context'),
+        commitResolution.name,
+      );
+    }
+    if (commitResolution?.kind === 'create') {
+      return sprintf(
+        /* translators: %s: typed name the commit will create as a new person */
+        __('Create person "%s"', 'alt-context'),
+        commitResolution.name,
+      );
+    }
+    return commitLabel;
+  }, [isPending, pendingLabel, commitResolution, commitLabel]);
 
   const ambiguousMatches = React.useMemo(
     () => (value.trim() ? personMatchesFor(options, value) : []),

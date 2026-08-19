@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries } from '../../../../api/rosterApi';
 import { PersonCommitControl } from '../PersonCommitControl';
-import { MODEL_OUTPUT_DISCLOSURE, PERSON_COMMIT_CONFIRM_COPY } from '../personCommitCopy';
+import { MODEL_OUTPUT_DISCLOSURE } from '../personCommitCopy';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -119,7 +119,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
 
     const input = screen.getByRole('combobox', { name: INPUT_NAME });
     await user.type(input, 'Pat Rivera');
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await user.click(screen.getByRole('button', { name: 'Create person "Pat Rivera"' }));
 
     expect(onCommit).toHaveBeenCalledWith({
       clusterId: 'cluster-1',
@@ -213,7 +213,7 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('combobox', { name: INPUT_NAME });
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await user.click(screen.getByRole('button', { name: 'Create person "cluster-7"' }));
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent(RESERVED_MESSAGE);
@@ -224,7 +224,7 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('combobox', { name: INPUT_NAME });
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await user.click(screen.getByRole('button', { name: 'Create person "cluster-7"' }));
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent(RESERVED_MESSAGE);
@@ -235,7 +235,7 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('combobox', { name: INPUT_NAME });
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await user.click(screen.getByRole('button', { name: 'Create person "Pat Rivera"' }));
 
     expect(onCommit).toHaveBeenCalledWith({
       clusterId: 'cluster-1',
@@ -249,7 +249,7 @@ describe('PersonCommitControl reserved create-name gate (BR-59)', () => {
     const user = userEvent.setup();
 
     const input = await screen.findByRole('combobox', { name: INPUT_NAME });
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await user.click(screen.getByRole('button', { name: 'Create person "cluster-7"' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(RESERVED_MESSAGE);
 
     await user.clear(input);

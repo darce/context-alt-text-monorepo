@@ -1698,3 +1698,30 @@ def test_cli_draw_cannot_read_manifest_exits_2(tmp_path, capsys, monkeypatch):
     assert "cannot read manifest:" in captured.err
     assert str(_SEED_MANIFEST) in captured.err
     assert not out.exists()
+
+
+def test_cli_draw_utf8_bom_exposure_file_strips_bom(tmp_path):
+    # VLM6-RV10-L-01 / EVAL-10: a UTF-8 BOM must not seal into the note.
+    # MUT[utf8_not_sig]: encoding="utf-8" -> sealed note is "\ufeffcafé note".
+    exposure = tmp_path / "notes.txt"
+    exposure.write_bytes(b"\xef\xbb\xbfcaf\xc3\xa9 note\n")
+    out, argv = _draw_with_exposure_file(tmp_path, exposure)
+    assert main(argv) is None
+    sealed = json.loads(out.read_text(encoding="utf-8"))
+    assert sealed["pre_split_exposure"] == ["caf\u00e9 note"]
+
+
+def test_cli_check_raw_utf8_artifact_pins_read_encoding(tmp_path, monkeypatch):
+    # VLM6-RV10-L-02 / EVAL-10: --check must decode a raw-UTF-8 sealed
+    # artifact (ensure_ascii=False, non-ASCII exposure) as UTF-8 even when
+    # the host default is ISO-8859-1. MUT[drop_check_read_pin]: bare
+    # read_text() -> SystemExit 1 with "seal digest mismatch".
+    monkeypatch.setattr(io, "text_encoding", _latin1_when_unspecified)
+    note = "caf\u00e9 note"
+    artifact = _draw_golden(
+        source_manifest_sha256=hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest(),
+        pre_split_exposure=[note],
+    )
+    out = tmp_path / "split.json"
+    out.write_bytes((json.dumps(artifact, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"))
+    assert main(_check_cli_args(out, exposure_notes=[note])) is None

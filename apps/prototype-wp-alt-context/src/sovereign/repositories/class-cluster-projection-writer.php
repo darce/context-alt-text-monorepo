@@ -33,7 +33,7 @@ class ClusterProjectionWriter {
 		$this->table_name = $table_name;
 	}
 
-	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int|\WP_Error {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -72,7 +72,7 @@ class ClusterProjectionWriter {
 				}
 			);
 			if ( is_wp_error( $resolved ) ) {
-				return 0;
+				return $resolved;
 			}
 			$normalized_label = trim( (string) $resolved['name'] );
 		}

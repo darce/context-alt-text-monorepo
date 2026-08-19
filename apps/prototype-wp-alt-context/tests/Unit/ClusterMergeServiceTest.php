@@ -138,7 +138,7 @@ class ClusterMergeServiceTest extends TestCase
         global $wpdb;
 
         $repository = new class() extends ClusterMutationsRepositorySpy {
-            public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
+            public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int|\WP_Error
             {
                 $this->createdLocalClusterId = $cluster_uuid;
                 return (new ClusterProjectionWriter('wp_acx_clusters'))

@@ -1,12 +1,12 @@
 # UXW2-5 fix lane r5 report
 
-Close the board: ten senior-review findings, zero high. TDD. 4xx no longer maps as candidates; max `top_k` is a live 200; schema/docs/tests tell the same story.
+Close the board: ten senior-review findings, zero high. TDD. 4xx no longer maps as candidates; max `top_k` is 50 (`MAX_ROSTER_CANDIDATES_TOP_K` / PHP `ROSTER_CANDIDATES_PYTHON_WINDOW`); schema/docs/tests tell the same story. The r5 “live 200” was R5-02’s HTTP status, transcribed as if it were the cap.
 
 Final HEAD: recorded by the integrator in the canonical worktree after transplant.
 
 ## GREEN (this checkout)
 
-- PHP `composer test`: `OK, but there were issues! Tests: 1782, Assertions: 8660, PHPUnit Warnings: 137.` Baseline `Tests: 1781, Assertions: 8652, PHPUnit Warnings: 137.` +1 test / +8 assertions. Zero NEW failures. The 137 warnings are pre-existing AppleDouble `._*` fixtures; `composer test` still exits 1 on that warning set.
+- PHP `composer test`: `OK (1785 tests, 8678 assertions)`. Exit 0. Zero warnings.
 - PY targeted (`recognition/tests/unit/test_roster_candidates.py` + `recognition/tests/api/test_roster_candidates.py`): `30 passed in 6.47s` (baseline `29 passed in 4.92s`).
 - PY covering `suggestions.py` (targeted pair + `recognition/tests/api/test_api_suggestions.py`): `60 passed in 28.20s`.
 - PHPCS `composer cs-check`: exit 0, no findings.
@@ -59,4 +59,3 @@ Subjects above each match exactly one commit via `git log --format=%H --fixed-st
 - The candidates[] bullet was guarded as `Python cluster-grain` (the token actually on `recognition-clustering.md:560`), not by writing `people-grain` onto that line. `people-grain` is asserted in the PHP passthrough block.
 - MCP handoff not written: this throwaway lane has no workbay MCP tools.
 - `js/**` and ranking behaviour untouched (out of scope).
-- Pre-existing AppleDouble `._*` PHPUnit warnings (137); `composer test` exits 1 on that warning set. Not introduced here.

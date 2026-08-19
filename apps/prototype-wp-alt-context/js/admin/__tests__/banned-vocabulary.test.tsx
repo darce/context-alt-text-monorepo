@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -242,6 +242,7 @@ vi.mock('../api/config', () => ({
     endpoints: {},
   }),
   resetConfigCache: vi.fn(),
+  isDevMode: () => false,
 }));
 
 // Workbench state fans out over four provider modules since E21-11 S2 — stub each
@@ -558,6 +559,11 @@ const ACCESSIBLE_ATTRS = ['aria-label', 'title', 'alt', 'placeholder', 'aria-des
 
 const collectReviewSurfaceText = (root: HTMLElement = document.body): string => {
   const chunks = [root.textContent ?? ''];
+  // Join per-element text so adjacent controls cannot glue "ClusterSplit" and
+  // hide a whole-word hit from \\bclusters?\\b (UXW2-3-R3-09 TEST-15).
+  root.querySelectorAll('button, p, h1, h2, h3, h4, span, label, li, [role]').forEach((node) => {
+    chunks.push(node.textContent ?? '');
+  });
   for (const attr of ACCESSIBLE_ATTRS) {
     root.querySelectorAll(`[${attr}]`).forEach((node) => {
       chunks.push(node.getAttribute(attr) ?? '');
@@ -721,6 +727,8 @@ describe('banned vocabulary across js/admin pages', () => {
     ['ReviewQueue empty', 'queue-empty'],
     ['ReviewQueue pending', 'queue-pending'],
     ['merge-dialog-open', 'merge-dialog-open'],
+    ['cluster-actions', 'cluster-actions'],
+    ['identity-cluster-item', 'identity-cluster-item'],
   ] as const)('%s has no banned review vocabulary', async (_label, state) => {
     const naming = await import('../pages/workbench/identity-clusters/NameFaceControl');
     const edit = await import('../pages/workbench/identity-clusters/ClusterEditForm');
@@ -732,6 +740,8 @@ describe('banned vocabulary across js/admin pages', () => {
     const undo = await import('../pages/workbench/identity-clusters/MergeUndoBanner');
     const survivors = await import('../pages/workbench/identity-clusters/MergeSurvivorContext');
     const showAll = await import('../pages/workbench/identity-clusters/useShowAllClusterMembers');
+    const actions = await import('../pages/workbench/identity-clusters/ClusterActions');
+    const clusterItem = await import('../pages/workbench/identity-clusters/IdentityClusterItem');
 
     if (state === 'error') {
       vi.mocked(showAll.useShowAllClusterMembers).mockReturnValueOnce({
@@ -825,6 +835,73 @@ describe('banned vocabulary across js/admin pages', () => {
           isReverting={false}
           onUndo={() => undefined}
         />
+      ) : state === 'cluster-actions' ? (
+        <actions.ClusterActions
+          canEdit
+          canSearchForMatch={false}
+          hasLabel
+          isAutoLabel={false}
+          canSplit
+          isPending={false}
+          onEdit={() => undefined}
+          onWrongPerson={() => undefined}
+          onSplit={() => undefined}
+        />
+      ) : state === 'identity-cluster-item' ? (
+        <>
+          <clusterItem.IdentityClusterItem
+            cluster={{
+              key: 'singleton',
+              clusterId: null,
+              label: null,
+              isAutoLabel: false,
+              clusteringPending: false,
+              members: [
+                {
+                  identity_id: 'id-unlabeled',
+                  representative_id: 'rep-unlabeled',
+                  media_id: 1,
+                  cluster_id: null,
+                  cluster_label: null,
+                  is_auto_label: false,
+                  is_pinned: false,
+                  bbox: { x: 0, y: 0, width: 1, height: 1 },
+                  confidence: 1,
+                  similarity: 1,
+                  detected_at: '',
+                },
+              ],
+            }}
+            canLabel
+            canMutate
+          />
+          <clusterItem.IdentityClusterItem
+            cluster={{
+              key: 'editable',
+              clusterId: 'editable',
+              label: 'bob',
+              isAutoLabel: false,
+              clusteringPending: false,
+              members: [
+                {
+                  identity_id: 'id-1',
+                  representative_id: 'rep-1',
+                  media_id: 1,
+                  cluster_id: 'editable',
+                  cluster_label: 'bob',
+                  is_auto_label: false,
+                  is_pinned: false,
+                  bbox: { x: 0, y: 0, width: 1, height: 1 },
+                  confidence: 1,
+                  similarity: 1,
+                  detected_at: '',
+                },
+              ],
+            }}
+            canLabel
+            canMutate
+          />
+        </>
       ) : state === 'suggestion-default' ? (
         <cards.SuggestionCard
           suggestion={{
@@ -863,6 +940,13 @@ describe('banned vocabulary across js/admin pages', () => {
       );
 
     render(wrap(node));
+    if (state === 'identity-cluster-item') {
+      const remove = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Remove from group',
+      );
+      expect(remove, 'identity-cluster-item fixture must render the remove control').toBeTruthy();
+      fireEvent.click(remove as HTMLButtonElement);
+    }
     assertNoBannedReviewWords(document.body);
   });
 

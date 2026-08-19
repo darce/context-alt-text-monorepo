@@ -70,10 +70,10 @@ export const IdentityClusterItem = ({
   const canEdit = canLabel && Boolean(editableClusterId) && !cluster.clusteringPending;
   const canSearchForMatch = canLabel && isSingleton && !cluster.clusteringPending;
 
-  // Show "Processing..." when clustering hasn't run yet, otherwise "Unlabeled identity"
+  // Show "Processing..." when clustering hasn't run yet, otherwise "Unnamed person"
   const labelText = cluster.clusteringPending
     ? __('Processing...', 'alt-context')
-    : (derivedLabel ?? __('Unlabeled identity', 'alt-context'));
+    : (derivedLabel ?? __('Unnamed person', 'alt-context'));
 
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
@@ -408,9 +408,9 @@ export const IdentityClusterItem = ({
           <DialogOverlay />
           <DialogContent>
             <div className="acx-queue-modal">
-              <DialogTitle>{__('Remove member from cluster', 'alt-context')}</DialogTitle>
+              <DialogTitle>{__('Remove this face from the group', 'alt-context')}</DialogTitle>
               <DialogDescription>
-                {__('Are you sure you want to remove this from the cluster?', 'alt-context')}
+                {__('Remove this face from the group?', 'alt-context')}
               </DialogDescription>
               <div className="acx-queue-modal__actions">
                 <button type="button" className="button" onClick={handleCancelWrongPerson}>

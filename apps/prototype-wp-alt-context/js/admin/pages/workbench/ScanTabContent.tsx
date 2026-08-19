@@ -221,6 +221,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
                   dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(__('Name saved. Back to review suggestions.', 'alt-context'));
+                  focusQueueRoot();
                 }}
               />
             ) : reviewClusterId !== null ? (

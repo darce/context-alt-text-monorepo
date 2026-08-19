@@ -9,7 +9,6 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse, MergeClusterResponse } from '../../../api/recognition';
-import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useClusterActionMutations } from './useClusterActionMutations';
 import { useClusterLabelMutations } from './useClusterLabelMutations';
 
@@ -51,9 +50,12 @@ export const useClusterMutations = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-    // Refresh assignment projection after curation (labels may enable/disable suggestions)
-    void invalidateSuggestionProjection(queryClient);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.suggestions.projection.all,
+    });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.suggestions.mergePending(),
+    });
   }, [queryClient]);
 
   const cancelIdentityQueries = useCallback(

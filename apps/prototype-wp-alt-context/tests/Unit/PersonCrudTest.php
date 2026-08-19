@@ -327,7 +327,10 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
         $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
         $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
-        $this->assertStringContainsString('c.identity_count >= 2', $sql);
+        $this->assertStringContainsString('FROM `wp_acx_identity_members` m', $sql);
+        $this->assertStringContainsString('m.cluster_uuid = c.cluster_uuid', $sql);
+        $this->assertStringContainsString(') >= 2', $sql);
+        $this->assertStringNotContainsString('c.identity_count >= 2', $sql);
     }
 
     public function testDeletePersonSingletonIsCountedByTopUnlabeledSingletons(): void
@@ -365,7 +368,10 @@ class PersonCrudTest extends TestCase
             ->count_top_unlabeled_singletons(self::currentTenantId());
         $this->assertSame(1, $count);
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString('c.identity_count <= 1', $sql);
+        $this->assertStringContainsString('FROM `wp_acx_identity_members` m', $sql);
+        $this->assertStringContainsString('m.cluster_uuid = c.cluster_uuid', $sql);
+        $this->assertStringContainsString(') <= 1', $sql);
+        $this->assertStringNotContainsString('c.identity_count <= 1', $sql);
     }
 
     public function testDeletePersonDoesNotDeleteOtherTenantSharingPersonId(): void

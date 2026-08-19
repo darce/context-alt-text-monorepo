@@ -45,6 +45,21 @@ Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
 | job progress: idle | running | error                         |
 |--------------------------------------------------------------|
 | AI findings preview (evidence-linked)                        |
+| states: default | empty | loading | error | degraded         |
+|         | unavailable | repair | zero_evidence               |
+| code_ref: WorkbenchFindingsPanel.tsx                         |
+|--------------------------------------------------------------|
+| REVIEW SUGGESTIONS HEADER  N left to review on this page     |
+| position: 1 of N on this page | kind chips | band chips      |
+| states: default | loading | empty | error | filtered         |
+|--------------------------------------------------------------|
+| TOP GROUP CARD  N faces | N of M faces shown                 |
+| Name this person | Is this <name>? | Review | Yes/No   |
+| busy disables actions | read-only demotes label/confirm     |
+| zero reps still render (Avatar, not empty)                   |
+| states: default | suggested_label | busy | read_only         |
+|         | missing_image                                      |
+| code_ref: TopClusterCard.tsx                                 |
 +--------------------------------------------------------------+
 states: default | loading | empty | error | first_time | edge_input
 ```

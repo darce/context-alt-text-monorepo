@@ -95,6 +95,7 @@ const makeQueues = (overrides: Partial<WorkbenchFindingsQueues> = {}): Workbench
   // Mirrors the hook fallback: server total defaults to the fetched page length.
   topUnlabeledTotal: overrides.topUnlabeledClusters?.length ?? 0,
   topUnlabeledTruncated: false,
+  topUnlabeledRepairPending: false,
   ...overrides,
 });
 
@@ -175,6 +176,53 @@ describe('buildWorkbenchFindings', () => {
     expect(model.counts.total).toBe(42);
     expect(model.hasFindings).toBe(true);
     expect(model.queue).toHaveLength(17);
+  });
+
+  it('R2-12: repair_pending from the envelope drives the resync gate', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [],
+        topUnlabeledTotal: 5,
+        topUnlabeledTruncated: true,
+        topUnlabeledRepairPending: true,
+      }),
+      makeState(),
+    );
+
+    expect(model.repairPending).toBe(true);
+    expect(model.zeroEvidenceClusterCount).toBe(0);
+    expect(model.counts.unlabeledClusters).toBe(5);
+  });
+
+  it('R3-03: envelope repair_pending wins when total === served length', () => {
+    const served = [makeCluster(), makeCluster({ id: 'top-2', identity_count: 4 })];
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: served,
+        topUnlabeledTotal: served.length,
+        topUnlabeledRepairPending: true,
+      }),
+      makeState(),
+    );
+
+    expect(model.repairPending).toBe(true);
+    expect(model.zeroEvidenceClusterCount).toBe(0);
+    expect(model.counts.unlabeledClusters).toBe(served.length);
+  });
+
+  it('R2-12: empty served page with server total remaining is repair, not drain', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [],
+        topUnlabeledTotal: 5,
+        topUnlabeledTruncated: true,
+        topUnlabeledRepairPending: false,
+      }),
+      makeState(),
+    );
+
+    expect(model.repairPending).toBe(true);
+    expect(model.counts.unlabeledClusters).toBe(5);
   });
 
   it('prioritizes the highest-score assignment suggestion as next action', () => {

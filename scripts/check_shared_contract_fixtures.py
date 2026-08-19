@@ -119,6 +119,9 @@ def validate_against_schema(value: Any, schema: dict[str, Any], path: str = "$")
 		return
 
 	if isinstance(value, list):
+		min_items = schema.get("minItems")
+		if isinstance(min_items, int) and len(value) < min_items:
+			raise SchemaValidationError(f"{path}: expected minItems {min_items}, got {len(value)}")
 		item_schema = schema.get("items")
 		if isinstance(item_schema, dict):
 			for index, item in enumerate(value):

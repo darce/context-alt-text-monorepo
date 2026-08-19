@@ -311,6 +311,7 @@ final class ClustersReadCharacterizationScenarios
     {
         self::resetHarness();
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+        $GLOBALS['__ac_attachment_urls'][102] = 'http://example.test/media/102.jpg';
 
         $clustersRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
@@ -323,7 +324,7 @@ final class ClustersReadCharacterizationScenarios
                     [
                         'cluster_uuid' => 'cluster-1',
                         'label' => null,
-                        'identity_count' => 1,
+                        'identity_count' => 2,
                     ],
                 ];
             }
@@ -335,7 +336,14 @@ final class ClustersReadCharacterizationScenarios
                 return [
                     'cluster-1' => [
                         [
+                            'identity_uuid' => 'identity-1',
                             'media_id' => 101,
+                            'cluster_uuid' => 'cluster-1',
+                            'distance' => 0.0,
+                        ],
+                        [
+                            'identity_uuid' => 'identity-2',
+                            'media_id' => 102,
                             'cluster_uuid' => 'cluster-1',
                             'distance' => 0.0,
                         ],
@@ -373,19 +381,33 @@ final class ClustersReadCharacterizationScenarios
         $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
         // Canonical envelope required — bare-array fabrication is forbidden [rg-015].
+        // One schema-valid served row plus one empty-rep drop (R2-02 / R3).
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
                 'clusters' => [
                     [
                         'id' => 'cluster-proxy-top',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'is_labeled' => false,
+                        'is_auto_label' => false,
+                        'identity_count' => 2,
+                        'user_confirmed' => false,
+                        'representatives' => [
+                            ['id' => 'rep-proxy-top', 'media_id' => 101, 'is_pinned' => false],
+                        ],
+                    ],
+                    [
+                        'id' => 'cluster-proxy-drop',
+                        'tenant_id' => 'tenant-1',
                         'label' => null,
                         'identity_count' => 4,
                         'representatives' => [],
                     ],
                 ],
                 'limit' => 10,
-                'total' => 1,
+                'total' => 2,
                 'truncated' => false,
             ]),
         ]);
@@ -1220,13 +1242,26 @@ final class ClustersReadCharacterizationScenarios
                 'clusters' => [
                     [
                         'id' => 'cluster-canonical',
+                        'tenant_id' => 'tenant-1',
                         'label' => null,
+                        'is_labeled' => false,
+                        'is_auto_label' => false,
                         'identity_count' => 2,
+                        'user_confirmed' => false,
+                        'representatives' => [
+                            ['id' => 'rep-canonical', 'media_id' => 102, 'is_pinned' => false],
+                        ],
+                    ],
+                    [
+                        'id' => 'cluster-canonical-drop',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'identity_count' => 3,
                         'representatives' => [],
                     ],
                 ],
                 'limit' => 10,
-                'total' => 1,
+                'total' => 2,
                 'truncated' => false,
             ]),
         ]);

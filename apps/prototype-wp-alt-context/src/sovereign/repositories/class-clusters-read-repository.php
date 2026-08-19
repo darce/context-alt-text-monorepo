@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
+require_once __DIR__ . '/trait-resolves-identity-members-table-name.php';
 require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
 require_once dirname( __DIR__, 2 ) . '/api/class-tenant-identity.php';
 
@@ -31,6 +32,7 @@ class ClustersReadRepository {
 	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 	use ResolvesPersonsTableName;
+	use ResolvesIdentityMembersTableName;
 
 	private string $table_name;
 
@@ -247,6 +249,7 @@ class ClustersReadRepository {
 
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
+		$members_table    = $this->resolve_identity_members_table_name();
 		$sql = $this->prepare_projection_read_query(
 				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state 
 				FROM %i c
@@ -254,14 +257,24 @@ class ClustersReadRepository {
 				WHERE c.tenant_id = %s
 					AND c.is_user_confirmed = 0
 					AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
-					AND c.identity_count >= 2
+					AND (
+						SELECT COUNT(*)
+						FROM %i m
+						WHERE m.cluster_uuid = c.cluster_uuid
+					) >= 2
 					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
-				ORDER BY c.identity_count DESC, c.updated_at DESC, c.cluster_uuid ASC
+				ORDER BY (
+						SELECT COUNT(*)
+						FROM %i m
+						WHERE m.cluster_uuid = c.cluster_uuid
+					) DESC, c.updated_at DESC, c.cluster_uuid ASC
 				LIMIT %d",
 				array(
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$members_table,
+					$members_table,
 					$normalized_limit,
 				)
 			);
@@ -271,6 +284,67 @@ class ClustersReadRepository {
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		$this->guard_query_error( 'clusters.list_top_unlabeled', $rows, true );
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * @return list<string>
+	 */
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_limit = max( 1, $limit );
+		$members_table    = $this->resolve_identity_members_table_name();
+		$sql              = $this->prepare_projection_read_query(
+			"SELECT c.cluster_uuid
+			FROM %i c
+			WHERE c.tenant_id = %s
+				AND c.is_user_confirmed = 0
+				AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
+				AND c.identity_count <> (
+					SELECT COUNT(*)
+					FROM %i m
+					WHERE m.cluster_uuid = c.cluster_uuid
+				)
+			LIMIT %d",
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+				$members_table,
+				$normalized_limit,
+			)
+		);
+
+		$this->clear_query_error();
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		$this->guard_query_error( 'clusters.list_unlabeled_identity_count_drift', $rows, true );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$ids = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$cluster_id = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' !== $cluster_id ) {
+				$ids[] = $cluster_id;
+			}
+		}
+
+		return $ids;
 	}
 
 	public function count_top_unlabeled_singletons( string $tenant_id ): int {
@@ -286,17 +360,23 @@ class ClustersReadRepository {
 			return 0;
 		}
 
+		$members_table = $this->resolve_identity_members_table_name();
 		$sql = $this->prepare_projection_read_query(
 			"SELECT COUNT(*)
 			FROM %i c
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
 				AND (c.label IS NULL OR c.label = '' OR {$this->reserved_label_sql_predicate('c.label')})
-				AND c.identity_count <= 1
+				AND (
+					SELECT COUNT(*)
+					FROM %i m
+					WHERE m.cluster_uuid = c.cluster_uuid
+				) <= 1
 				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')",
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
+				$members_table,
 			)
 		);
 

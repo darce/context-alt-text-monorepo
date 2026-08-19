@@ -183,6 +183,73 @@ class ClusterReadServiceTest extends TestCase
     }
 
     /**
+     * R2-06 residual: a full last page (limit == fetched == total_count, no
+     * drops) is not truncated. Mutant: truncated => fetched_page >= limit.
+     */
+    public function testListTopUnlabeledFullLastPageIsNotTruncated(): void
+    {
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-a',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-b',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-a' => [
+                        ['identity_uuid' => 'id-a1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-a2', 'attachment_id' => 2],
+                    ],
+                    'cluster-b' => [
+                        ['identity_uuid' => 'id-b1', 'attachment_id' => 3],
+                        ['identity_uuid' => 'id-b2', 'attachment_id' => 4],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('limit', 2);
+        $response = $service->list_top_unlabeled_clusters($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(2, $data['clusters']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    /**
      * R2-11: drift ids for clusters absent from this page merge into the repair event.
      */
     public function testListTopUnlabeledMergesOffPageDriftIdsIntoRepairEvent(): void

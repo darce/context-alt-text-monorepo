@@ -188,8 +188,10 @@ class ClusterReadService {
 			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids );
 			$dropped = $this->dependencies->cluster_mapper->dropped_cluster_count();
 			$total   = count( $unlabeled_items );
+			$total_count = null;
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
-				$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] - $dropped );
+				$total_count = (int) $sovereign_data['clusters'][0]['total_count'];
+				$total = max( 0, $total_count - $dropped );
 			}
 			$fetched_page = count( $sovereign_data['clusters'] );
 			$repair_pending = array() !== $mapper_ids || $dropped > 0 || array() !== $extra_ids;
@@ -199,7 +201,7 @@ class ClusterReadService {
 					'clusters' => $unlabeled_items,
 					'limit' => $limit,
 					'total' => $total,
-					'truncated' => $fetched_page >= $limit,
+					'truncated' => null !== $total_count && $total_count > $fetched_page,
 					'repair_pending' => $repair_pending,
 					'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 					'has_clusters' => $has_clusters,

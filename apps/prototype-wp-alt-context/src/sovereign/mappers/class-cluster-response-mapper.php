@@ -340,37 +340,6 @@ class ClusterResponseMapper {
 	}
 
 	/**
-	 * Prefer the SQL `label_state` column. Older SELECTs without it still emit
-	 * the key via resolve_cluster_label_state() so the FE is never missing it.
-	 *
-	 * @param array<string,mixed> $cluster_row
-	 */
-	private function resolve_emitted_label_state( array $cluster_row ): string {
-		if ( isset( $cluster_row['label_state'] ) && is_string( $cluster_row['label_state'] ) ) {
-			$from_row = trim( $cluster_row['label_state'] );
-			if ( '' !== $from_row ) {
-				return $from_row;
-			}
-		}
-
-		$person_name = trim( (string) ( $cluster_row['person_name'] ?? '' ) );
-		if ( '' === $person_name ) {
-			$person_uuid = trim( (string) ( $cluster_row['person_uuid'] ?? '' ) );
-			$projected   = $this->normalize_label( $cluster_row );
-			if ( '' !== $person_uuid && '' !== $projected && ! $this->is_reserved_label_shape( $projected ) ) {
-				$person_name = $projected;
-			}
-		}
-
-		$cluster_label = $this->normalize_label( $cluster_row );
-
-		return $this->resolve_cluster_label_state(
-			'' !== $person_name ? $person_name : null,
-			'' !== $cluster_label ? $cluster_label : null
-		);
-	}
-
-	/**
 	 * @param array<string,mixed> $cluster_row
 	 */
 	private function resolve_user_confirmed_flag( array $cluster_row ): bool {

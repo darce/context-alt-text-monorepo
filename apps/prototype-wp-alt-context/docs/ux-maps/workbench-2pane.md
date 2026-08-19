@@ -6,7 +6,7 @@
 ## Goals
 
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
-- Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport
+- Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
 
 ## Vocabulary
@@ -31,10 +31,10 @@ by other lanes and are not yet covered by this list.
 
 ## Jobs
 
-- `job-cluster-recognize` — Cluster & recognize faces (build/refresh clusters, run recognition)
-- `job-name-curate` — Name & curate identities (confirm/correct/merge/split, assign names)
+- `job-cluster-recognize` — Build & recognize face groups (refresh groups, run recognition)
+- `job-name-curate` — Name & curate people (confirm/correct/merge/split, assign names)
 - `job-caption-library` — Caption & describe media (alt-text + long description on library rows)
-- `job-triage-sync` — Triage identity conflicts / failed sync (overlays)
+- `job-triage-sync` — Triage people conflicts / failed sync (overlays)
 
 ## Screens
 
@@ -53,7 +53,7 @@ by other lanes and are not yet covered by this list.
 ```
 +------------------------------------------------------------+
 | Workbench (2-pane)  [screen]  #/workbench                  |
-| Two-pane operator surface: left control (cluster/recogniz… |
+| Two-pane operator surface: left control (face-group/recog… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Workbench header + recognition endpoint (read-only st… |
@@ -63,7 +63,7 @@ by other lanes and are not yet covered by this list.
 |   - Overlay host (conflicts | dead-letter) (other) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Run / refresh recognition + clustering -> job… |
+|   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
 |   [secondary] Open Conflict Inbox -> workbench-conflicts   |
 |   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
 +------------------------------------------------------------+
@@ -76,7 +76,7 @@ by other lanes and are not yet covered by this list.
 ```
 +------------------------------------------------------------+
 | Control surface (left pane)  [screen]  #/workbench?pane=c… |
-| Cluster, recognize, name, and curate: recognition endpoin… |
+| Recognize, name, and curate: recognition endpoint + healt… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Recognition endpoint + health (read-only: InsightFace… |
@@ -86,12 +86,12 @@ by other lanes and are not yet covered by this list.
 |   - Name this person (NameFaceControl) (forced_choice)     |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Run / refresh recognition + clustering -> job… |
+|   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
 |   [PRIMARY] Save name (NameFaceControl) -> identity-store  |
 |   [PRIMARY] Select face group (UMAP or list) -> library    |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] View / change recognition endpoint (Setting… |
-|   [DESTRUCTIVE] Merge / split / correct cluster -> identi… |
+|   [DESTRUCTIVE] Merge / split / correct group -> identity… |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
 +------------------------------------------------------------+
@@ -105,7 +105,7 @@ by other lanes and are not yet covered by this list.
 | Media library table with alt-text caption and long-descri… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Library filters (status, has-alt, has-description, cl… |
+|   - Library filters (status, has-alt, has-description, fa… |
 |   - Media library table (thumb | title | status | alt-tex… |
 |   - Inline person naming (NameFaceControl) + alt editor    |
 |   - AI name / caption suggestions (ai_review)              |
@@ -126,7 +126,7 @@ by other lanes and are not yet covered by this list.
 ```
 +------------------------------------------------------------+
 | Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
-| Review identity conflicts; commit human judgment with evi… |
+| Review people conflicts; commit human judgment with evide… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Conflict list (queue) states=[default,loading,empty]   |
@@ -189,16 +189,16 @@ by other lanes and are not yet covered by this list.
 
 ## Flows
 
-### Run recognition -> select cluster -> name/curate -> library people column updates (`flow-recognize-name-curate`)
+### Run recognition -> select face group -> name/curate -> library people column updates (`flow-recognize-name-curate`)
 
 ```mermaid
 flowchart TD
-  %% flow: Run recognition -> select cluster -> name/curate -> library people column updates job=job-name-curate
+  %% flow: Run recognition -> select face group -> name/curate -> library people column updates job=job-name-curate
   n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_2pane_shell -->|enter| n_workbench_control
   n_workbench_control -->|run recognition (preview cost)| n_workbench_control
-  n_workbench_control -->|select cluster (umap/list)| n_workbench_control
+  n_workbench_control -->|select face group (umap/list)| n_workbench_control
   n_workbench_library["Media library (right pane) (screen)"]
   n_workbench_control -->|name / curate| n_workbench_library
 ```
@@ -213,15 +213,16 @@ flowchart TD
   n_workbench_library -->|accept/edit AI caption| n_workbench_library
 ```
 
-### UMAP scatter -> select cluster -> right library filters to cluster media (`flow-umap-select-to-library`)
+### UMAP scatter -> select face group -> right library filters to face-group media (`flow-umap-select-to-library`)
 
 ```mermaid
 flowchart TD
-  %% flow: UMAP scatter -> select cluster -> right library filters to cluster media job=job-cluster-recognize
+  %% flow: UMAP scatter -> select face group -> right library filters to face-group media job=job-cluster-recognize
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_control -->|umap scatter| n_workbench_control
   n_workbench_library["Media library (right pane) (screen)"]
-  n_workbench_control -->|select cluster point/region| n_workbench_library
+  n_workbench_control -->|select face-group point/region| n_workbench_library
+  n_workbench_library -->|face-group= filters library| n_workbench_library
 ```
 
 ### Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed (`flow-scan-to-conflict`)

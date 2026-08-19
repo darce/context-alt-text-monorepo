@@ -1,6 +1,6 @@
 # UXW2-2 R1 REPORT
 
-Adversarial-review close-out. Branch `master`. Full suite: **OK (1790 tests, 8624 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `composer lint` not defined.
+Adversarial-review close-out. Branch `feature/uxw2-2`. Full suite: **OK (1790 tests, 8624 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `composer lint` not defined.
 
 ## RED
 
@@ -34,19 +34,19 @@ Adversarial-review close-out. Branch `master`. Full suite: **OK (1790 tests, 862
 
 | Finding | Commit | Test | Mutant killed |
 |---|---|---|---|
-| R1-01 | `5e27822486c921ff9a2001a0a73348e36671d12f` | `testListTopUnlabeledExcludesMemberlessClusterWhenSeeded` | `OR 1=1` / drop `COUNT(m)>=2` includes memberless |
-| R1-02 | `f70e69f6e64949707255ccfd081f9fedbc854cbc` | `testMapTopUnlabeledReturnsObservedCountWhenObservedExceedsProjected` | return projected → `2 !== 4` |
-| R1-03 | `cc5a93219be059a8effc6c56d91db7448ed216ce` | `testMapTopUnlabeledDropsZeroObservedMembersWhenMembersLoaded` | skip `continue` → empty reps served |
-| R1-04 | `ae8c148ac30fc1b851ced2e577641587b4dfef26` | `testListTopUnlabeledSchedulesRepairFromMapperRequestedIds` | `find_clusters_missing` missed upward drift |
-| R1-05 | `5e27822486c921ff9a2001a0a73348e36671d12f` | `testStaleLowIdentityCountWithThreeMembersIsQueuedNotSingleton` / `testStaleHighIdentityCountWithOneMemberIsSingletonNotQueued` | column predicate misclassifies size |
-| R1-06 | `9b4d30016c99caf76773f1dcd882a52036c2d6e4` | `testContractGoldenValidatesAgainstSchema` / `testMemberlessPayloadFailsMinItems` | empty `representatives` passes without `minItems` |
-| R1-07 | `ae8c148ac30fc1b851ced2e577641587b4dfef26` | `testRepairTargetedProjectionSchedulesClusterIdsAndDoesNotPullInline` / `testPerformBootstrapSyncWithClusterIdsRunsTargetedSnapshot` | schedule `[tenant]` only; ids discarded |
+| R1-01 | `fix(sovereign): UXW2-2-R1-01 R1-05 member count is sole size predicate` | `testListTopUnlabeledExcludesMemberlessClusterWhenSeeded` | `OR 1=1` / drop `COUNT(m)>=2` includes memberless |
+| R1-02 | `fix(sovereign): UXW2-2-R1-02 R1-14 bidirectional identity_count` | `testMapTopUnlabeledReturnsObservedCountWhenObservedExceedsProjected` | return projected → `2 !== 4` |
+| R1-03 | `fix(sovereign): UXW2-2-R1-03 drop memberless top-unlabeled rows` | `testMapTopUnlabeledDropsZeroObservedMembersWhenMembersLoaded` | skip `continue` → empty reps served |
+| R1-04 | `fix(sovereign): UXW2-2-R1-04 R1-07 R1-13 mapper-owned targeted repair` | `testListTopUnlabeledSchedulesRepairFromMapperRequestedIds` | `find_clusters_missing` missed upward drift |
+| R1-05 | `fix(sovereign): UXW2-2-R1-01 R1-05 member count is sole size predicate` | `testStaleLowIdentityCountWithThreeMembersIsQueuedNotSingleton` / `testStaleHighIdentityCountWithOneMemberIsSingletonNotQueued` | column predicate misclassifies size |
+| R1-06 | `fix(sovereign): UXW2-2-R1-06 schema minItems and golden validation` | `testContractGoldenValidatesAgainstSchema` / `testMemberlessPayloadFailsMinItems` | empty `representatives` passes without `minItems` |
+| R1-07 | `fix(sovereign): UXW2-2-R1-04 R1-07 R1-13 mapper-owned targeted repair` | `testRepairTargetedProjectionSchedulesClusterIdsAndDoesNotPullInline` / `testPerformBootstrapSyncWithClusterIdsRunsTargetedSnapshot` | schedule `[tenant]` only; ids discarded |
 | R1-08 | (this file) | `git cat-file -e` on every SHA below | prior REPORT SHAs did not exist |
-| R1-10 | `c9e9015a6b96231f161ed598417d99574c4508a3` | `testListTopUnlabeledResolvesMembersTableFromWpdbPrefix` | `str_replace` silent-empty when name lacks `acx_clusters` |
+| R1-10 | `fix(sovereign): UXW2-2-R1-10 resolve identity members table via prefix` | `testListTopUnlabeledResolvesMembersTableFromWpdbPrefix` | `str_replace` silent-empty when name lacks `acx_clusters` |
 | R1-11 | `docs/workbay/contracts/clustering-api.md` (tracked, committed) | n/a (contract prose) | — |
-| R1-12 | `d98bd9f4f2ef28c23f7ddb147191c5efa8676248` | `testMapTopUnlabeledTreatsObservedEqualToCapAsExactCount` | `observed==cap` treated as truncation |
-| R1-13 | `ae8c148ac30fc1b851ced2e577641587b4dfef26` + `8cc387ea9018359ecca306652be2bda6a7a40855` | `testRepairTargetedProjectionNoopsOnEmptyIds` / `testMapClusterListNonPositivePreviewLimitIsNotTruncation` | empty/whitespace ids still scheduled; `preview=0` as cap |
-| R1-14 | `f70e69f6e64949707255ccfd081f9fedbc854cbc` | `testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit` | rename |
+| R1-12 | `fix(sovereign): UXW2-2-R1-12 cap-hit fetch limit plus one` | `testMapTopUnlabeledTreatsObservedEqualToCapAsExactCount` | `observed==cap` treated as truncation |
+| R1-13 | `fix(sovereign): UXW2-2-R1-04 R1-07 R1-13 mapper-owned targeted repair` + `fix(sovereign): UXW2-2-R1-07 R1-13 targeted heal test follow-through` | `testRepairTargetedProjectionNoopsOnEmptyIds` / `testMapClusterListNonPositivePreviewLimitIsNotTruncation` | empty/whitespace ids still scheduled; `preview=0` as cap |
+| R1-14 | `fix(sovereign): UXW2-2-R1-02 R1-14 bidirectional identity_count` | `testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit` | rename |
 
 ## Files
 
@@ -81,30 +81,32 @@ Adversarial-review close-out. Branch `master`. Full suite: **OK (1790 tests, 862
 
 ## Undone
 
-(empty)
+- R1-08 — report cited 40-hex SHAs from a foreign clone; none resolve on the destination tree (fixed later as R2-01 / R3-01 / R4-01).
+- R1-09 — empty-representative proxy rows still served (closed R2-02).
+- R1-07 residual — `repair_targeted_projection` targeting vs full bootstrap still under check (see R4 S3).
+- R1-11 — contract file tracking claims later contradicted.
 
-## Commits (lane, `git rev-parse`)
+## Commits (lane, subject line only)
 
-- `41b54bd4447e37aab460c85fc8f3afdbce967473` `fix(sovereign): UXW2-2 identity_count reflects observed members`
-- `5463596c7e7b770e6e55b874c0295bbfdf41bb9e` `fix(sovereign): UXW2-2 exclude memberless clusters from top-unlabeled`
-- `4324a9a69c88f5d6682619ea17393cb942196446` `fix(sovereign): UXW2-2 golden identity_count matches observed members`
-- `d282abe33e8e807f1bca04750369c4fc24455ecb` `docs: UXW2-2 REPORT.md` (superseded)
-- `f70e69f6e64949707255ccfd081f9fedbc854cbc` `fix(sovereign): UXW2-2-R1-02 R1-14 bidirectional identity_count`
-- `d98bd9f4f2ef28c23f7ddb147191c5efa8676248` `fix(sovereign): UXW2-2-R1-12 cap-hit fetch limit plus one`
-- `cc5a93219be059a8effc6c56d91db7448ed216ce` `fix(sovereign): UXW2-2-R1-03 drop memberless top-unlabeled rows`
-- `5e27822486c921ff9a2001a0a73348e36671d12f` `fix(sovereign): UXW2-2-R1-01 R1-05 member count is sole size predicate`
-- `c9e9015a6b96231f161ed598417d99574c4508a3` `fix(sovereign): UXW2-2-R1-10 resolve identity members table via prefix`
-- `e794dbe050b240cf93878a5ed7161ab234fa5647` `fix(sovereign): UXW2-2-R1-10 resolve identity members table via prefix trait`
-- `ae8c148ac30fc1b851ced2e577641587b4dfef26` `fix(sovereign): UXW2-2-R1-04 R1-07 R1-13 mapper-owned targeted repair`
-- `9b4d30016c99caf76773f1dcd882a52036c2d6e4` `fix(sovereign): UXW2-2-R1-06 schema minItems and golden validation`
-- `8cc387ea9018359ecca306652be2bda6a7a40855` `fix(sovereign): UXW2-2-R1-07 R1-13 targeted heal test follow-through`
-- `09efde7c3ef75a8962dc7ab86a428f0a7ffd06dd` `fix(sovereign): UXW2-2-R1-07 R1-06 plugin-load targeted heal and minItems`
-- `6c741dbbbd5eb678a64cdf0a9b7ccf853c155579` `docs: UXW2-2-R1-08 REPORT.md`
-- `da15978a1465019ed03c62368089006d75833ea2` `docs: UXW2-2-R1-08 pin REPORT HEAD SHA`
-- `316ea93964e2c225bf8db1bc7fb4f93beb24f395` `docs: UXW2-2-R1-08 rewrite REPORT.md`
-- `002767d655764ac56ff5c621205ad9b2328c1c89` `docs: UXW2-2-R1-08 complete commit list`
+- `fix(sovereign): UXW2-2 identity_count reflects observed members`
+- `fix(sovereign): UXW2-2 exclude memberless clusters from top-unlabeled`
+- `fix(sovereign): UXW2-2 golden identity_count matches observed members`
+- `docs: UXW2-2 REPORT.md` (superseded)
+- `fix(sovereign): UXW2-2-R1-02 R1-14 bidirectional identity_count`
+- `fix(sovereign): UXW2-2-R1-12 cap-hit fetch limit plus one`
+- `fix(sovereign): UXW2-2-R1-03 drop memberless top-unlabeled rows`
+- `fix(sovereign): UXW2-2-R1-01 R1-05 member count is sole size predicate`
+- `fix(sovereign): UXW2-2-R1-10 resolve identity members table via prefix`
+- `fix(sovereign): UXW2-2-R1-10 resolve identity members table via prefix trait`
+- `fix(sovereign): UXW2-2-R1-04 R1-07 R1-13 mapper-owned targeted repair`
+- `fix(sovereign): UXW2-2-R1-06 schema minItems and golden validation`
+- `fix(sovereign): UXW2-2-R1-07 R1-13 targeted heal test follow-through`
+- `fix(sovereign): UXW2-2-R1-07 R1-06 plugin-load targeted heal and minItems`
+- `docs: UXW2-2-R1-08 REPORT.md`
+- `docs: UXW2-2-R1-08 pin REPORT HEAD SHA`
+- `docs: UXW2-2-R1-08 rewrite REPORT.md`
+- `docs: UXW2-2-R1-08 complete commit list`
 
-HEAD: `ba3e343171f1264808ffe249c96cb6bde2aaaaf6`
 
 ---
 
@@ -112,7 +114,7 @@ HEAD: `ba3e343171f1264808ffe249c96cb6bde2aaaaf6`
 
 Folded from root `REPORT.md` (removed). Canonical branch `feature/uxw2-2`; this lane commits on `master` as specified. Contract `docs/workbay/contracts/clustering-api.md` is tracked and was edited+committed.
 
-Suite: **OK (1799 tests, 8654 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `python3 scripts/check_shared_contract_fixtures.py` green. Cite by subject; SHAs below are from `git log --format=%H` on this tree.
+Suite: **OK (1799 tests, 8654 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `python3 scripts/check_shared_contract_fixtures.py` green. Cite by subject line only (lane SHAs do not survive `git am` onto the canonical tree).
 
 ## RED
 
@@ -196,7 +198,7 @@ Closed in R3 below.
 
 # UXW2-2 R3 REPORT
 
-Lane cwd. Branch `master` (canonical `feature/uxw2-2`). Cite by subject; SHAs from `git log --format=%H` on this tree. Root `REPORT.md` removed.
+Lane cwd. Branch `feature/uxw2-2`. Cite by subject line only (lane SHAs do not survive `git am` onto the canonical tree). Root `REPORT.md` removed.
 
 Suite: **OK (1807 tests, 8691 assertions)** (`cd apps/prototype-wp-alt-context && composer test`). `python3 scripts/check_shared_contract_fixtures.py` green. `php -l` clean on changed PHP. `test ! -f REPORT.md`.
 
@@ -260,20 +262,26 @@ R2-04 verify: `test ! -f apps/prototype-wp-alt-context/tests/Unit/TopUnlabeledSc
 | rg-015 | envelope metadata matches behaviour |
 | rg-005 | `total` / `total_count` column semantics documented |
 
-## Commits (R3, `git log --format=%H`)
+## Commits (R3, subject line only)
 
-- `7d3cd7ce77634819a3e333c114ffa3581854266b` `docs: UXW2-2-R3-01 R2-01 R1-08 fold report and drop root REPORT.md`
-- `f500a5aef59d9e10b598fba79a649c05e205a77a` `fix(api): UXW2-2-R2-02 R1-06 R1-09 R2-12 proxy goldens and repair_pending`
-- `0f4fdbe91a04831aa669c28078a986935bf5cb58` `fix(api): UXW2-2-R2-06 truncated is total_count greater than fetched_page`
-- `489b10e0fa80d442f7d99ab23371104b6cc3874f` `fix(sovereign): UXW2-2-R2-07 truncated identity_count never below preview`
-- `718f1910648c6ca90bdd8f91e79511695acac12a` `fix(contracts): UXW2-2-R2-07 restore truncated clustering-api.md tail`
-- `a3d98ba77c38c55d4e6698576c80e9e7ac460b34` `fix(tests): UXW2-2-R2-11 drop without mapper id sets repair_pending`
-- `05a1bd77df841dc43e09ab6ed6e48966084bcb35` `fix(api): UXW2-2-R2-09 mapper ids take the repair-batch ceiling`
-- `5fe62c00b4fceb5483ea070137e30ec477030abf` `fix(api): UXW2-2-R3-04 total is pre-filter qualifying count`
-- `28e3a2423c9de81c25ee37b18b92dace5ea63946` `fix(tests): UXW2-2-R2-05 prove bootstrap event ceiling via call log`
-
-HEAD at report time (parent of this report commit): `28e3a2423c9de81c25ee37b18b92dace5ea63946`
+- `docs: UXW2-2-R3-01 R2-01 R1-08 fold report and drop root REPORT.md`
+- `fix(api): UXW2-2-R2-02 R1-06 R1-09 R2-12 proxy goldens and repair_pending`
+- `fix(api): UXW2-2-R2-06 truncated is total_count greater than fetched_page`
+- `fix(sovereign): UXW2-2-R2-07 truncated identity_count never below preview`
+- `fix(contracts): UXW2-2-R2-07 restore truncated clustering-api.md tail`
+- `fix(tests): UXW2-2-R2-11 drop without mapper id sets repair_pending`
+- `fix(api): UXW2-2-R2-09 mapper ids take the repair-batch ceiling`
+- `fix(api): UXW2-2-R3-04 total is pre-filter qualifying count`
+- `fix(tests): UXW2-2-R2-05 prove bootstrap event ceiling via call log`
 
 ## Undone
 
-(empty) 
+Open at R4-01 write (this commit closes only R4-01 / R4-06 / R4-07):
+
+- UXW2-2-R3-02 — `clustering-api.md` still states two `total` rules (`:296` subtracts dropped rows; `:307` does not) and a repair-on-every-truncation mandate the mapper gates off when `projected > preview_limit`.
+- UXW2-2-R3-04 — proxy envelope still subtracts dropped rows from `total` (`class-cluster-response-envelope-service.php`).
+- UXW2-2-R4-02 — `repair_pending` is not in the schema `required` list.
+- UXW2-2-R4-03 — `identity_count >= representatives.length` lives only in a schema description string.
+- UXW2-2-R5-12 — duplicating `schedule_repair_from_mapper` leaves the suite GREEN.
+- UXW2-2-R4-04 / R4-05 / R1-07 — stretch; not started.
+- UXW2-2-R3-01 / R2-01 / R1-08 — still open on the task ref as report-truth siblings; this rewrite is the R4 close of the SHA-citation form only.

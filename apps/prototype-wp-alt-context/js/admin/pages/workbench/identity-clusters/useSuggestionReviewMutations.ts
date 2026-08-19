@@ -34,10 +34,10 @@ import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
 export const UNDO_HOLD_MS = 5000;
 
-/** Single hold/status copy — component + tests consume this export (BR-24). */
+/** HOLDING status copy — tests pin ReviewQueue's gettext literal; hook announce also consumes this (BR-24). */
 export const HOLD_STATUS_COPY = 'Saving… — Undo';
 
-/** BR-55: committing phase drops Undo suffix (Undo unreachable). */
+/** COMMITTING status copy (Undo dropped). Tests pin ReviewQueue's gettext literal against this export (BR-55). */
 export const HOLD_COMMITTING_STATUS_COPY = 'Saving…';
 
 export type SuggestionCommitKind =

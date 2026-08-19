@@ -1704,8 +1704,8 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if is_public and public_json is not None and public_md is not None:
         public_json_path.write_text(public_json, encoding="utf-8")
         public_md_path.write_text(public_md, encoding="utf-8")
-        print(public_md_path)
-    print(md_path)
+        print(_printable_path(public_md_path))
+    print(_printable_path(md_path))
     verdict = scored.get("verdict") or {}
     det = scored["faces"]["detection"]
     if det.get("refused"):
@@ -2350,7 +2350,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         if isinstance(block, dict):
             occlusion_eligible += int((block.get("synthetic") or {}).get("n_eligible") or 0)
     directional_excluded = len((scored.get("gate_proposal") or {}).get("excluded_directional") or [])
-    print(md_path)
+    print(_printable_path(md_path))
     print(
         f"scored={scored_n}/{total_n} "
         f"matched_faces={matched_faces} "
@@ -2788,15 +2788,32 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
-    print(out)
+    print(_printable_path(out))
+
+
+def _printable_path(path: Path | str) -> str:
+    """OBS-08: machine-consumable path text for stdout.
+
+    ASCII-locale argv stores non-ASCII filenames as surrogate-escaped UTF-8
+    bytes. Those surrogates keep file I/O working via os.fsencode, but print()
+    of the raw str is a silent lie. Recover UTF-8 so a utf-8 stdout emits the
+    real filename bytes (and ascii/backslashreplace would emit \\xe9 instead).
+    """
+    text = os.fspath(path)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return os.fsencode(text).decode("utf-8", errors="backslashreplace")
+    return text
 
 
 def _reconfigure_stdio() -> None:
-    """EVAL-10 / VLM6-RV12-L-03: a passing score must not die on ASCII stdout.
+    """EVAL-10 / VLM6-RV13-L-01: a passing score must not lie on ASCII stdout.
 
     After reports are on disk, print(md_path) raises UnicodeEncodeError when
     the run-record path is non-ASCII and stdout is ASCII/strict. Reconfigure
-    once at CLI entry rather than special-casing each print. Guard None /
+    once at CLI entry to utf-8 (not merely errors=backslashreplace, which
+    leaves encoding=ascii and silently escapes the path). Guard None /
     non-reconfigurable streams (pytest capture, closed pipes).
     """
     for stream in (sys.stdout, sys.stderr):
@@ -2806,7 +2823,7 @@ def _reconfigure_stdio() -> None:
         if reconfigure is None:
             continue
         try:
-            reconfigure(errors="backslashreplace")
+            reconfigure(encoding="utf-8", errors="backslashreplace")
         except (OSError, ValueError):
             continue
 

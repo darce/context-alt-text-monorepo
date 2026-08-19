@@ -359,6 +359,14 @@ def test_rubric_empty_warns(tmp_path):  # S1-02
 def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
     decomposed = unicodedata.normalize("NFD", "Breiðamerkurjökull.jpg")
     composed = unicodedata.normalize("NFC", "Breiðamerkurjökull.jpg")
+    try:
+        os.fsencode(composed)
+    except UnicodeEncodeError:
+        pytest.skip(
+            "filesystem encoding cannot encode NFC fixture name "
+            f"{composed!r} (getfilesystemencoding={sys.getfilesystemencoding()!r}); "
+            "product _resolve_image is not reached (AGT-06)"
+        )
     body = b"glacier bytes"
     data = _valid_manifest_dict()
     data["entries"][0]["path"] = f"mock_images/{decomposed}"  # manifest in NFD

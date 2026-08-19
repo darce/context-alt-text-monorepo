@@ -1039,6 +1039,22 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Pat Rivera', expect.anything());
     });
+    expect(commitClusterToRosterEntry).not.toHaveBeenCalled();
+  });
+
+  it('type + Enter on a single roster person binds that rosterEntryId (UXW2-3-R1-08a)', async () => {
+    mockRoster([makeRosterPerson(42, 'Alex Carter')]);
+    renderPanel();
+    const user = await typePanelName('Alex Carter');
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 42,
+      });
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
   });
 
   it('clicking confirm on a suggestion row primes that option (UXW2-3-R1-08b)', async () => {

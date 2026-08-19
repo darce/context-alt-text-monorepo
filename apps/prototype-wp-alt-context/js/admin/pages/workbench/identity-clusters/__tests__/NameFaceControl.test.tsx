@@ -480,6 +480,65 @@ describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
     expect(screen.getByRole('button', { name: 'Saving name…' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
   });
+
+  it('arrow-active row previews the row bind not the typed draft', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} previewCommit />);
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+
+    await user.type(input, 'Gra');
+    expect(screen.getByRole('button', { name: 'Create person "Gra"' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('button', { name: 'Save as Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create person "Gra"' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create person "Grace Hopper"' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Save as Grace Hopper' }));
+    expect(onCommit).toHaveBeenCalledWith({
+      kind: 'roster',
+      rosterEntryId: 2,
+      name: 'Grace Hopper',
+    });
+  });
+
+  it('arrow-active same-fold row keeps commitLabel', async () => {
+    const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
+    renderControl({ options, value: 'Alex Carter', previewCommit: true });
+    const user = userEvent.setup();
+    screen.getByRole('combobox', { name: 'Name this person' }).focus();
+    await user.keyboard('{ArrowDown}');
+
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create person/ })).not.toBeInTheDocument();
+  });
+
+  it('pendingLabel wins over arrow-active preview', async () => {
+    const options = [person(1, 'Ada Lovelace'), person(2, 'Grace Hopper'), person(3, 'Alan Turing')];
+    const onCommit = vi.fn();
+    const props = {
+      options,
+      value: 'Gra',
+      onValueChange: vi.fn(),
+      onCommit,
+      commitLabel: 'Save name',
+      pendingLabel: 'Saving name…',
+      previewCommit: true,
+      ariaLabel: 'Name this person',
+    };
+    const { rerender } = render(<NameFaceControl {...props} />);
+    const user = userEvent.setup();
+    screen.getByRole('combobox', { name: 'Name this person' }).focus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('button', { name: 'Save as Grace Hopper' })).toBeInTheDocument();
+
+    rerender(<NameFaceControl {...props} isPending />);
+    expect(screen.getByRole('button', { name: 'Saving name…' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save as Grace Hopper' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create person "Gra"' })).not.toBeInTheDocument();
+  });
 });
 
 describe('NameFaceControl header + loading (UXW2-3-R1-16)', () => {

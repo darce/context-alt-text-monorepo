@@ -54,16 +54,14 @@ class ClustersReadRepository {
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
 		$persons_table     = $this->resolve_persons_table_name();
-		$projected_label   = $this->projected_cluster_label_sql( 'p.name', 'c.label' );
-		$labeled_predicate = "{$projected_label} IS NOT NULL AND {$projected_label} != ''";
 
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$projected_label} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND {$labeled_predicate} AND c.label LIKE %s
+				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != '' AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
@@ -77,10 +75,10 @@ class ClustersReadRepository {
 			);
 		} elseif ( $labeled_only ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$projected_label} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND {$labeled_predicate}
+				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != ''
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
@@ -151,23 +149,24 @@ class ClustersReadRepository {
 
 		$normalized_search = trim( $search );
 		$normalized_limit  = max( 1, $limit );
-		$reserved          = $this->reserved_label_sql_predicate( 'label' );
 
 		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$reserved} AND label LIKE %s ORDER BY label ASC",
+				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} AND label LIKE %s ORDER BY label ASC LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
 					'%' . $wpdb->esc_like( $normalized_search ) . '%',
+					$normalized_limit,
 				)
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$reserved} ORDER BY label ASC",
+				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} ORDER BY label ASC LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
+					$normalized_limit,
 				)
 			);
 		}

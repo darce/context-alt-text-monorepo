@@ -179,16 +179,26 @@ class ClustersRepositoryTest extends TestCase
         ]);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("label IS NOT NULL", $sql);
+        $this->assertStringContainsString('THEN p.name', $sql);
         $this->assertStringContainsString("label LIKE", $sql);
     }
 
     public function testListLabelsReturnsBoundedRowsWithTotalCountMetadata(): void
     {
         global $wpdb;
-        $wpdb->mockResults = [
-            ['label' => 'Alice', 'total_count' => 2],
-            ['label' => 'Bob', 'total_count' => 2],
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'c-a',
+                'tenant_id' => 'tenant-labels',
+                'label' => 'Alice',
+                'person_id' => 1,
+            ],
+            [
+                'cluster_uuid' => 'c-b',
+                'tenant_id' => 'tenant-labels',
+                'label' => 'Bob',
+                'person_id' => 2,
+            ],
         ];
 
         $labels = $this->repository->list_labels('tenant-labels', '', 25);

@@ -196,6 +196,7 @@ class ClusterLabelServiceTest extends TestCase
                 'name' => 'Ada Lovelace',
                 'normalized_name' => PersonResolutionService::normalize_name('Ada Lovelace'),
                 'tags' => '[]',
+                'tenant_id' => self::currentTenantId(),
             ],
         ];
         $this->seedClusterRow();

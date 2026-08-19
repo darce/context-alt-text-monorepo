@@ -293,13 +293,13 @@ class ProjectionQueryColumnParityTest extends TestCase
         $derivedUnits = [];
         foreach ($extraction['units'] as $unit) {
             if (
-                str_contains($unit['sql'], 'FROM (SELECT DISTINCT')
-                && str_contains($unit['sql'], 'filtered')
+                str_contains($unit['sql'], 'SELECT label, person_id FROM')
+                && str_contains($unit['sql'], 'reserved_label_sql_predicate')
             ) {
                 $this->assertSame(
                     'prepare_projection_read_query',
                     $unit['method'],
-                    'list_labels derived-table SQL must arrive via prepare_projection_read_query'
+                    'list_labels SQL must arrive via prepare_projection_read_query'
                 );
                 $derivedUnits[] = $unit;
             }
@@ -307,7 +307,7 @@ class ProjectionQueryColumnParityTest extends TestCase
 
         $this->assertNotEmpty(
             $derivedUnits,
-            'production list_labels derived-table SQL must be present in the extracted corpus (FIX-4)'
+            'production list_labels SQL must be present in the extracted corpus (FIX-4)'
         );
 
         $interiorLabels = 0;

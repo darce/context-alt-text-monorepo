@@ -117,7 +117,12 @@ class ClustersRepositoryCharacterizationTest extends TestCase
         );
 
         $this->assertSame(1, $result);
-        $query = $wpdb->queries[0];
+        $inserts = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_clusters')
+        ));
+        $this->assertNotEmpty($inserts);
+        $query = $inserts[0];
         $this->assertStringContainsString('INSERT INTO wp_acx_clusters', $query);
         $this->assertStringContainsString('cluster-new', $query);
         $this->assertStringContainsString('Curated Label', $query);

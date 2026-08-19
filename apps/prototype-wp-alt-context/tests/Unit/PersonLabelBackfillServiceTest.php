@@ -161,6 +161,7 @@ class PersonLabelBackfillServiceTest extends TestCase
                 'person_uuid' => $existingUuid,
                 'name' => 'John Smith',
                 'normalized_name' => PersonResolutionService::normalize_name('John Smith'),
+                'tenant_id' => self::currentTenantId(),
             ],
         ];
         $wpdb->tableRows['wp_acx_clusters'] = [

@@ -73,6 +73,20 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
     }
 
     /**
+     * R4-02: repair_pending is required so dropping the key cannot stay green.
+     */
+    public function testGoldenWithoutRepairPendingFailsRequired(): void
+    {
+        $schema  = $this->loadJson($this->resolveRepoPath(self::SCHEMA_RELATIVE));
+        $invalid = $this->loadJson($this->resolveRepoPath(self::GOLDEN_RELATIVE));
+        unset($invalid['repair_pending']);
+
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('repair_pending');
+        $this->assertSchemaValid($schema, $invalid);
+    }
+
+    /**
      * @return array<string,mixed>
      */
     private function loadJson(string $path): array

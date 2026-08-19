@@ -320,7 +320,10 @@ export const ClusterLabelingPanel = ({
     }
   };
 
-  const submitLabel = async (rawLabel: string, options?: { skipPersonOnlyGuard?: boolean }) => {
+  const submitLabel = async (
+    rawLabel: string,
+    options?: { skipPersonOnlyGuard?: boolean; skipDuplicateGuard?: boolean },
+  ) => {
     const trimmed = rawLabel.trim();
     if (!trimmed) {
       return;
@@ -338,7 +341,7 @@ export const ClusterLabelingPanel = ({
         return;
       }
 
-      if (!allowRenameAnyway) {
+      if (!allowRenameAnyway && !options?.skipDuplicateGuard) {
         const localGuard = evaluateDuplicateGuard(trimmed);
         const skipPersonOnly = Boolean(options?.skipPersonOnlyGuard && localGuard && !localGuard.mergeTarget);
         if (localGuard && !skipPersonOnly) {
@@ -682,10 +685,7 @@ export const ClusterLabelingPanel = ({
                   onClick={() => {
                     setAllowRenameAnyway(true);
                     setDuplicateGuard(null);
-                    void labelMutation.mutateAsync(duplicateGuard.label).catch((err: unknown) => {
-                      setError(getErrorMessage(err));
-                      setAllowRenameAnyway(false);
-                    });
+                    void submitLabel(duplicateGuard.label, { skipDuplicateGuard: true });
                   }}
                 >
                   {__('Rename anyway', 'alt-context')}

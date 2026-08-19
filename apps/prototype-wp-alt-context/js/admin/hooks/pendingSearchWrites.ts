@@ -6,13 +6,13 @@ import { serializeQueueState, type WorkbenchQueueState } from './workbenchQueueU
  * WorkbenchMediaProvider). Per-hook refs lose same-commit p/rq writes
  * because react-router's updater reads the render snapshot (R1-01).
  */
-type PendingSearchWrites = {
+interface PendingSearchWrites {
   rq?: WorkbenchQueueState;
   /** URL `rq` at the moment the pending write was first queued. */
   rqSnapshot?: string | null;
   p?: number;
   pSnapshot?: string | null;
-};
+}
 
 let pendingSearchWrites: PendingSearchWrites = {};
 let workbenchFilterInstanceCount = 0;

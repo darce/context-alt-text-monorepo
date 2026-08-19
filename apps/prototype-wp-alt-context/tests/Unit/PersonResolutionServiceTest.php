@@ -60,9 +60,42 @@ class PersonResolutionServiceTest extends TestCase
         $wpdb->tableRows['wp_acx_persons'] = $rows;
 
         $service = new PersonResolutionService();
-        $result = $service->create_distinct('Ada', static fn(): bool => true);
+        try {
+            $result = $service->create_distinct('Ada', static fn(): bool => true);
+        } catch (\Throwable $e) {
+            $this->fail(
+                'create_distinct must return WP_Error on suffix exhaustion, not throw: '
+                . $e::class . ': ' . $e->getMessage()
+            );
+        }
 
         $this->assertInstanceOf(\WP_Error::class, $result);
         $this->assertSame('acx_name_collision', $result->get_error_code());
+    }
+
+    public function testCreateDistinctReturnsErrorWhenWpdbUnavailable(): void
+    {
+        $saved = $GLOBALS['wpdb'] ?? null;
+        $result = null;
+
+        try {
+            unset($GLOBALS['wpdb']);
+            $service = new PersonResolutionService();
+            try {
+                $result = $service->create_distinct('Ada', static fn(): bool => true);
+            } catch (\Throwable $e) {
+                $this->fail(
+                    'create_distinct must return WP_Error when wpdb is unavailable, not throw: '
+                    . $e::class . ': ' . $e->getMessage()
+                );
+            }
+        } finally {
+            if ($saved !== null) {
+                $GLOBALS['wpdb'] = $saved;
+            }
+        }
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('acx_db_error', $result->get_error_code());
     }
 }

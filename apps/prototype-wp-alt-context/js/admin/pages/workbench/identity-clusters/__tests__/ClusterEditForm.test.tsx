@@ -143,7 +143,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
     );
@@ -286,16 +286,26 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
     );
   });
 
+  it('default idle commit button is Save name (UXW2-3-R1-16i)', () => {
+    render(<ClusterEditForm {...defaultProps} />);
+    expect(screen.getByRole('button', { name: 'Save name' })).toHaveAccessibleName('Save name');
+  });
+
+  it('default pending commit button is Saving name… (UXW2-3-R1-16i)', () => {
+    render(<ClusterEditForm {...defaultProps} isPending />);
+    expect(screen.getByRole('button', { name: 'Saving name…' })).toBeDisabled();
+  });
+
   it('is disabled when isPending is true', () => {
     render(<ClusterEditForm {...defaultProps} isPending={true} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    const saveButton = screen.getByRole('button', { name: 'Saving…' });
+    const saveButton = screen.getByRole('button', { name: 'Saving name…' });
 
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
@@ -317,10 +327,10 @@ describe('ClusterEditForm', () => {
     expect(screen.getByRole('button', { name: 'Saved!' })).toBeInTheDocument();
   });
 
-  it('announces Saving… in the field live region while pending without custom label', () => {
+  it('announces Saving name… in the field live region while pending without custom label', () => {
     render(<ClusterEditForm {...defaultProps} isPending />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
+    expect(screen.getByRole('status')).toHaveTextContent('Saving name…');
   });
 
   it('calls onRejectSuggestion when Reject button is clicked', () => {
@@ -531,7 +541,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith(
         'cluster-alice',

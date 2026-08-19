@@ -121,7 +121,7 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
 
     expect(findClusterByLabel).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
   });
 
   it('exact-dupe remote "bob" + typed "Bob" keeps Save (no Merge-with) — UXP-3-BR-44', async () => {
@@ -141,7 +141,7 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
 
     expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
   });
 
   it('reverting to exact label aborts in-flight match so preview stays Save — UXP-3-BR-45', async () => {
@@ -183,7 +183,19 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem Library save copy (UXW2-3-R1-16i)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('default Library row commit button is Save name (UXW2-3-R1-16i)', () => {
+    renderItem();
+    fireEvent.click(screen.getByRole('button', { name: 'bob' }));
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
   });
 });
 

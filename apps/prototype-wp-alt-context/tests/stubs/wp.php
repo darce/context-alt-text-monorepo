@@ -2925,23 +2925,25 @@ if (!isset($GLOBALS['wpdb'])) {
                 $row[$column] = $this->evaluateSqlAssignment($rawValues[$index] ?? 'NULL', []);
             }
 
-            $pk = $row['cluster_uuid'] ?? $row['id'] ?? null;
             foreach ($this->tableRows[$table] as $index => $existing) {
-                $existingPk = $existing['cluster_uuid'] ?? $existing['id'] ?? null;
-                if ((string) $existingPk !== (string) $pk) {
+                if (!$this->rowMatchesInsertDuplicateKey($existing, $row)) {
                     continue;
                 }
                 $userConfirmed = (int) ($existing['is_user_confirmed'] ?? 0) === 1;
                 if (!$userConfirmed && array_key_exists('label', $row)) {
                     $existing['label'] = $row['label'];
                 }
+                if (!$userConfirmed && array_key_exists('label_cleared_label', $row)) {
+                    $existing['label_cleared_label'] = $row['label_cleared_label'];
+                }
+                if (!$userConfirmed && array_key_exists('label_cleared_revision', $row)) {
+                    $existing['label_cleared_revision'] = $row['label_cleared_revision'];
+                }
                 if (array_key_exists('snapshot_version', $row)) {
-                    $incomingVersion = (int) $row['snapshot_version'];
-                    $cleared = (int) ($existing['label_cleared_revision'] ?? 0);
-                    if ($incomingVersion > $cleared) {
-                        $existing['label_cleared_revision'] = null;
-                    }
-                    $existing['snapshot_version'] = max((int) ($existing['snapshot_version'] ?? 0), $incomingVersion);
+                    $existing['snapshot_version'] = max(
+                        (int) ($existing['snapshot_version'] ?? 0),
+                        (int) $row['snapshot_version']
+                    );
                 }
                 if (array_key_exists('identity_count', $row)) {
                     $existing['identity_count'] = $row['identity_count'];
@@ -3040,6 +3042,24 @@ if (!isset($GLOBALS['wpdb'])) {
             }
 
             return true;
+        }
+
+        /** @param array<string,mixed> $existing */
+        /** @param array<string,mixed> $incoming */
+        private function rowMatchesInsertDuplicateKey(array $existing, array $incoming): bool
+        {
+            if (array_key_exists('cluster_uuid', $incoming) && array_key_exists('tenant_id', $incoming)) {
+                return (string) ($existing['cluster_uuid'] ?? '') === (string) $incoming['cluster_uuid']
+                    && (string) ($existing['tenant_id'] ?? '') === (string) $incoming['tenant_id'];
+            }
+            if (array_key_exists('cluster_uuid', $incoming)) {
+                return (string) ($existing['cluster_uuid'] ?? '') === (string) $incoming['cluster_uuid'];
+            }
+            if (array_key_exists('id', $incoming)) {
+                return (string) ($existing['id'] ?? '') === (string) $incoming['id'];
+            }
+
+            return false;
         }
 
         public function reset(): void

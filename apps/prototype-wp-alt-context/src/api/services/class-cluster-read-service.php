@@ -186,12 +186,14 @@ class ClusterReadService {
 				$tenant_id,
 				$preview_limit
 			);
-			$mapper_ids = $this->dependencies->cluster_mapper->requested_repair_cluster_ids();
+			$mapper_ids = $this->normalize_repair_cluster_ids(
+				$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
+			);
 			$extra_ids  = array();
 			if ( count( $mapper_ids ) < self::TARGETED_REPAIR_ID_CEILING ) {
 				$extra_ids = $this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id );
 			}
-			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids );
+			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids, $mapper_ids );
 			$dropped      = $this->dependencies->cluster_mapper->dropped_cluster_count();
 			$fetched_page = count( $sovereign_data['clusters'] );
 			$total_count  = null;
@@ -434,11 +436,12 @@ class ClusterReadService {
 	/**
 	 * Mapper-requested ids take the ceiling first; extras top up only if room remains.
 	 *
-	 * @param list<string> $extra_ids
+	 * @param list<string>      $extra_ids
+	 * @param list<string>|null $mapper_ids Already-normalized mapper ids; fetched when null.
 	 */
-	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array() ): void {
+	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array(), ?array $mapper_ids = null ): void {
 		$mapper_ids = $this->normalize_repair_cluster_ids(
-			$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
+			$mapper_ids ?? $this->dependencies->cluster_mapper->requested_repair_cluster_ids()
 		);
 		$mapper_ids = array_slice( $mapper_ids, 0, self::TARGETED_REPAIR_ID_CEILING );
 		$room       = self::TARGETED_REPAIR_ID_CEILING - count( $mapper_ids );

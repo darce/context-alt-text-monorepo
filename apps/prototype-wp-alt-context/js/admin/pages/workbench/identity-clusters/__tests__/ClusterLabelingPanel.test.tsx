@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../../api/queryKeys';
 import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import {
   fetchClusterMembers,
@@ -566,7 +567,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('People list unavailable; showing named groups only.')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Unable to load people/);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   });
 
   it('announces roster loading and empty states (A11Y-24 / FIX-7)', async () => {
@@ -587,7 +589,6 @@ describe('ClusterLabelingPanel', () => {
 
     const { rerender, queryClient } = renderPanel();
 
-    // Multiple status regions exist (result count + show-all announce).
     expect(screen.getByText('Loading people…')).toHaveAttribute('role', 'status');
 
     vi.mocked(useRosterEntries).mockReturnValue(
@@ -606,7 +607,12 @@ describe('ClusterLabelingPanel', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('No naming options available.')).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 400);
+      });
+    });
+    expect(screen.getByText('0 naming options')).toBeInTheDocument();
   });
 
   it('resets guard/input/banner when clusterId changes (FIX-4)', async () => {
@@ -1058,5 +1064,111 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     release?.();
+  });
+
+  it('roster error shows alert + Retry and hides create (UXW2-3-R2-04)', async () => {
+    const refetch = vi.fn();
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [] as const,
+        isLoading: false,
+        isError: true,
+        isSuccess: false,
+        status: 'error',
+        error: new Error('roster unavailable'),
+        refetch,
+      }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Unable to load people/);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save name' })).not.toBeInTheDocument();
+  });
+
+  it('successful label invalidates roster.entries (UXW2-3-R2-04)', async () => {
+    const { queryClient } = renderPanel();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    await typePanelName('Pat Rivera');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalled();
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.entries() });
+  });
+
+  it('typing 3 chars fast announces the filtered count once after 400ms (UXW2-3-R2-04)', async () => {
+    vi.useFakeTimers();
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 1,
+            name: 'Ada Lovelace',
+            person_uuid: 'p1',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+          {
+            id: 2,
+            name: 'Grace Hopper',
+            person_uuid: 'p2',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+          {
+            id: 3,
+            name: 'Alan Turing',
+            person_uuid: 'p3',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    renderPanel();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    await user.type(input, 'Ada');
+
+    const namingBefore = Array.from(document.querySelectorAll('[role="status"]')).filter((node) =>
+      /naming option/i.test(node.textContent ?? ''),
+    );
+    expect(namingBefore).toHaveLength(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+
+    const namingAfter = Array.from(document.querySelectorAll('[role="status"]')).filter((node) =>
+      /naming option/i.test(node.textContent ?? ''),
+    );
+    expect(namingAfter).toHaveLength(1);
+    expect(namingAfter[0]).toHaveTextContent('1 naming option');
+    vi.useRealTimers();
   });
 });

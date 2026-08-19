@@ -130,6 +130,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setAllowRenameAnyway(false);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
     void invalidateSuggestionProjection(queryClient);
     onLabel(label);
   };
@@ -177,7 +178,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     data: persons = [],
     isLoading: rosterLoading,
     isError: rosterError,
-    isSuccess: rosterSuccess,
+    refetch: refetchRoster,
   } = useRosterEntries();
 
   // Labeled clusters for the union (shared builder; debounced free-text still uses persons + full list).
@@ -220,23 +221,6 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       })),
     [namingOptions],
   );
-
-  const resultCountAnnouncement = useMemo(() => {
-    if (rosterLoading) {
-      return __('Loading people…', 'alt-context');
-    }
-    if (rosterError) {
-      return __('People list unavailable; showing named groups only.', 'alt-context');
-    }
-    if (rosterSuccess && persons.length === 0 && namingOptions.length === 0) {
-      return __('No naming options available.', 'alt-context');
-    }
-    return sprintf(
-      /* translators: %d: number of naming options */
-      __('%d naming options', 'alt-context'),
-      namingOptions.length,
-    );
-  }, [rosterLoading, rosterError, rosterSuccess, persons.length, namingOptions.length]);
 
   const labelMutation = useMutation({
     mutationFn: (newLabel: string) =>
@@ -589,6 +573,22 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
 
         <div className="acx-cluster-labeling-panel__form">
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
+          {rosterError ? (
+            <div className="acx-cluster-labeling-panel__failure" role="alert">
+              <p className="acx-cluster-labeling-panel__failure-message">
+                {__('Unable to load people. Retry before naming someone new.', 'alt-context')}
+              </p>
+              <button
+                type="button"
+                className="button acx-cluster-labeling-panel__retry"
+                onClick={() => {
+                  void refetchRoster();
+                }}
+              >
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
+          ) : (
           <NameFaceControl
             options={comboboxOptions}
             value={labelInput}
@@ -607,15 +607,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             searchPlaceholder={__('Enter name...', 'alt-context')}
             inputId="cluster-label-input"
             autoFocus={false}
-            hideStatusAnnouncement
             suggestionsHeader={__('Matches', 'alt-context')}
             className="acx-cluster-labeling-panel__input-group"
             classPrefix="acx-cluster-labeling-panel"
           />
-
-          <p className="acx-cluster-labeling-panel__result-count" role="status" aria-live="polite">
-            {resultCountAnnouncement}
-          </p>
+          )}
 
           {duplicateGuard && (
             <div className="acx-cluster-labeling-panel__duplicate-guard" role="status" aria-live="polite">

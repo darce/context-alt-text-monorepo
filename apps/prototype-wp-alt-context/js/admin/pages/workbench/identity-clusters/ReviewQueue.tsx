@@ -600,7 +600,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             findings.zeroEvidenceClusterCount,
             findings.counts.unlabeledClusters,
           );
-          setLiveMessage(gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated));
+          setLiveMessage(gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated, length));
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }
@@ -1321,6 +1321,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                             findings.counts.unlabeledClusters,
                           ),
                           findings.topUnlabeledTruncated,
+                          length,
                         )}
                       </p>
                       <button

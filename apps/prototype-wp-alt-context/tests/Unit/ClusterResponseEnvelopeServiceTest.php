@@ -86,6 +86,7 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertSame(10, $data['limit']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
+        $this->assertFalse($data['repair_pending']);
     }
 
     /**
@@ -123,6 +124,7 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertSame('cluster-kept', $data['clusters'][0]['id']);
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
+        $this->assertTrue($data['repair_pending']);
     }
 
     public function testBuildClusterLabelsEnvelopeTruncatesWhenTotalExceedsCount(): void

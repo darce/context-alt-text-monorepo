@@ -397,6 +397,7 @@ class ClustersControllerTest extends TestCase
                 'limit' => 10,
                 'total' => 0,
                 'truncated' => false,
+                'repair_pending' => true,
                 'data_source' => 'backend_proxy',
             ],
             $response->get_data()
@@ -412,6 +413,64 @@ class ClustersControllerTest extends TestCase
         $events = $this->scheduledBootstrapEvents();
         $this->assertCount(1, $events);
         $this->assertSame([self::currentTenantId()], array_values($events)[0]['args']);
+    }
+
+    /**
+     * R2-12 backend / R3 proxy: invariant-failing upstream rows set repair_pending
+     * on the proxy leg (same rule as local_projection). Mutant: omit the key.
+     */
+    public function testTopUnlabeledProxyDropSetsRepairPending(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return null;
+            }
+        };
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'clusters' => [
+                    [
+                        'id' => 'cluster-proxy-kept',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'is_labeled' => false,
+                        'is_auto_label' => false,
+                        'identity_count' => 2,
+                        'user_confirmed' => false,
+                        'representatives' => [
+                            ['id' => 'rep-1', 'media_id' => 101, 'is_pinned' => false],
+                        ],
+                    ],
+                    [
+                        'id' => 'cluster-proxy-drop',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'identity_count' => 4,
+                        'representatives' => [],
+                    ],
+                ],
+                'limit' => 10,
+                'total' => 2,
+                'truncated' => false,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame('cluster-proxy-kept', $data['clusters'][0]['id']);
+        $this->assertSame(1, $data['total']);
+        $this->assertTrue($data['repair_pending']);
+        $this->assertSame('backend_proxy', $data['data_source']);
     }
 
     public function testTopUnlabeledClustersRejectPartialProxyEnvelope(): void

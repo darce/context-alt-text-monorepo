@@ -381,19 +381,33 @@ final class ClustersReadCharacterizationScenarios
         $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
         // Canonical envelope required — bare-array fabrication is forbidden [rg-015].
+        // One schema-valid served row plus one empty-rep drop (R2-02 / R3).
         self::queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
                 'clusters' => [
                     [
                         'id' => 'cluster-proxy-top',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'is_labeled' => false,
+                        'is_auto_label' => false,
+                        'identity_count' => 2,
+                        'user_confirmed' => false,
+                        'representatives' => [
+                            ['id' => 'rep-proxy-top', 'media_id' => 101, 'is_pinned' => false],
+                        ],
+                    ],
+                    [
+                        'id' => 'cluster-proxy-drop',
+                        'tenant_id' => 'tenant-1',
                         'label' => null,
                         'identity_count' => 4,
                         'representatives' => [],
                     ],
                 ],
                 'limit' => 10,
-                'total' => 1,
+                'total' => 2,
                 'truncated' => false,
             ]),
         ]);
@@ -1228,13 +1242,26 @@ final class ClustersReadCharacterizationScenarios
                 'clusters' => [
                     [
                         'id' => 'cluster-canonical',
+                        'tenant_id' => 'tenant-1',
                         'label' => null,
+                        'is_labeled' => false,
+                        'is_auto_label' => false,
                         'identity_count' => 2,
+                        'user_confirmed' => false,
+                        'representatives' => [
+                            ['id' => 'rep-canonical', 'media_id' => 102, 'is_pinned' => false],
+                        ],
+                    ],
+                    [
+                        'id' => 'cluster-canonical-drop',
+                        'tenant_id' => 'tenant-1',
+                        'label' => null,
+                        'identity_count' => 3,
                         'representatives' => [],
                     ],
                 ],
                 'limit' => 10,
-                'total' => 1,
+                'total' => 2,
                 'truncated' => false,
             ]),
         ]);

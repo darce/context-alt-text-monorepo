@@ -954,7 +954,7 @@ def _cmd_fetch(args: argparse.Namespace) -> list[str]:
             spent_usd += record["provenance"].get("est_cost_usd", 0.0)
         record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
         record_paths.append(str(record_path))
-        print(record_path)
+        print(_printable_path(record_path))
     # Never prune records this invocation just wrote (S3-07 across the matrix).
     prune_out_dir(str(OUT_DIR), keep=max(args.keep, len(record_paths)))
     return record_paths
@@ -2140,7 +2140,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
         path = OUT_DIR / f"face-run-{stamp}-aborted.json"
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
         prune_out_dir(str(OUT_DIR), keep=args.keep)
-        print(path)
+        print(_printable_path(path))
         sys.exit(f"FaceBoundedStallError: {exc}")
     # FIR5GL-01: synthetic occlusion twin pass — generate/render twins from the
     # frozen landmark cache, re-detect+embed the occluded pixels with the SAME
@@ -2164,7 +2164,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     path = OUT_DIR / f"face-run-{stamp}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(OUT_DIR), keep=args.keep)
-    print(path)
+    print(_printable_path(path))
     print(
         f"face-bakeoff items={len(record['items'])} "
         f"leg={record['provenance'].get('leg')} "
@@ -2651,7 +2651,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         print(line)
     if regressions:
         sys.exit("compare regression gate: candidate fails meet-or-beat vs baseline — " + "; ".join(regressions))
-    print(f"compare meet-or-beat: PASS candidate={candidate_path} baseline={baseline_path}")
+    print(f"compare meet-or-beat: PASS candidate={_printable_path(candidate_path)} baseline={_printable_path(baseline_path)}")
 
 
 def _held_out_fraction_arg(raw: str) -> float:

@@ -499,7 +499,7 @@ Local and proxy-success responses include:
 - `true` when a local cluster row was updated to that person, or was already bound to that person (`BIND_ALREADY_BOUND`).
 - `false` when no local cluster row matched.
 
-A genuine bind write failure (`bind_person_to_cluster` returns `false`, including a missing `$wpdb`) is not a `roster_bound: false` flag. Local and proxy-success paths both return HTTP `500` with error code `acx_db_error` before `roster_bound` is written. This fail-closed behaviour holds on every write path that sets `roster_bound`.
+On the local path, a genuine bind write failure (`bind_person_to_cluster` returns `false`, including a missing `$wpdb`) is not a `roster_bound: false` flag — it raises HTTP `500` with error code `acx_db_error` before `roster_bound` is written. Do not treat that 500 as a general fail-closed rule for every `roster_bound` writer.
 
 ## POST /recognition/clusters/{source_id}/merge
 
@@ -520,7 +520,7 @@ When `target_label` is a human name, the plugin binds a roster person to the tar
 }
 ```
 
-`roster_bound` is `true` when the target cluster row was updated or already bound to that person, and `false` when no local cluster row matched. A bind write failure (`false` from `bind_person_to_cluster`) is HTTP `500` `acx_db_error` on both the local and proxy-success paths — it is not reported as `roster_bound: false`. `person_id` is present on the proxy-success path only.
+`roster_bound` is `true` when the target cluster row was updated or already bound to that person (`BIND_ALREADY_BOUND`), and `false` when no local cluster row matched. On the local path, a bind write failure (`false` from `bind_person_to_cluster`) is HTTP `500` `acx_db_error` — it is not reported as `roster_bound: false`. `person_id` is present on the proxy-success path only.
 
 If the target cluster is already bound to a **different** person, the plugin returns HTTP `409` with error code `cluster_already_bound`. Remedy: unbind the target cluster first, then retry the merge.
 

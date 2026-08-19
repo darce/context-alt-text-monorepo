@@ -535,7 +535,7 @@ export const NameFaceControl = ({
           onKeyDown={handleKeyDown}
           placeholder={searchPlaceholder ?? placeholder ?? __('Enter a name…', 'alt-context')}
           disabled={isInputDisabled}
-          aria-label={ariaLabel}
+          aria-label={visibleLabel && inputId ? undefined : ariaLabel}
           aria-describedby={hint ? hintId : undefined}
         />
 

@@ -187,7 +187,6 @@ export const ClusterEditForm = ({
       pendingLabel={saveButtonLabel}
       placeholder={__('Enter a name…', 'alt-context')}
       suggestionsHeader={__('People', 'alt-context')}
-      ariaLabel={__('Person name', 'alt-context')}
       visibleLabel={__('Person name', 'alt-context')}
       inputId={inputId}
       className="acx-identity-cluster__edit"

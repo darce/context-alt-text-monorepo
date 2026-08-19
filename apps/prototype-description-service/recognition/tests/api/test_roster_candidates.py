@@ -394,6 +394,10 @@ def test_schema_and_contract_agree_on_php_candidate_ordering() -> None:
     assert "roster_entry_id null rows are uncommittable and kept flagged" not in desc
     assert "before uncommittable" in desc or "after every committable row" in desc
     assert "must not re-sort" in desc
+    assert "Browser/SPA" in desc
+    assert "mapping proxy" in desc or "PHP-layer" in desc
+    old_unqualified = "Clients must render in payload order and must not re-sort client-side."
+    assert old_unqualified not in desc
     contract_path = (
         Path(__file__).resolve().parents[5]
         / "docs"
@@ -404,10 +408,14 @@ def test_schema_and_contract_agree_on_php_candidate_ordering() -> None:
     text = contract_path.read_text(encoding="utf-8")
     heading = "### GET /recognition/clusters/{cluster_id}/roster-candidates"
     assert heading in text
+    assert old_unqualified not in text
     python_body, php_block = text.split(heading, 1)[1].split(
         "PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`", 1
     )
     candidates_line = next(line for line in python_body.splitlines() if "`candidates[]`" in line)
     assert "Python cluster-grain" in candidates_line
     assert "people-grain" in php_block
-    assert "must not re-sort" in php_block and "client-side" in php_block
+    assert "Browser/SPA" in php_block
+    assert "mapping proxy" in php_block or "PHP-layer" in php_block
+    assert "must not re-sort" in php_block
+    assert old_unqualified not in php_block

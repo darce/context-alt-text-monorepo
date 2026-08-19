@@ -130,7 +130,7 @@ describe('dropClusterFromReviewCaches', () => {
     ).toEqual(['merge-live']);
   });
 
-  it('R1-22: decrements topUnlabeled total by the rows actually removed and recomputes has_clusters', () => {
+  it('R1-22: decrements topUnlabeled total by the rows actually removed and keeps has_clusters', () => {
     const queryClient = new QueryClient();
     seed(queryClient);
 
@@ -145,7 +145,20 @@ describe('dropClusterFromReviewCaches', () => {
     const empty = queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey);
     expect(empty?.clusters).toEqual([]);
     expect(empty?.total).toBe(10);
-    expect(empty?.has_clusters).toBe(false);
+    expect(empty?.has_clusters).toBe(true);
+  });
+
+  it('R3-09: has_clusters survives a full-page tombstone at non-zero server total', () => {
+    const queryClient = new QueryClient();
+    seed(queryClient);
+
+    dropClusterFromReviewCaches(queryClient, 'cluster-1', { mode: REVIEW_DROP_MODE.LABEL });
+    dropClusterFromReviewCaches(queryClient, 'cluster-other', { mode: REVIEW_DROP_MODE.LABEL });
+
+    const empty = queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey);
+    expect(empty?.clusters).toEqual([]);
+    expect(empty?.total).toBe(10);
+    expect(empty?.has_clusters).toBe(true);
   });
 
   it('R1-23 merge path: drops mergePending rows on either side of the retired source', () => {

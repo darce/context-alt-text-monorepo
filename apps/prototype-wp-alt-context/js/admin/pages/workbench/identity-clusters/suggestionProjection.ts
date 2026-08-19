@@ -491,7 +491,6 @@ export const applyTopUnlabeledTombstones = (
     ...page,
     clusters: filtered,
     total: Math.max(0, page.total - removed),
-    has_clusters: filtered.length > 0,
   };
 };
 
@@ -569,7 +568,6 @@ export const dropClusterFromReviewCaches = (
         ...current,
         clusters: filtered,
         total: Math.max(0, current.total - removed),
-        has_clusters: filtered.length > 0,
       };
     },
   );

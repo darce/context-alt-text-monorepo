@@ -2056,6 +2056,8 @@ describe('ReviewQueue', () => {
     expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
     // Demoted Accept suggestion must not steal primacy.
     expect(focused?.classList.contains('acx-suggestion-card__accept')).toBe(false);
+    // R6-02: prefilled Save must not be the first stop — operator lands in the name field.
+    expect(focused).toBe(screen.getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA }));
   });
 
   it('BR-27: focus on CLUSTER with nothing selected lands on enabled person-commit control', async () => {

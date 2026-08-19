@@ -435,8 +435,10 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	/**
 	 * Map python labelled cluster_id → local acx_persons.id. Collapse to one row
 	 * per roster_entry_id (max similarity wins, keep that row's band + name).
-	 * Re-sort similarity DESC, cluster_id ASC, then slice people-grain top_k.
-	 * Unmapped rows keep roster_entry_id null (uncommittable). Never invents total/limit.
+	 * Re-sort committable first, then similarity DESC, cluster_id ASC, then
+	 * slice people-grain top_k. Unmapped rows keep roster_entry_id null
+	 * (uncommittable) and do not occupy top_k slots ahead of committable rows.
+	 * Never invents total/limit.
 	 *
 	 * @param array<string,mixed> $payload
 	 * @return array<string,mixed>
@@ -506,6 +508,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		usort(
 			$collapsed,
 			static function ( array $left, array $right ): int {
+				$left_null  = null === ( $left['roster_entry_id'] ?? null );
+				$right_null = null === ( $right['roster_entry_id'] ?? null );
+				if ( $left_null !== $right_null ) {
+					return $left_null ? 1 : -1;
+				}
 				$sim = ( (float) ( $right['similarity'] ?? 0 ) ) <=> ( (float) ( $left['similarity'] ?? 0 ) );
 				if ( 0 !== $sim ) {
 					return $sim;

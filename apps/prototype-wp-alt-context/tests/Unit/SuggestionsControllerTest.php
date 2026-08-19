@@ -1293,6 +1293,52 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(['Alice', 'Bob'], array_column($data['candidates'], 'name'));
     }
 
+    public function testGetRosterCandidatesRanksUncommittableAfterCommittableForTopK(): void
+    {
+        $orphan = 'ffffffff-0000-0000-0000-00000000000f';
+        $alice = 'aaaaaaaa-0000-0000-0000-00000000000a';
+        $bob = 'bbbbbbbb-0000-0000-0000-00000000000b';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 3,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    ['cluster_id' => $orphan, 'name' => 'Orphan', 'similarity' => 0.99, 'band' => 'strong'],
+                    ['cluster_id' => $alice, 'name' => 'Alice-c', 'similarity' => 0.80, 'band' => 'strong'],
+                    ['cluster_id' => $bob, 'name' => 'Bob-c', 'similarity' => 0.70, 'band' => 'strong'],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $alice, 'person_id' => 1, 'name' => 'Alice'],
+            ['cluster_uuid' => $bob, 'person_id' => 2, 'name' => 'Bob'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 2);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+
+        $this->assertCount(2, $data['candidates']);
+        $this->assertSame([1, 2], array_column($data['candidates'], 'roster_entry_id'));
+        $this->assertSame([$alice, $bob], array_column($data['candidates'], 'cluster_id'));
+        $this->assertSame(['Alice', 'Bob'], array_column($data['candidates'], 'name'));
+    }
+
     public function testGetRosterCandidatesTieBreaksEqualSimilarityByClusterIdAsc(): void
     {
         $zed = 'zzzzzzzz-0000-0000-0000-00000000000z';

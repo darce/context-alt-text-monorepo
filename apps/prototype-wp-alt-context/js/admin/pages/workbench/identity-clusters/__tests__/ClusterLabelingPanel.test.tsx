@@ -144,7 +144,7 @@ describe('ClusterLabelingPanel', () => {
 
     // Confirming a cluster option row primes the guard (INT-07 outcome sample on the same surface).
     await typePanelName('Slate Willow');
-    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
 
     expect(
       await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
@@ -509,7 +509,7 @@ describe('ClusterLabelingPanel', () => {
     renderPanel();
 
     await typePanelName('Slate Willow');
-    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
 
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
@@ -629,7 +629,7 @@ describe('ClusterLabelingPanel', () => {
     );
 
     await typePanelName('Slate Willow');
-    await userEvent.click(await screen.findByRole('button', { name: /confirm match/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
     expect(await screen.findByText(/already exists/)).toBeInTheDocument();
 
     rerender(
@@ -988,7 +988,7 @@ describe('ClusterLabelingPanel', () => {
     vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
     renderPanel();
     await typePanelName('Slate Willow');
-    await userEvent.click(await screen.findByRole('button', { name: /Confirm match with Slate Willow/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /Confirm match with Slate Willow/i }));
     expect(
       await screen.findByText('A name matching "Slate Willow" already exists. Choose how to proceed.'),
     ).toBeInTheDocument();
@@ -1079,7 +1079,7 @@ describe('ClusterLabelingPanel', () => {
     );
     renderPanel();
     await typePanelName('Alex');
-    await userEvent.click(await screen.findByRole('button', { name: /Confirm match with Alex Carter/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /Confirm match with Alex Carter/i }));
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Alex Carter', expect.anything());
     });

@@ -213,9 +213,9 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
     const user = userEvent.setup();
 
-    const confirmButtons = screen.getAllByRole('button', { name: /Confirm match with/ });
-    expect(confirmButtons).toHaveLength(2);
-    await user.click(confirmButtons[1]);
+    const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+    expect(confirmOptions).toHaveLength(2);
+    await user.click(confirmOptions[1]);
 
     expect(onCommit).toHaveBeenCalledWith({
       kind: 'roster',
@@ -287,11 +287,51 @@ describe('NameFaceControl distinct confirm names (UXW2-3-R1-15)', () => {
       onRejectSuggestion: vi.fn(),
     });
 
-    expect(screen.getByRole('button', { name: 'Confirm match with Ada Lovelace' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm match with Grace Hopper' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace (Person)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper (Person)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Ada Lovelace' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Grace Hopper' })).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: 'Confirm match' })).toHaveLength(0);
+  });
+});
+
+describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
+  it('exposes aria-controls and toggles aria-expanded on Escape / ArrowDown', async () => {
+    const onCancel = vi.fn();
+    renderControl({ onCancel });
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    const listbox = screen.getByRole('listbox');
+
+    expect(input).toHaveAttribute('aria-controls', listbox.id);
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(listbox).toHaveAttribute('aria-labelledby', `${listbox.id}-label`);
+    for (const option of screen.getAllByRole('option')) {
+      expect(option.querySelector('button')).toBeNull();
+    }
+
+    input.focus();
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalled();
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.keyboard('{ArrowDown}');
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('reject is reachable via keyboard Delete on the active option', async () => {
+    const onRejectSuggestion = vi.fn();
+    renderControl({
+      options: [{ ...person(1, 'Ada Lovelace'), suggestion_id: 's-ada' }],
+      onRejectSuggestion,
+    });
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    input.focus();
+    await user.keyboard('{ArrowDown}{Delete}');
+    expect(onRejectSuggestion).toHaveBeenCalledWith('s-ada');
   });
 });
 

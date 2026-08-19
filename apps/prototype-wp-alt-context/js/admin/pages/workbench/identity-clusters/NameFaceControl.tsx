@@ -229,6 +229,7 @@ export const NameFaceControl = ({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [announcedTotal, setAnnouncedTotal] = useState<number | null>(null);
   const [chosenOptionValue, setChosenOptionValue] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(true);
   const isDisabled = isPending || disabled || isLoading;
   const isInputDisabled = disabled || isLoading || (inputDisabled ?? isPending);
 
@@ -247,7 +248,7 @@ export const NameFaceControl = ({
     [matchingOptions],
   );
   const matchTotal = matchingOptions.length;
-  const overlayOpen = displayedOptions.length > 0 && !isPending && !isLoading;
+  const overlayOpen = listOpen && displayedOptions.length > 0 && !isPending && !isLoading;
 
   useEffect(() => {
     setActiveIndex(-1);
@@ -330,6 +331,11 @@ export const NameFaceControl = ({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       if (!overlayOpen) {
+        if (displayedOptions.length > 0 && !isPending && !isLoading) {
+          e.preventDefault();
+          setListOpen(true);
+          setActiveIndex(0);
+        }
         return;
       }
       e.preventDefault();
@@ -362,6 +368,18 @@ export const NameFaceControl = ({
       setActiveIndex(displayedOptions.length - 1);
       return;
     }
+    if (e.key === 'Delete') {
+      if (!overlayOpen || activeIndex < 0 || !onRejectSuggestion) {
+        return;
+      }
+      const active = displayedOptions[activeIndex];
+      const suggestionId = active?.suggestion_id;
+      if (typeof suggestionId === 'string' && suggestionId.length > 0) {
+        e.preventDefault();
+        onRejectSuggestion(suggestionId);
+      }
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       if (isPending || isLoading) {
@@ -375,19 +393,13 @@ export const NameFaceControl = ({
       return;
     }
     if (e.key === 'Escape') {
+      setListOpen(false);
       onCancel?.();
     }
   };
 
-  const handleSuggestionSelect = React.useCallback(
-    (label: string) => () => {
-      onValueChange(label);
-    },
-    [onValueChange],
-  );
-
   const handleConfirmOptionClick = React.useCallback(
-    (option: ComboboxOption) => (event: React.MouseEvent<HTMLButtonElement>) => {
+    (option: ComboboxOption) => (event: React.MouseEvent<HTMLElement>) => {
       event.stopPropagation();
       confirmDisplayedOption(option);
     },
@@ -420,7 +432,10 @@ export const NameFaceControl = ({
           className={`${classPrefix}__label-input`}
           id={inputId}
           value={value}
-          onChange={(e) => onValueChange(e.target.value)}
+          onChange={(e) => {
+            setListOpen(true);
+            onValueChange(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={searchPlaceholder ?? placeholder ?? __('Enter a name…', 'alt-context')}
           disabled={isInputDisabled}
@@ -433,6 +448,7 @@ export const NameFaceControl = ({
             className={`${classPrefix}__suggestions-overlay`}
             role="listbox"
             id={listboxId}
+            aria-labelledby={`${listboxId}-label`}
           >
             <div className={`${classPrefix}__suggestions-header`} id={`${listboxId}-label`}>
               {suggestionsHeader ?? __('Suggested', 'alt-context')}
@@ -440,31 +456,43 @@ export const NameFaceControl = ({
             {displayedOptions.map((option, index) => {
               const optionId = `${listboxId}-opt-${index}`;
               const selected = index === activeIndex;
+              const optionName = sourceBadgeLabel(option)
+                ? sprintf(
+                    /* translators: 1: person/group name, 2: source (Person or Group) */
+                    __('%1$s (%2$s)', 'alt-context'),
+                    option.label,
+                    sourceBadgeLabel(option) ?? '',
+                  )
+                : option.label;
               return (
                 <div
                   key={option.value}
-                  id={optionId}
-                  role="option"
-                  aria-selected={selected}
                   className={`${classPrefix}__suggestion-row${
                     selected ? ` ${classPrefix}__suggestion-row--active` : ''
                   }`}
                 >
-                  <button
-                    type="button"
+                  <div
+                    id={optionId}
+                    role="option"
+                    aria-selected={selected}
                     className={`${classPrefix}__suggestion-item`}
-                    onClick={handleSuggestionSelect(option.label)}
-                    tabIndex={-1}
-                    title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
+                    onClick={handleConfirmOptionClick(option)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        confirmDisplayedOption(option);
+                      }
+                    }}
+                    title={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
                     aria-label={
                       sourceBadgeLabel(option)
                         ? sprintf(
                             /* translators: 1: person/group name, 2: source (Person or Group) */
-                            __('%1$s (%2$s)', 'alt-context'),
+                            __('Confirm match with %1$s (%2$s)', 'alt-context'),
                             option.label,
                             sourceBadgeLabel(option) ?? '',
                           )
-                        : option.label
+                        : sprintf(__('Confirm match with %s', 'alt-context'), option.label)
                     }
                   >
                     <span className={`${classPrefix}__suggestion-label`}>
@@ -491,31 +519,22 @@ export const NameFaceControl = ({
                         </span>
                       </span>
                     )}
-                  </button>
-                  <div className={`${classPrefix}__suggestion-actions`}>
+                    <span className={`${classPrefix}__suggestion-confirm`} aria-hidden="true">
+                      ✓
+                    </span>
+                    <span className="screen-reader-text">{optionName}</span>
+                  </div>
+                  {!!option.suggestion_id && !!onRejectSuggestion && (
                     <button
                       type="button"
-                      className={`${classPrefix}__suggestion-confirm`}
-                      onClick={handleConfirmOptionClick(option)}
-                      tabIndex={-1}
-                      title={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
-                      aria-label={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
+                      className={`${classPrefix}__suggestion-reject`}
+                      onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
+                      title={sprintf(__('Reject %s', 'alt-context'), option.label)}
+                      aria-label={sprintf(__('Reject %s', 'alt-context'), option.label)}
                     >
-                      ✓
+                      ✕
                     </button>
-                    {!!option.suggestion_id && !!onRejectSuggestion && (
-                      <button
-                        type="button"
-                        className={`${classPrefix}__suggestion-reject`}
-                        onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
-                        tabIndex={-1}
-                        title={sprintf(__('Reject %s', 'alt-context'), option.label)}
-                        aria-label={sprintf(__('Reject %s', 'alt-context'), option.label)}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               );
             })}

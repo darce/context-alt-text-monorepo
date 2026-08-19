@@ -108,15 +108,11 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    // Clicking the suggestion item only changes label
-    const suggestion = screen.getByRole('button', { name: /Person B \(Group\)/ });
-    fireEvent.click(suggestion);
-    expect(onLabelChange).toHaveBeenCalledWith('Person B');
+    // Clicking the option confirms (no nested button). Namespaced cluster: ids unwrap.
+    const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
+    fireEvent.click(confirmOption);
+    expect(onLabelChange).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
-
-    // Clicking the confirm button unwraps namespaced cluster: ids.
-    const confirmButton = screen.getAllByRole('button', { name: /confirm match/i })[1]; // Index 1 for Person B
-    fireEvent.click(confirmButton);
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
     );
@@ -138,7 +134,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster'));
     expect(onSave).not.toHaveBeenCalled();
     expect(onConfirmSuggestion).not.toHaveBeenCalled();
@@ -155,7 +151,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
   });
 
@@ -173,7 +169,7 @@ describe('ClusterEditForm', () => {
     ];
     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
 
-    expect(screen.getByRole('button', { name: /Alice Person \(Person\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Alice Person/ })).toBeInTheDocument();
     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested 4')).not.toBeInTheDocument();
   });
@@ -210,7 +206,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /Person A \(Group\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
   });
 
   it('unwraps cluster: namespaced values on confirm', async () => {
@@ -224,7 +220,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
     );
@@ -356,7 +352,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    const renderedOptionRows = screen.getAllByRole('button', { name: /confirm match/i });
+    const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
@@ -450,7 +446,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith(
         'cluster-alice',

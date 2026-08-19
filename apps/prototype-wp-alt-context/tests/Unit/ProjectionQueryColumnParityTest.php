@@ -1780,7 +1780,7 @@ PHP;
 
     private function isPlausibleColumnIdentifier(string $id): bool
     {
-        if ($id === '' || str_starts_with($id, '%')) {
+        if ($id === '' || str_starts_with($id, '%') || strtolower($id) === 'this') {
             return false;
         }
         if ($this->isSqlKeyword($id)) {

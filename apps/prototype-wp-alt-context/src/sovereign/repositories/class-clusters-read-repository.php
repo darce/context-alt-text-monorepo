@@ -56,7 +56,7 @@ class ClustersReadRepository {
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != '' AND c.label LIKE %s
@@ -73,7 +73,7 @@ class ClustersReadRepository {
 			);
 		} elseif ( $labeled_only ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label IS NOT NULL AND c.label != ''
@@ -89,7 +89,7 @@ class ClustersReadRepository {
 			);
 		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s AND c.label LIKE %s
@@ -106,7 +106,7 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
 				 WHERE c.tenant_id = %s
@@ -238,7 +238,7 @@ class ClustersReadRepository {
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label 
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
 				WHERE c.tenant_id = %s
@@ -311,7 +311,7 @@ class ClustersReadRepository {
 
 		$persons_table = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
-			"SELECT c.*, p.person_uuid, {$this->projected_cluster_label_sql()} as label 
+			"SELECT c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
 			 WHERE c.cluster_uuid = %s 

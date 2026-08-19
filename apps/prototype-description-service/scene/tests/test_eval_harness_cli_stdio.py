@@ -36,20 +36,31 @@ _CURRENT_REQUEST: pytest.FixtureRequest | None = None
 
 
 def _argv_has_utf8_non_ascii(argv: list[bytes] | None) -> bool:
+    """True iff some argv part is valid UTF-8 with a codepoint > 127.
+
+    Latin-1 0xe9 is False on purpose: invalid UTF-8 is the host-independent
+    L-01 oracle and must not take @pytest.mark.requires_surrogate_argv, which
+    Darwin-skips via a UTF-8 café probe (RV18-07 / PRINCIPLE 10 / AGT-06).
+    """
     if not argv:
         return False
     for part in argv:
         try:
             text = part.decode("utf-8")
         except UnicodeDecodeError:
-            continue
+            continue  # latin-1 0xe9 / undecodable bytes: not this gate
         if any(ord(ch) > 127 for ch in text):
             return True
     return False
 
 
 def _enforce_surrogate_argv_marker(argv: list[bytes] | None) -> None:
-    """FAIL unmarked C-locale café-argv children (C-01 / sr-001 / PRINCIPLE 10)."""
+    """FAIL unmarked C-locale UTF-8 café-argv children (C-01 / sr-001 / PRINCIPLE 10).
+
+    Latin-1 0xe9 argv is out of scope (invalid UTF-8). Those tests are the
+    host-independent L-01 oracle and must not carry requires_surrogate_argv
+    (RV18-07).
+    """
     if not _argv_has_utf8_non_ascii(argv):
         return
     req = _CURRENT_REQUEST
@@ -839,3 +850,60 @@ def test_c01_marked_rename_skips_when_probe_false(
     )
     with pytest.raises(pytest.skip.Exception, match="PEP 383"):
         apply_surrogate_argv_gate(_Req())  # type: ignore[arg-type]
+
+
+def test_c01_latin1_argv_is_outside_utf8_surrogate_gate() -> None:
+    """RV18-07 / PRINCIPLE 10: gate is valid-UTF-8 café, not any non-ASCII byte.
+
+    `caf\\xe9` is invalid UTF-8. It must not trip requires_surrogate_argv —
+    that marker Darwin-skips via a UTF-8 café probe, which would eat the
+    host-independent L-01 0xe9 oracle (AGT-06).
+    """
+    latin1 = [b"caf\xe9.json"]
+    utf8_cafe = [b"caf\xc3\xa9.json"]
+    assert _argv_has_utf8_non_ascii(latin1) is False
+    assert _argv_has_utf8_non_ascii(utf8_cafe) is True
+    assert _argv_has_utf8_non_ascii([b"ascii.json"]) is False
+    assert _argv_has_utf8_non_ascii(None) is False
+    _enforce_surrogate_argv_marker(latin1)  # must not pytest.fail
+
+
+def test_c01_utf8_predicate_source_names_latin1_exclusion() -> None:
+    """RV18-07 advertised boundary: latin-1 0xe9 exclusion is in the helper body."""
+    src = Path(__file__).read_text(encoding="utf-8")
+    start = src.index("def _argv_has_utf8_non_ascii")
+    end = src.index("\ndef ", start + 1)
+    body = src[start:end]
+    assert "0xe9" in body, body
+    assert "latin-1" in body.lower(), body
+
+
+def test_c01_unmarked_utf8_cafe_spawn_fails_enforcement() -> None:
+    """C-01 spawn half / RV18-08: unmarked café argv through _run_python_bytes fails."""
+    with pytest.raises(pytest.fail.Exception, match="requires_surrogate_argv"):
+        _run_python_bytes(
+            b"import sys; sys.stdout.buffer.write(b'ok')",
+            [b"caf\xc3\xa9.json"],
+        )
+
+
+def test_c01_run_python_bytes_invokes_enforcer_with_exact_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RV18-08: spy pins the argv actually passed; deleting the spawn call goes red."""
+    seen: list[list[bytes] | None] = []
+    real = _enforce_surrogate_argv_marker
+
+    def _spy(argv: list[bytes] | None) -> None:
+        seen.append(None if argv is None else list(argv))
+        real(argv)
+
+    monkeypatch.setattr(sys.modules[__name__], "_enforce_surrogate_argv_marker", _spy)
+    argv = [b"--manifest", b"plain.json", b"exact-argv-pin.json"]
+    proc = _run_python_bytes(b"import sys; sys.stdout.buffer.write(b'ok')", argv)
+    assert seen == [argv], (
+        "_run_python_bytes did not pass argv to _enforce_surrogate_argv_marker "
+        "(VLM6-RV18-08 / VLM6-RV16-C-01 spawn half)"
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == b"ok"

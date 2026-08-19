@@ -46,6 +46,21 @@ class ClusterMutationsCharacterizationTest extends TestCase
             null,
             $this->topologyCommandRepository
         );
+        global $wpdb;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-xyz',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+            [
+                'cluster_uuid' => 'cluster-target',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+        ];
     }
 
     public function testClusterMediaIsBackendProxyMutation(): void

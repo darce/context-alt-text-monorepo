@@ -205,7 +205,7 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
 
       act(() => {
         result.current.mutations.bulkAccept.mutate({
-          suggestion_type: 'assignment',
+          suggestion_type: 'name',
           min_confidence: 0.5,
         });
       });

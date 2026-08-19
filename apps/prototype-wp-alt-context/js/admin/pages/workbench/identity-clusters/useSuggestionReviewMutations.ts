@@ -1005,35 +1005,19 @@ export const useSuggestionReviewMutations = ({
   });
 
   const bulkAcceptMutation = useMutation({
-    mutationFn: bulkAcceptSuggestions,
+    mutationFn: async (request: Parameters<typeof bulkAcceptSuggestions>[0]) => {
+      // BulkAcceptResponse is {accepted_count, skipped_count} only — no accepted
+      // ids. Assignment/merge drops would guess from min_confidence (rg-015).
+      if (request.suggestion_type !== 'name') {
+        throw new Error('Bulk accept is only available for name suggestions.');
+      }
+      return bulkAcceptSuggestions(request);
+    },
     onSuccess: (_data, request) => {
-      if (request.suggestion_type === 'name') {
-        const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
-        for (const item of names?.suggestions ?? []) {
-          if ((item.confidence_score ?? 0) >= request.min_confidence) {
-            dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
-          }
-        }
-      } else if (request.suggestion_type === 'assignment') {
-        const page = queryClient.getQueryData<SuggestionReviewPage>(
-          queryKeys.suggestions.projection.reviewPage(0),
-        );
-        const dropped = new Set<string>();
-        for (const item of page?.items ?? []) {
-          if (item.similarity >= request.min_confidence) {
-            const dropId = item.clusterId;
-            if (dropId && !dropped.has(dropId)) {
-              dropped.add(dropId);
-              dropClusterFromReviewCaches(queryClient, dropId, { mode: REVIEW_DROP_MODE.LABEL });
-            }
-          }
-        }
-      } else if (request.suggestion_type === 'merge') {
-        const merges = queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey);
-        for (const item of merges?.suggestions ?? []) {
-          if (item.similarity >= request.min_confidence) {
-            dropRetiredMergeCluster(item);
-          }
+      const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+      for (const item of names?.suggestions ?? []) {
+        if ((item.confidence_score ?? 0) >= request.min_confidence) {
+          dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
         }
       }
       invalidateReviewCachesWithoutRefetch(queryClient);

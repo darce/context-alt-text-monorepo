@@ -1734,5 +1734,87 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(
       queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
     ).toEqual(['cluster-low']);
+    // Header count for NAME is the remaining name-pending rows.
+    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(1);
+  });
+
+  it('R1-24: bulkAccept name type decrements the header count', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(0);
+  });
+
+  it('R1-24: bulkAccept assignment type is scoped out (no silent drop)', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([makeItem({ suggestionId: 'sugg-a', clusterId: 'cluster-1', similarity: 0.95 })]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(topUnlabeledKey, makeTopUnlabeledPage([makeTopCluster('cluster-1')]));
+
+    const { result } = renderMutations();
+    await expect(
+      result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'assignment',
+        min_confidence: 0.5,
+      }),
+    ).rejects.toThrow('Bulk accept is only available for name suggestions.');
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-a']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1']);
+  });
+
+  it('R1-24: bulkAccept merge type is scoped out (no silent drop)', async () => {
+    const mergeRow = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-1',
+      cluster_b_id: 'cluster-2',
+      source_cluster_id: 'cluster-1',
+      target_cluster_id: 'cluster-2',
+      similarity: 0.95,
+    };
+    queryClient.setQueryData(mergePendingKey, makeMergePage([mergeRow]));
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+
+    const { result } = renderMutations();
+    await expect(
+      result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'merge',
+        min_confidence: 0.5,
+      }),
+    ).rejects.toThrow('Bulk accept is only available for name suggestions.');
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-1']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
   });
 });

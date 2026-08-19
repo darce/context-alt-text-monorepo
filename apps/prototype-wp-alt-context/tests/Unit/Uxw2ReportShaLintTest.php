@@ -32,14 +32,71 @@ class Uxw2ReportShaLintTest extends TestCase
         $root = $this->repoRoot();
         foreach ($paths as $path) {
             $content = (string) file_get_contents($path);
-            preg_match_all('/\b[0-9a-f]{40}\b/', $content, $matches);
-            foreach ($matches[0] as $sha) {
+            foreach ($this->collectFortyHexTokens($content) as $sha) {
                 $this->assertTrue(
                     $this->shaResolves($git, $root, $sha),
                     sprintf('%s cites unresolved commit %s', basename($path), $sha)
                 );
             }
         }
+    }
+
+    /**
+     * R9-01: a 40-hex token is exempt only when its line contains the
+     * literal `sha-lint:allow`. The marker is not a blanket disable.
+     * Mutant: skip every 40-hex token regardless of the marker.
+     */
+    public function testShaLintAllowMarkerExemptsTokensOnThatLineOnly(): void
+    {
+        $dead = str_repeat('0', 40);
+        $allowed = sprintf(
+            'DEAD %s <!-- sha-lint:allow verbatim mutant payload, not a commit citation -->',
+            $dead
+        );
+        $denied = sprintf('DEAD %s', $dead);
+
+        $this->assertSame(
+            [],
+            $this->collectFortyHexTokens($allowed),
+            'sha-lint:allow on the line must skip every forty-hex token on that line'
+        );
+        $this->assertNotEmpty(
+            $this->collectFortyHexTokens($denied),
+            'unmarked forty-hex token must still be collected'
+        );
+        $this->assertSame([$dead], $this->collectFortyHexTokens($denied));
+
+        $git = $this->gitBinary();
+        if (null === $git) {
+            $this->markTestSkipped('git is unavailable');
+        }
+        $this->assertFalse(
+            $this->shaResolves($git, $this->repoRoot(), $dead),
+            'fixture token must be unresolvable so the unmarked case is a real fail'
+        );
+    }
+
+    /**
+     * Forty-hex tokens that the lint must resolve. A line containing the
+     * literal `sha-lint:allow` is skipped in full.
+     *
+     * @return list<string>
+     */
+    private function collectFortyHexTokens(string $content): array
+    {
+        $tokens = [];
+        foreach (preg_split('/\R/', $content) as $line) {
+            if (false !== strpos($line, 'sha-lint:allow')) {
+                continue;
+            }
+            if (preg_match_all('/\b[0-9a-f]{40}\b/', $line, $matches) > 0) {
+                foreach ($matches[0] as $sha) {
+                    $tokens[] = $sha;
+                }
+            }
+        }
+
+        return $tokens;
     }
 
     /**

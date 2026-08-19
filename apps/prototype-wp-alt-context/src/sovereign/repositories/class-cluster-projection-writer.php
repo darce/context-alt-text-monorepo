@@ -5,16 +5,26 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/class-cluster-curation-writer.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
+require_once dirname( __DIR__ ) . '/sync/class-outbox-writer.php';
+
+use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
 use function is_int;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function max;
 use function method_exists;
 use function trim;
 
 class ClusterProjectionWriter {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 
 	private string $table_name;
@@ -23,7 +33,7 @@ class ClusterProjectionWriter {
 		$this->table_name = $table_name;
 	}
 
-	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int|\WP_Error {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -35,6 +45,36 @@ class ClusterProjectionWriter {
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'insert' ) ) {
 			return 0;
+		}
+
+		$resolved = null;
+		if ( ! $this->is_reserved_label_shape( $normalized_label ) ) {
+			$resolver = new PersonResolutionService();
+			$resolved = $resolver->resolve_for_automatic_bind(
+				$normalized_label,
+				$normalized_tenant_id,
+				$normalized_cluster_uuid,
+				function ( string $person_uuid, string $name, array $tags ) use ( $normalized_tenant_id ): bool {
+					$queued = ( new OutboxWriter() )->enqueue(
+						$normalized_tenant_id,
+						'person_created',
+						'person',
+						$person_uuid,
+						0,
+						1,
+						array(
+							'person_uuid' => $person_uuid,
+							'name'        => $name,
+							'tags'        => $tags,
+						)
+					);
+					return false !== $queued;
+				}
+			);
+			if ( is_wp_error( $resolved ) ) {
+				return $resolved;
+			}
+			$normalized_label = trim( (string) $resolved['name'] );
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
@@ -56,7 +96,23 @@ class ClusterProjectionWriter {
 			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
 		);
 
-		return is_int( $inserted ) ? $inserted : 0;
+		if ( ! is_int( $inserted ) || $inserted <= 0 ) {
+			return is_int( $inserted ) ? $inserted : 0;
+		}
+
+		if ( is_array( $resolved ) ) {
+			$bound = ( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
+				$normalized_cluster_uuid,
+				(int) $resolved['person_id'],
+				$normalized_tenant_id,
+				false
+			);
+			if ( false === $bound ) {
+				return 0;
+			}
+		}
+
+		return $inserted;
 	}
 
 	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int {

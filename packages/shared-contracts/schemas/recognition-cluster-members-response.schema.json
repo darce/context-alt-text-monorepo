@@ -22,6 +22,7 @@
           "media_url",
           "cluster_id",
           "cluster_label",
+          "label_state",
           "is_auto_label",
           "is_pinned",
           "detected_at",
@@ -82,6 +83,11 @@
           "cluster_label": {
             "type": ["string", "null"],
             "description": "Resolved cluster label when available."
+          },
+          "label_state": {
+            "type": "string",
+            "enum": ["person", "unlabeled", "unbound"],
+            "description": "Named label authority: person (bound person name), unlabeled (empty/null or reserved cluster-*), unbound (human label with no person bind)."
           },
           "is_auto_label": {
             "type": "boolean",

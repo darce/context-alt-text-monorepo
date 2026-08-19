@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/class-cluster-curation-writer.php';
+require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
+
+use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function absint;
 use function array_chunk;
@@ -23,6 +29,7 @@ use function is_bool;
 use function is_numeric;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function max;
 use function method_exists;
 use function preg_match;
@@ -30,6 +37,7 @@ use function sprintf;
 use function trim;
 
 class ClusterSnapshotMerger {
+	use DetectsSystemDefinedLabels;
 	use PreparesSqlQueries;
 
 	private string $table_name;
@@ -97,18 +105,28 @@ class ClusterSnapshotMerger {
 				continue;
 			}
 
-			$label       = $this->normalize_label( $cluster );
-			$thumb_path  = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
-			$inserted_at = $now_utc;
+			$incoming_label = $this->normalize_label( $cluster );
+			$existing       = $this->load_existing_cluster( $cluster_uuid, $normalized_tenant_id );
+			$cleared_label  = trim( (string) ( $existing['label_cleared_label'] ?? '' ) );
+			$cleared_rev    = is_numeric( $existing['label_cleared_revision'] ?? null )
+				? (int) $existing['label_cleared_revision']
+				: 0;
+			$keep_cleared = '' !== $cleared_label && $incoming_label === $cleared_label;
+			$label        = $keep_cleared ? null : $incoming_label;
+			$persisted_cleared_label = $keep_cleared ? $cleared_label : '';
+			$persisted_cleared_rev   = $keep_cleared ? $cleared_rev : 0;
+			$thumb_path              = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
+			$inserted_at             = $now_utc;
 
-			// COR-1: gate each overwritten data column on the incoming version so
-			// an out-of-order (older) snapshot cannot regress newer projection data.
+			// Tombstone is decided in PHP (cleared-label match). SQL stays dumb.
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
-				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
+				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
+				VALUES (%s, %s, NULLIF(%s, \'\'), %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
 					label = IF(is_user_confirmed = 1, label, VALUES(label)),
+					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, VALUES(label_cleared_label)),
+					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, VALUES(label_cleared_revision)),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
@@ -128,7 +146,9 @@ class ClusterSnapshotMerger {
 					$this->table_name,
 					$cluster_uuid,
 					$normalized_tenant_id,
-					$label,
+					null === $label ? '' : $label,
+					$persisted_cleared_label,
+					$persisted_cleared_rev,
 					$this->normalize_curation_state( $cluster ),
 					$thumb_path,
 					$this->normalize_representative_id( $cluster ),
@@ -149,6 +169,74 @@ class ClusterSnapshotMerger {
 			if ( is_string( $sql ) && '' !== $sql ) {
 				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 				$wpdb->query( $sql );
+			}
+		}
+
+		$this->backfill_persons_for_human_labels( $normalized_tenant_id, $normalized_clusters );
+	}
+
+	/**
+	 * Bind a person from the STORED label after upsert (skip null/empty/reserved).
+	 *
+	 * @param array<int,array<string,mixed>> $clusters
+	 */
+	private function backfill_persons_for_human_labels( string $tenant_id, array $clusters ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return;
+		}
+
+		$resolver = new PersonResolutionService();
+		$writer   = new ClusterCurationWriter( $this->table_name );
+		foreach ( $clusters as $cluster ) {
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$stored_sql = $this->prepare_query(
+				'SELECT label, person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+				array(
+					$this->table_name,
+					$cluster_uuid,
+					$tenant_id,
+				)
+			);
+			if ( ! is_string( $stored_sql ) || '' === $stored_sql ) {
+				continue;
+			}
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$stored = $wpdb->get_row( $stored_sql, ARRAY_A );
+			if ( ! is_array( $stored ) ) {
+				continue;
+			}
+
+			if ( is_numeric( $stored['person_id'] ?? null ) && (int) $stored['person_id'] > 0 ) {
+				continue;
+			}
+
+			$stored_label = trim( (string) ( $stored['label'] ?? '' ) );
+			if ( '' === $stored_label || $this->is_reserved_label_shape( $stored_label ) ) {
+				continue;
+			}
+
+			$resolved = $resolver->resolve_for_automatic_bind(
+				$stored_label,
+				$tenant_id,
+				$cluster_uuid,
+				static function (): bool {
+					return true;
+				}
+			);
+			if ( is_wp_error( $resolved ) ) {
+				continue;
+			}
+
+			$bound = $writer->bind_person_to_cluster( $cluster_uuid, (int) $resolved['person_id'], $tenant_id, false );
+			if ( false === $bound ) {
+				continue;
 			}
 		}
 	}
@@ -239,11 +327,34 @@ class ClusterSnapshotMerger {
 	}
 
 	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function load_existing_cluster( string $cluster_uuid, string $tenant_id ): ?array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT label, person_id, is_user_confirmed, label_cleared_revision, label_cleared_label, snapshot_version FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			array( $this->table_name, $cluster_uuid, $tenant_id )
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		return is_array( $row ) ? $row : null;
+	}
+
+	/**
 	 * @param array<string,mixed> $cluster
 	 */
-	private function normalize_label( array $cluster ): string {
+	private function normalize_label( array $cluster ): ?string {
 		$label = trim( (string) ( $cluster['label'] ?? $cluster['cluster_label'] ?? '' ) );
-		return $label;
+		return '' === $label ? null : $label;
 	}
 
 	/**

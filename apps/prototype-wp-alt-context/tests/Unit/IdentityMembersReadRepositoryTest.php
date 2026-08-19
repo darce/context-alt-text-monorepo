@@ -121,4 +121,23 @@ class IdentityMembersReadRepositoryTest extends TestCase
         $this->assertIsArray($row);
         $this->assertStringContainsString('LIMIT 1', $wpdb->queries[0]);
     }
+
+    public function testReadPathsEmitLabelStateAndSharedReservedPredicateIncludingUnderscore(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_cluster('cluster-ab12', 10, 0, self::currentTenantId());
+        $this->repository->list_for_cluster('cluster-ab12', 10, 0);
+        $this->repository->list_for_cluster_uuids(['cluster-ab12'], 3);
+        $this->repository->list_for_media_ids(self::currentTenantId(), [1]);
+
+        $this->assertCount(4, $wpdb->queries, 'all four identity-members reads must be observed');
+        foreach ($wpdb->queries as $sql) {
+            $this->assertStringContainsString("LIKE 'cluster\\_%%'", $sql, $sql);
+            $this->assertStringContainsString('AS label_state', $sql, $sql);
+            $this->assertStringContainsString("THEN 'person'", $sql, $sql);
+            $this->assertStringContainsString("THEN 'unlabeled'", $sql, $sql);
+            $this->assertStringContainsString("ELSE 'unbound'", $sql, $sql);
+        }
+    }
 }

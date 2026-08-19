@@ -217,8 +217,7 @@ describe('WorkbenchPage', () => {
     handleSearchChange: vi.fn(),
     handleStatusChange: vi.fn(),
     queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
-    getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
-    setQueueState: vi.fn(),
+    dispatchQueue: vi.fn(),
     ...overrides,
   });
 

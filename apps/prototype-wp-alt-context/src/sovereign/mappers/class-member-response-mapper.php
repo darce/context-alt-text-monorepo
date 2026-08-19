@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Mappers;
 require_once __DIR__ . '/trait-maps-response-fields.php';
 
 use function absint;
+use function is_string;
 use function trim;
 
 class MemberResponseMapper {
@@ -29,6 +30,22 @@ class MemberResponseMapper {
 	 * @param array<int,array<string,mixed>> $member_rows
 	 * @return array<int,list<array<string,mixed>>> Media-id-keyed groups; PHP coerces the numeric string key to int.
 	 */
+	/**
+	 * @param array<string,mixed> $identity
+	 * @return array<string,mixed>
+	 */
+	public function apply_label_authority( array $identity ): array {
+		$identity['cluster_label'] = $this->normalize_cluster_label(
+			array(
+				'person_name'   => $identity['person_name'] ?? '',
+				'cluster_label' => is_string( $identity['cluster_label'] ?? null ) ? $identity['cluster_label'] : '',
+			)
+		);
+		$identity['label_state'] = $this->resolve_emitted_label_state( $identity );
+
+		return $identity;
+	}
+
 	public function map_media_identities( array $member_rows ): array {
 		$grouped = array();
 		foreach ( $member_rows as $row ) {
@@ -80,6 +97,7 @@ class MemberResponseMapper {
 			'media_url'     => $source['media_url'],
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
 			'cluster_label' => $cluster_label,
+			'label_state' => $this->resolve_emitted_label_state( $member_row ),
 			'is_auto_label' => $is_auto_label,
 			'is_pinned' => $is_pinned,
 			'detected_at' => null,
@@ -96,7 +114,20 @@ class MemberResponseMapper {
 	}
 
 	private function normalize_cluster_label( array $member_row ): ?string {
+		$person = trim( (string) ( $member_row['person_name'] ?? '' ) );
+		if ( '' !== $person ) {
+			return $person;
+		}
+
 		$label = trim( (string) ( $member_row['cluster_label'] ?? '' ) );
-		return '' !== $label ? $label : null;
+		if ( '' === $label ) {
+			return null;
+		}
+
+		if ( $this->is_reserved_label_shape( $label ) ) {
+			return $label;
+		}
+
+		return null;
 	}
 }

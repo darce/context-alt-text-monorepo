@@ -21,7 +21,7 @@
 
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { removeClusterMember } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
@@ -51,7 +51,12 @@ export const ClusterReviewPanel = ({
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
   const [showAllAnnouncement, setShowAllAnnouncement] = React.useState<string | null>(null);
   const memberGridRef = React.useRef<HTMLDivElement | null>(null);
+  const backButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasExpandingRef = React.useRef(false);
+
+  React.useEffect(() => {
+    backButtonRef.current?.focus({ preventScroll: true });
+  }, []);
 
   const {
     members,
@@ -72,8 +77,8 @@ export const ClusterReviewPanel = ({
     if (wasExpandingRef.current && !isExpanding && isFullyLoaded && !expandError) {
       setShowAllAnnouncement(
         sprintf(
-          /* translators: %d: total member count */
-          __('All %d members shown', 'alt-context'),
+          /* translators: %d: total face count */
+          _n('All %d face shown', 'All %d faces shown', total, 'alt-context'),
           total,
         ),
       );
@@ -113,18 +118,23 @@ export const ClusterReviewPanel = ({
   return (
     <div className="acx-cluster-review-panel">
       <div className="acx-cluster-review-panel__header">
-        <h2>{__('Review Cluster', 'alt-context')}</h2>
-        <button type="button" className="acx-close-button" onClick={onClose} aria-label={__('Close', 'alt-context')}>
-          ×
+        <button
+          type="button"
+          className="acx-cluster-review-panel__back"
+          ref={backButtonRef}
+          onClick={onClose}
+        >
+          {__('← Back to Review Suggestions', 'alt-context')}
         </button>
+        <h2 id="acx-workbench-queue-heading">{__('Review these faces', 'alt-context')}</h2>
       </div>
 
       <div className="acx-cluster-review-panel__content">
         {isLoading ? (
-          <p>{__('Loading members...', 'alt-context')}</p>
+          <p>{__('Loading faces…', 'alt-context')}</p>
         ) : isError ? (
           <div className="acx-cluster-review-panel__error" role="alert" data-testid="acx-cluster-members-error">
-            <p>{__('Unable to load cluster members.', 'alt-context')}</p>
+            <p>{__('Unable to load faces.', 'alt-context')}</p>
             <button type="button" className="button" onClick={() => refetch()}>
               {__('Retry', 'alt-context')}
             </button>
@@ -143,15 +153,15 @@ export const ClusterReviewPanel = ({
                         bbox: member.bbox,
                       }}
                       size="lg"
-                      alt={__('Cluster member', 'alt-context')}
+                      alt={sprintf(__('Face on media %d', 'alt-context'), member.media_id)}
                       className="acx-cluster-member-card__image"
                     />
                     <button
                       type="button"
                       className="acx-cluster-member-card__remove"
                       onClick={() => handleRemove(member.identity_id)}
-                      aria-label={__('Remove from cluster', 'alt-context')}
-                      title={__('Remove from cluster', 'alt-context')}
+                      aria-label={__('Remove this face from the face group', 'alt-context')}
+                      title={__('Remove this face from the face group', 'alt-context')}
                     >
                       ×
                     </button>
@@ -175,9 +185,9 @@ export const ClusterReviewPanel = ({
                   data-total={total}
                 >
                   {isExpanding
-                    ? __('Loading all members…', 'alt-context')
+                    ? __('Loading all faces…', 'alt-context')
                     : sprintf(
-                        /* translators: %d: total member count */
+                        /* translators: %d: total face count */
                         __('Show all (%d)', 'alt-context'),
                         total,
                       )}
@@ -191,7 +201,7 @@ export const ClusterReviewPanel = ({
             ) : null}
           </>
         ) : (
-          <p>{__('No members found.', 'alt-context')}</p>
+          <p>{__('No faces in this group.', 'alt-context')}</p>
         )}
       </div>
 
@@ -207,16 +217,16 @@ export const ClusterReviewPanel = ({
           <DialogOverlay />
           <DialogContent>
             <div className="acx-queue-modal">
-              <DialogTitle>{__('Remove cluster member', 'alt-context')}</DialogTitle>
+              <DialogTitle>{__('Remove this face', 'alt-context')}</DialogTitle>
               <DialogDescription>
-                {__('Are you sure you want to remove this person from the cluster?', 'alt-context')}
+                {__('Are you sure you want to remove this face from the face group?', 'alt-context')}
               </DialogDescription>
               <div className="acx-queue-modal__actions">
                 <button type="button" className="button" onClick={handleCancelRemoval}>
                   {__('Cancel', 'alt-context')}
                 </button>
                 <button type="button" className="button button-primary" onClick={handleConfirmRemoval}>
-                  {__('Remove member', 'alt-context')}
+                  {__('Remove face', 'alt-context')}
                 </button>
               </div>
             </div>

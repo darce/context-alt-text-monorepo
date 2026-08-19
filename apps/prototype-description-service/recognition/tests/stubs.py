@@ -276,9 +276,27 @@ class NullClusterRepository(ClusterRepository):
         return embeddings
 
     async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list[np.ndarray], str | None]:
+        embeddings, model, _ = await self.get_representative_embeddings_with_quality(cluster_id)
+        return embeddings, model
+
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
         reps = self._representatives_by_cluster.get(cluster_id, [])
         embeddings = [np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps]
-        return embeddings, _single_stub_model(reps)
+        qualities = [
+            (
+                getattr(rep, "quality_score", None),
+                (getattr(rep, "debug_metrics", None) or {}).get("landmark_quality")
+                if isinstance(getattr(rep, "debug_metrics", None), dict)
+                else None,
+                (getattr(rep, "debug_metrics", None) or {}).get("det_score")
+                if isinstance(getattr(rep, "debug_metrics", None), dict)
+                else None,
+            )
+            for rep in reps
+        ]
+        return embeddings, _single_stub_model(reps), qualities
 
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
         embeddings, _ = await self.get_member_fallback_embeddings_with_model(cluster_id, limit=limit)
@@ -293,6 +311,12 @@ class NullClusterRepository(ClusterRepository):
         else:
             vectors = [np.asarray(e, dtype=np.float32) for e in embeddings[:limit]]
         return vectors, _single_stub_model(embeddings)
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        embeddings, model = await self.get_member_fallback_embeddings_with_model(cluster_id, limit=limit)
+        return embeddings, model, [(None, None, None) for _ in embeddings]
 
     async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
         return [

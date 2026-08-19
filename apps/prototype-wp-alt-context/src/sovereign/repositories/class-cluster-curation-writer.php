@@ -11,6 +11,7 @@ use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
 use function is_int;
+use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
@@ -245,29 +246,105 @@ class ClusterCurationWriter {
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 
-	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {
+	public const BIND_ALREADY_BOUND = -1;
+
+	/**
+	 * True when the cluster is bound to the requested person (updated or already bound).
+	 */
+	public static function bind_succeeded( int|false $bound ): bool {
+		return false !== $bound && 0 !== $bound;
+	}
+
+	/**
+	 * Single bind end-state for every person-to-cluster write.
+	 *
+	 * User-initiated ($confirm=true): person_id + curation_state=confirmed + is_user_confirmed=1.
+	 * Heal/automatic ($confirm=false): person_id only (R1-07 — do not invent user intent).
+	 * Already-bound to the same person returns BIND_ALREADY_BOUND.
+	 * Missing cluster row returns 0. DB failure is false.
+	 *
+	 * @return int|false Rows updated, 0 when no row matched, BIND_ALREADY_BOUND, or false on DB failure.
+	 */
+	public function bind_person_to_cluster( string $cluster_uuid, int $person_id, string $tenant_id, bool $confirm = false ): int|false {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
-		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_tenant_id    = trim( $tenant_id );
+		if ( '' === $normalized_cluster_uuid || '' === $normalized_tenant_id || $person_id <= 0 ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return false;
+		}
+
+		$existing_sql = $this->prepare_query(
+			'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			array( $this->table_name, $normalized_cluster_uuid, $normalized_tenant_id )
+		);
+		if ( ! is_string( $existing_sql ) || '' === $existing_sql ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$existing_row = $wpdb->get_row( $existing_sql, ARRAY_A );
+		if ( ! is_array( $existing_row ) ) {
+			return 0;
+		}
+
+		$existing_person_id = is_numeric( $existing_row['person_id'] ?? null ) ? (int) $existing_row['person_id'] : 0;
+		if ( $existing_person_id === $person_id ) {
+			return self::BIND_ALREADY_BOUND;
+		}
+
+		$data = array(
+			'person_id'  => $person_id,
+			'updated_at' => gmdate( 'Y-m-d H:i:s' ),
+		);
+		$format = array( '%d', '%s' );
+		if ( $confirm ) {
+			$data['curation_state']    = 'confirmed';
+			$data['is_user_confirmed'] = 1;
+			$format[]                  = '%s';
+			$format[]                  = '%d';
+		}
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			$data,
+			array(
+				'cluster_uuid' => $normalized_cluster_uuid,
+				'tenant_id'    => $normalized_tenant_id,
+			),
+			$format,
+			array( '%s', '%s' )
+		);
+
+		return false === $updated ? false : (int) $updated;
+	}
+
+	/**
+	 * Clear local label + person bind in one write. Returns affected rows
+	 * (0 when nothing matched) or false on DB failure.
+	 *
+	 * @return int|false
+	 */
+	public function reset_curation( string $cluster_uuid, string $tenant_id ): int|false {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		$normalized_tenant_id    = trim( $tenant_id );
 		if ( '' === $normalized_cluster_uuid || '' === $normalized_tenant_id ) {
 			return 0;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
+			return false;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$sql = $this->prepare_query(
-			'UPDATE %i
-			SET label = NULL,
-				person_id = NULL,
-				curation_state = %s,
-				is_user_confirmed = 0,
-				local_revision = local_revision + 1,
-				updated_at = %s
-			WHERE cluster_uuid = %s AND tenant_id = %s',
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET label_cleared_label = label, label = NULL, person_id = NULL, curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, label_cleared_revision = snapshot_version, updated_at = %s WHERE cluster_uuid = %s AND tenant_id = %s',
 			array(
 				$this->table_name,
 				'uncurated',
@@ -276,13 +353,16 @@ class ClusterCurationWriter {
 				$normalized_tenant_id,
 			)
 		);
-
 		if ( ! is_string( $sql ) || '' === $sql ) {
-			return 0;
+			return false;
 		}
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$query_result = $wpdb->query( $sql );
+		if ( false === $query_result ) {
+			return false;
+		}
+
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 }

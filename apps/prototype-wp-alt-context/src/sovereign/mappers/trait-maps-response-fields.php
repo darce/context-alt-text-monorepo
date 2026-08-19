@@ -356,6 +356,50 @@ trait MapsResponseFields {
 		return (float) $value;
 	}
 
+	/**
+	 * Prefer the SQL `label_state` column. Older SELECTs without it still emit
+	 * the key via resolve_cluster_label_state() so the FE is never missing it.
+	 *
+	 * @param array<string,mixed> $row
+	 */
+	protected function resolve_emitted_label_state( array $row ): string {
+		if ( isset( $row['label_state'] ) && is_string( $row['label_state'] ) ) {
+			$from_row = trim( $row['label_state'] );
+			if ( '' !== $from_row ) {
+				return $from_row;
+			}
+		}
+
+		$person_name = trim( (string) ( $row['person_name'] ?? '' ) );
+		if ( '' === $person_name ) {
+			$person_uuid = trim( (string) ( $row['person_uuid'] ?? '' ) );
+			$projected   = $this->projected_row_label( $row );
+			if ( '' !== $person_uuid && '' !== $projected && ! $this->is_reserved_label_shape( $projected ) ) {
+				$person_name = $projected;
+			}
+		}
+
+		$cluster_label = $this->projected_row_label( $row );
+
+		return $this->resolve_cluster_label_state(
+			'' !== $person_name ? $person_name : null,
+			'' !== $cluster_label ? $cluster_label : null
+		);
+	}
+
+	/**
+	 * Cluster rows expose `label`; member rows expose `cluster_label`.
+	 *
+	 * @param array<string,mixed> $row
+	 */
+	protected function projected_row_label( array $row ): string {
+		if ( isset( $row['label'] ) && is_string( $row['label'] ) ) {
+			return trim( $row['label'] );
+		}
+
+		return trim( (string) ( $row['cluster_label'] ?? '' ) );
+	}
+
 	private function normalize_boolean_value( mixed $value ): bool {
 		if ( is_bool( $value ) ) {
 			return $value;

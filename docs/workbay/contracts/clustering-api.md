@@ -652,4 +652,147 @@ Response (envelope):
       "suggested_label": "Alice",
       "suggested_label_source": "identity",
       "suggested_label_confidence": 0.91,
-      "identity_media
+      "identity_media_id": 123,
+      "identity_media_url": "https://...",
+      "identity_thumb_url": "https://...",
+      "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
+      "representative_media_id": 456,
+      "representative_media_url": "https://...",
+      "representative_thumb_url": "https://...",
+      "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
+```
+
+Notes:
+
+- `cluster_label` is null for unlabeled clusters; use `suggested_label*` for copy if present.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript type: `PendingSuggestion` in `js/admin/api/recognition/types/suggestion.ts`.
+- Field names use `suggested_cluster_id` (not `cluster_id`), `representative_similarity` (not `rep_similarity`), and `*_thumb_url` (not `*_thumbnail_url`).
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults or list length.
+
+## GET /recognition/suggestions/merge
+
+List pending merge suggestions.
+
+Query params:
+
+- `limit` (default 10)
+- `offset` (default 0)
+
+Response (envelope):
+
+```json
+{
+  "suggestions": [
+    {
+      "id": "...",
+      "cluster_a_id": "...",
+      "cluster_b_id": "...",
+      "similarity": 0.88,
+      "status": "pending",
+      "confidence_score": 0.85,
+      "cluster_a_label": "Alice",
+      "cluster_b_label": null,
+      "cluster_a_identity_count": 5,
+      "cluster_b_identity_count": 3,
+      "cluster_a_representative_thumb_url": "https://...",
+      "cluster_b_representative_thumb_url": "https://..."
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
+```
+
+Notes:
+
+- The WordPress proxy wraps the backend's bare-array merge-suggestion response into this envelope.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults or list length.
+
+## GET /recognition/suggestions/name
+
+List pending name suggestions.
+
+Query params:
+
+- `min_confidence` (default 0.0)
+- `limit` (default 25)
+- `offset` (default 0)
+
+Response (envelope):
+
+```json
+{
+  "suggestions": [
+    {
+      "id": "...",
+      "cluster_id": "...",
+      "suggested_name": "Alice",
+      "confidence_score": 0.88,
+      "source": "roster",
+      "created_at": "2026-03-25T12:00:00Z",
+      "expires_at": null,
+      "representatives": []
+    }
+  ],
+  "total": 1,
+  "limit": 25,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
+```
+
+Notes:
+
+- The WordPress proxy wraps the backend's bare-array name-suggestion response into this envelope.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- `representatives` is optional; current UI types allow it but the proxy may omit it when the backend response does not supply representative context.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults.
+
+## POST /recognition/suggestions/{suggestion_id}/accept
+
+## POST /recognition/suggestions/{suggestion_id}/reject
+
+Accept or reject an assignment suggestion.
+
+## POST /recognition/suggestions/merge/{suggestion_id}/accept
+
+## POST /recognition/suggestions/merge/{suggestion_id}/reject
+
+Accept or reject a merge suggestion.
+
+## POST /recognition/suggestions/name/{suggestion_id}/accept
+
+## POST /recognition/suggestions/name/{suggestion_id}/reject
+
+Accept or reject a name suggestion.
+
+## Known proxy gaps
+
+The following backend endpoints exist but lack WordPress proxy routes:
+
+- `POST /recognition/clusters/recover-orphans` (direct backend call only)
+
+## Related contracts
+
+The WordPress plugin exposes additional REST endpoints outside the `/recognition` proxy path:
+
+- **Sovereign Sync (outbox, conflict, dead-letter, sync health):** [curation-sync-api.md](curation-sync-api.md)
+- **Snapshot projection and conflict detection:** [cluster-snapshot-api.md](cluster-snapshot-api.md)
+- **Endpoint authorization (capability requirements):** [security.md](security.md)

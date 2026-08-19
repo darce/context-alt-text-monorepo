@@ -565,6 +565,7 @@ class LifecycleManager {
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
+			tenant_id varchar(64) NOT NULL,
 			name varchar(255) NOT NULL,
 			normalized_name varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 			tags text DEFAULT '',

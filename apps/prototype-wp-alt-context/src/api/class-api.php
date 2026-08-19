@@ -602,10 +602,17 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 		$result = $wpdb->insert(
 			$table_name,
 			array(
 				'person_uuid'     => $person_uuid,
+				'tenant_id'       => $tenant_id,
 				'name'            => $name,
 				'normalized_name' => $normalized_name,
 				'tags'            => wp_json_encode( $tags ),
@@ -613,7 +620,7 @@ class Api {
 				'created_at'      => $now,
 				'updated_at'      => $now,
 			),
-			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		if ( false === $result ) {
@@ -789,14 +796,20 @@ class Api {
 		$table_persons  = $wpdb->prefix . 'acx_persons';
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
 
-		$person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_persons, $id ) );
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$person = $wpdb->get_row(
+			$wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_persons, $id, $tenant_id )
+		);
 		if ( ! $person ) {
 			return new WP_Error( 'acx_person_not_found', __( 'Person not found.', 'alt-context' ), array( 'status' => 404 ) );
 		}
 
 		return $this->run_transactional(
-			function () use ( $wpdb, $id, $person, $table_persons, $table_clusters ): WP_REST_Response|WP_Error {
-				$tenant_id         = TenantIdentity::resolve()['value'];
+			function () use ( $wpdb, $id, $person, $table_persons, $table_clusters, $tenant_id ): WP_REST_Response|WP_Error {
 				$affected_clusters = $wpdb->get_results(
 					$wpdb->prepare(
 						'SELECT cluster_uuid FROM %i WHERE person_id = %d AND tenant_id = %s',
@@ -857,9 +870,20 @@ class Api {
 					$cluster_ids[] = $cluster_uuid;
 				}
 
-				$result = $wpdb->delete( $table_persons, array( 'id' => $id ), array( '%d' ) );
-				if ( false === $result ) {
-					return new WP_Error( 'acx_db_error', __( 'Could not delete person from database.', 'alt-context' ), array( 'status' => 500 ) );
+				$result = $wpdb->delete(
+					$table_persons,
+					array(
+						'id'        => $id,
+						'tenant_id' => $tenant_id,
+					),
+					array( '%d', '%s' )
+				);
+				if ( false === $result || 1 !== (int) $result ) {
+					return new WP_Error(
+						'acx_person_not_found',
+						__( 'Person not found.', 'alt-context' ),
+						array( 'status' => 404 )
+					);
 				}
 
 				$person_local_revision = max( 1, (int) ( $person->local_revision ?? 0 ) + 1 );

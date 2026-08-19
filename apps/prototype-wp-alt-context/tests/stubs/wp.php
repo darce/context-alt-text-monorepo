@@ -2684,10 +2684,13 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queries[] = $sql;
 
             if (isset($this->tableRows[$table])) {
+                $before = count($this->tableRows[$table]);
                 $this->tableRows[$table] = array_values(array_filter(
                     $this->tableRows[$table],
                     fn(array $row): bool => !$this->rowMatchesWhere($row, $where)
                 ));
+
+                return $before - count($this->tableRows[$table]);
             }
 
             return 1;

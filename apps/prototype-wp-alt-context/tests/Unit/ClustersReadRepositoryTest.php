@@ -42,6 +42,63 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertStringContainsString('ORDER BY c.updated_at DESC', $query);
     }
 
+    public function testListForTenantIssuedSqlUsesSharedReservedLabelPredicate(): void
+    {
+        global $wpdb;
+
+        $detector = new class() {
+            use \AltContext\Support\DetectsSystemDefinedLabels;
+
+            public function fragment(): string
+            {
+                return $this->projected_cluster_label_sql();
+            }
+
+            public function reserved(): string
+            {
+                return $this->reserved_label_sql_predicate('c.label');
+            }
+        };
+        $fragment = $detector->fragment();
+        $reserved = $detector->reserved();
+
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-reserved-x',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'cluster_x',
+            ],
+            [
+                'cluster_uuid' => 'cluster-reserved-upper',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'CLUSTER-1',
+            ],
+        ];
+
+        $this->repository->list_for_tenant(self::currentTenantId(), 10, 0);
+
+        $this->assertNotSame('', $fragment);
+        $this->assertStringContainsString($fragment, $wpdb->queries[0]);
+        $this->assertStringContainsString($reserved, $wpdb->queries[0]);
+        $this->assertStringContainsString('LOWER(c.label)', $reserved);
+        $this->assertTrue((new class() {
+            use \AltContext\Support\DetectsSystemDefinedLabels;
+
+            public function check(string $label): bool
+            {
+                return $this->is_reserved_label_shape($label);
+            }
+        })->check('cluster_x'));
+        $this->assertTrue((new class() {
+            use \AltContext\Support\DetectsSystemDefinedLabels;
+
+            public function check(string $label): bool
+            {
+                return $this->is_reserved_label_shape($label);
+            }
+        })->check('CLUSTER-1'));
+    }
+
     public function testFindByUuidReturnsRow(): void
     {
         global $wpdb;

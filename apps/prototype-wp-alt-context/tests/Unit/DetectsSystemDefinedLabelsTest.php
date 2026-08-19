@@ -82,7 +82,7 @@ class DetectsSystemDefinedLabelsTest extends TestCase
         };
 
         $sql = $detector->sql('c.label');
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
     }
 }

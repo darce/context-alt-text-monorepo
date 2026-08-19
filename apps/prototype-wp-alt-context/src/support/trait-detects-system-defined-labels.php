@@ -23,7 +23,9 @@ trait DetectsSystemDefinedLabels {
 	 * %% survives $wpdb->prepare; underscore is escaped so it is literal.
 	 */
 	protected function reserved_label_sql_predicate( string $column ): string {
-		return '(' . $column . " LIKE 'cluster-%%' OR " . $column . " LIKE 'cluster\\_%%')";
+		$lower = 'LOWER(' . $column . ')';
+
+		return '(' . $lower . " LIKE 'cluster-%%' OR " . $lower . " LIKE 'cluster\\_%%')";
 	}
 
 	/**

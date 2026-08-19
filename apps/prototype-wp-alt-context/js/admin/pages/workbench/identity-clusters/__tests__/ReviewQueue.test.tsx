@@ -2740,6 +2740,29 @@ describe('ReviewQueue', () => {
     expect(repair).not.toHaveTextContent(/on this page/);
   });
 
+  it('R5-03: the repair-empty page does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-queue-repair');
+    expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Position unavailable')).toBeInTheDocument();
+  });
+
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
   // Omitting data.refetchName() leaves this call count at the initial 1.
   it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {

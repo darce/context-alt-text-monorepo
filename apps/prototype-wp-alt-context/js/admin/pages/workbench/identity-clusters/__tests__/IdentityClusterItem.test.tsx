@@ -139,7 +139,7 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
 
     expect(findClusterByLabel).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
   });
 
   it('exact-dupe remote "bob" + typed "Bob" keeps Save (no Merge-with) — UXP-3-BR-44', async () => {
@@ -159,7 +159,7 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
 
     expect(findClusterByLabel).toHaveBeenCalledWith('Bob', expect.any(AbortSignal));
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
   });
 
   it('reverting to exact label aborts in-flight match so preview stays Save — UXP-3-BR-45', async () => {
@@ -201,7 +201,19 @@ describe('IdentityClusterItem proactive match (UXP-3-BR-39)', () => {
     });
 
     expect(screen.queryByRole('button', { name: /Merge with/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save name$/i })).toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem Library save copy (UXW2-3-R1-16i)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('default Library row commit button is Save name (UXW2-3-R1-16i)', () => {
+    renderItem();
+    fireEvent.click(screen.getByRole('button', { name: 'bob' }));
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
   });
 });
 
@@ -217,7 +229,7 @@ describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
 
     const hint = screen.getByText(/Showing \d+ of 80 labels/);
     expect(hint).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       hint.textContent ?? '',
     );
   });
@@ -228,10 +240,10 @@ describe('IdentityClusterItem unlabeled copy (UXW2-4-R7E-02)', () => {
     cleanup();
   });
 
-  it('renders Unlabeled identity when the cluster has a UUID and no human label', () => {
+  it('renders Unnamed person when the cluster has a UUID and no human label', () => {
     renderItem(unlabeledCluster());
 
-    expect(screen.getByRole('button', { name: 'Unlabeled identity' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unnamed person' })).toBeInTheDocument();
     expect(screen.queryByText(/cluster-[0-9a-f]{8}/i)).not.toBeInTheDocument();
   });
 
@@ -244,6 +256,6 @@ describe('IdentityClusterItem unlabeled copy (UXW2-4-R7E-02)', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'cluster-7' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Unlabeled identity' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unnamed person' })).toBeInTheDocument();
   });
 });

@@ -77,6 +77,8 @@ export interface TopUnlabeledClustersResponse {
   limit: number;
   total: number;
   truncated: boolean;
+  /** Envelope repair signal; drives Resync when local_projection cannot emit zero-evidence rows. */
+  repair_pending?: boolean;
   singleton_count?: number;
   has_clusters?: boolean;
   data_source: DataSource;
@@ -179,6 +181,7 @@ export interface SplitClusterRequest {
 export interface CreateClusterForIdentityRequest {
   identityId: string;
   label: string;
+  rosterEntryId?: number;
 }
 
 export interface CreateClusterForIdentityResponse {
@@ -186,4 +189,7 @@ export interface CreateClusterForIdentityResponse {
   label: string;
   identity_id: string;
   message: string;
+  person_id?: number | null;
+  person_uuid?: string | null;
+  person_name?: string | null;
 }

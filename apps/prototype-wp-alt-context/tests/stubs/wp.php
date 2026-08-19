@@ -2294,6 +2294,19 @@ if (!isset($GLOBALS['wpdb'])) {
         public array $tableIndexes = [];
         /** @var callable|null Optional observer invoked with each get_var SQL string (test instrumentation). */
         public $onGetVar = null;
+        /**
+         * Optional get_results override. Return an array to replace mockResults,
+         * or null to keep the default stub path.
+         *
+         * @var callable|null
+         */
+        public $onGetResults = null;
+        /**
+         * Optional get_var override. When set, its return value is used.
+         *
+         * @var callable|null
+         */
+        public $onGetVarResolve = null;
 
         public function query($sql)
         {
@@ -2418,6 +2431,19 @@ if (!isset($GLOBALS['wpdb'])) {
                 return null;
             }
 
+            if ($this->onGetResults !== null) {
+                $override = ($this->onGetResults)($normalizedSql);
+                if (is_array($override)) {
+                    if ($output === ARRAY_A) {
+                        return $override;
+                    }
+                    if ($output === OBJECT) {
+                        return array_map(static fn(array $row) => (object) $row, $override);
+                    }
+                    return $override;
+                }
+            }
+
             if (preg_match('/^SHOW COLUMNS FROM\s+`?([^\s`]+)`?/i', $normalizedSql, $matches)) {
                 $tableName = $matches[1];
                 $showError = $GLOBALS['__ac_show_columns_error'] ?? null;
@@ -2512,6 +2538,10 @@ if (!isset($GLOBALS['wpdb'])) {
 
             if ($this->onGetVar !== null) {
                 ($this->onGetVar)($normalizedSql);
+            }
+
+            if ($this->onGetVarResolve !== null) {
+                return ($this->onGetVarResolve)($normalizedSql);
             }
 
             if ($this->get_var_returns_null) {
@@ -3191,6 +3221,8 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->tableColumns = [];
             $this->tableIndexes = [];
             $this->onGetVar = null;
+            $this->onGetResults = null;
+            $this->onGetVarResolve = null;
         }
     }
 

@@ -233,9 +233,11 @@ class ClustersRepositoryTest extends TestCase
         $this->repository->list_top_unlabeled('tenant-top', 7);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("identity_count DESC", $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString(') DESC', $sql);
         $this->assertStringContainsString("c.is_user_confirmed = 0", $sql);
-        $this->assertStringContainsString("c.identity_count >= 2", $sql);
+        $this->assertStringNotContainsString("c.identity_count >= 2", $sql);
+        $this->assertStringContainsString(') >= 2', $sql);
         $this->assertStringContainsString("label IS NULL", $sql);
         $this->assertStringContainsString("curation_state <> 'dismissed'", $sql);
     }
@@ -261,7 +263,9 @@ class ClustersRepositoryTest extends TestCase
         $this->assertSame(4, $count);
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('COUNT(*)', $sql);
-        $this->assertStringContainsString('c.identity_count <= 1', $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString(') <= 1', $sql);
+        $this->assertStringNotContainsString('c.identity_count <= 1', $sql);
     }
 
     public function testFindByUuidReturnsNullWhenRowMissing(): void

@@ -279,6 +279,96 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertNotContains('COMMIT', $wpdb->queries);
     }
 
+    public function testCreateForIdentityWithRosterEntryIdBindsPersonAndEnqueuesClusterPersonBound(): void
+    {
+        global $wpdb;
+
+        $personUuid = '8cb36e76-7c2c-4aa8-bf2f-0d4dfab01234';
+        $wpdb->queryResults['SELECT person_uuid FROM `wp_acx_persons` WHERE id = 7'] = $personUuid;
+        $wpdb->queryResults['SELECT name FROM `wp_acx_persons` WHERE id = 7'] = 'Roster Name';
+        $wpdb->queryResults["SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = 'uuid-1'"] = 2;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+        $request->set_param('roster_entry_id', 7);
+
+        $response = $this->service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(7, $data['person_id']);
+        $this->assertSame($personUuid, $data['person_uuid']);
+        $this->assertSame('Roster Name', $data['person_name']);
+
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 7');
+        $this->assertStringContainsString("curation_state = 'confirmed'", $clusterUpdate);
+        $this->assertStringContainsString('is_user_confirmed = 1', $clusterUpdate);
+        $this->assertStringContainsString("label = 'Roster Name'", $clusterUpdate);
+
+        $boundOps = $this->queriesContaining($wpdb->queries, "'cluster_person_bound'");
+        $this->assertCount(1, $boundOps);
+        $this->assertStringContainsString($personUuid, $boundOps[0]);
+    }
+
+    public function testCreateForIdentityWithoutRosterEntryIdLeavesPersonNullAndSkipsBind(): void
+    {
+        global $wpdb;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $this->service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertArrayHasKey('person_id', $data);
+        $this->assertArrayHasKey('person_uuid', $data);
+        $this->assertArrayHasKey('person_name', $data);
+        $this->assertNull($data['person_id']);
+        $this->assertNull($data['person_uuid']);
+        $this->assertNull($data['person_name']);
+        $this->assertSame('Curated Name', $data['label']);
+        $this->assertNotSame('', $this->repository->createdLocalClusterId);
+
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, "'cluster_person_bound'"));
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, 'person_id = '));
+    }
+
+    public function testCreateForIdentityMissingPersonDoesNotLeaveOrphanCluster(): void
+    {
+        global $wpdb;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+        $request->set_param('roster_entry_id', 404);
+
+        $response = $this->service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response);
+        $this->assertSame('', $this->repository->createdLocalClusterId);
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, "'cluster_person_bound'"));
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, 'person_id = 404'));
+    }
+
+    /**
+     * @param array<int,mixed> $queries
+     * @return list<string>
+     */
+    private function queriesContaining(array $queries, string $needle): array
+    {
+        $matches = [];
+        foreach ($queries as $query) {
+            if (is_string($query) && str_contains($query, $needle)) {
+                $matches[] = $query;
+            }
+        }
+
+        return $matches;
+    }
+
     public function testCreateForIdentitySurfacesNameCollisionAs409(): void
     {
         global $wpdb;

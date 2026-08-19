@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
@@ -7,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   acceptMergeSuggestion,
+  acceptNameSuggestion,
   acceptSuggestion,
   bulkAcceptSuggestions,
   fetchClusterMembers,
@@ -14,6 +19,7 @@ import {
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchTopUnlabeledClusters,
+  listRecognitionClusters,
   rejectSuggestion,
   updateClusterLabel,
   type PendingSuggestionsResponse,
@@ -39,18 +45,26 @@ import type {
 } from '../../../../hooks/workbenchQueueUrl';
 import * as workbenchFilters from '../../../../hooks/useWorkbenchFilters';
 import {
-  JUST_LABEL_COPY,
   MODEL_OUTPUT_DISCLOSURE,
+  PERSON_COMMIT_COMBOBOX_ARIA,
   PERSON_COMMIT_CONFIRM_COPY,
   VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
+  viewInRosterHref,
 } from '../personCommitCopy';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
+import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { dropClusterFromReviewCaches, REVIEW_DROP_MODE } from '../suggestionProjection';
+import { WorkbenchFindingsPanel } from '../WorkbenchFindingsPanel';
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
-import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import {
+  HOLD_COMMITTING_STATUS_COPY,
+  HOLD_STATUS_COPY,
+  UNDO_HOLD_MS,
+  useSuggestionReviewMutations,
+} from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
 import { ScanTabContent } from '../../ScanTabContent';
@@ -65,6 +79,24 @@ const rosterCommitFixture = (
   updated_at: '2026-01-01T00:00:00Z',
   ...overrides,
 });
+
+/**
+ * UXW2-3 single-gesture naming: type into the inline NameFaceControl and commit
+ * with Enter. Waits for the roster typeahead so exact names resolve to rosterEntryId.
+ */
+const typePersonName = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+): Promise<void> => {
+  const commit = await screen.findByTestId('acx-person-commit');
+  await within(commit).findByText(name);
+  const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+  await user.type(input, `${name}{Enter}`);
+};
+
+/** Whole-content of a hold live region — jest-dom string matchers are substring. */
+const wholeHoldText = (el: HTMLElement): string =>
+  (el.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -136,6 +168,7 @@ vi.mock('../../../../api/recognition', async () => {
       truncated: false,
     }),
     fetchTopUnlabeledClusters: vi.fn(),
+    listRecognitionClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
     mergeCluster: vi.fn().mockResolvedValue(undefined),
     updateClusterLabel: vi.fn().mockResolvedValue(undefined),
@@ -180,18 +213,6 @@ vi.mock('../../JobTimeline', () => ({
   JobTimeline: () => <div data-testid="job-timeline" />,
 }));
 
-vi.mock('../WorkbenchFindingsPanel', () => ({
-  WorkbenchFindingsPanel: () => <div data-testid="findings-panel" />,
-}));
-
-vi.mock('../ClusterLabelingPanel', () => ({
-  ClusterLabelingPanel: () => <div data-testid="label-panel" />,
-}));
-
-vi.mock('../ClusterReviewPanel', () => ({
-  ClusterReviewPanel: () => <div data-testid="review-panel" />,
-}));
-
 vi.mock('../useOpenReviewTargetLifecycle', () => ({
   useOpenReviewTargetLifecycle: () => ({ reviewClusterId: null }),
 }));
@@ -232,8 +253,8 @@ interface HarnessProps {
   initialBand?: ReviewQueueBandParam;
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
-  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
+  onLabel?: (clusterId: string) => void;
   /** Expose selection for M2 asserts (optional). */
   selectionRef?: React.MutableRefObject<Set<string>>;
   onKindChange?: (kind: ReviewQueueKindParam) => void;
@@ -366,6 +387,55 @@ const renderQueue = (props: HarnessProps = {}) => {
   return { queryClient, ...utils };
 };
 
+type SuggestionReviewMutations = ReturnType<typeof useSuggestionReviewMutations>;
+
+/** Second hook instance on the same QueryClient — ReviewQueue has no bulk-accept chrome. */
+const ReviewMutationDriver = ({
+  readyRef,
+}: {
+  readyRef: React.MutableRefObject<SuggestionReviewMutations | null>;
+}): null => {
+  const queryClient = useQueryClient();
+  const bulkActionRef = React.useRef(false);
+  const mutations = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+  readyRef.current = mutations;
+  return null;
+};
+
+const twoNameSuggestions = [
+  {
+    id: 'name-1',
+    cluster_id: 'cluster-1',
+    suggested_name: 'Alex',
+    confidence_score: 0.95,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+  {
+    id: 'name-2',
+    cluster_id: 'cluster-2',
+    suggested_name: 'Bea',
+    confidence_score: 0.9,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+];
+
+const unlabeledCluster = (id: string, repId: string) => ({
+  id,
+  tenant_id: 'test-tenant-id',
+  label: null,
+  is_labeled: false,
+  is_auto_label: true,
+  identity_count: 4,
+  user_confirmed: false,
+  suggested_label: null,
+  suggested_target_cluster_id: null,
+  representatives: [{ id: repId, media_id: 1, is_pinned: false }],
+});
+
 describe('ReviewQueue', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -387,6 +457,12 @@ describe('ReviewQueue', () => {
     };
 
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    vi.mocked(fetchClusterMembers).mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    });
     vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
       clusters: [],
       limit: 20,
@@ -449,7 +525,7 @@ describe('ReviewQueue', () => {
 
     await screen.findByRole('button', { name: 'Yes' });
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
   });
 
   it('navigates with prev/next without changing index on accept (PR-54 live-queue semantics)', async () => {
@@ -496,7 +572,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Face label + question both render the name — assert via card textContent.
     expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
 
@@ -504,13 +580,13 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Previous review item' }));
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
     });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
 
     await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
     await waitFor(() => {
@@ -518,7 +594,7 @@ describe('ReviewQueue', () => {
     });
     // BR-08: index stays at head; next card occupies the slot after removal.
     await waitFor(() => {
-      expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      expect(screen.getByText('1 of 1 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
   });
@@ -664,20 +740,20 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // BR-14: two KIND chips only — no third "All" button.
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     expect(await screen.findByText('Are these the same person?')).toBeInTheDocument();
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 1')).toBeInTheDocument();
+    expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
 
     // Toggle active chip → unfiltered/all.
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     await waitFor(() => {
-      expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
@@ -913,7 +989,7 @@ describe('ReviewQueue', () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText('3 of 3')).toBeInTheDocument();
+    expect(await screen.findByText('3 of 3 on this page')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Close matches' }));
     await waitFor(() => {
       expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
@@ -933,7 +1009,7 @@ describe('ReviewQueue', () => {
       'aria-pressed',
       'false',
     );
-    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 shown')).toBeInTheDocument();
   });
 
   it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {
@@ -972,14 +1048,14 @@ describe('ReviewQueue', () => {
     });
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
-    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
     const next = screen.getByRole('button', { name: 'Next review item' });
     act(() => {
       next.click();
       next.click();
     });
     await waitFor(() => {
-      expect(screen.getByText('3 of 3')).toBeInTheDocument();
+      expect(screen.getByText('3 of 3 on this page')).toBeInTheDocument();
     });
   });
 
@@ -1345,7 +1421,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
     expect(screen.getByText('panel-mode')).toBeInTheDocument();
@@ -1354,7 +1430,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
   });
 
   it('announces card transitions via role=status live region', async () => {
@@ -1618,7 +1694,7 @@ describe('ReviewQueue', () => {
     // Full queue: [Alex, c1, c2, c3, c4] — index 3 is cluster-c3.
     await waitFor(() => {
       expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
-      expect(screen.getByText('4 of 5')).toBeInTheDocument();
+      expect(screen.getByText('4 of 5 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
     });
   });
@@ -1669,7 +1745,7 @@ describe('ReviewQueue', () => {
     });
     // Still on first merge card (failure leaves item at head).
     expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Persistent failure alert.
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
@@ -1678,7 +1754,7 @@ describe('ReviewQueue', () => {
 
     await user.click(screen.getByRole('button', { name: 'Next review item' }));
     await waitFor(() => {
-      expect(screen.getByText('2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
     });
     // Stale pending-focus must not auto-focus the primary after Next.
     expect(screen.getByRole('button', { name: 'Yes' })).not.toHaveFocus();
@@ -1833,6 +1909,31 @@ describe('ReviewQueue', () => {
     });
   });
 
+  it('R7-04: filtered-empty-with-work does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assign-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue({ initialKind: 'merge' });
+
+    await screen.findByText('No items match the current filters.');
+    const position = document.querySelector('.acx-review-queue__position');
+    expect(position).not.toHaveTextContent('0 of 0');
+    expect(position).toHaveTextContent('Position unavailable');
+  });
+
   it('shows true drain copy when unfiltered queue is empty', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
@@ -1877,7 +1978,8 @@ describe('ReviewQueue', () => {
 
     await screen.findByRole('button', { name: 'Yes' });
     expect(screen.getByTestId('acx-person-commit')).toBeInTheDocument();
-    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    // ASSIGNMENT does not pass a machine create-name; disclosure must stay off (R6-05).
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY })).toBeInTheDocument();
   });
 
@@ -1944,7 +2046,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText('Are these the same person?');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Merge suggestion 1 of 2/);
     expect(card).toHaveAccessibleName(/Are these the same person\?/);
@@ -1983,7 +2085,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByRole('button', { name: 'Yes' });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Face suggestion 1 of 2/);
   });
@@ -2022,9 +2124,185 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Suggested name:/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
+  });
+
+  // UXW2-2-R1-15/28/29: label from the real XOR composition (queue unmounts
+  // while the panel is open). Fetchers keep returning the pre-curation rows;
+  // the header copy must stay decremented after remount.
+  it('header count decrements after a label commit remount with stale fetchers', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    const staleNames = {
+      suggestions: [
+        {
+          id: 'name-x',
+          cluster_id: 'cluster-x',
+          suggested_name: 'Xavier',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-y',
+          cluster_id: 'cluster-y',
+          suggested_name: 'Yara',
+          confidence_score: 0.8,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    };
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue(staleNames);
+    vi.mocked(listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      limit: 10,
+      total: 0,
+      truncated: false,
+    });
+
+    const { queryClient, unmount } = renderQueue();
+    const countEl = () => document.querySelector('.acx-review-queue__count');
+    const positionEl = () => document.querySelector('.acx-review-queue__position');
+    await waitFor(() => expect(countEl()).toHaveTextContent('2 left to review on this page'));
+    expect(countEl()?.textContent).toBe('2 left to review on this page');
+    expect(positionEl()?.textContent).toBe('1 of 2 on this page');
+    expect(countEl()?.textContent).not.toMatch(/\(loaded\)|cluster/i);
+
+    unmount();
+
+    const panel = render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel clusterId="cluster-x" onClose={vi.fn()} onLabel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    await user.type(input, 'Zed Newperson');
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() =>
+      expect(updateClusterLabel).toHaveBeenCalledWith('cluster-x', 'Zed Newperson', expect.any(AbortSignal)),
+    );
+    panel.unmount();
+
+    render(withQueueProviders(queryClient, <ReviewQueueHarness />));
+    await waitFor(() => expect(countEl()?.textContent).toBe('1 left to review on this page'));
+    expect(positionEl()?.textContent).toBe('1 of 1 on this page');
+  });
+
+  it('R1-22: queue header and findings unlabeled count agree after a drop', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-x',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'cluster-y',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 3,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-2', media_id: 2, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewQueueHarness />
+          <WorkbenchFindingsPanel />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+    expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
+
+    dropClusterFromReviewCaches(queryClient, 'cluster-x', { mode: REVIEW_DROP_MODE.LABEL });
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
+    });
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('R1-29: filtered header uses shown copy, not a false remaining total', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 's-1',
+          identity_id: 'id-1',
+          suggested_cluster_id: 'c1',
+          representative_similarity: 0.9,
+          cluster_label: 'Maria',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 's-2',
+          identity_id: 'id-2',
+          suggested_cluster_id: 'c2',
+          representative_similarity: 0.4,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByTestId('acx-review-card');
+    expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+      '2 left to review on this page',
+    );
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe('2 shown');
+    });
+    expect(document.querySelector('.acx-review-queue__position')?.textContent).toBe('1 of 2 shown');
   });
 
   it('BR-41: CLUSTER card receives queue ordinal from position chrome', async () => {
@@ -2070,9 +2348,9 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-review-card');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
-    expect(card).toHaveAccessibleName(/Cluster review 1 of 2/);
+    expect(card).toHaveAccessibleName(/Face group review 1 of 2/);
   });
 
   // BR-41: NAME invalid/no-ordinal fallbacks (inline CurrentCard root uses ReviewCardGroupShell).
@@ -2145,6 +2423,36 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText(/Name suggestion \d+ of \d+/)).toBeNull();
   });
 
+  it('curate control on a name card reports the cluster id upward (UXW2-3-R3-01)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const onLabel = vi.fn();
+    renderQueue({ onLabel });
+
+    await screen.findByText(/Suggested name:/);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
+    expect(onLabel).toHaveBeenCalledWith('cluster-name-1');
+  });
+
   it('shows person-commit as primary on NAME cards with disclosure', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
@@ -2207,6 +2515,41 @@ describe('ReviewQueue', () => {
 
     await screen.findByTestId('acx-review-card');
     expect(screen.getByTestId('acx-person-commit')).toHaveAttribute('data-person-commit-primary', 'true');
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
+  });
+
+  it('shows HAI-05 disclosure on CLUSTER cards when suggested_label is present (UXW2-3-R6-05)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: 'Morgan',
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
   });
 
   it('person-commit confirm calls commitClusterToRosterEntry not updateClusterLabel', async () => {
@@ -2230,10 +2573,8 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    // Open combobox and select roster entry "Alex".
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    // Type the existing roster name and commit with Enter (single gesture).
+    await typePersonName(user, 'Alex');
 
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
@@ -2267,12 +2608,10 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     const link = await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
-    expect(link).toHaveAttribute('href', VIEW_IN_ROSTER_HREF);
+    expect(link).toHaveAttribute('href', viewInRosterHref('person-uuid-7'));
   });
 
   it('person-commit failure shows persistent role=alert with retry', async () => {
@@ -2297,17 +2636,14 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     const alert = await screen.findByRole('alert');
     expect(alert).toBeInTheDocument();
     expect(within(alert).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('tertiary just label dispatches open_label with the card clusterId', async () => {
-    const onLabel = vi.fn();
+  it('no just-label tertiary control renders on the queue card (UXW2-3)', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -2324,21 +2660,12 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
-    const user = userEvent.setup();
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
-    });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MergeSurvivorProvider>
-          <ReviewQueueHarness onLabel={onLabel} />
-        </MergeSurvivorProvider>
-      </QueryClientProvider>,
-    );
+    renderQueue();
 
     await screen.findByTestId('acx-person-commit');
-    await user.click(screen.getByRole('button', { name: JUST_LABEL_COPY }));
-    expect(onLabel).toHaveBeenCalledWith('cluster-1');
+    // Naming always creates/binds a roster person — the misleading tertiary path is retired.
+    expect(screen.queryByRole('button', { name: /just label/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/don't add to roster/i)).not.toBeInTheDocument();
   });
 
   it('person-commit while accept hold is open flushes held accept first', async () => {
@@ -2382,9 +2709,7 @@ describe('ReviewQueue', () => {
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
     expect(acceptSuggestion).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalled();
@@ -2431,6 +2756,8 @@ describe('ReviewQueue', () => {
     expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
     // Demoted Accept suggestion must not steal primacy.
     expect(focused?.classList.contains('acx-suggestion-card__accept')).toBe(false);
+    // R6-02: prefilled Save must not be the first stop — operator lands in the name field.
+    expect(focused).toBe(screen.getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA }));
   });
 
   it('BR-27: focus on CLUSTER with nothing selected lands on enabled person-commit control', async () => {
@@ -2545,9 +2872,7 @@ describe('ReviewQueue', () => {
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    await user.click(await screen.findByRole('option', { name: /Alex/i }));
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
+    await typePersonName(user, 'Alex');
 
     // Accept flushed → card advanced to sugg-2 before person-commit settles.
     await waitFor(() => {
@@ -2591,10 +2916,10 @@ describe('ReviewQueue', () => {
 
     const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
     expect(error).toHaveAttribute('role', 'alert');
-    expect(error).toHaveTextContent('Unable to load unlabeled clusters.');
+    expect(error).toHaveTextContent('Unable to load unlabeled faces.');
     expect(within(error).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
-    expect(screen.queryByText('This cluster is no longer available.')).not.toBeInTheDocument();
+    expect(screen.queryByText('These faces are no longer available.')).not.toBeInTheDocument();
   });
 
   // UI-05: Retry must re-invoke the top-unlabeled query (not a decorative button).
@@ -2672,7 +2997,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       const statuses = screen.getAllByRole('status');
       expect(
-        statuses.some((node) => within(node).queryByText('Unable to load unlabeled clusters.')),
+        statuses.some((node) => within(node).queryByText('Unable to load unlabeled faces.')),
       ).toBe(true);
     });
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
@@ -2758,7 +3083,7 @@ describe('ReviewQueue', () => {
     // The live region must announce the outage AND the filtered-empty hint.
     await waitFor(() => {
       const live = document.querySelector('.acx-review-queue__live');
-      expect(live).toHaveTextContent('Unable to load unlabeled clusters.');
+      expect(live).toHaveTextContent('Unable to load unlabeled faces.');
       expect(live).toHaveTextContent('No items match the current filters.');
     });
 
@@ -2875,14 +3200,14 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });
 
   // REV2-09 / TEST-15: repair copy without Resync is a dead end. Dropping
   // refetchTopUnlabeled (or omitting the button) leaves this call count at 1.
-  it('REV2-09: empty-queue Resync refetches top-unlabeled and keeps the drain confirmation', async () => {
+  it('REV2-09: empty-queue Resync refetches top-unlabeled without drain confirmation', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -2913,9 +3238,10 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
-    const resync = screen.getByRole('button', { name: 'Resync' });
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(within(repair).getByText('1 group missing face data')).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    const resync = screen.getByRole('button', { name: /^Resync review queue$/ });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
     const callsBefore = topMock.mock.calls.length;
@@ -2925,7 +3251,624 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
     });
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    expect(within(screen.getByTestId('acx-review-queue-repair')).getByText('1 group missing face data')).toBeInTheDocument();
+  });
+
+  it('R2-12: repair_pending with empty served page mounts Resync and does not drain-only', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    const live = screen.getByRole('status');
+    expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+    expect(live.textContent).not.toContain('All caught up');
+  });
+
+  it('R5-09: findings Resync and queue Resync have distinct accessible names', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    expect(await screen.findByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Resync findings$/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Resync review queue$/ })).toHaveLength(1);
+    expect(screen.queryAllByRole('button', { name: /^Resync$/ })).toHaveLength(0);
+  });
+
+  it('R8-01: zero-evidence-only page panel and queue announce the same non-elsewhere claim', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'zero-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-2', media_id: 2, is_pinned: false }],
+        },
+        {
+          id: 'zero-3',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-3', media_id: 3, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 7,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await screen.findByTestId('acx-review-queue-repair');
+    await waitFor(() => {
+      expect(document.getElementById('acx-findings-panel-repair-copy')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+    });
+
+    const panelClaim = (document.getElementById('acx-findings-panel-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const queueLiveClaim = (container.querySelector('.acx-review-queue__live')?.textContent ?? '').trim();
+    const queueVisualClaim = (document.getElementById('acx-review-queue-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    expect(panelClaim).toBe('3 groups missing face data');
+    expect(queueLiveClaim).toBe('3 groups missing face data');
+    expect(queueVisualClaim).toBe('3 groups missing face data');
+    expect(panelClaim).toBe(queueLiveClaim);
+    expect(panelClaim).toBe(queueVisualClaim);
+    expect(panelClaim).not.toMatch(/elsewhere/);
+    expect(queueLiveClaim).not.toMatch(/elsewhere/);
+  });
+
+  it('R5-02: the repair-empty page does not claim groups are on this page', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 24,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(repair).not.toHaveTextContent(/on this page/);
+  });
+
+  it('R5-03: the repair-empty page does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-queue-repair');
+    expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Position unavailable')).toBeInTheDocument();
+  });
+
+  it('R5-04: an already-empty repair_pending mount announces the repair state', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = container.querySelector('.acx-review-queue__live');
+    expect(liveRegion).toBeTruthy();
+    expect(within(liveRegion as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+  });
+
+  it('R5-04: the repair-empty mount announces only once across a re-render', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    const seq = liveRegion()?.getAttribute('data-announce-seq');
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
+  });
+
+  it('R8-02: repair count change 7 to 2 re-announces; identical data stays silent', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 7,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('7 groups elsewhere are missing face data');
+    });
+    const seqAfterSeven = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterSeven).toBeTruthy();
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    });
+    const seqAfterTwo = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterTwo).not.toBe(seqAfterSeven);
+    expect(liveRegion()).not.toHaveTextContent('7 groups elsewhere are missing face data');
+
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seqAfterTwo);
+  });
+
+  it('R7-02: drain after repair clears the repair live sentence', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+
+    queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      repair_pending: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(liveRegion()).not.toHaveTextContent(/missing face data/i);
+    expect(liveRegion()).toHaveTextContent(REVIEW_QUEUE_DRAIN_MESSAGE);
+  });
+
+  it('R7-02: filtered-empty repair first-mount announces exactly once across rerenders', async () => {
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    const announceSpy = vi.fn();
+    let realAnnounce: ((message: string) => void) | null = null;
+    const wrappedAnnounce = (message: string): void => {
+      announceSpy(message);
+      realAnnounce?.(message);
+    };
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      realAnnounce = result.announce;
+      return {
+        ...result,
+        announce: wrappedAnnounce,
+      };
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 3,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+        clusters: [],
+        limit: 20,
+        total: 5,
+        truncated: true,
+        repair_pending: true,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+
+      const { queryClient } = renderQueue({ initialKind: 'merge' });
+      await screen.findByRole('button', { name: 'Clear filters' });
+
+      const filteredAnnounceCount = (): number =>
+        announceSpy.mock.calls.filter(
+          (call) => typeof call[0] === 'string' && call[0].includes('No items match the current filters.'),
+        ).length;
+
+      expect(filteredAnnounceCount()).toBe(1);
+      const seqAfterFirst = document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq');
+      expect(seqAfterFirst).toBeTruthy();
+
+      const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+      for (let bump = 1; bump <= 3; bump += 1) {
+        queryClient.setQueryData(topKey, {
+          clusters: [],
+          limit: 20,
+          total: 5 + bump,
+          truncated: true,
+          repair_pending: true,
+          singleton_count: 0,
+          data_source: DATA_SOURCE.LOCAL_PROJECTION,
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+
+      expect(filteredAnnounceCount()).toBe(1);
+      expect(document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq')).toBe(
+        seqAfterFirst,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('R7-06: queue header decrements after accepting names through ReviewQueue', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-1',
+          suggested_name: 'Alex',
+          confidence_score: 0.95,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-2',
+          cluster_id: 'cluster-2',
+          suggested_name: 'Bea',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+      suggestion_id: suggestionId,
+      resolution: 'accepted',
+      identity_id: `identity-${suggestionId}`,
+      cluster_id: suggestionId === 'name-1' ? 'cluster-1' : 'cluster-2',
+      message: 'ok',
+    }));
+
+    const { container } = renderQueue();
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
+    });
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // ReviewQueue has no Bulk-accept chrome (queryByText('Bulk accept') is null;
+  // useBulkReviewCommit.ts: "Zero calls to legacy bulk-accept"). Drive the
+  // real bulkAccept mutation against the rendered queue's QueryClient and let
+  // the namePending refetch shrink .acx-review-queue__count.
+  it('R5-07: the queue header count decrements after a full bulk accept', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // acceptNameMutation.onSuccess (not the hold/schedule path) drops the
+  // accepted cluster from namePending + topUnlabeled. Header is both sources.
+  it('R1-24: acceptName mutation decrements the rendered queue header', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [unlabeledCluster('cluster-1', 'rep-1'), unlabeledCluster('cluster-2', 'rep-2')],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '4 left to review on this page',
+      );
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.acceptName.mutateAsync('name-1');
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
   });
 
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
@@ -3206,7 +4149,7 @@ describe('ReviewQueue', () => {
     expect(screen.queryByTestId('acx-person-commit')).not.toBeInTheDocument();
   });
 
-  it('BR-35: substring match still allows Create new person via explicit call-site action', async () => {
+  it('BR-35/UXW2-3: a substring of an existing name still creates a new person in one gesture', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -3225,19 +4168,12 @@ describe('ReviewQueue', () => {
 
     const user = userEvent.setup();
     renderQueue();
-    await screen.findByTestId('acx-person-commit');
+    const commit = await screen.findByTestId('acx-person-commit');
 
-    await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
-    // Type a substring of existing "Alex" — shared combobox would hide Create.
-    const search = await screen.findByPlaceholderText(/Choose or create/i);
-    await user.clear(search);
-    await user.type(search, 'Al');
+    // Type a substring of existing "Alex" — not an exact match, so Enter creates.
+    const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+    await user.type(input, 'Al{Enter}');
 
-    const createBtn = await screen.findByRole('button', { name: /Create new person "Al"/i });
-    await user.click(createBtn);
-
-    // Confirm uses create path with the typed name.
-    await user.click(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY }));
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'cluster-1',
@@ -3568,7 +4504,7 @@ describe('ReviewQueue', () => {
 
       await screen.findByText(/Is this/);
       // 2 assignments + 1 merge
-      expect(screen.getByText('1 of 3')).toBeInTheDocument();
+      expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
         'false',
@@ -3577,7 +4513,7 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // strong-1 (0.50) only — merge-1 excluded from bands (BR-60); weak-1 dropped
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
@@ -3588,7 +4524,7 @@ describe('ReviewQueue', () => {
       // KIND ∩ band: Close matches ∩ Strong → still only strong-1
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
 
@@ -3596,20 +4532,22 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // assignment only: strong + weak
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 shown')).toBeInTheDocument();
       });
 
       // Merge stays reachable under band=all via its KIND chip.
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       // Merge ∩ strong band → empty (merge similarity is a different domain).
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
-        expect(screen.getByText('0 of 0')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
       });
+      expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+      expect(screen.getByText('Position unavailable')).toBeInTheDocument();
     });
 
     it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind; fired ids = intersection (BR-61); split tray copy (BR-63)', async () => {
@@ -3697,7 +4635,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
@@ -3705,7 +4643,7 @@ describe('ReviewQueue', () => {
       // Activate strong band → queue shows only s-strong; selection still 2.
       await user.click(screen.getByTestId('apply-strong-band'));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
       // BR-63: split copy — selection extends beyond the active filter view.
@@ -3855,7 +4793,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
 
@@ -3905,7 +4843,7 @@ describe('ReviewQueue', () => {
 
       renderQueue({ initialBand: 'weaker' });
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/WeakPerson/);
       expect(screen.getByRole('button', { name: 'Weaker matches' })).toHaveAttribute(
@@ -3971,6 +4909,87 @@ describe('ReviewQueue', () => {
       expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     });
   });
+
+  it('R6-03: deferred accept POST renders COMMITTING through the ReviewQueue passthrough', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    });
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    let resolveAccept: ((value: {
+      suggestion_id: string;
+      resolution: 'accepted';
+      identity_id: string;
+      cluster_id: string;
+      message: string;
+    }) => void) | null = null;
+    vi.mocked(acceptSuggestion).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAccept = resolve;
+        }),
+    );
+
+    renderQueue();
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        yes.click();
+      });
+      const holding = document.querySelector('.acx-review-queue__hold');
+      expect(holding).toBeInstanceOf(HTMLElement);
+      expect(holding).toHaveTextContent(HOLD_STATUS_COPY);
+      expect(within(holding as HTMLElement).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_HOLD_MS);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const committing = document.querySelector('.acx-review-queue__hold');
+      expect(committing).toBeInstanceOf(HTMLElement);
+      expect(wholeHoldText(committing as HTMLElement)).toBe(HOLD_COMMITTING_STATUS_COPY);
+      expect(wholeHoldText(committing as HTMLElement)).toBe('Saving…');
+      expect(committing).not.toHaveTextContent('Undo');
+      expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+      // R6-07: phase change remounts the polite live region so AT re-reads it.
+      expect(committing).not.toBe(holding);
+
+      await act(async () => {
+        resolveAccept?.({
+          suggestion_id: 'sugg-1',
+          resolution: 'accepted',
+          identity_id: 'identity-1',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
@@ -4010,6 +5029,38 @@ describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
 
     await user.unhover(status);
     expect(onPausedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('renders committing-phase role=status with HOLD_COMMITTING_STATUS_COPY and no Undo', () => {
+    render(
+      <div>
+        <button type="button">Yes</button>
+        <CommitHoldRegion
+          phase="committing"
+          errorMessage={null}
+          onUndo={() => undefined}
+          onRetry={() => undefined}
+          onPausedChange={() => undefined}
+        />
+      </div>,
+    );
+
+    const status = screen.getByRole('status');
+    // Whole-content pin: 'Saving…' is a prefix of the HOLDING copy, so
+    // toHaveTextContent(string) cannot distinguish the phases (UXW2-3-R6-01).
+    expect(wholeHoldText(status)).toBe(HOLD_COMMITTING_STATUS_COPY);
+    expect(wholeHoldText(status)).toBe('Saving…');
+    expect(status).not.toHaveTextContent('Undo');
+  });
+
+  it('CommitHoldRegion consumes HOLD_*_STATUS_COPY as SSOT (UXW2-3-R6-01)', () => {
+    const source = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../ReviewQueue.tsx'),
+      'utf8',
+    );
+    expect(source).toMatch(/\bHOLD_STATUS_COPY\b/);
+    expect(source).toMatch(/\bHOLD_COMMITTING_STATUS_COPY\b/);
+    expect(source).not.toMatch(/__\(\s*'Saving…/);
   });
 
   it('failed phase renders persistent role=alert; Retry disabled while retryPending (BR-17)', () => {

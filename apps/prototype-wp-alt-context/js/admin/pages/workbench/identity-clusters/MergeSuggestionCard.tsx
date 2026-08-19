@@ -99,15 +99,15 @@ export const MergeSuggestionCard = ({
   const humanLabelB = isHumanLabeledTarget(suggestion.cluster_b_label)
     ? suggestion.cluster_b_label
     : null;
-  const clusterALabel = humanLabelA ?? __('Unnamed cluster', 'alt-context');
-  const clusterBLabel = humanLabelB ?? __('Unnamed cluster', 'alt-context');
+  const clusterALabel = humanLabelA ?? __('Unnamed face group', 'alt-context');
+  const clusterBLabel = humanLabelB ?? __('Unnamed face group', 'alt-context');
   // BR-30: per-side alt differentiators for auto labels; human names stay unchanged.
   const clusterAAlt =
     humanLabelA ??
-    sprintf(__('Detected face (%s)', 'alt-context'), __('first cluster', 'alt-context'));
+    sprintf(__('Detected face (%s)', 'alt-context'), __('first group', 'alt-context'));
   const clusterBAlt =
     humanLabelB ??
-    sprintf(__('Detected face (%s)', 'alt-context'), __('second cluster', 'alt-context'));
+    sprintf(__('Detected face (%s)', 'alt-context'), __('second group', 'alt-context'));
   // BR-35/BR-40/TS41-1: only when the ordinal pair is valid (ints >= 1 and position <= total).
   // Otherwise keep today's no-ordinal / question-only labels.
   // Pair predicate narrows position; single-guard on total restores dual narrowing for sprintf.
@@ -152,8 +152,8 @@ export const MergeSuggestionCard = ({
   const questionId = `acx-merge-q-${suggestion.id}`;
   const contextId = `acx-merge-ctx-${suggestion.id}`;
   const positionId = `acx-merge-pos-${suggestion.id}`;
-  const sideAContext = humanLabelA ?? __('first cluster', 'alt-context');
-  const sideBContext = humanLabelB ?? __('second cluster', 'alt-context');
+  const sideAContext = humanLabelA ?? __('first group', 'alt-context');
+  const sideBContext = humanLabelB ?? __('second group', 'alt-context');
   const matchContext = `${matchPercent}% ${__('match', 'alt-context')}`;
   const baseCardContext = sprintf(
     /* translators: 1: first side label, 2: second side label, 3: match percent label (e.g. "87% match") */

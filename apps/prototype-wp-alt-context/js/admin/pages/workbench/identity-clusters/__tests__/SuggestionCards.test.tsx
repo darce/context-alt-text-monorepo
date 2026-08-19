@@ -7,6 +7,7 @@ import { SuggestionCard } from '../SuggestionCards';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
   sprintf: (template: string, ...args: (string | number)[]) => {
     let idx = 0;
     return template.replace(/%(\d+\$)?[sd]/g, () => String(args[idx++] ?? ''));
@@ -111,6 +112,25 @@ describe('SuggestionCard BR-41 group accname', () => {
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName('Face suggestion');
     expect(screen.queryByText(/Face suggestion \d+ of \d+/)).toBeNull();
+  });
+
+  it('renders the face-count string and review title (UXW2-3-R1-11)', () => {
+    render(
+      <SuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onReview={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByText(/3 faces/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review details' })).toHaveAttribute(
+      'title',
+      'Review these faces',
+    );
   });
 });
 

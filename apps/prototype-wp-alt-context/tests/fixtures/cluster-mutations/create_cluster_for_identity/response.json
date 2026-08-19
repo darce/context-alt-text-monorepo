@@ -1,1 +1,1 @@
-{"type":"response","status":200,"data":{"cluster_id":"uuid-1","identity_id":"identity-77","label":"Curated Name","synced":false,"status":"pending"}}
+{"type":"response","status":200,"data":{"cluster_id":"uuid-1","identity_id":"identity-77","label":"Curated Name","synced":false,"status":"pending","person_id":null,"person_uuid":null,"person_name":null}}

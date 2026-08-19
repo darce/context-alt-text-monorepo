@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import { __ } from '@wordpress/i18n';
 import { useMutation, type QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
@@ -27,18 +28,23 @@ import {
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import { PERSON_COMMIT_FAILURE_COPY } from './personCommitCopy';
-import { resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
-import { invalidateSuggestionProjection } from './suggestionProjection';
+import { authoritativeMergeSurvivor, resolveMergeSurvivorFromResponse } from './resolveMergeSurvivor';
+import {
+  dropClusterFromReviewCaches,
+  invalidateReviewCachesWithoutRefetch,
+  invalidateSuggestionProjection,
+  REVIEW_DROP_MODE,
+} from './suggestionProjection';
 import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
 export const UNDO_HOLD_MS = 5000;
 
-/** Single hold/status copy — component + tests consume this export (BR-24). */
-export const HOLD_STATUS_COPY = 'Saving… — Undo';
+/** HOLDING status copy — CommitHoldRegion renders this export (SSOT). Tests pin whole content. */
+export const HOLD_STATUS_COPY = __('Saving… — Undo', 'alt-context');
 
-/** BR-55: committing phase drops Undo suffix (Undo unreachable). */
-export const HOLD_COMMITTING_STATUS_COPY = 'Saving…';
+/** COMMITTING status copy (Undo dropped). CommitHoldRegion renders this export (SSOT). Tests pin whole content. */
+export const HOLD_COMMITTING_STATUS_COPY = __('Saving…', 'alt-context');
 
 export type SuggestionCommitKind =
   | 'accept'
@@ -96,6 +102,7 @@ export interface PersonCommitState {
   phase: PersonCommitPhase;
   clusterId: string | null;
   errorMessage: string | null;
+  personUuid: string | null;
 }
 
 export interface PersonCommitRequest {
@@ -173,6 +180,21 @@ export const useSuggestionReviewMutations = ({
     api.recordMergeSurvivor(retiredId, survivorId);
   }, []);
 
+  /**
+   * UXW2-2-R1-21: retire only the topology-checked source id from
+   * authoritativeMergeSurvivor. Foreign/malformed ids → no drop (invalidation only).
+   */
+  const dropRetiredMergeCluster = React.useCallback(
+    (response: PendingMergeSuggestion) => {
+      const resolved = authoritativeMergeSurvivor(response);
+      if (!resolved) {
+        return;
+      }
+      dropClusterFromReviewCaches(queryClient, resolved.retiredId, { mode: REVIEW_DROP_MODE.MERGE });
+    },
+    [queryClient],
+  );
+
   const [hold, setHold] = React.useState<CommitHoldState>({
     phase: 'idle',
     kind: null,
@@ -184,6 +206,7 @@ export const useSuggestionReviewMutations = ({
     phase: 'idle',
     clusterId: null,
     errorMessage: null,
+    personUuid: null,
   });
 
   const mountedRef = React.useRef(true);
@@ -274,23 +297,6 @@ export const useSuggestionReviewMutations = ({
     [queryClient],
   );
 
-  /** BR-29: person-commit success drops namePending rows for the committed cluster. */
-  const removeNameSuggestionForCluster = React.useCallback(
-    (clusterId: string) => {
-      queryClient.setQueryData<PendingNameSuggestionsResponse | undefined>(namePendingKey, (current) => {
-        if (!current) {
-          return current;
-        }
-        const filtered = current.suggestions.filter((item) => item.cluster_id !== clusterId);
-        if (filtered.length === current.suggestions.length) {
-          return current;
-        }
-        return { ...current, suggestions: filtered };
-      });
-    },
-    [queryClient],
-  );
-
   const invalidateSuggestionQueries = React.useCallback(() => {
     void invalidateSuggestionProjection(queryClient);
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
@@ -336,18 +342,23 @@ export const useSuggestionReviewMutations = ({
         case 'acceptMerge':
           // BR-18: drop from cache before invalidation so the card leaves the queue immediately.
           removeMergeSuggestionFromCache(suggestionId);
-          void queryClient.invalidateQueries({ queryKey: mergePendingKey });
+          invalidateReviewCachesWithoutRefetch(queryClient);
           invalidateMediaIdentities();
-          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
           break;
         case 'rejectMerge':
           removeMergeSuggestionFromCache(suggestionId);
           void queryClient.invalidateQueries({ queryKey: mergePendingKey });
           break;
-        case 'acceptName':
+        case 'acceptName': {
+          const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+          const named = names?.suggestions.find((item) => item.id === suggestionId);
+          if (named?.cluster_id) {
+            dropClusterFromReviewCaches(queryClient, named.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
+          }
           removeNameSuggestionFromCache(suggestionId);
-          void queryClient.invalidateQueries({ queryKey: namePendingKey });
+          invalidateReviewCachesWithoutRefetch(queryClient);
           break;
+        }
         case 'rejectName':
           removeNameSuggestionFromCache(suggestionId);
           void queryClient.invalidateQueries({ queryKey: namePendingKey });
@@ -402,6 +413,7 @@ export const useSuggestionReviewMutations = ({
         const response = await fireCommitApi(kind, suggestionId);
         if (kind === 'acceptMerge' && response) {
           recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+          dropRetiredMergeCluster(response as PendingMergeSuggestion);
         }
         applySuccessSideEffects(kind, suggestionId);
         failedHoldRef.current = null;
@@ -429,7 +441,7 @@ export const useSuggestionReviewMutations = ({
         committingRef.current = false;
       }
     },
-    [applySuccessSideEffects, fireCommitApi, recordMergeSurvivorFromSuggestion, setHoldSafe],
+    [applySuccessSideEffects, dropRetiredMergeCluster, fireCommitApi, recordMergeSurvivorFromSuggestion, setHoldSafe],
   );
 
   const flushHeldInternal = React.useCallback(
@@ -751,32 +763,28 @@ export const useSuggestionReviewMutations = ({
         phase: 'committing',
         clusterId: request.clusterId,
         errorMessage: null,
+        personUuid: null,
       });
 
       try {
-        await commitClusterToRosterEntry({
+        const committed = await commitClusterToRosterEntry({
           clusterId: request.clusterId,
           rosterEntryId: request.rosterEntryId,
           newEntryName: request.newEntryName,
         });
         // BR-28: clusterLabelSetClear kept targets (extras allowed).
-        void invalidateSuggestionProjection(queryClient);
-        void queryClient.invalidateQueries({ queryKey: mergePendingKey });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+        // S2-02 [CON-05] / R1-16: mark review feeds stale WITHOUT an immediate refetch.
+        // Backend curation lags the write; refetch-now restores the dropped row.
+        invalidateReviewCachesWithoutRefetch(queryClient);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels(), refetchType: 'none' });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-        // S2-02 [CON-05]: mark namePending stale WITHOUT an immediate refetch. Backend
-        // curation lags the commit, so a refetch-now returns the just-committed cluster's
-        // row and clobbers the optimistic BR-29 removal below (row reappears). refetchType
-        // 'none' lets the optimistic drop win; a later natural refetch reconciles post-curation.
-        void queryClient.invalidateQueries({ queryKey: namePendingKey, refetchType: 'none' });
-        // BR-29: drop namePending rows for this cluster immediately (async curation lag).
-        removeNameSuggestionForCluster(request.clusterId);
+        dropClusterFromReviewCaches(queryClient, request.clusterId, { mode: REVIEW_DROP_MODE.LABEL });
         setPersonCommitSafe({
           phase: 'succeeded',
           clusterId: request.clusterId,
           errorMessage: null,
+          personUuid: committed.person_uuid,
         });
         return { outcome: 'committed', clusterId: request.clusterId };
       } catch {
@@ -784,13 +792,14 @@ export const useSuggestionReviewMutations = ({
           phase: 'failed',
           clusterId: request.clusterId,
           errorMessage: PERSON_COMMIT_FAILURE_COPY,
+          personUuid: null,
         });
         return { outcome: 'failed', clusterId: request.clusterId };
       } finally {
         personCommittingRef.current = false;
       }
     },
-    [queryClient, removeNameSuggestionForCluster, setPersonCommitSafe],
+    [queryClient, setPersonCommitSafe],
   );
 
   const schedulePersonCommit = React.useCallback(
@@ -902,7 +911,7 @@ export const useSuggestionReviewMutations = ({
 
   const clearPersonCommitSuccess = React.useCallback((): void => {
     if (personCommit.phase === 'succeeded' || personCommit.phase === 'failed') {
-      setPersonCommitSafe({ phase: 'idle', clusterId: null, errorMessage: null });
+      setPersonCommitSafe({ phase: 'idle', clusterId: null, errorMessage: null, personUuid: null });
     }
   }, [personCommit.phase, setPersonCommitSafe]);
 
@@ -923,6 +932,7 @@ export const useSuggestionReviewMutations = ({
         (response) => {
           if (held.kind === 'acceptMerge' && response) {
             recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+            dropRetiredMergeCluster(response as PendingMergeSuggestion);
           }
           applySuccessSideEffects(held.kind, held.suggestionId);
         },
@@ -931,7 +941,7 @@ export const useSuggestionReviewMutations = ({
         },
       );
     };
-  }, [applySuccessSideEffects, clearHeldTimer, fireCommitApi, recordMergeSurvivorFromSuggestion]);
+  }, [applySuccessSideEffects, clearHeldTimer, dropRetiredMergeCluster, fireCommitApi, recordMergeSurvivorFromSuggestion]);
 
   // Raw mutations remain for bulkAccept and any direct callers; assignment accept/reject
   // no longer use optimistic onMutate — ReviewQueue schedules through the hold API.
@@ -964,10 +974,10 @@ export const useSuggestionReviewMutations = ({
     mutationFn: acceptMergeSuggestion,
     onSuccess: (data, suggestionId) => {
       recordMergeSurvivorFromSuggestion(data);
+      dropRetiredMergeCluster(data);
       removeMergeSuggestionFromCache(suggestionId);
-      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
+      invalidateReviewCachesWithoutRefetch(queryClient);
       invalidateMediaIdentities();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
   });
 
@@ -982,8 +992,13 @@ export const useSuggestionReviewMutations = ({
   const acceptNameMutation = useMutation({
     mutationFn: acceptNameSuggestion,
     onSuccess: (_data, suggestionId) => {
+      const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
+      const named = names?.suggestions.find((item) => item.id === suggestionId);
+      if (named?.cluster_id) {
+        dropClusterFromReviewCaches(queryClient, named.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
+      }
       removeNameSuggestionFromCache(suggestionId);
-      void queryClient.invalidateQueries({ queryKey: namePendingKey });
+      invalidateReviewCachesWithoutRefetch(queryClient);
     },
   });
 
@@ -996,12 +1011,31 @@ export const useSuggestionReviewMutations = ({
   });
 
   const bulkAcceptMutation = useMutation({
-    mutationFn: bulkAcceptSuggestions,
-    onSuccess: () => {
-      void invalidateSuggestionProjection(queryClient);
+    mutationFn: async (request: Parameters<typeof bulkAcceptSuggestions>[0]) => {
+      // BulkAcceptResponse is {accepted_count, skipped_count} only — no accepted
+      // ids. Assignment/merge drops would guess from min_confidence (rg-015).
+      if (request.suggestion_type !== 'name') {
+        throw new Error('Bulk accept is only available for name suggestions.');
+      }
+      return bulkAcceptSuggestions(request);
+    },
+    onSuccess: (data) => {
+      if (data.accepted_count <= 0) {
+        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        return;
+      }
+      // BulkAcceptResponse carries counts only — equal cardinality is not the
+      // accepted set (concurrent edit, confidence recompute, threshold ties).
+      // rg-015 / DATA-14: do not invent ids. Refetch instead of evicting.
       void queryClient.invalidateQueries({ queryKey: namePendingKey });
-      void queryClient.invalidateQueries({ queryKey: mergePendingKey });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      // Prefix matches dropClusterFromReviewCaches — no tenant id in this module.
+      void queryClient.invalidateQueries({
+        queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+      });
+      if (data.skipped_count > 0) {
+        return;
+      }
+      invalidateReviewCachesWithoutRefetch(queryClient);
     },
   });
 
@@ -1062,7 +1096,6 @@ export const useSuggestionReviewMutations = ({
 
   return {
     hold,
-    holdAnnounce: HOLD_STATUS_COPY,
     isHoldActive,
     isCommitting,
     isCardActionsDisabled,

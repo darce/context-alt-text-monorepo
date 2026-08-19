@@ -86,6 +86,41 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
         $this->assertSchemaValid($schema, $invalid);
     }
 
+    public function testEveryGoldenSatisfiesIdentityCountInvariant(): void
+    {
+        $this->assertIdentityCountCoversRepresentatives(
+            $this->loadJson($this->resolveRepoPath(self::GOLDEN_RELATIVE)),
+            'contract-golden'
+        );
+        $this->assertIdentityCountCoversRepresentatives(
+            $this->loadJson(self::LOCAL_FIXTURE)['data'],
+            'local-projection'
+        );
+        $this->assertIdentityCountCoversRepresentatives(
+            $this->loadJson(self::PROXY_SUCCESS_FIXTURE)['data'],
+            'proxy-success'
+        );
+        $this->assertIdentityCountCoversRepresentatives(
+            $this->loadJson(self::PROXY_CANONICAL_FIXTURE)['data'],
+            'proxy-canonical'
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function assertIdentityCountCoversRepresentatives(array $payload, string $label): void
+    {
+        foreach ($payload['clusters'] ?? [] as $index => $cluster) {
+            $reps = $cluster['representatives'] ?? [];
+            $this->assertGreaterThanOrEqual(
+                count($reps),
+                (int) ($cluster['identity_count'] ?? -1),
+                sprintf('%s cluster %d: identity_count must cover representatives', $label, $index)
+            );
+        }
+    }
+
     /**
      * @return array<string,mixed>
      */

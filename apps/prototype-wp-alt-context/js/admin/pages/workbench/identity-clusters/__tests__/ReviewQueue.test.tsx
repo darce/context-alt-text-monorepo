@@ -25,10 +25,16 @@ import {
   listRosterEntries,
   type RosterClusterCommitResponse,
 } from '../../../../api/rosterApi';
+import {
+  QUEUE_ACTION,
+  type QueueAction,
+} from '../../../../hooks/useWorkbenchFilters';
 import type {
   ReviewQueueBandParam,
   ReviewQueueKindParam,
+  WorkbenchQueueState,
 } from '../../../../hooks/workbenchQueueUrl';
+import * as workbenchFilters from '../../../../hooks/useWorkbenchFilters';
 import {
   JUST_LABEL_COPY,
   MODEL_OUTPUT_DISCLOSURE,
@@ -169,26 +175,10 @@ interface HarnessProps {
   selectionRef?: React.MutableRefObject<Set<string>>;
   onKindChange?: (kind: ReviewQueueKindParam) => void;
   onBandChange?: (band: ReviewQueueBandParam) => void;
-  onIndexChange?: (index: number) => void;
   onClampIndex?: (index: number) => void;
   onStepIndex?: (delta: number, length: number) => void;
   onClearFilters?: () => void;
 }
-
-const sanitizeHarnessIndex = (index: number): number => {
-  if (!Number.isFinite(index)) {
-    return 0;
-  }
-  return Math.max(0, Math.trunc(index));
-};
-
-const stepHarnessIndex = (index: number, delta: number, length: number): number => {
-  if (length <= 0) {
-    return 0;
-  }
-  const clamped = Math.min(sanitizeHarnessIndex(index), length - 1);
-  return Math.min(Math.max(0, clamped + delta), length - 1);
-};
 
 /** Reducer-semantic parent state — every ReviewQueue harness must go through this. */
 const useQueueHarnessState = (
@@ -196,41 +186,36 @@ const useQueueHarnessState = (
   initialKind: ReviewQueueKindParam = 'all',
   initialBand: ReviewQueueBandParam = 'all',
 ) => {
-  const [index, setIndex] = React.useState(initialIndex);
-  const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
-  const [band, setBand] = React.useState<ReviewQueueBandParam>(initialBand);
+  const [queueState, setQueueState] = React.useState<WorkbenchQueueState>({
+    index: initialIndex,
+    kind: initialKind,
+    band: initialBand,
+  });
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+  const dispatch = (action: QueueAction): void => {
+    setQueueState((prev) => workbenchFilters.reduceQueueAction(prev, action));
+  };
   return {
-    index,
-    setIndex,
-    kind,
-    setKind,
-    band,
-    setBand,
+    index: queueState.index,
+    kind: queueState.kind,
+    band: queueState.band,
     selectedIds,
     setSelectedIds,
     queueCallbacks: {
-      onIndexChange: (next: number): void => {
-        setIndex(sanitizeHarnessIndex(next));
-      },
       onClampIndex: (next: number): void => {
-        setIndex(sanitizeHarnessIndex(next));
+        dispatch({ type: QUEUE_ACTION.CLAMP_INDEX, index: next });
       },
       onStepIndex: (delta: number, length: number): void => {
-        setIndex((prev) => stepHarnessIndex(prev, delta, length));
+        dispatch({ type: QUEUE_ACTION.STEP_INDEX, delta, length });
       },
       onKindChange: (next: ReviewQueueKindParam): void => {
-        setKind(next);
-        setIndex(0);
+        dispatch({ type: QUEUE_ACTION.SET_KIND, kind: next });
       },
       onBandChange: (next: ReviewQueueBandParam): void => {
-        setBand(next);
-        setIndex(0);
+        dispatch({ type: QUEUE_ACTION.SET_BAND, band: next });
       },
       onClearFilters: (): void => {
-        setKind('all');
-        setBand('all');
-        setIndex(0);
+        dispatch({ type: QUEUE_ACTION.CLEAR_FILTERS });
       },
     },
   };
@@ -250,7 +235,6 @@ const makeQueueHarness = (defaults: HarnessProps = {}) => {
       selectionRef,
       onKindChange: onKindChangeSpy,
       onBandChange: onBandChangeSpy,
-      onIndexChange: onIndexChangeSpy,
       onClampIndex: onClampIndexSpy,
       onStepIndex: onStepIndexSpy,
       onClearFilters: onClearFiltersSpy,
@@ -274,10 +258,6 @@ const makeQueueHarness = (defaults: HarnessProps = {}) => {
         emptyStateAnchorRef={emptyStateAnchorRef}
         onLabel={onLabel}
         onReview={onReview}
-        onIndexChange={(next) => {
-          onIndexChangeSpy?.(next);
-          queueCallbacks.onIndexChange(next);
-        }}
         onClampIndex={(next) => {
           onClampIndexSpy?.(next);
           queueCallbacks.onClampIndex(next);
@@ -639,7 +619,7 @@ describe('ReviewQueue', () => {
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('kind chip calls onKindChange once and never onIndexChange (R1-06)', async () => {
+  it('kind chip calls onKindChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -656,9 +636,9 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
     const onKindChange = vi.fn();
-    const onIndexChange = vi.fn();
     const onBandChange = vi.fn();
-    const Harness = makeQueueHarness({ onKindChange, onIndexChange, onBandChange });
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange });
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
@@ -668,11 +648,13 @@ describe('ReviewQueue', () => {
     await user.click(screen.getByRole('button', { name: 'Close matches' }));
     expect(onKindChange).toHaveBeenCalledTimes(1);
     expect(onKindChange).toHaveBeenCalledWith('assignment');
-    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type !== QUEUE_ACTION.SET_INDEX)).toBe(true);
     expect(onBandChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
   });
 
-  it('band chip calls onBandChange once and never onIndexChange (R1-06)', async () => {
+  it('band chip calls onBandChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {
@@ -689,9 +671,9 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
     const onKindChange = vi.fn();
-    const onIndexChange = vi.fn();
     const onBandChange = vi.fn();
-    const Harness = makeQueueHarness({ onKindChange, onIndexChange, onBandChange });
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange });
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
@@ -701,8 +683,10 @@ describe('ReviewQueue', () => {
     await user.click(screen.getByRole('button', { name: 'Strong matches' }));
     expect(onBandChange).toHaveBeenCalledTimes(1);
     expect(onBandChange).toHaveBeenCalledWith('strong');
-    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type !== QUEUE_ACTION.SET_INDEX)).toBe(true);
     expect(onKindChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
   });
 
   it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {

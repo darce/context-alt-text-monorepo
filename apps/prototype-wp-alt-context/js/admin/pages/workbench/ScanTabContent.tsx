@@ -90,13 +90,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     () => new Set(),
   );
 
-  const handleIndexChange = React.useCallback(
-    (nextIndex: number): void => {
-      dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: nextIndex });
-    },
-    [dispatchQueue],
-  );
-
   const handleClampIndex = React.useCallback(
     (nextIndex: number): void => {
       dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: nextIndex });
@@ -221,7 +214,6 @@ export const ScanTabContent = (): React.JSX.Element => {
               <ReviewQueue
                 ref={reviewQueueRef}
                 index={queueState.index}
-                onIndexChange={handleIndexChange}
                 onClampIndex={handleClampIndex}
                 onStepIndex={handleStepIndex}
                 kind={queueState.kind}

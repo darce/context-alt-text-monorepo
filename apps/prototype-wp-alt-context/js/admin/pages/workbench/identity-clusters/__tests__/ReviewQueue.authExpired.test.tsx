@@ -114,7 +114,6 @@ const ReviewQueueHarness = ({ initialIndex = 0, queueRef }: HarnessProps): React
     <ReviewQueue
       ref={queueRef}
       index={index}
-      onIndexChange={(next) => setIndex(Math.max(0, next))}
       onClampIndex={(next) => setIndex(Math.max(0, next))}
       onStepIndex={(delta, length) => {
         setIndex((prev) => {

@@ -1350,20 +1350,56 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
 
         $this->assertNotEmpty($data['candidates'] ?? []);
-        $uuidPattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
-        foreach (array_column($data['candidates'], 'cluster_id') as $emitted) {
-            $this->assertMatchesRegularExpression(
-                $uuidPattern,
-                (string) $emitted,
-                'emitted cluster_id must match schema format uuid'
-            );
-        }
-
         $this->assertSame(
             [$ann, $far],
             array_column($data['candidates'], 'cluster_id')
         );
         $this->assertSame([11, 10], array_column($data['candidates'], 'roster_entry_id'));
+    }
+
+    public function testGetRosterCandidatesEmittedClusterIdsMatchSchemaUuidFormat(): void
+    {
+        $rfc = '550e8400-e29b-41d4-a716-446655440000';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 1,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    ['cluster_id' => $rfc, 'name' => 'Ada-c', 'similarity' => 0.81, 'band' => 'strong'],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $rfc, 'person_id' => 3, 'name' => 'Ada'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 1);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+        $this->assertNotEmpty($data['candidates'] ?? []);
+        $schemaUuid = '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i';
+        foreach (array_column($data['candidates'], 'cluster_id') as $emitted) {
+            $this->assertMatchesRegularExpression(
+                $schemaUuid,
+                (string) $emitted,
+                'emitted cluster_id must match schema format uuid'
+            );
+        }
     }
 
     public function testGetRosterCandidatesRejectsInvalidTopKWithoutSignFlip(): void

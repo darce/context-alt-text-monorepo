@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
 
@@ -702,6 +703,62 @@ class LifecycleManagerTest extends TestCase
         };
         $manager->maybe_upgrade();
         $this->assertSame(0, $manager->healRuns, 'completed heal must not re-run');
+    }
+
+    public function testMaybeUpgradeDoesNotStampHealCompleteWhenCappedAndPassesBatchBound(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            public ?int $seenMaxBatches = null;
+
+            protected function create_person_label_backfill_service(): PersonLabelBackfillService
+            {
+                $cap = (new \ReflectionClass(LifecycleManager::class))->getConstant('MAX_HEAL_BATCHES_PER_LOAD');
+                $this->seenMaxBatches = is_int($cap) ? $cap : null;
+
+                return new class($this->seenMaxBatches) extends PersonLabelBackfillService {
+                    public function backfill_tenant(string $tenant_id, int $batch_size = self::BATCH_SIZE, bool $dry_run = false): array
+                    {
+                        return [
+                            'bound' => 500,
+                            'created' => 0,
+                            'persons' => 500,
+                            'skipped' => 0,
+                            'examined' => 500,
+                            'collisions' => 0,
+                            'stalls' => 0,
+                            'stalled' => false,
+                            'empty' => false,
+                            'capped' => true,
+                        ];
+                    }
+                };
+            }
+        };
+
+        $manager->maybe_upgrade();
+
+        $this->assertSame(5, $manager->seenMaxBatches, 'upgrade heal must bound batches per load');
+        $this->assertNotSame(
+            '1',
+            (string) get_option('acx_label_heal_complete', ''),
+            'capped heal must not stamp success (remainder must resume)'
+        );
+    }
+
+    public function testUninstallRemovesLabelHealOptions(): void
+    {
+        $this->setOption('acx_label_heal_complete', '1');
+        $this->setOption('acx_label_heal_attempts', 2);
+        $this->setOption('acx_label_heal_blocked_reason', 'tenant_unresolved');
+
+        $this->manager->uninstall();
+
+        $this->assertFalse(get_option('acx_label_heal_complete'));
+        $this->assertFalse(get_option('acx_label_heal_attempts'));
+        $this->assertFalse(get_option('acx_label_heal_blocked_reason'));
     }
 
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void

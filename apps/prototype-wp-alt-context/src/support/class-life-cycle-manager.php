@@ -37,6 +37,11 @@ class LifecycleManager {
 	private const OPTION_HEAL_ATTEMPTS = 'acx_label_heal_attempts';
 	private const OPTION_HEAL_BLOCKED_REASON = 'acx_label_heal_blocked_reason';
 	private const MAX_HEAL_ATTEMPTS_PER_LOAD = 1;
+	/**
+	 * Upgrade/activate runs inside a WP request. 5 * BATCH_SIZE(100) = 500 binds
+	 * per load. Remainder resumes via acx_label_heal_complete staying unset.
+	 */
+	private const MAX_HEAL_BATCHES_PER_LOAD = 5;
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
@@ -199,6 +204,16 @@ class LifecycleManager {
 		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
 
 		$result = $this->run_label_heal( $tenant_id );
+		if ( ! empty( $result['capped'] ) ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] unbound-label heal capped after %d batches; will resume on next load',
+					self::MAX_HEAL_BATCHES_PER_LOAD
+				)
+			);
+			return;
+		}
+
 		if ( ! empty( $result['stalled'] ) ) {
 			Telemetry::log_line(
 				sprintf(
@@ -214,10 +229,14 @@ class LifecycleManager {
 	}
 
 	/**
-	 * @return array{stalled:bool,stalls?:int}
+	 * @return array{stalled:bool,stalls?:int,capped?:bool}
 	 */
 	protected function run_label_heal( string $tenant_id ): array {
-		return ( new PersonLabelBackfillService() )->backfill_tenant( $tenant_id );
+		return $this->create_person_label_backfill_service()->backfill_tenant( $tenant_id );
+	}
+
+	protected function create_person_label_backfill_service(): PersonLabelBackfillService {
+		return new PersonLabelBackfillService( self::MAX_HEAL_BATCHES_PER_LOAD );
 	}
 
 	/**
@@ -541,6 +560,7 @@ class LifecycleManager {
 		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
 		delete_option( self::OPTION_HEAL_COMPLETE );
 		delete_option( self::OPTION_HEAL_ATTEMPTS );
+		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();

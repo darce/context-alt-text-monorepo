@@ -516,6 +516,66 @@ class LifecycleManagerTest extends TestCase
         $this->assertNotEmpty($personInserts);
     }
 
+    public function testMaybeUpgradeHealsUnboundHumanLabelSoRosterReadIsNotNull(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        global $wpdb;
+        $tenant = self::currentTenantId();
+        $wpdb->insert_id = 8;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-unbound-human',
+                'tenant_id' => $tenant,
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_identity_members'] = [
+            [
+                'identity_uuid' => 'member-unbound',
+                'cluster_uuid' => 'cluster-unbound-human',
+                'attachment_id' => 42,
+            ],
+        ];
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-unbound-human',
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->assertNull(
+            $this->projectedRosterLabel(null, 'Tory Guzman'),
+            'pre-upgrade CASE must hide a human label with no person bind'
+        );
+
+        $this->manager->maybe_upgrade();
+
+        $personName = trim((string) ($wpdb->tableRows['wp_acx_persons'][0]['name'] ?? ''));
+        $personId = $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] ?? null;
+        $this->assertSame('Tory Guzman', $personName);
+        $this->assertTrue(is_numeric($personId) && (int) $personId > 0, 'upgrade must bind the unbound human label');
+        $this->assertSame(
+            'Tory Guzman',
+            $this->projectedRosterLabel($personName, (string) $wpdb->tableRows['wp_acx_clusters'][0]['label'])
+        );
+
+        $wpdb->mockResults = [];
+        $wpdb->queries = [];
+        (new \AltContext\Sovereign\Repositories\IdentityMembersReadRepository(
+            'wp_acx_identity_members',
+            'wp_acx_clusters'
+        ))->list_for_media_ids($tenant, [42]);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('THEN p.name', $sql);
+        $this->assertStringContainsString('ELSE NULL END', $sql);
+    }
+
     public function testMaybeUpgradeDoesNotMarkHealCompleteWhenStalledAndRetries(): void
     {
         $this->setOption('acx_version', ACX_VERSION);
@@ -1048,6 +1108,29 @@ class LifecycleManagerTest extends TestCase
             $wpdb->queries,
             'acx_description_usage must not be orphaned on uninstall (BR-09)'
         );
+    }
+
+    private function projectedRosterLabel(?string $personName, ?string $clusterLabel): ?string
+    {
+        $person = trim((string) $personName);
+        if ('' !== $person) {
+            return $person;
+        }
+
+        $reserved = (new class() {
+            use \AltContext\Support\DetectsSystemDefinedLabels;
+
+            public function check(string $label): bool
+            {
+                return $this->is_reserved_label_shape($label);
+            }
+        })->check((string) $clusterLabel);
+
+        if (null === $clusterLabel || '' === $clusterLabel || $reserved) {
+            return $clusterLabel;
+        }
+
+        return null;
     }
 
     private function findQueryContaining(array $queries, string $needle): string

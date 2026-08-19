@@ -439,6 +439,232 @@ class ClusterReadServiceTest extends TestCase
         $this->assertCount(ClusterReadService::TARGETED_REPAIR_ID_CEILING, $scheduled['args'][1]);
     }
 
+    /**
+     * R2-09: mapper-requested ids are not evicted by lexically-earlier drift ids.
+     * Mutant: array_merge → sort → slice.
+     */
+    public function testListTopUnlabeledMapperRepairIdsAreNotEvictedByDriftIds(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+
+        $mapperIds = [];
+        for ($i = 1; $i <= 20; $i++) {
+            $mapperIds[] = sprintf('zzz-%02d', $i);
+        }
+
+        $clustersRepo = new class($mapperIds) extends NullClustersRepository {
+            /** @param list<string> $mapperIds */
+            public function __construct(private array $mapperIds)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                $rows = [];
+                foreach ($this->mapperIds as $id) {
+                    $rows[] = [
+                        'cluster_uuid' => $id,
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ];
+                }
+                return $rows;
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                $ids = [];
+                for ($i = 1; $i <= 10; $i++) {
+                    $ids[] = sprintf('aaa-%02d', $i);
+                }
+                return $ids;
+            }
+        };
+
+        $membersRepo = new class($mapperIds) extends NullIdentityMembersRepository {
+            /** @param list<string> $mapperIds */
+            public function __construct(private array $mapperIds)
+            {
+            }
+
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                $out = [];
+                foreach ($this->mapperIds as $id) {
+                    $out[$id] = [
+                        ['identity_uuid' => $id . '-m1', 'attachment_id' => 1],
+                        ['identity_uuid' => $id . '-m2', 'attachment_id' => 2],
+                        ['identity_uuid' => $id . '-m3', 'attachment_id' => 3],
+                        ['identity_uuid' => $id . '-m4', 'attachment_id' => 4],
+                    ];
+                }
+                return $out;
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0]['args'][1];
+        $this->assertSame(
+            array_merge($mapperIds, ['aaa-01', 'aaa-02', 'aaa-03', 'aaa-04', 'aaa-05']),
+            $scheduled
+        );
+    }
+
+    /**
+     * R2-09: extra-id top-up is sorted so deleting sort changes the scheduled list.
+     * Mutant: delete sort( $normalized ) / sort of extras.
+     */
+    public function testListTopUnlabeledRepairExtraIdsAreSorted(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'mid-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                return ['ccc-extra', 'aaa-extra', 'bbb-extra'];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'mid-keep' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                        ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0]['args'][1];
+        $this->assertSame(['mid-keep', 'aaa-extra', 'bbb-extra', 'ccc-extra'], $scheduled);
+    }
+
+    /**
+     * R2-09: skip the correlated drift scan once mapper ids already fill the ceiling.
+     * Mutant: delete the count($mapper_ids) < CEILING guard.
+     */
+    public function testListTopUnlabeledSkipsDriftScanWhenMapperIdsFillCeiling(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+        $driftCalls = 0;
+
+        $mapperIds = [];
+        for ($i = 1; $i <= ClusterReadService::TARGETED_REPAIR_ID_CEILING; $i++) {
+            $mapperIds[] = sprintf('zzz-%02d', $i);
+        }
+
+        $clustersRepo = new class($mapperIds, $driftCalls) extends NullClustersRepository {
+            /** @param list<string> $mapperIds */
+            public function __construct(private array $mapperIds, private int &$driftCalls)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                $rows = [];
+                foreach ($this->mapperIds as $id) {
+                    $rows[] = [
+                        'cluster_uuid' => $id,
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ];
+                }
+                return $rows;
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                ++$this->driftCalls;
+                return ['aaa-drift'];
+            }
+        };
+
+        $membersRepo = new class($mapperIds) extends NullIdentityMembersRepository {
+            /** @param list<string> $mapperIds */
+            public function __construct(private array $mapperIds)
+            {
+            }
+
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                $out = [];
+                foreach ($this->mapperIds as $id) {
+                    $out[$id] = [
+                        ['identity_uuid' => $id . '-m1', 'attachment_id' => 1],
+                        ['identity_uuid' => $id . '-m2', 'attachment_id' => 2],
+                        ['identity_uuid' => $id . '-m3', 'attachment_id' => 3],
+                        ['identity_uuid' => $id . '-m4', 'attachment_id' => 4],
+                    ];
+                }
+                return $out;
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertSame(0, $driftCalls);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0]['args'][1];
+        $this->assertSame($mapperIds, $scheduled);
+    }
+
     public function testListTopUnlabeledProxyBootstrappingFallbackEnvelope(): void
     {
         $GLOBALS['__ac_scheduled'] = [];

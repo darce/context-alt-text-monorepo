@@ -33,6 +33,9 @@ class LifecycleManager {
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
 	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
+	private const OPTION_HEAL_COMPLETE = 'acx_label_heal_complete';
+	private const OPTION_HEAL_ATTEMPTS = 'acx_label_heal_attempts';
+	private const MAX_HEAL_ATTEMPTS_PER_LOAD = 1;
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
@@ -74,6 +77,7 @@ class LifecycleManager {
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
 			add_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array( $this, 'continue_legacy_roster_migration' ) );
+			add_action( 'admin_notices', array( $this, 'render_label_heal_notice' ) );
 		}
 	}
 
@@ -94,7 +98,7 @@ class LifecycleManager {
 		if ( $this->maybe_create_projection_tables() ) {
 			update_option( self::OPTION_SCHEMA_FINGERPRINT, $this->compute_projection_schema_fingerprint() );
 		}
-		$this->heal_unbound_human_labels();
+		$this->maybe_heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
 	}
@@ -128,22 +132,51 @@ class LifecycleManager {
 		$fingerprint         = $this->compute_projection_schema_fingerprint();
 		$version_matches     = get_option( self::OPTION_VERSION ) === ACX_VERSION;
 		$fingerprint_matches = get_option( self::OPTION_SCHEMA_FINGERPRINT ) === $fingerprint;
-		if ( $version_matches && $fingerprint_matches ) {
+		if ( ! $version_matches || ! $fingerprint_matches ) {
+			if ( ! $this->maybe_create_projection_tables() ) {
+				// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
+				Telemetry::log_line(
+					sprintf(
+						'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
+						ACX_VERSION
+					)
+				);
+				$this->maybe_heal_unbound_human_labels();
+				return;
+			}
+			update_option( self::OPTION_VERSION, ACX_VERSION );
+			update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
+		}
+
+		$this->maybe_heal_unbound_human_labels();
+	}
+
+	public function render_label_heal_notice(): void {
+		if ( '1' === (string) get_option( self::OPTION_HEAL_COMPLETE, '' ) ) {
 			return;
 		}
 
-		if ( ! $this->maybe_create_projection_tables() ) {
-			// RLSE-05 / OBS-08: refuse to stamp so the next request retries.
-			Telemetry::log_line(
-				sprintf(
-					'[acx] maybe_upgrade: projection schema apply failed; not stamping acx_version=%s or fingerprint (will retry)',
-					ACX_VERSION
-				)
-			);
+		if ( false === get_option( self::OPTION_VERSION ) ) {
 			return;
 		}
-		update_option( self::OPTION_VERSION, ACX_VERSION );
-		update_option( self::OPTION_SCHEMA_FINGERPRINT, $fingerprint );
+
+		echo '<div class="notice notice-warning"><p>'
+			. esc_html__( 'Alt Context is still repairing unlabeled clusters. The heal will retry on the next page load.', 'alt-context' )
+			. '</p></div>';
+	}
+
+	private function maybe_heal_unbound_human_labels(): void {
+		if ( '1' === (string) get_option( self::OPTION_HEAL_COMPLETE, '' ) ) {
+			return;
+		}
+
+		$attempts = (int) get_option( self::OPTION_HEAL_ATTEMPTS, 0 );
+		if ( $attempts >= self::MAX_HEAL_ATTEMPTS_PER_LOAD ) {
+			// Bounded per load (rg-007). A later request retries from zero.
+			delete_option( self::OPTION_HEAL_ATTEMPTS );
+		}
+
+		update_option( self::OPTION_HEAL_ATTEMPTS, 1 );
 		$this->heal_unbound_human_labels();
 	}
 
@@ -153,15 +186,26 @@ class LifecycleManager {
 			return;
 		}
 
-		$result = ( new PersonLabelBackfillService() )->backfill_tenant( $tenant_id );
-		if ( $result['stalled'] ) {
+		$result = $this->run_label_heal( $tenant_id );
+		if ( ! empty( $result['stalled'] ) ) {
 			Telemetry::log_line(
 				sprintf(
-					'[acx] unbound-label heal stalled after %d batches; will retry on next upgrade',
-					(int) $result['stalls']
+					'[acx] unbound-label heal stalled after %d batches; will retry on next load',
+					(int) ( $result['stalls'] ?? 0 )
 				)
 			);
+			return;
 		}
+
+		update_option( self::OPTION_HEAL_COMPLETE, '1' );
+		delete_option( self::OPTION_HEAL_ATTEMPTS );
+	}
+
+	/**
+	 * @return array{stalled:bool,stalls?:int}
+	 */
+	protected function run_label_heal( string $tenant_id ): array {
+		return ( new PersonLabelBackfillService() )->backfill_tenant( $tenant_id );
 	}
 
 	/**
@@ -483,6 +527,8 @@ class LifecycleManager {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
 		delete_option( self::OPTION_SCHEMA_FINGERPRINT );
+		delete_option( self::OPTION_HEAL_COMPLETE );
+		delete_option( self::OPTION_HEAL_ATTEMPTS );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();

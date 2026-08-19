@@ -1,6 +1,9 @@
 """VLM-2A Slice 3: CLI fetch loop (per-item isolation, bounded stall rg-007) + retention."""
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -5767,3 +5770,99 @@ def test_refuse_overwrite_uses_stable_shared_prefix(tmp_path, monkeypatch):
     assert not msg_score.startswith("score refuse-overwrite:")
     # Allow-path is silent.
     _refuse_report_overwrite([target], allow=True, label="score")
+
+
+# ---------------------------------------------------------------------------
+# VLM6-RV11-L-01 / L-02 — C-locale score I/O (EVAL-10)
+# ---------------------------------------------------------------------------
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[2]
+_ASCII_LOCALE_ENV = {
+    "LC_ALL": "C",
+    "LANG": "C",
+    "PYTHONUTF8": "0",
+    "PYTHONCOERCECLOCALE": "0",
+}
+
+
+def _run_score_c_locale(manifest_path: Path, record_path: Path) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env.update(_ASCII_LOCALE_ENV)
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+        ],
+        cwd=str(_SERVICE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def test_cmd_score_writes_utf8_report_under_c_locale(tmp_path):
+    """VLM6-RV11-L-01 / EVAL-10: score report writes must pin utf-8.
+
+    report.py serialises ensure_ascii=False and always emits 'π'. Unpinned
+    write_text under PYTHONUTF8=0 LC_ALL=C LANG=C dies with UnicodeEncodeError.
+    MUT[drop_score_write_pin]: revert the json_path write pin → this test fails.
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-c-locale")
+    proc = _run_score_c_locale(manifest_path, record_path)
+    assert proc.returncode == 0, proc.stderr
+    report_path = tmp_path / "run-c-locale-report.json"
+    scored = json.loads(report_path.read_text(encoding="utf-8"))
+    assert isinstance(scored, dict)
+    assert "π" in report_path.read_text(encoding="utf-8")
+
+
+def test_cmd_score_raw_utf8_run_record_under_c_locale(tmp_path):
+    """VLM6-RV11-L-02 / EVAL-10: raw-UTF-8 run record must decode under C locale.
+
+    MUT[drop_record_read_pin]: bare read_text() → UnicodeDecodeError.
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-raw-utf8")
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    payload["items"][0]["describe"]["alt_text_draft"] = "café " + payload["items"][0]["describe"]["alt_text_draft"]
+    record_path.write_bytes((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+    proc = _run_score_c_locale(manifest_path, record_path)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_cmd_score_invalid_utf8_run_record_named_exit(tmp_path, capsys):
+    """VLM6-RV11-L-02: \\xff\\xfe record → named exit 2, no report written.
+
+    MUT[narrow_record_guard]: except OSError only → UnicodeDecodeError escapes.
+    """
+    record = tmp_path / "run-bad.json"
+    record.write_bytes(b"\xff\xfe")
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(man), "--run-record", str(record)])
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "score: run record not found/unreadable:" in captured.err
+    assert str(record) in captured.err
+    assert not (tmp_path / "run-bad-report.json").exists()
+
+
+def test_cmd_score_missing_run_record_named_exit(tmp_path, capsys):
+    """VLM6-RV11-L-02: missing run record → named exit 2."""
+    missing = tmp_path / "no-such-run.json"
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(man), "--run-record", str(missing)])
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "score: run record not found/unreadable:" in captured.err
+    assert str(missing) in captured.err

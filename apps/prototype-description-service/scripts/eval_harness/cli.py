@@ -792,7 +792,7 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ManifestError(f"{path} is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
@@ -1377,7 +1377,7 @@ def _check_score_determinism_cross_process(
     resolved_manifest = Path(manifest_path).resolve()
     # Baseline: current process, reading the persisted anchor with the real
     # operator parameters (not the build_reports defaults).
-    record = json.loads(resolved_record.read_text())
+    record = json.loads(resolved_record.read_text(encoding="utf-8"))
     # Metadata-only: build_reports reads rubrics/roster/policy, never opens image bytes.
     manifest = load_manifest(
         str(resolved_manifest),
@@ -1552,7 +1552,14 @@ def _refuse_report_overwrite(paths: list[Path], *, allow: bool, label: str) -> N
 def _cmd_score(args: argparse.Namespace) -> None:
     _reject_llm_judge(args)
     record_path = Path(args.run_record)
-    record = json.loads(record_path.read_text())
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(
+            f"score: run record not found/unreadable: {record_path}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     # Metadata-only: score_run_record/build_reports use must_right/easy_wrong/roster/policy;
     # image bytes already live in the run-record and are never re-opened here.
     manifest = load_manifest(
@@ -1686,16 +1693,16 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # JSON is the load-bearing Slice-2 artifact (OBS-04). Write it first so a
     # schema-degraded document still leaves a fail verdict on disk even if the
     # human markdown renderer cannot tolerate missing hard-keyed fields.
-    json_path.write_text(local_json)
-    md_path.write_text(local_md)
+    json_path.write_text(local_json, encoding="utf-8")
+    md_path.write_text(local_md, encoding="utf-8")
     # VLM-6 S5 W1 (VLM6-C-01 / VLM6-F-03): audience-aware export. Additive — the
     # full LOCAL report above is always written (operator triage + the failure gate
     # below score the whole corpus); --audience public ALSO emits a redacted,
     # publishable-only artifact. This is the sole sanctioned eval->public path,
     # the prerequisite that makes the rd.altcontext.com gallery (RND-1) safe.
     if is_public and public_json is not None and public_md is not None:
-        public_json_path.write_text(public_json)
-        public_md_path.write_text(public_md)
+        public_json_path.write_text(public_json, encoding="utf-8")
+        public_md_path.write_text(public_md, encoding="utf-8")
         print(public_md_path)
     print(md_path)
     verdict = scored.get("verdict") or {}
@@ -2204,7 +2211,7 @@ def _check_face_determinism_cross_process(
     resolved_record = record_path.resolve()
     resolved_manifest = Path(manifest_path).resolve()
     # Baseline: current process
-    record = json.loads(resolved_record.read_text())
+    record = json.loads(resolved_record.read_text(encoding="utf-8"))
     # Metadata-only: face score uses face_count/tags/boxes from record + manifest fields;
     # never opens image files (embeddings already in the face run-record).
     manifest = load_manifest(
@@ -2265,7 +2272,7 @@ def _check_face_determinism_cross_process(
 def _cmd_score_face(args: argparse.Namespace) -> None:
     """Pure offline face score over the full unfiltered corpus (§G)."""
     record_path = Path(args.run_record)
-    record = json.loads(record_path.read_text())
+    record = json.loads(record_path.read_text(encoding="utf-8"))
     if record.get("kind") == DocKind.FACE_RUN_RECORD.value:
         validate_face_run_record(record)
     # Metadata-only: score_face_run_record / build_face_reports use tags, face_count,
@@ -2310,8 +2317,8 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         json_path = Path(f"{base}-face-report.json")
         md_path = Path(f"{base}-face-report.md")
     _refuse_report_overwrite([json_path, md_path], allow=allow_overwrite_report, label="score-face")
-    json_path.write_text(json_doc)
-    md_path.write_text(md_doc)
+    json_path.write_text(json_doc, encoding="utf-8")
+    md_path.write_text(md_doc, encoding="utf-8")
     # VLM6-A-07 / TEST-15: gate on a read-back of the written artifact — never a
     # second score_face_run_record re-derive. Serialisation bugs must go red.
     try:
@@ -2702,7 +2709,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         raise SystemExit(2)
     if args.check:
         try:
-            artifact = json.loads(out.read_text(encoding="utf-8"))
+            artifact = json.loads(out.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             print(
                 f"draw-eval-split: sealed split not found/unreadable: {out}",

@@ -31,6 +31,9 @@ class ClusterReadServiceTest extends TestCase
 {
     private const BOOTSTRAP_HOOK = 'acx_bootstrap_sync_test';
 
+    /** @var (ClusterProjectionSyncService&object{repairCalls: list<array<int,mixed>>})|null */
+    private ?ClusterProjectionSyncService $countingSync = null;
+
     public function testListTopUnlabeledSchedulesRepairFromMapperRequestedIds(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
@@ -115,6 +118,93 @@ class ClusterReadServiceTest extends TestCase
         $this->assertCount(1, $GLOBALS['__ac_scheduled']);
         $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
         $this->assertSame(['tenant-1', ['cluster-upward']], $scheduled['args']);
+    }
+
+    /**
+     * R5-12: count repair at the service seam. Cron-layer observers
+     * overwrite on the same hook+args key and miss a duplicated call.
+     */
+    public function testListTopUnlabeledSchedulesRepairExactlyOncePerRead(): void
+    {
+        $host = new class() implements ClustersHostInterface {
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                return new WP_Error('unexpected', 'must stay local');
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return true;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return false;
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-upward',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-upward' => [
+                        ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                        ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ],
+                ];
+            }
+        };
+
+        $syncJob = new SpySyncPullJob();
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            sync_pull_job: $syncJob,
+            members_repository: $membersRepo,
+            count_repair_calls: true
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertNotNull($this->countingSync);
+        $this->assertCount(1, $this->countingSync->repairCalls, 'one read must emit exactly one repair schedule');
+        $this->assertSame(['tenant-1', ['cluster-upward']], $this->countingSync->repairCalls[0]);
     }
 
     /**
@@ -959,7 +1049,8 @@ class ClusterReadServiceTest extends TestCase
         bool $use_local_projection,
         ?NullClustersRepository $clusters_repository = null,
         ?SyncPullJobInterface $sync_pull_job = null,
-        ?NullIdentityMembersRepository $members_repository = null
+        ?NullIdentityMembersRepository $members_repository = null,
+        bool $count_repair_calls = false
     ): ClusterReadService {
         $syncHost = new class($use_local_projection) implements ClustersHostInterface {
             public function __construct(private bool $use_local_projection) {}
@@ -999,15 +1090,31 @@ class ClusterReadServiceTest extends TestCase
         $clustersRepo = $clusters_repository ?? new NullClustersRepository();
         $membersRepo = $members_repository ?? new NullIdentityMembersRepository();
 
-        $projectionSync = new ClusterProjectionSyncService(
-            $syncHost,
-            self::BOOTSTRAP_HOOK,
-            $clustersRepo,
-            $membersRepo,
-            new NullSyncStateRepository(),
-            $syncJob,
-            null
-        );
+        if ($count_repair_calls) {
+            $this->countingSync = new class($syncHost, self::BOOTSTRAP_HOOK, $clustersRepo, $membersRepo, new NullSyncStateRepository(), $syncJob, null) extends ClusterProjectionSyncService {
+                /** @var list<array<int,mixed>> */
+                public array $repairCalls = [];
+
+                public function repair_targeted_projection(string $tenant_id, array $cluster_ids): bool
+                {
+                    $this->repairCalls[] = [$tenant_id, $cluster_ids];
+
+                    return parent::repair_targeted_projection($tenant_id, $cluster_ids);
+                }
+            };
+            $projectionSync = $this->countingSync;
+        } else {
+            $this->countingSync = null;
+            $projectionSync = new ClusterProjectionSyncService(
+                $syncHost,
+                self::BOOTSTRAP_HOOK,
+                $clustersRepo,
+                $membersRepo,
+                new NullSyncStateRepository(),
+                $syncJob,
+                null
+            );
+        }
 
         $dependencies = new ClusterReadDependencies(
             $clustersRepo,

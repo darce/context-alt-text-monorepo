@@ -1630,6 +1630,7 @@ const CurrentCard = ({
     }
     return (
       <CommitHoldRegion
+        key={hold.phase}
         phase={
           hold.phase === COMMIT_HOLD_PHASE.FAILED
             ? COMMIT_HOLD_PHASE.FAILED

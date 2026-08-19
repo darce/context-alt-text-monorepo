@@ -3656,6 +3656,8 @@ describe('ReviewQueue', () => {
       expect(wholeHoldText(committing as HTMLElement)).toBe('Saving…');
       expect(committing).not.toHaveTextContent('Undo');
       expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+      // R6-07: phase change remounts the polite live region so AT re-reads it.
+      expect(committing).not.toBe(holding);
 
       await act(async () => {
         resolveAccept?.({

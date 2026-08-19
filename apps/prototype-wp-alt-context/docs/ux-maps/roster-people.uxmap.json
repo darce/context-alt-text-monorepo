@@ -95,7 +95,9 @@
           "role": "other",
           "states": [
             "default",
-            "empty"
+            "empty",
+            "loading",
+            "error"
           ]
         }
       ]
@@ -104,7 +106,7 @@
       "id": "roster-person-workspace",
       "kind": "screen",
       "title": "Person workspace",
-      "purpose": "Deep-linked person panel: identities, media, projection-gated when status is not current",
+      "purpose": "Deep-linked person panel: faces, media, gated when data status is not current",
       "route": "#/roster?person=",
       "job_entry": true,
       "deep_link": true,
@@ -125,7 +127,7 @@
       "zones": [
         {
           "id": "z-person-header",
-          "label": "Person identity header",
+          "label": "Person header",
           "role": "content",
           "states": [
             "default",
@@ -134,7 +136,7 @@
         },
         {
           "id": "z-person-identities",
-          "label": "Linked identities / faces",
+          "label": "Linked faces",
           "role": "ai_review",
           "evidence_linked": true,
           "states": [
@@ -196,7 +198,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {

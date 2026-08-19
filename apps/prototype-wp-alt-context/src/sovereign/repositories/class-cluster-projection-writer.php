@@ -47,29 +47,7 @@ class ClusterProjectionWriter {
 			return 0;
 		}
 
-		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$inserted = $wpdb->insert(
-			$this->table_name,
-			array(
-				'cluster_uuid' => $normalized_cluster_uuid,
-				'tenant_id' => $normalized_tenant_id,
-				'label' => $normalized_label,
-				'curation_state' => 'uncurated',
-				'identity_count' => max( 0, $identity_count ),
-				'snapshot_version' => 0,
-				'is_user_confirmed' => 1,
-				'local_revision' => 1,
-				'created_at' => $now_utc,
-				'updated_at' => $now_utc,
-				'last_synced_at' => $now_utc,
-			),
-			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
-		);
-
-		if ( ! is_int( $inserted ) || $inserted <= 0 ) {
-			return is_int( $inserted ) ? $inserted : 0;
-		}
-
+		$resolved = null;
 		if ( ! $this->is_reserved_label_shape( $normalized_label ) ) {
 			$resolver = new PersonResolutionService();
 			$resolved = $resolver->resolve_for_automatic_bind(
@@ -96,6 +74,33 @@ class ClusterProjectionWriter {
 			if ( is_wp_error( $resolved ) ) {
 				return 0;
 			}
+			$normalized_label = trim( (string) $resolved['name'] );
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$inserted = $wpdb->insert(
+			$this->table_name,
+			array(
+				'cluster_uuid' => $normalized_cluster_uuid,
+				'tenant_id' => $normalized_tenant_id,
+				'label' => $normalized_label,
+				'curation_state' => 'uncurated',
+				'identity_count' => max( 0, $identity_count ),
+				'snapshot_version' => 0,
+				'is_user_confirmed' => 1,
+				'local_revision' => 1,
+				'created_at' => $now_utc,
+				'updated_at' => $now_utc,
+				'last_synced_at' => $now_utc,
+			),
+			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
+		);
+
+		if ( ! is_int( $inserted ) || $inserted <= 0 ) {
+			return is_int( $inserted ) ? $inserted : 0;
+		}
+
+		if ( is_array( $resolved ) ) {
 			$bound = ( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
 				$normalized_cluster_uuid,
 				(int) $resolved['person_id'],

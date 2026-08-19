@@ -619,7 +619,8 @@ class LifecycleManager {
 		$conflicts_table             = $prefix . 'acx_sync_conflicts';
 
 		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
-		// collation-folded idx_name. Greenfield — edit CREATE TABLE directly; no migration.
+		// collation-folded idx_name. Tenant-scoped — two tenants may share a name.
+		// Greenfield — edit CREATE TABLE directly; no migration.
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
@@ -633,7 +634,7 @@ class LifecycleManager {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
-			UNIQUE KEY idx_normalized_name (normalized_name),
+			UNIQUE KEY idx_normalized_name (tenant_id, normalized_name),
 			UNIQUE KEY idx_person_uuid (person_uuid)
 		) {$charset_collate};";
 

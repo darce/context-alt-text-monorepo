@@ -1,0 +1,48 @@
+{
+  "agent_exit_to_status": {
+    "*": "agent_failed",
+    "0": "ok"
+  },
+  "argv": [
+    "--prompt-file",
+    "{brief_file}",
+    "--cwd",
+    ".",
+    "-m",
+    "grok-4.5",
+    "--json-schema",
+    "{schema_inline}",
+    "--max-turns",
+    "20",
+    "--always-approve",
+    "--no-plan",
+    "--no-subagents",
+    "--reasoning-effort",
+    "high",
+    "--debug-file",
+    "{debug_file}"
+  ],
+  "auth_match": {},
+  "backend_id": "grok-remote",
+  "binary": "grok",
+  "close_fds": [
+    9
+  ],
+  "env": {},
+  "env_file": null,
+  "lane_timeout_s": 0,
+  "operator_values": [
+    "grok-4.5",
+    "high"
+  ],
+  "path_prepend": [
+    ".grok/bin"
+  ],
+  "requires_live_sandbox_preflight": false,
+  "requires_timeout": false,
+  "result_source": "stdout",
+  "spec_version": 2,
+  "stderr": "{run_log}",
+  "stdin": "/dev/null",
+  "stdout": "{result_file}"
+}

@@ -61,6 +61,8 @@ import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
   COMMIT_HOLD_PHASE,
+  HOLD_COMMITTING_STATUS_COPY,
+  HOLD_STATUS_COPY,
   PERSON_COMMIT_PHASE,
   type CommitHoldPhase,
   type PersonCommitRequest,
@@ -1535,8 +1537,8 @@ export const CommitHoldRegion = ({
 
   const holdMessage =
     phase === COMMIT_HOLD_PHASE.COMMITTING
-      ? __('Saving…', 'alt-context')
-      : __('Saving… — Undo', 'alt-context');
+      ? HOLD_COMMITTING_STATUS_COPY
+      : HOLD_STATUS_COPY;
 
   return (
     <div

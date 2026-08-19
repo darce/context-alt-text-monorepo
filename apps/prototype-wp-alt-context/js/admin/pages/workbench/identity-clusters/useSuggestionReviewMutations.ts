@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import { __ } from '@wordpress/i18n';
 import { useMutation, type QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
@@ -34,11 +35,11 @@ import type { SuggestionReviewPage } from './useSuggestionReviewQueries';
 /** Pinned undo hold window — unit, e2e, and AT scripts share this single constant. */
 export const UNDO_HOLD_MS = 5000;
 
-/** HOLDING status copy — tests pin ReviewQueue's gettext literal; hook announce also consumes this (BR-24). */
-export const HOLD_STATUS_COPY = 'Saving… — Undo';
+/** HOLDING status copy — CommitHoldRegion renders this export (SSOT). Tests pin whole content. */
+export const HOLD_STATUS_COPY = __('Saving… — Undo', 'alt-context');
 
-/** COMMITTING status copy (Undo dropped). Tests pin ReviewQueue's gettext literal against this export (BR-55). */
-export const HOLD_COMMITTING_STATUS_COPY = 'Saving…';
+/** COMMITTING status copy (Undo dropped). CommitHoldRegion renders this export (SSOT). Tests pin whole content. */
+export const HOLD_COMMITTING_STATUS_COPY = __('Saving…', 'alt-context');
 
 export type SuggestionCommitKind =
   | 'accept'

@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -73,6 +77,10 @@ const typePersonName = async (
   const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
   await user.type(input, `${name}{Enter}`);
 };
+
+/** Whole-content of a hold live region — jest-dom string matchers are substring. */
+const wholeHoldText = (el: HTMLElement): string =>
+  (el.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
@@ -3647,8 +3655,21 @@ describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
     );
 
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(HOLD_COMMITTING_STATUS_COPY);
+    // Whole-content pin: 'Saving…' is a prefix of the HOLDING copy, so
+    // toHaveTextContent(string) cannot distinguish the phases (UXW2-3-R6-01).
+    expect(wholeHoldText(status)).toBe(HOLD_COMMITTING_STATUS_COPY);
+    expect(wholeHoldText(status)).toBe('Saving…');
     expect(status).not.toHaveTextContent('Undo');
+  });
+
+  it('CommitHoldRegion consumes HOLD_*_STATUS_COPY as SSOT (UXW2-3-R6-01)', () => {
+    const source = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../ReviewQueue.tsx'),
+      'utf8',
+    );
+    expect(source).toMatch(/\bHOLD_STATUS_COPY\b/);
+    expect(source).toMatch(/\bHOLD_COMMITTING_STATUS_COPY\b/);
+    expect(source).not.toMatch(/__\(\s*'Saving…/);
   });
 
   it('failed phase renders persistent role=alert; Retry disabled while retryPending (BR-17)', () => {

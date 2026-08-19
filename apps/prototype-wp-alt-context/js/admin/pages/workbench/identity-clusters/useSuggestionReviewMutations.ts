@@ -1013,7 +1013,22 @@ export const useSuggestionReviewMutations = ({
       }
       return bulkAcceptSuggestions(request);
     },
-    onSuccess: (_data, request) => {
+    onSuccess: (data, request) => {
+      if (data.accepted_count <= 0) {
+        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        return;
+      }
+      if (data.skipped_count > 0) {
+        // Partial accept: the response carries no accepted ids, so any local
+        // eviction would be the same rg-015 guess. Refetch instead.
+        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        // Prefix matches dropClusterFromReviewCaches — no tenant id in this module.
+        void queryClient.invalidateQueries({
+          queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+        });
+        return;
+      }
+      // Full accept: accepted_count === the rows the request targeted.
       const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
       for (const item of names?.suggestions ?? []) {
         if ((item.confidence_score ?? 0) >= request.min_confidence) {

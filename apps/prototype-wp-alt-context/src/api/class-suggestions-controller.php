@@ -403,7 +403,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response ) ) {
+		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response, 400 ) ) {
 			return new WP_Error(
 				'recognition_endpoint_error',
 				'Recognition roster-candidates endpoint is unavailable.',

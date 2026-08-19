@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -1121,13 +1125,10 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
 
-  it('ReviewQueue and ScanTab drop dead onLabel / open_label (UXW2-3-R2-07)', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { resolve, dirname } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const here = dirname(fileURLToPath(import.meta.url));
-    const queue = readFileSync(resolve(here, '../ReviewQueue.tsx'), 'utf8');
-    const scan = readFileSync(resolve(here, '../../ScanTabContent.tsx'), 'utf8');
+  it('ReviewQueue and ScanTab drop dead onLabel / open_label (UXW2-3-R2-07)', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const queue = readFileSync(path.resolve(here, '../ReviewQueue.tsx'), 'utf8');
+    const scan = readFileSync(path.resolve(here, '../../ScanTabContent.tsx'), 'utf8');
     expect(queue).not.toMatch(/onLabel:\s*_onLabel/);
     expect(scan).not.toMatch(/type:\s*'open_label'/);
   });
@@ -1254,7 +1255,7 @@ describe('ClusterLabelingPanel', () => {
     );
     expect(namingBefore).toHaveLength(0);
 
-    await act(async () => {
+    act(() => {
       vi.advanceTimersByTime(400);
     });
 

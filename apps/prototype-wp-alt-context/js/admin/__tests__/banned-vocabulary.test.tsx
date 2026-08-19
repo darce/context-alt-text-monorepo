@@ -5,7 +5,7 @@
  * missing from PAGE_SWEEP fails CI. Representative fixtures only — if jargon
  * is injected into a page module under those fixtures, this test fails.
  */
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -866,13 +866,10 @@ describe('banned vocabulary across js/admin pages', () => {
     assertNoBannedReviewWords(document.body);
   });
 
-  it('ReviewQueue source does not say unlabeled clusters (UXW2-3-R2-06 mutant)', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { resolve, dirname } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const here = dirname(fileURLToPath(import.meta.url));
+  it('ReviewQueue source does not say unlabeled clusters (UXW2-3-R2-06 mutant)', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const source = readFileSync(
-      resolve(here, '../pages/workbench/identity-clusters/ReviewQueue.tsx'),
+      path.resolve(here, '../pages/workbench/identity-clusters/ReviewQueue.tsx'),
       'utf8',
     );
     expect(source).toContain('Unable to load unlabeled faces.');

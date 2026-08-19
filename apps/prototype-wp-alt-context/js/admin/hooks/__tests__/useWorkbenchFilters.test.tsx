@@ -397,6 +397,85 @@ describe('useWorkbenchFilters', () => {
     expect(screen.getByTestId('loc').textContent).toContain('p=3');
   });
 
+  it('a queue write snapshotted from a bare URL is abandoned when the destination also omits rq (UXW2-1-R3-06)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav
+          </button>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeUndefined();
+  });
+
+  it('the abandoned rq does not resurrect on the next unrelated commit (UXW2-1-R3-06)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue, handleSearchChange } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleSearchChange({ target: { value: 'cat' } } as ChangeEvent<HTMLInputElement>);
+            }}
+          >
+            search
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav').click();
+    });
+    act(() => {
+      screen.getByText('search').click();
+    });
+    expect(screen.getByTestId('loc').textContent).not.toContain('rq=');
+  });
+
   it('useTabParam in the same tick merges pending rq instead of ghosting it (R2-02)', () => {
     const Probe = (): React.JSX.Element => {
       const { dispatchQueue } = useWorkbenchFilters();

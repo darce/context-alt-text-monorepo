@@ -580,7 +580,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
       if (
         !currentKey &&
-        (previousItemKeyRef.current !== null || (findings.repairPending && !repairAnnouncedRef.current))
+        (previousItemKeyRef.current !== null ||
+          (findings.repairPending && !repairAnnouncedRef.current) ||
+          (!findings.repairPending && repairAnnouncedRef.current))
       ) {
         previousItemKeyRef.current = null;
         // UI-04: drain copy is for a successful empty only — projection failure
@@ -588,6 +590,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // [rg-003] the outage must not silence the filtered-empty announcement:
         // when filters hide real work, AT hears both the failure and the hint
         // that an escape hatch exists, matching the visual (both are rendered).
+        // RLSE-06: latch every first-mount repair consumer so AT is not
+        // re-interrupted on every re-render; clear the latch when repair
+        // itself drains, not only when an item arrives.
         if (data.isTopUnlabeledError) {
           const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
           setLiveMessage(
@@ -595,9 +600,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
               : errorCopy,
           );
+          repairAnnouncedRef.current = findings.repairPending;
         } else if (filteredEmptyWithWork) {
           // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
           setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
+          repairAnnouncedRef.current = findings.repairPending;
         } else if (findings.repairPending) {
           // R2-12: envelope repair_pending (or total>served empty page) — never
           // announce drain-only while work remains on the server.
@@ -611,6 +618,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           repairAnnouncedRef.current = true;
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
+          repairAnnouncedRef.current = false;
         }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;

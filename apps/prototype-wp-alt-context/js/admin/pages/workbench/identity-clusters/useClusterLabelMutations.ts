@@ -19,7 +19,12 @@ import {
   isProjectionNotReadyError,
 } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
-import { removePendingSuggestionFromCache } from './suggestionProjection';
+import {
+  dropClusterFromReviewCaches,
+  invalidateReviewCachesWithoutRefetch,
+  removePendingSuggestionFromCache,
+  REVIEW_DROP_MODE,
+} from './suggestionProjection';
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -67,7 +72,9 @@ export const useClusterLabelMutations = ({
       const updatedLabel = variables.label;
       if (clusterId) {
         updateCachedClusterLabel(clusterId, updatedLabel);
+        dropClusterFromReviewCaches(queryClient, clusterId, { mode: REVIEW_DROP_MODE.LABEL });
       }
+      invalidateReviewCachesWithoutRefetch(queryClient);
       invalidateQueries();
       onRenameSuccess?.(updatedLabel);
     },
@@ -122,10 +129,14 @@ export const useClusterLabelMutations = ({
       if (clusterId) {
         updateCachedClusterLabel(clusterId, result.target_label ?? '');
       }
+      if (typeof result.source_id === 'string' && result.source_id !== '') {
+        dropClusterFromReviewCaches(queryClient, result.source_id, { mode: REVIEW_DROP_MODE.MERGE });
+      }
       // L1V-03: drop accepted pending row before invalidate so review queue is not stale until refetch.
       if (variables.suggestionId) {
         removePendingSuggestionFromCache(queryClient, variables.suggestionId);
       }
+      invalidateReviewCachesWithoutRefetch(queryClient);
       invalidateQueries();
       onMergeSuccess?.(result);
     },

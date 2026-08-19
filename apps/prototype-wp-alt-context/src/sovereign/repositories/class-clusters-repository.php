@@ -102,6 +102,13 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	/**
+	 * @return list<string>
+	 */
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array {
+		return $this->read_repository->list_unlabeled_identity_count_drift( $tenant_id, $limit );
+	}
+
+	/**
 	 * @return array<string,mixed>|null
 	 */
 	public function find_by_uuid( string $cluster_uuid ): ?array {

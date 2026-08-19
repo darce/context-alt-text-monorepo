@@ -116,6 +116,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
   zeroEvidenceClusterCount: 0,
+  repairPending: overrides.repairPending ?? (overrides.zeroEvidenceClusterCount ?? 0) > 0,
   topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
@@ -843,6 +844,7 @@ describe('WorkbenchFindingsPanel', () => {
         topUnlabeledClusters: [],
         topUnlabeledTotal: 0,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -903,6 +905,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 1,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -961,6 +964,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 1,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1147,10 +1151,38 @@ describe('WorkbenchFindingsPanel', () => {
   });
 
   // S2 / TEST-15: kills silent drop of zero-evidence clusters (no aggregate repair row).
+  it('R2-12: Resync mounts on envelope repair_pending without zero-evidence rows', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 5, total: 5 },
+        hasFindings: true,
+        zeroEvidenceClusterCount: 0,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('5 groups elsewhere are missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('5 groups missing face data')).not.toBeInTheDocument();
+  });
+
   it('S2: aggregate repair row renders with the gated cluster count', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 2,
         nextAction: {
@@ -1166,7 +1198,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
   });
 
@@ -1213,6 +1245,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1226,14 +1259,22 @@ describe('WorkbenchFindingsPanel', () => {
       },
     );
 
-    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    vi.mocked(useWorkbenchFindings).mockReturnValue({
+      ...model,
+      previews: [
+        preview({
+          key: 'served-chip',
+          thumbUrl: 'http://example.test/served.jpg',
+        }),
+      ],
+    });
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Resync findings$/ }));
     expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
   });
 
@@ -1282,6 +1323,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1299,11 +1341,19 @@ describe('WorkbenchFindingsPanel', () => {
     expect(model.counts.total).toBe(3);
     expect(model.zeroEvidenceClusterCount).toBe(3);
 
-    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    vi.mocked(useWorkbenchFindings).mockReturnValue({
+      ...model,
+      previews: [
+        preview({
+          key: 'served-chip',
+          thumbUrl: 'http://example.test/served.jpg',
+        }),
+      ],
+    });
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(container.querySelector('[data-findings-state]')).toHaveAttribute(
       'data-findings-state',
       'data',
@@ -1371,6 +1421,7 @@ describe('WorkbenchFindingsPanel', () => {
         ],
         topUnlabeledTotal: 3,
         topUnlabeledTruncated: false,
+        topUnlabeledRepairPending: false,
       },
       {
         assignmentDataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -1407,6 +1458,13 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 2,
         nextAction: {
@@ -1424,13 +1482,13 @@ describe('WorkbenchFindingsPanel', () => {
     expect(liveRegions).toHaveLength(1);
     expect(liveRegions[0]).toHaveTextContent('2 groups missing face data');
     expect(liveRegions[0]).toHaveTextContent('1 to review');
-    expect(within(liveRegions[0]).queryByRole('button', { name: 'Resync' })).not.toBeInTheDocument();
+    expect(within(liveRegions[0]).queryByRole('button', { name: /^Resync findings$/ })).not.toBeInTheDocument();
     for (const region of liveRegions) {
       expect(within(region).queryByRole('button')).not.toBeInTheDocument();
       expect(within(region).queryByRole('link')).not.toBeInTheDocument();
     }
 
-    const resync = screen.getByRole('button', { name: 'Resync' });
+    const resync = screen.getByRole('button', { name: /^Resync findings$/ });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-findings-panel-repair-copy');
     const described = document.getElementById('acx-findings-panel-repair-copy');
@@ -1834,6 +1892,12 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 42, total: 42 },
+        previews: [
+          preview({
+            key: 'served-chip',
+            thumbUrl: 'http://example.test/served.jpg',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 3,
         topUnlabeledTruncated: true,
@@ -1846,5 +1910,110 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
     expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
     expect(screen.getByText('42 unlabeled groups')).toBeInTheDocument();
+  });
+
+  // R8-01 / R7-03: previews.length is evidence chips, not gated-cluster servedCount.
+  // N zeros on this page + zero evidence previews must NOT say "elsewhere".
+  // unlabeledClusters=7 vs zeros=3 so a swapped repairGatedCount cannot hide.
+  it('R8-01: zero-evidence-only page does not claim the gated groups are elsewhere', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: false,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    expect(screen.queryByText(/elsewhere/)).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 3 groups on this page missing face data')).not.toBeInTheDocument();
+  });
+
+  // R7-01: repairGatedCount(0, unlabeled) is server-wide. Do not feed that
+  // number into the truncated "on this page" branch when chips are showing.
+  it('R7-01: envelope repair with previews does not use the server-wide unlabeled total as on-this-page', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 7, total: 8 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+          preview({
+            key: 'assignment-s2',
+            thumbUrl: 'http://example.test/face-2.jpg',
+            label: 'Bea',
+          }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 0,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Some groups are missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups elsewhere are missing face data')).not.toBeInTheDocument();
+  });
+
+  // R7-03 / TEST-15 / TEST-06: the three counts must be mutually distinct so
+  // a wrong first-arg or servedCount cannot hide behind /missing face data/i.
+  it('R7-03: truncated branch uses the page-local zero count not previews or unlabeled', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [
+          preview({ key: 'p1', thumbUrl: 'http://example.test/p1.jpg' }),
+          preview({ key: 'p2', thumbUrl: 'http://example.test/p2.jpg' }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('At least 2 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups elsewhere are missing face data')).not.toBeInTheDocument();
+  });
+
+  it('R7-03: plain branch uses the page-local zero count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [
+          preview({ key: 'p1', thumbUrl: 'http://example.test/p1.jpg' }),
+          preview({ key: 'p2', thumbUrl: 'http://example.test/p2.jpg' }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: false,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('2 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 3 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups elsewhere are missing face data')).not.toBeInTheDocument();
   });
 });

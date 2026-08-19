@@ -1,1 +1,1 @@
-{"branch":"local_projection","scheduled_event_count":0,"scheduled_events":[],"http_call_count":0,"do_action_log":[]}
+{"branch":"local_projection","scheduled_event_count":1,"scheduled_events":[{"hook":"acx_bootstrap_sync","args":["33380427-1819-5ad2-922b-cdd246fac3a0",["cluster-detail-local"]]}],"http_call_count":0,"do_action_log":[]}

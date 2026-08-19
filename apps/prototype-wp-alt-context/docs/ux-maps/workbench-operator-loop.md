@@ -91,7 +91,17 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 |   - Status / search filters (form) states=[default,edge_i… |
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |
-|   - Identity / findings preview (AI-assisted) (ai_review)… |
+|   - Identity / findings preview (AI-assisted) (ai_review)  |
+|     states=[default,empty,loading,error,degraded,          |
+|             unavailable,repair,zero_evidence]              |
+|     code_ref=WorkbenchFindingsPanel.tsx                    |
+|   - Review Suggestions queue header / count (status)       |
+|     states=[default,loading,empty,error,filtered,repair]   |
+|     code_ref=ReviewQueue.tsx                               |
+|   - Top-of-queue group card (ai_review)                    |
+|     states=[default,suggested_label,busy,read_only,        |
+|             missing_image]                                 |
+|     code_ref=TopClusterCard.tsx                            |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |

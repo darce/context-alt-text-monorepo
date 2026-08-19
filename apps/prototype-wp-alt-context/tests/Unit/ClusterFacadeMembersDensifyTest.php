@@ -41,7 +41,7 @@ class ClusterFacadeMembersDensifyTest extends TestCase {
 			->method( 'list_for_cluster_uuids' )
 			->with(
 				[ 'uuid-with-members', 'uuid-empty' ],
-				IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER
+				IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT
 			)
 			->willReturn( $sparse );
 

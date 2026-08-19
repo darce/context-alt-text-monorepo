@@ -581,6 +581,40 @@ const assertNoBannedReviewWords = (root: HTMLElement = document.body): void => {
   }
 };
 
+/** Operator-visible UX-map fields only. Ids / url_params / code_ref / decision records are exempt. */
+const UXMAP_OPERATOR_COPY_KEYS = new Set([
+  'title',
+  'label',
+  'purpose',
+  'verb',
+  'goals',
+  'description',
+  'branch_label',
+]);
+
+const UXMAP_EXEMPT_KEYS = new Set(['id', 'url_params', 'code_ref', 'open_questions', 'not_doing']);
+
+const UXMAP_RETIRED_WORDS = [...BANNED_REVIEW_SURFACE_WORDS, /\bembeddings?\b/i] as const;
+
+const collectUxMapOperatorCopy = (value: unknown, key?: string): string[] => {
+  if (key && UXMAP_EXEMPT_KEYS.has(key)) {
+    return [];
+  }
+  if (typeof value === 'string') {
+    return key && UXMAP_OPERATOR_COPY_KEYS.has(key) ? [value] : [];
+  }
+  if (Array.isArray(value)) {
+    if (key && UXMAP_OPERATOR_COPY_KEYS.has(key)) {
+      return value.filter((item): item is string => typeof item === 'string');
+    }
+    return value.flatMap((item) => collectUxMapOperatorCopy(item, key));
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([childKey, child]) => collectUxMapOperatorCopy(child, childKey));
+  }
+  return [];
+};
+
 describe('banned vocabulary across js/admin pages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1052,5 +1086,24 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface.toLowerCase()).not.toContain('machine-derived');
     expect(surface.toLowerCase()).not.toContain('disposed state');
     expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  it('workbench-2pane operator-visible copy has no retired vocabulary (UXW2-3-R3-23)', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const mapPath = path.resolve(here, '../../../docs/ux-maps/workbench-2pane.uxmap.json');
+    const map = JSON.parse(readFileSync(mapPath, 'utf8')) as Record<string, unknown>;
+    const copy = collectUxMapOperatorCopy(map);
+    expect(copy.length).toBeGreaterThan(0);
+
+    for (const text of copy) {
+      for (const pattern of UXMAP_RETIRED_WORDS) {
+        expect(text, text).not.toMatch(pattern);
+      }
+    }
+
+    const openQuestions = map.open_questions;
+    const notDoing = map.not_doing;
+    expect(Array.isArray(openQuestions) ? openQuestions.join(' ') : '').toMatch(/\bcluster\b/i);
+    expect(Array.isArray(notDoing) ? notDoing.join(' ') : '').toMatch(/\bcluster/i);
   });
 });

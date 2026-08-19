@@ -1490,7 +1490,8 @@ describe('ReviewQueue', () => {
 
     await screen.findByRole('button', { name: 'Yes' });
     expect(screen.getByTestId('acx-person-commit')).toBeInTheDocument();
-    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    // ASSIGNMENT does not pass a machine create-name; disclosure must stay off (R6-05).
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY })).toBeInTheDocument();
   });
 
@@ -1850,6 +1851,41 @@ describe('ReviewQueue', () => {
 
     await screen.findByTestId('acx-review-card');
     expect(screen.getByTestId('acx-person-commit')).toHaveAttribute('data-person-commit-primary', 'true');
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
+  });
+
+  it('shows HAI-05 disclosure on CLUSTER cards when suggested_label is present (UXW2-3-R6-05)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-top-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: 'Morgan',
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
   });
 
   it('person-commit confirm calls commitClusterToRosterEntry not updateClusterLabel', async () => {

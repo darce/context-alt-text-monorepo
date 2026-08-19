@@ -107,7 +107,7 @@
           "label": "Review suggestions + Name this person (NameFaceControl)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading", "error", "pending", "suggestions-open"]
+          "states": ["default", "empty", "loading", "error", "pending", "suggestions-open", "suggested"]
         }
       ]
     },

@@ -241,10 +241,12 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
 
   it('Save is not an enabled no-op after a same-fold row click (UXW2-3-R3-02)', async () => {
     const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
-    const { onCommit } = renderControl({
+    const onCommit = vi.fn();
+    renderControl({
       options,
       value: 'alex carter',
       onOptionConfirm: undefined,
+      onCommit,
     });
     const user = userEvent.setup();
 

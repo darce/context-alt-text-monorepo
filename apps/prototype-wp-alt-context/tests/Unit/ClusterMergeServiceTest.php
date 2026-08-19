@@ -94,6 +94,29 @@ class ClusterMergeServiceTest extends TestCase
         $this->assertStringContainsString("'cluster_merged'", $outboxJoined);
     }
 
+    public function testLocalMergeResponseKeysMatchTheContract(): void
+    {
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Merged Cluster');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(
+            [
+                'source_cluster_id',
+                'target_cluster_id',
+                'moved_identity_count',
+                'synced',
+                'status',
+                'roster_bound',
+            ],
+            array_keys($response->get_data())
+        );
+    }
+
     public function testMergeClusterRejectsReservedTargetLabelBeforeTransaction(): void
     {
         global $wpdb;

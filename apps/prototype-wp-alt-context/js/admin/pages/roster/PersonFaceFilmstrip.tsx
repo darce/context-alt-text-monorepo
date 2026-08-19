@@ -83,7 +83,7 @@ export const PersonFaceFilmstrip = ({
       ref={railRef}
       className="acx-roster__person-workspace-rail"
       role="listbox"
-      aria-label={sprintf(__('Face instances for Cluster %d', 'alt-context'), clusterOrdinal)}
+      aria-label={sprintf(__('Faces in face group %d', 'alt-context'), clusterOrdinal)}
       aria-orientation="horizontal"
       aria-activedescendant={activeId}
       tabIndex={0}
@@ -91,7 +91,7 @@ export const PersonFaceFilmstrip = ({
     >
       {faces.map((face) => {
         const alt = sprintf(
-          __('Instance %d for Cluster %d', 'alt-context'),
+          __('Face from media %d in face group %d', 'alt-context'),
           face.mediaId,
           face.clusterIndex + 1,
         );

@@ -4,7 +4,6 @@ import { formatClusterLabel, groupIdentitiesByClusters } from '../utils';
 import type { DetectedIdentity } from '../../../../api/recognition';
 
 const CLUSTER_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const NORMALIZED_DISPLAY = `cluster-${CLUSTER_ID.replace(/-/g, '')}`;
 
 const identity = (overrides: Partial<DetectedIdentity> = {}): DetectedIdentity => {
   return {
@@ -33,12 +32,12 @@ const identityWithOmittedAutoFlag = (): DetectedIdentity => {
 describe('formatClusterLabel (E21-15-BR-27)', () => {
   it('does not treat auto-shape cluster-7 as a confirmed human name when isAutoLabel is false', () => {
     expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', false)).not.toBe('cluster-7');
-    expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', false)).toBe(NORMALIZED_DISPLAY);
+    expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', false)).toBeNull();
   });
 
   it('gates whitespace-padded cluster-* the same as bare auto-labels', () => {
     expect(formatClusterLabel(CLUSTER_ID, '  cluster-7  ', false)).not.toBe('  cluster-7  ');
-    expect(formatClusterLabel(CLUSTER_ID, '  cluster-7  ', false)).toBe(NORMALIZED_DISPLAY);
+    expect(formatClusterLabel(CLUSTER_ID, '  cluster-7  ', false)).toBeNull();
   });
 
   it("preserves genuinely human labels byte-for-byte ('Jane Doe')", () => {
@@ -46,7 +45,18 @@ describe('formatClusterLabel (E21-15-BR-27)', () => {
   });
 
   it('still falls through for flagged auto labels', () => {
-    expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', true)).toBe(NORMALIZED_DISPLAY);
+    expect(formatClusterLabel(CLUSTER_ID, 'cluster-7', true)).toBeNull();
+  });
+
+  it('returns null for unlabeled clusters instead of synthesizing cluster-<hex>', () => {
+    expect(formatClusterLabel(CLUSTER_ID, null, false)).toBeNull();
+    expect(formatClusterLabel(CLUSTER_ID, null, true)).toBeNull();
+    expect(formatClusterLabel(CLUSTER_ID, '', false)).toBeNull();
+  });
+
+  it('returns rawLabel untouched when clusterId is missing', () => {
+    expect(formatClusterLabel(null, 'Jane Doe', false)).toBe('Jane Doe');
+    expect(formatClusterLabel(null, null, false)).toBeNull();
   });
 });
 
@@ -63,6 +73,6 @@ describe('groupIdentitiesByClusters → formatClusterLabel display path (E21-15-
 
     const display = formatClusterLabel(groups[0].clusterId, groups[0].label, groups[0].isAutoLabel);
     expect(display).not.toBe('cluster-7');
-    expect(display).toBe(NORMALIZED_DISPLAY);
+    expect(display).toBeNull();
   });
 });

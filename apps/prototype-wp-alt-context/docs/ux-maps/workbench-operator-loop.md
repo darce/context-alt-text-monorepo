@@ -17,28 +17,42 @@
 
 ## Screens
 
-| id                      | kind    | route                           | title                           |
-| ----------------------- | ------- | ------------------------------- | ------------------------------- |
-| `workbench-shell`       | screen  | `#/workbench`                   | Workbench                       |
-| `workbench-scan`        | screen  | `#/workbench?tab=scan`          | Scan media queue                |
-| `workbench-conflicts`   | overlay | `#/workbench?panel=conflicts`   | Conflict Inbox                  |
-| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
-| `exit-roster`           | exit    | `#/roster`                      | Roster (person workspace)       |
-| `exit-settings`         | exit    | `#/settings`                    | Settings / service health       |
+| id | kind | route | title | url_params |
+| --- | --- | --- | --- | --- |
+| `workbench-shell` | screen | `#/workbench` | Workbench | `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`, `cluster` |
+| `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue | `tab`, `status`, `media`, `s`, `p`, `perPage`, `panel`, `cluster` |
+| `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces | `tab`, `panel`, `cluster`, `rq` |
+| `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox | `panel` |
+| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) | `panel` |
+| `exit-roster` | exit | `#/roster` | Roster (person workspace) | `personFilter`, `person` |
+| `exit-settings` | exit | `#/settings` | Settings / service health | — |
 
 ### Workbench (`workbench-shell`)
+
+Purpose: Operator surface for media queue scan, job pipeline, sync health, and review overlays
+
+url_params: `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`, `cluster`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-tabs` | Workbench steps tabs | nav | default |
+| `z-sync` | Sync / projection status strip | status | default, loading, error, degraded |
+| `z-overlay-host` | Overlay host (conflicts \| dead-letter) | other | default, empty |
+| `z-main-tab` | Active tab content (Scan) | content | default, loading, empty, error |
+| `z-advanced` | Advanced drawer | form | default, empty |
 
 ```
 +------------------------------------------------------------+
 | Workbench  [screen]  #/workbench                           |
-| Operator surface for media queue scan, job pipeline, sync… |
+| Operator surface for media queue scan, job pipeline, sync  |
+| health, and review overlays                                |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Workbench steps tabs (nav) states=[default]            |
-|   - Sync / projection status strip (status) states=[defau… |
-|   - Overlay host (conflicts | dead-letter) (other) states… |
-|   - Active tab content (Scan) (content) states=[default,l… |
-|   - Advanced drawer (form) states=[default,empty]          |
+|   - Workbench steps tabs (nav)                             |
+|   - Sync / projection status strip (status)                |
+|   - Overlay host (conflicts | dead-letter) (other)         |
+|   - Active tab content (Scan) (content)                    |
+|   - Advanced drawer (form)                                 |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Open Scan -> workbench-scan                    |
@@ -52,12 +66,28 @@
 
 ### Scan media queue (`workbench-scan`)
 
+Purpose: Filter and select library media; run scan faces / describe pipeline
+
+url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `cluster`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state) | queue | default, loading, empty, filtered_empty, drained, error |
+| `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, error, empty |
+| `z-filters` | Status / search filters | form | default, edge_input |
+| `z-media-queue` | Media selection table | queue | default, loading, empty, error |
+| `z-job-cta` | Scan / analyze CTAs + job progress | job | default, loading, error |
+| `z-identity-preview` | Identity / findings preview (AI-assisted) | ai_review | default, empty, loading |
+
 ```
 +------------------------------------------------------------+
 | Scan media queue  [screen]  #/workbench?tab=scan           |
-| Filter and select library media; run scan faces / describ… |
+| Filter and select library media; run scan faces / describe |
+| pipeline                                                   |
 +------------------------------------------------------------+
 | ZONES                                                      |
+|   - Review queue header / count with kind+band filter ch… |
+|   - Face-group review panel (panel=review&cluster=) (ai_… |
 |   - Status / search filters (form) states=[default,edge_i… |
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |
@@ -67,11 +97,53 @@
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |
 |   [secondary] Go to Roster -> exit-roster                  |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | first_time | … |
+| states: default | loading | empty | error | first_time | edge_input | reviewing |
++------------------------------------------------------------+
+```
+
+### Review these faces (`workbench-review-panel`)
+
+Purpose: Review the faces in one unnamed group; Back returns to Review Suggestions
+
+url_params: `tab`, `panel`, `cluster`, `rq`
+
+code_ref: ClusterReviewPanel.tsx (header + Back, faces grid, show-all, remove-confirm modal; no name input)
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-review-header` | Header + Back | nav | default |
+| `z-review-faces` | Faces grid | ai_review | default, loading, error, empty |
+
+```
++------------------------------------------------------------+
+| Review these faces  [screen]                               |
+| #/workbench?tab=scan&panel=review&cluster=                 |
+| Review the faces in one unnamed group; Back returns to     |
+| Review Suggestions                                         |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Header + Back (nav)                                    |
+|   - Faces grid (ai_review)                                 |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Back to Review Suggestions -> workbench-scan   |
++------------------------------------------------------------+
+| states: default | loading | error | empty                  |
+| code_ref: ClusterReviewPanel.tsx                           |
 +------------------------------------------------------------+
 ```
 
 ### Conflict Inbox (`workbench-conflicts`)
+
+Purpose: Review identity conflicts; commit human judgment with evidence
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-conflict-list` | Conflict list | queue | default, loading, empty |
+| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty |
+| `z-conflict-actions` | Resolve / defer actions | form | default |
 
 ```
 +------------------------------------------------------------+
@@ -79,9 +151,9 @@
 | Review identity conflicts; commit human judgment with evi… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Conflict list (queue) states=[default,loading,empty]   |
-|   - Conflict detail / candidates (forced_choice) states=[… |
-|   - Resolve / defer actions (form) states=[default]        |
+|   - Conflict list (queue)                                  |
+|   - Conflict detail / candidates (forced_choice)           |
+|   - Resolve / defer actions (form)                         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Resolve conflict -> identity-store (costly,pr… |
@@ -92,14 +164,23 @@
 
 ### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
 
+Purpose: Inspect failed sync ops; retry or discard
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-dl-list` | Dead-letter items | queue | default, loading, empty |
+| `z-dl-actions` | Retry / discard | form | default |
+
 ```
 +------------------------------------------------------------+
 | Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p… |
 | Inspect failed sync ops; retry or discard                  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Dead-letter items (queue) states=[default,loading,emp… |
-|   - Retry / discard (form) states=[default]                |
+|   - Dead-letter items (queue)                              |
+|   - Retry / discard (form)                                 |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Retry failed op -> sync (costly,preview)       |
@@ -111,13 +192,21 @@
 
 ### Roster (person workspace) (`exit-roster`)
 
+Purpose: Assign unassigned faces / manage identities after scan or conflict
+
+url_params: `personFilter`, `person`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-roster-main` | Entries / clusters workspace | content | default, empty |
+
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
 | Assign unassigned faces / manage identities after scan or… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Entries / clusters workspace (content) states=[defaul… |
+|   - Entries / clusters workspace (content)                 |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -125,13 +214,19 @@
 
 ### Settings / service health (`exit-settings`)
 
+Purpose: Configure recognition target and connection health
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-settings-form` | Settings form + test connection | form | default, error |
+
 ```
 +------------------------------------------------------------+
 | Settings / service health  [exit]  #/settings              |
 | Configure recognition target and connection health         |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Settings form + test connection (form) states=[defaul… |
+|   - Settings form + test connection (form)                 |
 +------------------------------------------------------------+
 | states: default | loading | error                          |
 +------------------------------------------------------------+

@@ -46,6 +46,7 @@ class PersonDedupeRebindTest extends TestCase
 				'name' => 'Ada Lovelace',
 				'normalized_name' => PersonResolutionService::normalize_name('Ada Lovelace'),
 				'tags' => '[]',
+				'tenant_id' => self::currentTenantId(),
 			],
 		];
 		$wpdb->queryResults["SELECT snapshot_version FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-rebind' LIMIT 1"] = 3;

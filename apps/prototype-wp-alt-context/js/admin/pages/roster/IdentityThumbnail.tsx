@@ -218,7 +218,7 @@ export const IdentityThumbnail = ({
   const croppedSrc = cropped !== null && cropped.ownerId === cropOwnerId ? cropped.src : null;
   const fallbackSrc = needsCanvasCrop ? croppedSrc : sourceUrl;
   const resolvedSrc = effectiveThumbUrl ?? (fallbackFailed ? null : fallbackSrc);
-  const resolvedAlt = alt ?? sprintf(__('Identity from media %d', 'alt-context'), identity.media_id);
+  const resolvedAlt = alt ?? sprintf(__('Face from media %d', 'alt-context'), identity.media_id);
   const imageFailedLabel = __('Image failed to load', 'alt-context');
 
   if (!resolvedSrc) {

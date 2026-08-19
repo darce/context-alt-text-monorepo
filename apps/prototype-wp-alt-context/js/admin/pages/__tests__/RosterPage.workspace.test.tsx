@@ -4,10 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterApi';
-import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
-import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
+import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
+import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
-import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 import { RosterPage } from '../RosterPage';
 import { PersonWorkspacePanel } from '../roster/PersonWorkspacePanel';
@@ -25,8 +24,11 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../hooks/useRecognitionHooks', () => ({
-  useRecognitionClusters: vi.fn(),
   useRecognitionCluster: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useTopUnlabeledTotal', () => ({
+  useTopUnlabeledTotal: vi.fn(() => null),
 }));
 
 vi.mock('../../hooks/useRosterHooks', () => ({
@@ -34,10 +36,6 @@ vi.mock('../../hooks/useRosterHooks', () => ({
   useCreatePerson: vi.fn(),
   useUpdatePerson: vi.fn(),
   useDeletePerson: vi.fn(),
-}));
-
-vi.mock('../../hooks/useClusterSelection', () => ({
-  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../roster/hooks/useClusterMediaMap', () => ({
@@ -66,13 +64,6 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   projection_refreshed_at: '2026-05-07T12:00:00Z',
   ...overrides,
 });
-
-const baseClusters: ClusterListResponse = {
-  clusters: [],
-  limit: 20,
-  total: 0,
-  truncated: false,
-};
 
 const dragDropState = {
   dragPayload: null,
@@ -106,19 +97,6 @@ const clusterActionState = {
       isPending: false,
     },
   ),
-  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkMergeProgress: null,
-  bulkMergeFailure: null,
-  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -126,18 +104,6 @@ const clusterActionState = {
   },
   errorMessage: null,
   resetAll: vi.fn(),
-};
-
-const selectionState = {
-  selectedIds: new Set<string>(),
-  toggle: vi.fn(),
-  selectRange: vi.fn(),
-  selectAll: vi.fn(),
-  retainVisible: vi.fn(),
-  clear: vi.fn(),
-  isAllSelected: vi.fn(() => false),
-  isSelected: vi.fn(() => false),
-  count: 0,
 };
 
 const RouteStateProbe = (): React.JSX.Element => {
@@ -188,13 +154,11 @@ const renderWithProviders = (
 };
 
 describe('RosterPage projection-aware workspace shell', () => {
-  const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
   const mockedUseUpdatePerson = vi.mocked(useUpdatePerson);
   const mockedUseDeletePerson = vi.mocked(useDeletePerson);
-  const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -202,16 +166,12 @@ describe('RosterPage projection-aware workspace shell', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({ data: baseClusters, isLoading: false, isError: false, refetch: vi.fn() }),
-    );
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({ data: undefined, isLoading: false, isError: false }),
     );
     mockedUseCreatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseUpdatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseDeletePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
-    mockedUseClusterSelection.mockReturnValue(selectionState);
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState);
     mockedUseClusterActions.mockReturnValue(clusterActionState);
@@ -337,14 +297,14 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     const workspace = screen.getByRole('region', { name: /Person workspace: Alice/i });
     expect(workspace).toBeInTheDocument();
-    expect(within(workspace).getByText('Projection status: current')).toBeInTheDocument();
+    expect(within(workspace).getByText('Data status: current')).toBeInTheDocument();
     expect(
-      within(workspace).getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`),
+      within(workspace).getByText(`Last refreshed: ${new Date(refreshedAt).toLocaleString()}`),
     ).toBeInTheDocument();
-    expect(within(workspace).getByText('Source version: 11')).toBeInTheDocument();
-    expect(within(workspace).getByText('Grouped cluster detail')).toBeInTheDocument();
+    expect(within(workspace).getByText('Record version: 11')).toBeInTheDocument();
+    expect(within(workspace).getByText('Face group detail')).toBeInTheDocument();
     expect(
-      within(workspace).getByText('2 curated clusters are currently grouped under this person.'),
+      within(workspace).getByText('2 face groups are currently assigned to this person.'),
     ).toBeInTheDocument();
     expect(within(workspace).getByText('Primary')).toBeInTheDocument();
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
@@ -378,7 +338,7 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(within(hardExamplesQueue).getByText('No queued items for this person yet.')).toBeInTheDocument();
     expect(
-      within(hardExamplesQueue).getByText('Hard examples will appear after the next projection refresh.'),
+      within(hardExamplesQueue).getByText('Hard examples will appear after the next refresh.'),
     ).toBeInTheDocument();
 
     expect(within(confirmationQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
@@ -433,11 +393,11 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Open hard examples queue' })).toBeDisabled();
-    expect(screen.getByText('Person identifier unavailable until the next projection refresh.')).toBeInTheDocument();
+    expect(screen.getByText('Person identifier unavailable until the next refresh.')).toBeInTheDocument();
     expect(onOpenQueue).not.toHaveBeenCalled();
   });
 
-  it('[PAG-M3-S3] renders assigned cluster evidence and all projected instances for the selected person', () => {
+  it('[PAG-M3-S3] renders face evidence and all faces for the selected person', () => {
     mockedUseRosterEntries.mockReturnValue(
       createMockQuery({
         data: [
@@ -484,16 +444,16 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     renderWithProviders(<RosterPage />, ['/?person=person-uuid-1']);
 
-    const evidenceSection = screen.getByRole('region', { name: 'Assigned cluster evidence' });
-    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Cluster 1' });
+    const evidenceSection = screen.getByRole('region', { name: 'Face evidence' });
+    const clusterRegion = within(evidenceSection).getByRole('region', { name: 'Face group 1' });
 
-    expect(within(clusterRegion).getByText('2 projected instances')).toBeInTheDocument();
+    expect(within(clusterRegion).getByText('2 faces')).toBeInTheDocument();
     expect(within(evidenceSection).queryByText(/cluster-alpha/)).not.toBeInTheDocument();
 
     const evidenceImages = [
-      { name: 'Representative face for Cluster 1', src: 'https://example.com/rep-alpha.jpg' },
-      { name: 'Instance 101 for Cluster 1', src: 'https://example.com/instance-101.jpg' },
-      { name: 'Instance 102 for Cluster 1', src: 'https://example.com/instance-102.jpg' },
+      { name: 'Representative face for face group 1', src: 'https://example.com/rep-alpha.jpg' },
+      { name: 'Face from media 101 in face group 1', src: 'https://example.com/instance-101.jpg' },
+      { name: 'Face from media 102 in face group 1', src: 'https://example.com/instance-102.jpg' },
     ];
     for (const { name, src } of evidenceImages) {
       const image = within(clusterRegion).getByRole('img', { name });
@@ -552,7 +512,7 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
     expect(screen.getAllByText('likely match').length).toBeGreaterThan(0);
-    expect(screen.getByText('Similarity pending next projection refresh.')).toBeInTheDocument();
+    expect(screen.getByText('Similarity pending the next refresh.')).toBeInTheDocument();
   });
 
   it('[PAG-M5-S5] renders threshold metadata when projected score thresholds are present', () => {
@@ -580,7 +540,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Above this cluster’s current threshold').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Above this face group’s current threshold').length).toBeGreaterThan(0);
   });
 
   it('[PAG-M3-S2] keeps the gate notice when projection_status is refreshing', () => {

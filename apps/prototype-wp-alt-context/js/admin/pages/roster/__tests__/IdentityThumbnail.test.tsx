@@ -163,7 +163,7 @@ describe('IdentityThumbnail', () => {
     // via focus + Enter/Space [A11Y-11] [A11Y-12]. Pointer click alone cannot
     // distinguish <button> from role=button div without tabIndex/onKeyDown.
     const control = screen.getByRole('button', {
-      name: /Identity from media 100/,
+      name: /Face from media 100/,
     });
     await userEvent.click(control);
     expect(onClick, 'pending placeholder pointer activation fires onClick').toHaveBeenCalledTimes(
@@ -621,8 +621,8 @@ describe('IdentityThumbnail', () => {
       expect(document.querySelector('img')).toBeNull();
 
       const [first, second] = screen.getAllByRole('link');
-      expect(first).toHaveAccessibleName(/Identity from media 100/);
-      expect(second).toHaveAccessibleName(/Identity from media 207/);
+      expect(first).toHaveAccessibleName(/Face from media 100/);
+      expect(second).toHaveAccessibleName(/Face from media 207/);
     });
 
     it('pending crop with decorative alt="" stays aria-hidden and names nothing [A11Y-02]', () => {

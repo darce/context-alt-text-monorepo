@@ -71,7 +71,7 @@ export const ClusterActions = ({
       </button>
       {canReject && (
         <button type="button" className="acx-identity-cluster__action" onClick={onWrongPerson} disabled={isPending}>
-          {__('Remove from Cluster', 'alt-context')}
+          {__('Remove from group', 'alt-context')}
         </button>
       )}
       {canSplit && (
@@ -83,7 +83,7 @@ export const ClusterActions = ({
           aria-disabled={splitAriaDisabled}
           title={splitTitle}
         >
-          {__('Split cluster', 'alt-context')}
+          {__('Split group', 'alt-context')}
         </button>
       )}
     </>

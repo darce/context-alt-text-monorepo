@@ -43,16 +43,12 @@ vi.mock('../../../hooks/useScrollRestoration', () => ({
   useScrollRestoration: () => undefined,
 }));
 
-vi.mock('../../../hooks/useWorkbenchFilters', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../hooks/useWorkbenchFilters')>();
-  return {
-    ...actual,
-    useWorkbenchFilters: () => ({
-      queueState: { index: 0, kind: 'all', band: 'all' },
-      dispatchQueue: vi.fn(),
-    }),
-  };
-});
+vi.mock('../../../hooks/useWorkbenchFilters', () => ({
+  useWorkbenchFilters: () => ({
+    queueState: { index: 0, kind: 'all', band: 'all' },
+    dispatchQueue: vi.fn(),
+  }),
+}));
 
 vi.mock('../Panels', () => ({
   ScanActionPanel: () => <div data-testid="scan-action-panel" />,

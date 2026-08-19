@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { APP_LINK_PARAMS, parsePanes, serializePanes, type PanesState } from '../navigation/appLinks';
-import { commitSearchParams } from './useWorkbenchFilters';
+import { commitSearchParams } from './pendingSearchWrites';
 
 export type { PanesState };
 

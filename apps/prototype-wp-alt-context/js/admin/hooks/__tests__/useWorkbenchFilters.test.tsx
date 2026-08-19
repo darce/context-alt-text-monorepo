@@ -7,9 +7,11 @@ import { useOverlayParam } from '../useOverlayParam';
 import { usePanesParam } from '../usePanesParam';
 import { useTabParam } from '../useTabParam';
 import {
-  QUEUE_ACTION,
   peekPendingSearchWritesForTests,
   resetPendingSearchWritesForTests,
+} from '../pendingSearchWrites';
+import {
+  QUEUE_ACTION,
   useWorkbenchFilters,
 } from '../useWorkbenchFilters';
 import { useWorkbenchNav, WorkbenchNavProvider } from '../../pages/workbench/WorkbenchNavContext';

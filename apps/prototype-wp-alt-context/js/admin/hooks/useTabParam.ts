@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { commitSearchParams } from './useWorkbenchFilters';
+import { commitSearchParams } from './pendingSearchWrites';
 
 export const useTabParam = <T extends string>(
   paramName: string,

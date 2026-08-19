@@ -2,6 +2,14 @@ import { ChangeEvent, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WORKBENCH_MEDIA_STATUSES, type WorkbenchMediaStatus } from '../api/workbenchMediaApi';
 import {
+  commitSearchParams,
+  getPendingQueueState,
+  queuePendingPage,
+  queuePendingQueueState,
+  reconcilePendingSearchWrites,
+  retainWorkbenchFilterInstance,
+} from './pendingSearchWrites';
+import {
   DEFAULT_QUEUE_STATE,
   parseQueueState,
   serializeQueueState,
@@ -91,122 +99,6 @@ export const reduceQueueAction = (state: WorkbenchQueueState, action: QueueActio
   return handler(state, action);
 };
 
-/**
- * Shared across every `useWorkbenchFilters` instance (ScanTabContent +
- * WorkbenchMediaProvider). Per-hook refs lose same-commit p/rq writes
- * because react-router's updater reads the render snapshot (R1-01).
- */
-type PendingSearchWrites = {
-  rq?: WorkbenchQueueState;
-  /** URL `rq` at the moment the pending write was first queued. */
-  rqSnapshot?: string | null;
-  p?: number;
-  pSnapshot?: string | null;
-};
-
-let pendingSearchWrites: PendingSearchWrites = {};
-let workbenchFilterInstanceCount = 0;
-
-const clearPendingSearchWrites = (): void => {
-  pendingSearchWrites = {};
-};
-
-/** Test-only: isolate module-level write-through between cases (TEST-07). */
-export const resetPendingSearchWritesForTests = (): void => {
-  clearPendingSearchWrites();
-  workbenchFilterInstanceCount = 0;
-};
-
-/** Test-only: observe the module buffer. Do not use reset to hide a live ghost. */
-export const peekPendingSearchWritesForTests = (): PendingSearchWrites => ({
-  ...pendingSearchWrites,
-});
-
-const applyPendingSearchWrites = (prev: URLSearchParams): URLSearchParams => {
-  const next = new URLSearchParams(prev);
-  if (pendingSearchWrites.rq !== undefined) {
-    const serialized = serializeQueueState(pendingSearchWrites.rq);
-    if (serialized === null) {
-      next.delete('rq');
-    } else {
-      next.set('rq', serialized);
-    }
-  }
-  if (pendingSearchWrites.p !== undefined) {
-    next.set('p', String(pendingSearchWrites.p));
-  }
-  return next;
-};
-
-const pageMatches = (urlP: string | null, page: number): boolean =>
-  urlP === String(page) || (page === 1 && urlP === null);
-
-const reconcilePendingSearchWrites = (searchParams: URLSearchParams): void => {
-  if (pendingSearchWrites.rq !== undefined) {
-    const urlRq = searchParams.get('rq');
-    const pendingRq = serializeQueueState(pendingSearchWrites.rq);
-    if (urlRq === pendingRq) {
-      delete pendingSearchWrites.rq;
-      delete pendingSearchWrites.rqSnapshot;
-    } else if (
-      pendingSearchWrites.rqSnapshot == null ||
-      urlRq !== pendingSearchWrites.rqSnapshot
-    ) {
-      // URL no longer carries the pending write. A null snapshot with a null
-      // destination is an abandon too (bare URL → overlay href with no rq).
-      delete pendingSearchWrites.rq;
-      delete pendingSearchWrites.rqSnapshot;
-    }
-  }
-  if (pendingSearchWrites.p !== undefined) {
-    const urlP = searchParams.get('p');
-    if (pageMatches(urlP, pendingSearchWrites.p)) {
-      delete pendingSearchWrites.p;
-      delete pendingSearchWrites.pSnapshot;
-    } else if (
-      pendingSearchWrites.pSnapshot == null ||
-      urlP !== pendingSearchWrites.pSnapshot
-    ) {
-      delete pendingSearchWrites.p;
-      delete pendingSearchWrites.pSnapshot;
-    }
-  }
-};
-
-type SearchParamsWriter = (
-  nextInit: URLSearchParams | ((prev: URLSearchParams) => URLSearchParams),
-  navigateOpts?: { replace?: boolean },
-) => void;
-
-/**
- * Shared write-through so every workbench URL writer merges the pending
- * `rq`/`p` buffer instead of last-write-winning against the render snapshot.
- */
-export const commitSearchParams = (
-  setSearchParams: SearchParamsWriter,
-  mutate: (next: URLSearchParams) => void,
-): void => {
-  setSearchParams((prev) => {
-    const next = applyPendingSearchWrites(prev);
-    mutate(next);
-    return next;
-  }, { replace: true });
-};
-
-const queuePendingQueueState = (nextState: WorkbenchQueueState, snapshotRq: string | null): void => {
-  if (pendingSearchWrites.rq === undefined) {
-    pendingSearchWrites.rqSnapshot = snapshotRq;
-  }
-  pendingSearchWrites.rq = nextState;
-};
-
-const queuePendingPage = (page: number, snapshotP: string | null): void => {
-  if (pendingSearchWrites.p === undefined) {
-    pendingSearchWrites.pSnapshot = snapshotP;
-  }
-  pendingSearchWrites.p = page;
-};
-
 export const useWorkbenchFilters = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -223,16 +115,7 @@ export const useWorkbenchFilters = () => {
   // E21-5: review-queue position/filter/band (rq=<kind>.<band>.<index>).
   const queueState = useMemo(() => parseQueueState(searchParams.get('rq')), [searchParams]);
 
-  useEffect(() => {
-    workbenchFilterInstanceCount += 1;
-    return () => {
-      workbenchFilterInstanceCount -= 1;
-      if (workbenchFilterInstanceCount <= 0) {
-        workbenchFilterInstanceCount = 0;
-        clearPendingSearchWrites();
-      }
-    };
-  }, []);
+  useEffect(() => retainWorkbenchFilterInstance(), []);
 
   useEffect(() => {
     reconcilePendingSearchWrites(searchParams);
@@ -314,7 +197,7 @@ export const useWorkbenchFilters = () => {
 
   const dispatchQueue = useCallback(
     (action: QueueAction): void => {
-      writeQueueState(reduceQueueAction(pendingSearchWrites.rq ?? queueState, action));
+      writeQueueState(reduceQueueAction(getPendingQueueState() ?? queueState, action));
     },
     [queueState, writeQueueState],
   );

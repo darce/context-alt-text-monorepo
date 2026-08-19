@@ -11,9 +11,9 @@ import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetPendingSearchWritesForTests } from '../../../hooks/pendingSearchWrites';
 import {
   QUEUE_ACTION,
-  resetPendingSearchWritesForTests,
   useWorkbenchFilters,
 } from '../../../hooks/useWorkbenchFilters';
 

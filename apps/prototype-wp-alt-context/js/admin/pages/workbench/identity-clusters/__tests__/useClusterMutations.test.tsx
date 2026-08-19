@@ -44,6 +44,10 @@ describe('useClusterMutations invalidate refetch (R3-05)', () => {
     });
     const identitiesKey = queryKeys.media.identities();
     const fetchIdentities = vi.fn().mockResolvedValue({ identities_by_media: {} });
+    const fetchLabels = vi.fn().mockResolvedValue([]);
+    const fetchClusters = vi.fn().mockResolvedValue({ clusters: [] });
+    const fetchProjection = vi.fn().mockResolvedValue({ items: [] });
+    const fetchMergePending = vi.fn().mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
@@ -51,12 +55,32 @@ describe('useClusterMutations invalidate refetch (R3-05)', () => {
     const { result } = renderHook(
       () => {
         const list = useQuery({ queryKey: identitiesKey, queryFn: fetchIdentities, staleTime: 0 });
+        const labels = useQuery({
+          queryKey: queryKeys.clusters.labels(),
+          queryFn: fetchLabels,
+          staleTime: 0,
+        });
+        const clusters = useQuery({
+          queryKey: queryKeys.clusters.all,
+          queryFn: fetchClusters,
+          staleTime: 0,
+        });
+        const projection = useQuery({
+          queryKey: queryKeys.suggestions.projection.all,
+          queryFn: fetchProjection,
+          staleTime: 0,
+        });
+        const mergePending = useQuery({
+          queryKey: queryKeys.suggestions.mergePending(),
+          queryFn: fetchMergePending,
+          staleTime: 0,
+        });
         const mutations = useClusterMutations({
           clusterId: 'cluster-1',
           currentLabel: null,
           derivedLabel: null,
         });
-        return { list, mutations };
+        return { list, labels, clusters, projection, mergePending, mutations };
       },
       { wrapper },
     );
@@ -66,6 +90,10 @@ describe('useClusterMutations invalidate refetch (R3-05)', () => {
       await Promise.resolve();
     });
     fetchIdentities.mockClear();
+    fetchLabels.mockClear();
+    fetchClusters.mockClear();
+    fetchProjection.mockClear();
+    fetchMergePending.mockClear();
 
     await act(async () => {
       result.current.mutations.pinRepresentative('rep-1', true);
@@ -75,6 +103,10 @@ describe('useClusterMutations invalidate refetch (R3-05)', () => {
 
     await waitFor(() => {
       expect(fetchIdentities).toHaveBeenCalled();
+      expect(fetchLabels).toHaveBeenCalled();
+      expect(fetchClusters).toHaveBeenCalled();
+      expect(fetchProjection).toHaveBeenCalled();
+      expect(fetchMergePending).toHaveBeenCalled();
     });
   });
 });

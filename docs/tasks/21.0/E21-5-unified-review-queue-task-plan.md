@@ -121,7 +121,7 @@ Outcome metric (PROD-01): **time-to-first-named-person** on the live demo — ba
 | --- | --- | --- | --- | --- |
 | Suggestion accept/reject/merge/name/bulk-accept | REST `acx/v1/recognition/suggestions/*` | atomic POSTs | **unchanged** — consumed one card at a time | none |
 | Person-commit | REST `acx/v1/recognition/roster/clusters/{id}/commit` | called only from roster drawer | also called from the review card | none (same body) |
-| Label-only rename | REST `PATCH recognition/clusters/{id}` | primary naming path | demoted to tertiary "just label" action | none |
+| Person bind / rename | REST `POST .../roster/clusters/{id}/commit` and `PATCH recognition/clusters/{id}` | person-row confirm binds the cluster to the chosen roster entry via `commitClusterToRosterEntry`; the label string is written only on the explicit rename path | shipped write-through (no tertiary label-only path) | none |
 | `queue_memberships` / `projection_status` | generated `roster-entry.ts` | roster surfaces | **unchanged — not read by the queue** (chips are `KIND`-derived; see §6) | none |
 | Cluster members list | REST members route (envelope `{members, limit, total, truncated}`) | client sends no paging params; server has none (verified) | route accepts `limit`/`offset` (③ / PA-10 carve-out — the leg fires for certain, §9 dual-path checklist) | **additive params only** (the wave's single permitted server leg) |
 | Suggestion projection | `suggestionProjection.ts` (UXP-3, client-side) | exported contract | consumed as-is (predicate/comparator/keys/invalidation map/fixture) — never re-derived | none (import-only) |

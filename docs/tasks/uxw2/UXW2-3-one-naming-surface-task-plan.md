@@ -29,12 +29,12 @@ B1: `identity-clusters/PersonCommitControl.tsx:106-158` two-phase popover combob
 ## Slices
 
 ### Slice 1 — `feat(workbench): UXW2-3 NameFaceControl + single-gesture Save name`
-- [x] RED `PersonCommitControl.test.tsx`: novel name + Enter → `newEntryName`; existing name + Enter → `rosterEntryId`; no "Just label" control.
-- [x] New `NameFaceControl`; `PersonCommitControl.tsx` inline input; `personCommitCopy.ts` updated.
+- [x] RED `PersonCommitControl.test.tsx`: novel name + Enter → `newEntryName`; existing name + Enter → `rosterEntryId`; no "Just label" control. Evidence: `feat(workbench): UXW2-3 NameFaceControl + single-gesture Save name`.
+- [x] New `NameFaceControl`; `PersonCommitControl.tsx` inline input; `personCommitCopy.ts` updated. Evidence: `feat(workbench): UXW2-3 NameFaceControl + single-gesture Save name`.
 ### Slice 2 — `refactor(workbench): UXW2-3 adopt NameFaceControl in label panel + Library pane`
-- [x] `ClusterLabelingPanel.tsx`, `IdentityClusterItem.tsx`/`ClusterEditForm.tsx`; single reserved-label module; tests updated only where DOM contract changed.
+- [x] `ClusterLabelingPanel.tsx`, `IdentityClusterItem.tsx`/`ClusterEditForm.tsx`; single reserved-label module; tests updated only where DOM contract changed. Evidence: `refactor(workbench): UXW2-3 adopt NameFaceControl in label panel + Library pane`.
 ### Slice 3 — `fix(workbench): UXW2-3 plain-language wording for review surfaces`
-- [x] Vocabulary table in `docs/ux-maps/workbench-2pane.md`; string sweep of the files above; `banned-vocabulary.test.tsx` bans `cluster` on workbench review surfaces; `ClusterReviewPanel.test.tsx` heading updated.
+- [x] Vocabulary table in `docs/ux-maps/workbench-2pane.md`; string sweep of the files above; `banned-vocabulary.test.tsx` bans `cluster` on workbench review surfaces; `ClusterReviewPanel.test.tsx` heading updated. Evidence: `fix(workbench): UXW2-3 plain-language wording for review surfaces`.
 
 ## Verification
 

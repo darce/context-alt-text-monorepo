@@ -416,7 +416,11 @@ export const NameFaceControl = ({
       return;
     }
     if (e.key === 'Escape') {
-      setListOpen(false);
+      if (overlayOpen) {
+        e.preventDefault();
+        setListOpen(false);
+        return;
+      }
       onCancel?.();
     }
   };
@@ -450,7 +454,7 @@ export const NameFaceControl = ({
           aria-autocomplete="list"
           aria-expanded={overlayOpen}
           aria-haspopup="listbox"
-          aria-controls={listboxId}
+          aria-controls={overlayOpen ? listboxId : undefined}
           aria-activedescendant={activeOptionId}
           className={`${classPrefix}__label-input`}
           id={inputId}

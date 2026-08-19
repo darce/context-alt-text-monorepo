@@ -279,11 +279,17 @@ class PersonResolutionService {
 	private function find_by_normalized_name( string $table_persons, string $normalized ): ?array {
 		global $wpdb;
 
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! \is_string( $tenant_id ) || '' === \trim( $tenant_id ) ) {
+			return null;
+		}
+
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT id, person_uuid, name FROM %i WHERE normalized_name = %s',
+				'SELECT id, person_uuid, name FROM %i WHERE normalized_name = %s AND tenant_id = %s',
 				$table_persons,
-				$normalized
+				$normalized,
+				$tenant_id
 			)
 		);
 

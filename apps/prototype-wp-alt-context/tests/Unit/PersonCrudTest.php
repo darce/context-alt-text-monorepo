@@ -347,6 +347,43 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString('tenant_id =', $deleteQuery);
     }
 
+    public function testUpdatePersonDoesNotTouchOtherTenantRow(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $currentTenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 7,
+                'tenant_id' => $currentTenant,
+                'name' => 'Alice',
+                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'local_revision' => 1,
+                'normalized_name' => 'alice',
+            ],
+            [
+                'id' => 7,
+                'tenant_id' => 'other-tenant',
+                'name' => 'Bob',
+                'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                'local_revision' => 4,
+                'normalized_name' => 'bob',
+            ],
+        ];
+
+        $request = new WP_REST_Request('PUT', '/acx/v1/roster/persons/7');
+        $request->set_param('id', 7);
+        $request->set_param('name', 'Alice Renamed');
+
+        $response = $this->api->update_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('Bob', $wpdb->tableRows['wp_acx_persons'][1]['name']);
+        $this->assertSame(4, (int) $wpdb->tableRows['wp_acx_persons'][1]['local_revision']);
+        $this->assertSame('Alice Renamed', $wpdb->tableRows['wp_acx_persons'][0]['name']);
+    }
+
     public function testDeletePersonSurfacesResetCurationFailure(): void
     {
         $this->api->register_routes();

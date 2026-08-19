@@ -259,7 +259,7 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame(9, $payload[0]['identity_count']);
         $this->assertCount(4, $payload[0]['sample_identities']);
         $this->assertSame([], $GLOBALS['__ac_error_log']);
-        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+        $this->assertContains('cluster-truncated', $this->mapper->requested_repair_cluster_ids());
     }
 
     public function testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit(): void
@@ -440,7 +440,7 @@ class ClusterResponseMapperTest extends TestCase
 
         $this->assertSame(9, $payload[0]['identity_count']);
         $this->assertCount(4, $payload[0]['representatives']);
-        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+        $this->assertContains('cluster-truncated-9-5', $this->mapper->requested_repair_cluster_ids());
         $this->assertSame([], $GLOBALS['__ac_error_log']);
     }
 

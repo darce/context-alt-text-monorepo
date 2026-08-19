@@ -122,9 +122,52 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $data = $result->get_data();
         $this->assertCount(1, $data['clusters']);
         $this->assertSame('cluster-kept', $data['clusters'][0]['id']);
-        $this->assertSame(1, $data['total']);
+        $this->assertSame(2, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertTrue($data['repair_pending']);
+    }
+
+    /**
+     * R3-02 / R3-04: dropped empty-rep rows set repair_pending and do not shrink total.
+     */
+    public function testNormalizeTopUnlabeledResponseDropsDoNotShrinkTotal(): void
+    {
+        $response = new WP_REST_Response([
+            'clusters' => [
+                [
+                    'id' => 'cluster-empty-a',
+                    'label' => null,
+                    'identity_count' => 3,
+                    'representatives' => [],
+                ],
+                [
+                    'id' => 'cluster-kept',
+                    'label' => null,
+                    'identity_count' => 4,
+                    'representatives' => [
+                        ['id' => 'r1', 'media_id' => 1, 'is_pinned' => false],
+                    ],
+                ],
+                [
+                    'id' => 'cluster-empty-b',
+                    'label' => null,
+                    'identity_count' => 5,
+                    'representatives' => [],
+                ],
+            ],
+            'limit' => 10,
+            'total' => 12,
+            'truncated' => false,
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $data = $result->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame(12, $data['total']);
+        $this->assertTrue($data['repair_pending']);
+        $this->assertFalse($data['truncated']);
     }
 
     public function testBuildClusterLabelsEnvelopeTruncatesWhenTotalExceedsCount(): void

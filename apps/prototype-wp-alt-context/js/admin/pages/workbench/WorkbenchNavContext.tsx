@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
+import { commitSearchParams } from '../../hooks/useWorkbenchFilters';
 import type { WorkbenchOverlay } from '../../api/recognition';
 import { APP_LINK_PARAMS, APP_LINK_VALUES } from '../../navigation/appLinks';
 
@@ -46,18 +47,13 @@ export const WorkbenchNavProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const setAdvancedOpen = React.useCallback(
     (open: boolean): void => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (open) {
-            next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
-          } else {
-            next.delete(ADVANCED_PARAM);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      commitSearchParams(setSearchParams, (next) => {
+        if (open) {
+          next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
+        } else {
+          next.delete(ADVANCED_PARAM);
+        }
+      });
     },
     [setSearchParams],
   );

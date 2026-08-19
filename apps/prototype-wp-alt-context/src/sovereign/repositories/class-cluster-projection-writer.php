@@ -8,8 +8,10 @@ require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/class-cluster-curation-writer.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
+require_once dirname( __DIR__ ) . '/sync/class-outbox-writer.php';
 
 use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Sovereign\Sync\OutboxWriter;
 use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function gmdate;
@@ -70,22 +72,38 @@ class ClusterProjectionWriter {
 
 		if ( ! $this->is_reserved_label_shape( $normalized_label ) ) {
 			$resolver = new PersonResolutionService();
-			$resolved = $resolver->resolve_or_create(
+			$resolved = $resolver->resolve_for_automatic_bind(
 				$normalized_label,
-				static function (): bool {
-					return true;
+				$normalized_tenant_id,
+				$normalized_cluster_uuid,
+				function ( string $person_uuid, string $name, array $tags ) use ( $normalized_tenant_id ): bool {
+					$queued = ( new OutboxWriter() )->enqueue(
+						$normalized_tenant_id,
+						'person_created',
+						'person',
+						$person_uuid,
+						0,
+						1,
+						array(
+							'person_uuid' => $person_uuid,
+							'name'        => $name,
+							'tags'        => $tags,
+						)
+					);
+					return false !== $queued;
 				}
 			);
-			if ( ! is_wp_error( $resolved ) ) {
-				$bound = ( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
-					$normalized_cluster_uuid,
-					(int) $resolved['person_id'],
-					$normalized_tenant_id,
-					false
-				);
-				if ( false === $bound ) {
-					return 0;
-				}
+			if ( is_wp_error( $resolved ) ) {
+				return 0;
+			}
+			$bound = ( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
+				$normalized_cluster_uuid,
+				(int) $resolved['person_id'],
+				$normalized_tenant_id,
+				false
+			);
+			if ( false === $bound ) {
+				return 0;
 			}
 		}
 

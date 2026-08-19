@@ -890,19 +890,14 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(10, $topK['default'] ?? null);
         $this->assertSame(1, $topK['minimum'] ?? null);
         $this->assertSame(50, $topK['maximum'] ?? null);
-        $this->assertArrayHasKey('validate_callback', $topK);
-        $validate = $topK['validate_callback'];
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
-        $this->assertInstanceOf(\WP_Error::class, $validate(-5, $request, 'top_k'));
-        $this->assertInstanceOf(\WP_Error::class, $validate(0, $request, 'top_k'));
-        $this->assertInstanceOf(\WP_Error::class, $validate(51, $request, 'top_k'));
-        $this->assertTrue($validate(1, $request, 'top_k'));
-        $this->assertTrue($validate(50, $request, 'top_k'));
+        $this->assertArrayNotHasKey('validate_callback', $topK);
     }
 
     /**
-     * Mimic WP REST dispatch: validate_callback WP_Error is propagated;
-     * boolean false becomes generic rest_invalid_param.
+     * WP_REST_Server-equivalent has_valid_params: a validate_callback WP_Error
+     * is wrapped as rest_invalid_param (message under data.params.top_k).
+     * Schema type/min/max alone do not short-circuit; the route callback owns
+     * the invalid_top_k envelope.
      *
      * @param mixed $topK
      */
@@ -914,17 +909,36 @@ class SuggestionsControllerTest extends TestCase
             static fn (array $definition): bool => '/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/roster-candidates' === $definition['route']
         ));
         $this->assertNotEmpty($definitions);
-        $validate = $definitions[0]['args']['args']['top_k']['validate_callback'] ?? null;
-        $this->assertIsCallable($validate);
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
         $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
         $request->set_param('top_k', $topK);
-        $valid = $validate($topK, $request, 'top_k');
-        if ($valid instanceof \WP_Error) {
-            return $valid;
-        }
-        if (false === $valid) {
-            return new \WP_Error('rest_invalid_param', 'Invalid parameter(s): top_k', ['status' => 400]);
+        $validate = $definitions[0]['args']['args']['top_k']['validate_callback'] ?? null;
+        if (is_callable($validate)) {
+            $valid = $validate($topK, $request, 'top_k');
+            if ($valid instanceof \WP_Error) {
+                return new \WP_Error(
+                    'rest_invalid_param',
+                    'Invalid parameter(s): top_k',
+                    [
+                        'status' => 400,
+                        'params' => ['top_k' => $valid->get_error_message()],
+                        'details' => [
+                            'top_k' => [
+                                'code' => $valid->get_error_code(),
+                                'message' => $valid->get_error_message(),
+                                'data' => $valid->get_error_data(),
+                            ],
+                        ],
+                    ]
+                );
+            }
+            if (false === $valid) {
+                return new \WP_Error(
+                    'rest_invalid_param',
+                    'Invalid parameter(s): top_k',
+                    ['status' => 400, 'params' => ['top_k' => 'Invalid parameter.']]
+                );
+            }
         }
         return $this->controller->get_roster_candidates($request);
     }

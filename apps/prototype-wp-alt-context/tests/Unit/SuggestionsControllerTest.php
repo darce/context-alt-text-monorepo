@@ -1436,4 +1436,17 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
     }
+
+    public function testProxyQueryReferencesPythonWindowConstantByTokenForRosterCandidates(): void
+    {
+        $src = file_get_contents(dirname(__DIR__, 2) . '/src/api/class-suggestions-controller.php');
+        $this->assertIsString($src);
+        $this->assertSame(
+            1,
+            preg_match('/function get_roster_candidates.*?\$query = array\((.*?)\n\t\t\);/s', $src, $m),
+            'roster-candidates $query block not found'
+        );
+        $this->assertStringContainsString('self::ROSTER_CANDIDATES_PYTHON_WINDOW', $m[1]);
+        $this->assertStringNotContainsString('ROSTER_CANDIDATES_TOP_K_MAX', $m[1]);
+    }
 }

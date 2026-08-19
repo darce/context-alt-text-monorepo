@@ -204,6 +204,7 @@ Response (envelope):
     {
       "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
       "label": "Alice",
+      "label_state": "person",
       "is_auto_label": false,
       "identity_count": 5,
       "member_ids": [
@@ -238,7 +239,8 @@ Notes:
 
 - The WordPress proxy always returns the envelope `{ clusters, limit, total, truncated }` on this route. The only compatibility carve-out is a legacy bare-array upstream response; in that case the plugin normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false`.
 - A partial envelope such as `{ "clusters": [...] }` without `limit`, `total`, or `truncated` is a contract violation. The proxy surfaces that upstream failure as a `502 invalid_cluster_list_envelope` response rather than inventing the missing metadata.
-- For unlabeled clusters, `label` may be a synthetic `cluster-*` prefix and `is_auto_label` is `true`.
+- For unlabeled clusters, `label_state` is `"unlabeled"`. `label` may still be a reserved auto label (`cluster-*` / `cluster_*`) with `is_auto_label: true`; the FE must not synthesize `cluster-<hex>` from a null label.
+- `label_state` is the three-valued authority `person | unlabeled | unbound`. `is_auto_label` / `is_labeled` cannot express `unbound`. Cluster detail uses the same summary shape as list items.
 - `suggested_label*` fields may be populated for unlabeled clusters.
 - `user_confirmed` distinguishes user-curated labels from auto-generated ones.
 
@@ -261,6 +263,7 @@ Response (envelope):
       "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
       "tenant_id": "a9c2c2c0f6ef4a1f8d6d7a3f6c9b8e12",
       "label": "cluster-a1b2c3d4",
+      "label_state": "unlabeled",
       "is_labeled": false,
       "is_auto_label": true,
       "identity_count": 8,
@@ -442,7 +445,8 @@ Notes:
 - `data_source: "unavailable"` remains the degraded HTTP `200` response only for non-503 upstream failures (for example other `5xx` or transport errors).
 - Successful backend-proxy responses must resolve to one canonical envelope: either an upstream `identities_by_media` object or a bare array of identity rows that each include `media_id`. Any other `200` payload shape is rejected with `invalid_media_identities_payload` and HTTP `502`.
 - TypeScript consumers now require `data_source` to be present on successful envelopes instead of defaulting missing metadata locally.
-- **Label authority (UXW2-4):** human label ⇒ bound person. On the local-projection path, `cluster_label` is the person name or the auto label. Auto/reserved labels match `DetectsSystemDefinedLabels::is_reserved_label_shape()`: unicode-whitespace trim, then case-insensitive prefix `cluster-` or `cluster_` (`/^cluster[-_]/i`). `Cluster_ab12ef34` is reserved, not a human name. Unbound human labels are not returned.
+- **Label authority (UXW2-4):** human label ⇒ bound person. On the local-projection path, `cluster_label` / `label` is the person name or the auto label. Auto/reserved labels match `DetectsSystemDefinedLabels::is_reserved_label_shape()`: unicode-whitespace trim, then case-insensitive prefix `cluster-` or `cluster_` (`/^cluster[-_]/i`). `Cluster_ab12ef34` is reserved, not a human name. Unbound human labels are not returned as `label` / `cluster_label`.
+- **`label_state`:** three-valued authority from `DetectsSystemDefinedLabels::projected_cluster_label_state_sql()` / `resolve_cluster_label_state()` — `person` (bound person name present), `unlabeled` (cluster label empty/null or reserved `/^cluster[-_]/i`), `unbound` (human label with no person bind). Local-projection cluster list, cluster detail, and top-unlabeled payloads emit it (`ClusterResponseMapper`). Distinct from `is_auto_label` / `is_labeled`, which cannot express `unbound`. Identity-members / media-identities SELECTs already compute the column; that mapper does not yet copy it onto the REST member row.
 
 ## POST /recognition/clusters/reassign
 

@@ -459,24 +459,30 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			}
 		}
 
-		$collapsed   = array();
-		$seen_person = array();
+		$collapsed  = array();
+		$seen_index = array();
 		foreach ( $candidates as $candidate ) {
 			if ( ! is_array( $candidate ) ) {
 				continue;
 			}
-			$uuid                              = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
-			$person_id                         = $person_by_cluster[ $uuid ] ?? null;
-			$person_id                         = is_int( $person_id ) ? $person_id : null;
-			$candidate['roster_entry_id']      = $person_id;
+			$uuid                         = sanitize_text_field( (string) ( $candidate['cluster_id'] ?? '' ) );
+			$person_id                    = $person_by_cluster[ $uuid ] ?? null;
+			$person_id                    = is_int( $person_id ) ? $person_id : null;
+			$candidate['roster_entry_id'] = $person_id;
 			if ( isset( $name_by_cluster[ $uuid ] ) ) {
 				$candidate['name'] = $name_by_cluster[ $uuid ];
 			}
-			if ( null !== $person_id ) {
-				if ( isset( $seen_person[ $person_id ] ) ) {
-					continue;
+			if ( null !== $person_id && isset( $seen_index[ $person_id ] ) ) {
+				$existing_index      = $seen_index[ $person_id ];
+				$existing_similarity = (float) ( $collapsed[ $existing_index ]['similarity'] ?? 0.0 );
+				$incoming_similarity = (float) ( $candidate['similarity'] ?? 0.0 );
+				if ( $incoming_similarity > $existing_similarity ) {
+					$collapsed[ $existing_index ] = $candidate;
 				}
-				$seen_person[ $person_id ] = true;
+				continue;
+			}
+			if ( null !== $person_id ) {
+				$seen_index[ $person_id ] = count( $collapsed );
 			}
 			$collapsed[] = $candidate;
 		}

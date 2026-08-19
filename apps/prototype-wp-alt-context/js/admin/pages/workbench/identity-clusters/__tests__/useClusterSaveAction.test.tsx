@@ -566,4 +566,21 @@ describe('useClusterSaveAction person-confirm reserved-label gate (BR-55)', () =
     expect(mutations.rename).toHaveBeenCalledWith('Pat Rivera', expect.any(AbortSignal));
     expect(queueSaveStatus).toHaveBeenCalled();
   });
+
+  it('handlePersonSelect with rosterEntryId binds that id and does not rename (UXW2-3-R3-12)', () => {
+    const bindToRosterEntry = vi.fn();
+    const { result, mutations } = renderSaveAction({
+      clusterLabel: 'Old',
+      mutations: { ...baseMutations(), bindToRosterEntry },
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('ALEX CARTER', 2);
+    });
+
+    expect(bindToRosterEntry).toHaveBeenCalledWith(2, 'ALEX CARTER', expect.any(AbortSignal));
+    expect(bindToRosterEntry).not.toHaveBeenCalledWith(1, expect.anything(), expect.anything());
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+  });
 });

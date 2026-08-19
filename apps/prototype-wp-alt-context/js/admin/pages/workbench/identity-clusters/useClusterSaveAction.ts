@@ -31,6 +31,7 @@ interface ClusterSaveMutations {
   ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
   createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
+  bindToRosterEntry?: (rosterEntryId: number, label: string, signal?: AbortSignal) => void;
 }
 
 interface UseClusterSaveActionOptions {
@@ -130,7 +131,7 @@ export const useClusterSaveAction = ({
   );
 
   const handlePersonSelect = React.useCallback(
-    (label: string) => {
+    (label: string, rosterEntryId?: number) => {
       if (saveStatus !== 'idle' || mutations.isPending) {
         return;
       }
@@ -166,7 +167,16 @@ export const useClusterSaveAction = ({
       queueSaveStatus();
       let mutationStarted = false;
       try {
-        mutationStarted = applyPersonLabel(canonical, abortController);
+        if (typeof rosterEntryId === 'number') {
+          if (editableClusterId && mutations.bindToRosterEntry) {
+            mutations.bindToRosterEntry(rosterEntryId, canonical, abortController.signal);
+            mutationStarted = true;
+          } else {
+            setError(__('Cannot bind this person: missing group.', 'alt-context'));
+          }
+        } else {
+          mutationStarted = applyPersonLabel(canonical, abortController);
+        }
         if (!mutationStarted) {
           resetSaveStatus();
         }
@@ -191,7 +201,8 @@ export const useClusterSaveAction = ({
       canSearchForMatch,
       cancelEditing,
       clusterLabel,
-      mutations.isPending,
+      editableClusterId,
+      mutations,
       queueSaveStatus,
       resetSaveStatus,
       saveAbortRef,

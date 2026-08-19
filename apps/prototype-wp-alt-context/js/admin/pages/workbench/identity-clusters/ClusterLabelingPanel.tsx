@@ -16,6 +16,7 @@ import {
   updateClusterLabel,
   type MergeClusterResponse,
 } from '../../../api/recognition';
+import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { Avatar } from '../../../../components/ui/avatar';
@@ -254,6 +255,17 @@ export const ClusterLabelingPanel = ({
     onSuccess: (_result, newLabel) => handleLabelSuccess(newLabel),
   });
 
+  const bindMutation = useMutation({
+    mutationFn: ({ rosterEntryId }: { rosterEntryId: number; name: string }) =>
+      withTimeout(
+        (_signal) => commitClusterToRosterEntry({ clusterId, rosterEntryId }),
+        SAVE_TIMEOUT_MS,
+        'save request timed out',
+      ),
+    retry: false,
+    onSuccess: (result, variables) => handleLabelSuccess(result.person_name ?? variables.name),
+  });
+
   const mergeMutation = useMutation({
     mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
       mergeCluster(clusterId, targetClusterId, targetLabel),
@@ -334,15 +346,17 @@ export const ClusterLabelingPanel = ({
     }
   };
 
+  const isBusy = labelMutation.isPending || mergeMutation.isPending || bindMutation.isPending;
+
   const submitLabel = async (
     rawLabel: string,
-    options?: { skipPersonOnlyGuard?: boolean; skipDuplicateGuard?: boolean },
+    options?: { skipPersonOnlyGuard?: boolean; skipDuplicateGuard?: boolean; rosterEntryId?: number },
   ) => {
     const trimmed = rawLabel.trim();
     if (!trimmed) {
       return;
     }
-    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || isBusy) {
       return;
     }
     submittingRef.current = true;
@@ -373,7 +387,11 @@ export const ClusterLabelingPanel = ({
       setAllowRenameAnyway(false);
 
       try {
-        await labelMutation.mutateAsync(trimmed);
+        if (typeof options?.rosterEntryId === 'number') {
+          await bindMutation.mutateAsync({ rosterEntryId: options.rosterEntryId, name: trimmed });
+        } else {
+          await labelMutation.mutateAsync(trimmed);
+        }
       } catch (err) {
         setError(getErrorMessage(err));
       }
@@ -383,7 +401,7 @@ export const ClusterLabelingPanel = ({
   };
 
   const resolveCommit = (resolution: NameFaceResolution): void => {
-    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || isBusy) {
       return;
     }
     if (resolution.kind === 'ambiguous') {
@@ -393,11 +411,12 @@ export const ClusterLabelingPanel = ({
     const hasClusterCollision = comboboxOptions.some(
       (option) => option.source === 'cluster' && normalizeNameFaceLabel(option.label) === folded,
     );
+    const rosterEntryId = resolution.kind === 'roster' ? resolution.rosterEntryId : undefined;
     if (resolution.kind === 'roster' && !hasClusterCollision) {
-      void submitLabel(resolution.name, { skipPersonOnlyGuard: true });
+      void submitLabel(resolution.name, { skipPersonOnlyGuard: true, rosterEntryId });
       return;
     }
-    void submitLabel(resolution.name);
+    void submitLabel(resolution.name, { rosterEntryId });
   };
 
   const clearError = () => {
@@ -416,14 +435,14 @@ export const ClusterLabelingPanel = ({
   };
 
   const handleOptionConfirm = (option: ComboboxOption): void => {
-    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || isBusy) {
       return;
     }
     handleSelectOption(String(option.value));
   };
 
   const handleSelectOption = (optionValue: string): void => {
-    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || isBusy) {
       return;
     }
     const matched = comboboxOptions.find((option) => option.value === optionValue);
@@ -628,13 +647,13 @@ export const ClusterLabelingPanel = ({
             onValueChange={handleTypedValueChange}
             onCommit={resolveCommit}
             onOptionConfirm={handleOptionConfirm}
-            isPending={labelMutation.isPending || mergeMutation.isPending}
+            isPending={isBusy}
             isLoading={rosterLoading}
             inputDisabled={mergeMutation.isPending}
             disabled={mergeMutation.isPending}
             commitLabel={__('Save name', 'alt-context')}
             pendingLabel={
-              labelMutation.isPending ? __('Saving...', 'alt-context') : __('Merging...', 'alt-context')
+              mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Saving...', 'alt-context')
             }
             placeholder={__('Enter name...', 'alt-context')}
             searchPlaceholder={__('Enter name...', 'alt-context')}
@@ -688,7 +707,7 @@ export const ClusterLabelingPanel = ({
                     ref={duplicateGuardFirstActionRef}
                     type="button"
                     className="button button-primary"
-                    disabled={mergeMutation.isPending || labelMutation.isPending}
+                    disabled={isBusy}
                     onClick={() =>
                       mergeMutation.mutate({
                         targetClusterId: mergeTargetId,
@@ -707,7 +726,7 @@ export const ClusterLabelingPanel = ({
                   ref={canOfferMerge && mergeTargetId ? undefined : duplicateGuardFirstActionRef}
                   type="button"
                   className="button"
-                  disabled={mergeMutation.isPending || labelMutation.isPending}
+                  disabled={isBusy}
                   onClick={() => {
                     setAllowRenameAnyway(true);
                     setDuplicateGuard(null);
@@ -719,7 +738,7 @@ export const ClusterLabelingPanel = ({
                 <button
                   type="button"
                   className="button"
-                  disabled={mergeMutation.isPending || labelMutation.isPending}
+                  disabled={isBusy}
                   onClick={() => {
                     setDuplicateGuard(null);
                     setAllowRenameAnyway(false);

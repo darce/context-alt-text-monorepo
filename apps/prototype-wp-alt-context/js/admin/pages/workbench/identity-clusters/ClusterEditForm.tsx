@@ -41,7 +41,7 @@ interface ClusterEditFormProps {
    * Explicit person-source confirm path — rename/create only; never merge (PR-16 / FIX-1).
    * When provided, person-row confirm uses this instead of onSave.
    */
-  onPersonSelect?: (label: string) => void;
+  onPersonSelect?: (label: string, rosterEntryId: number) => void;
   /** Called when a suggestion is confirmed (optional suggestionId resolves the pending row by id) */
   onConfirmSuggestion?: (clusterId: string, label: string, suggestionId?: string) => void;
   /** Called when cancel button is clicked */
@@ -129,12 +129,12 @@ export const ClusterEditForm = ({
             normalizeNameFaceLabel(option.label) === folded,
         ).length;
         // Prefill no-op stays for a single exact match (R1-13). Same-fold
-        // row confirm must still bind the chosen roster id (R3-12).
+        // confirm passes the chosen rosterEntryId with the label (R3-12).
         if (sameFoldCount <= 1 && folded === normalizeNameFaceLabel(prefillRef.current)) {
           return;
         }
         if (onPersonSelect) {
-          onPersonSelect(resolution.name);
+          onPersonSelect(resolution.name, resolution.rosterEntryId);
         } else {
           onSave(resolution.name);
         }

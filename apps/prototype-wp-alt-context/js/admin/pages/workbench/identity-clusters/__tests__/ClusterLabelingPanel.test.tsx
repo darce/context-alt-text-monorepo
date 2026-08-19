@@ -15,6 +15,7 @@ import {
   type ClusterListResponse,
   type ClusterMembersResponse,
 } from '../../../../api/recognition';
+import { commitClusterToRosterEntry } from '../../../../api/rosterApi';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
 
@@ -43,6 +44,13 @@ vi.mock('../../../../api/recognition', async () => {
 vi.mock('../../../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
 }));
+vi.mock('../../../../api/rosterApi', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/rosterApi')>('../../../../api/rosterApi');
+  return {
+    ...actual,
+    commitClusterToRosterEntry: vi.fn(),
+  };
+});
 
 const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'source-cluster-id') => {
   const queryClient = new QueryClient({
@@ -99,6 +107,13 @@ describe('ClusterLabelingPanel', () => {
     vi.clearAllMocks();
     vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
     vi.mocked(updateClusterLabel).mockResolvedValue(undefined);
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue({
+      cluster_id: 'source-cluster-id',
+      person_id: 1,
+      person_uuid: 'p1',
+      person_name: 'Alex Carter',
+      updated_at: '',
+    });
     vi.mocked(mergeCluster).mockResolvedValue({
       source_id: 'source-cluster-id',
       source_label: null,
@@ -208,8 +223,12 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Only Person', expect.any(AbortSignal));
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 11,
+      });
     });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     expect(mergeCluster).not.toHaveBeenCalled();
   });
@@ -1061,8 +1080,12 @@ describe('ClusterLabelingPanel', () => {
     input.focus();
     await user.keyboard('{Enter}');
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Alex Carter', expect.anything());
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 42,
+      });
     });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
   });
@@ -1094,8 +1117,12 @@ describe('ClusterLabelingPanel', () => {
     await typePanelName('Alex');
     await userEvent.click(await screen.findByRole('option', { name: /Confirm match with Alex Carter/i }));
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Alex Carter', expect.anything());
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 42,
+      });
     });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
@@ -1183,17 +1210,16 @@ describe('ClusterLabelingPanel', () => {
     expect(confirmOptions).toHaveLength(2);
     await userEvent.click(confirmOptions[1]);
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith(
-        'source-cluster-id',
-        'Alex\tCarter',
-        expect.any(AbortSignal),
-      );
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 2,
+      });
     });
-    expect(updateClusterLabel).not.toHaveBeenCalledWith(
-      'source-cluster-id',
-      'Alex Carter',
-      expect.any(AbortSignal),
-    );
+    expect(commitClusterToRosterEntry).not.toHaveBeenCalledWith({
+      clusterId: 'source-cluster-id',
+      rosterEntryId: 1,
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
   });
 
   it('two rapid Rename anyway clicks fire the mutation once (UXW2-3-R3-06)', async () => {

@@ -605,7 +605,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             findings.zeroEvidenceClusterCount,
             findings.counts.unlabeledClusters,
           );
-          setLiveMessage(gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated, length));
+          setLiveMessage(
+            gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated, topUnlabeledClusters.length),
+          );
           repairAnnouncedRef.current = true;
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
@@ -630,6 +632,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       length,
       safeIndex,
       setLiveMessage,
+      topUnlabeledClusters.length,
     ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
@@ -1329,7 +1332,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                             findings.counts.unlabeledClusters,
                           ),
                           findings.topUnlabeledTruncated,
-                          length,
+                          topUnlabeledClusters.length,
                         )}
                       </p>
                       <button

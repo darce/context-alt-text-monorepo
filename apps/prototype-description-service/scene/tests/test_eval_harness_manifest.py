@@ -356,27 +356,98 @@ def test_rubric_empty_warns(tmp_path):  # S1-02
         load_manifest(_write_manifest(tmp_path, data), skip_hash_verification=True)
 
 
-def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
-    decomposed = unicodedata.normalize("NFD", "Breiðamerkurjökull.jpg")
-    composed = unicodedata.normalize("NFC", "Breiðamerkurjökull.jpg")
+def _nfc_nfd_glacier_names() -> tuple[str, str]:
+    stem = "Breiðamerkurjökull.jpg"
+    return unicodedata.normalize("NFD", stem), unicodedata.normalize("NFC", stem)
+
+
+def _fs_encoding_is_utf8() -> bool:
+    return sys.getfilesystemencoding().lower().replace("_", "-") in {"utf-8", "utf8"}
+
+
+def _can_fsencode_nfc_nfd() -> bool:
+    decomposed, composed = _nfc_nfd_glacier_names()
     try:
         os.fsencode(composed)
+        os.fsencode(decomposed)
     except UnicodeEncodeError:
-        pytest.skip(
-            "filesystem encoding cannot encode NFC fixture name "
-            f"{composed!r} (getfilesystemencoding={sys.getfilesystemencoding()!r}); "
-            "product _resolve_image is not reached (AGT-06)"
+        return False
+    return True
+
+
+def _plant_nfc_glacier_bytes(mock_dir: Path, body: bytes) -> bytes:
+    """Create the NFC filename as raw UTF-8 bytes (works under ASCII fs encoding)."""
+    _, composed = _nfc_nfd_glacier_names()
+    bytes_path = os.fsencode(str(mock_dir)) + b"/" + composed.encode("utf-8")
+    with open(bytes_path, "wb") as handle:
+        handle.write(body)
+    return bytes_path
+
+
+def test_non_ascii_path_skip_guard_does_not_fire_on_utf8_fs():
+    """VLM6-RV13-Q2-02 / AGT-06: skip must not silently delete the NFC/NFD contract.
+
+    MUT skip: force the skip guard to fire unconditionally → this test fails
+    on a UTF-8 filesystem (the common CI locale) instead of pass-as-skipped.
+    """
+    if _fs_encoding_is_utf8():
+        assert _can_fsencode_nfc_nfd(), (
+            "NFC/NFD skip guard fired while filesystem encoding is UTF-8; "
+            "product _resolve_image is silently untested (AGT-06)"
+        )
+
+
+def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
+    decomposed, composed = _nfc_nfd_glacier_names()
+    encode_ok = _can_fsencode_nfc_nfd()
+    if not encode_ok and _fs_encoding_is_utf8():
+        pytest.fail(
+            "NFC/NFD skip guard fired while filesystem encoding is UTF-8; "
+            "product _resolve_image is silently untested (AGT-06 / VLM6-RV13-Q2-02)"
         )
     body = b"glacier bytes"
     data = _valid_manifest_dict()
     data["entries"][0]["path"] = f"mock_images/{decomposed}"  # manifest in NFD
     data["entries"][0]["sha256"] = hashlib.sha256(body).hexdigest()
     images = tmp_path / "images"
-    (images / "mock_images").mkdir(parents=True)
-    (images / "mock_images" / composed).write_bytes(body)  # file on disk in NFC
-    (images / "mock_images" / "scene-002.jpg").write_bytes(b"fake image bytes")
-    manifest = load_manifest(_write_manifest(tmp_path, data), images_dir=str(images))
-    assert len(manifest.entries) == 2
+    mock_dir = images / "mock_images"
+    mock_dir.mkdir(parents=True)
+    bytes_path = _plant_nfc_glacier_bytes(mock_dir, body)
+    assert os.path.isfile(bytes_path)
+    (mock_dir / "scene-002.jpg").write_bytes(b"fake image bytes")
+    man_path = _write_manifest(tmp_path, data)
+    if encode_ok:
+        manifest = load_manifest(man_path, images_dir=str(images))
+        assert len(manifest.entries) == 2
+        return
+    # ASCII fs: Path/os.fsencode cannot name the NFC file, so in-process
+    # _resolve_image never sees it. Drive the same load in a UTF-8 child
+    # that can express the bytes we planted (no skip — AGT-06).
+    service_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["LC_ALL"] = "C.UTF-8"
+    env["LANG"] = "C.UTF-8"
+    extra = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(service_root) + (os.pathsep + extra if extra else "")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scripts.eval_harness.manifest import load_manifest;"
+                f"m=load_manifest({man_path!r}, images_dir={str(images)!r});"
+                "assert len(m.entries)==2, len(m.entries)"
+            ),
+        ],
+        cwd=str(service_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 # --- VLM-2C Slice 1: real seed-corpus ground truth (operator-confirmed) ---

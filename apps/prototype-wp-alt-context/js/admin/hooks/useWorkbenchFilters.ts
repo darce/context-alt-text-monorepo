@@ -122,11 +122,6 @@ export const peekPendingSearchWritesForTests = (): PendingSearchWrites => ({
   ...pendingSearchWrites,
 });
 
-/** Test-only: plant a ghost write so unmount-clear can be asserted without a URL land. */
-export const seedPendingSearchWritesForTests = (next: PendingSearchWrites): void => {
-  pendingSearchWrites = { ...next };
-};
-
 const applyPendingSearchWrites = (prev: URLSearchParams): URLSearchParams => {
   const next = new URLSearchParams(prev);
   if (pendingSearchWrites.rq !== undefined) {

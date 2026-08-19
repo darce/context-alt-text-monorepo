@@ -1,6 +1,5 @@
-import type { ChangeEvent } from 'react';
+import { useState, type ChangeEvent, type ReactNode } from 'react';
 import { act, render, renderHook, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -11,7 +10,6 @@ import {
   QUEUE_ACTION,
   peekPendingSearchWritesForTests,
   resetPendingSearchWritesForTests,
-  seedPendingSearchWritesForTests,
   useWorkbenchFilters,
 } from '../useWorkbenchFilters';
 import { useWorkbenchNav, WorkbenchNavProvider } from '../../pages/workbench/WorkbenchNavContext';
@@ -306,13 +304,97 @@ describe('useWorkbenchFilters', () => {
   });
 
   it('unmounting the last hook instance clears the pending search buffer (R2-02)', () => {
-    const { unmount } = renderHook(() => useWorkbenchFilters(), { wrapper });
-    seedPendingSearchWritesForTests({
-      rq: { kind: 'assignment', band: 'all', index: 0 },
+    const { result, unmount } = renderHook(() => useWorkbenchFilters(), { wrapper });
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
     });
-    expect(peekPendingSearchWritesForTests().rq).toEqual({ kind: 'assignment', band: 'all', index: 0 });
     unmount();
     expect(peekPendingSearchWritesForTests()).toEqual({});
+  });
+
+  it('unmounting one of two mounted instances keeps the pending buffer alive (UXW2-1-R3-05)', () => {
+    const Second = (): null => {
+      useWorkbenchFilters();
+      return null;
+    };
+
+    const Dual = (): React.JSX.Element => {
+      const [showSecond, setShowSecond] = useState(true);
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          {showSecond ? <Second /> : null}
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            fill
+          </button>
+          <button type="button" onClick={() => setShowSecond(false)}>
+            drop-one
+          </button>
+        </div>
+      );
+    };
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?rq=merge.all.0']}>
+        <Routes>
+          <Route path="/" element={<Dual />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('fill').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeDefined();
+    act(() => {
+      screen.getByText('drop-one').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeDefined();
+    unmount();
+    expect(peekPendingSearchWritesForTests()).toEqual({});
+  });
+
+  it('a p write abandoned by an external navigate does not resurrect (UXW2-1-R3-05)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { setCurrentPage } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentPage(2);
+              setSearchParams(new URLSearchParams('p=3'), { replace: true });
+            }}
+          >
+            race-p
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/?p=1']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-p').click();
+    });
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(screen.getByTestId('loc').textContent).toContain('p=3');
   });
 
   it('useTabParam in the same tick merges pending rq instead of ghosting it (R2-02)', () => {

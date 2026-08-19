@@ -15,7 +15,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
 import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
-import { namingOptionValue } from './buildNamingOptions';
+import { buildNamingOptions } from './buildNamingOptions';
 import { viewInRosterHref } from './personCommitCopy';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import {
@@ -85,13 +85,15 @@ export const PersonCommitControl = ({
   }, [phase, queryClient]);
 
   // Full roster for create-vs-bind (R1-07). Overlay budgets the display slice.
+  // Queue card has no cluster/similarity source; pass empty labelMatches and
+  // limit: null so the shared helper does not truncate the roster.
   const options = React.useMemo(
     () =>
-      (rosterQuery.data ?? []).map((entry) => ({
-        value: namingOptionValue('person', entry.id),
-        label: entry.name,
-        source: 'person' as const,
-      })),
+      buildNamingOptions({
+        rosterEntries: rosterQuery.data ?? [],
+        labelMatches: [],
+        limit: null,
+      }).options,
     [rosterQuery.data],
   );
 

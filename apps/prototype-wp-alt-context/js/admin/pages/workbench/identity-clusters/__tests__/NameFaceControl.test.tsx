@@ -10,7 +10,7 @@ import {
   resolveNameFaceInput,
   type NameFaceResolution,
 } from '../NameFaceControl';
-import { namingOptionValue } from '../buildNamingOptions';
+import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -474,6 +474,19 @@ describe('NameFaceControl header + loading (UXW2-3-R1-16)', () => {
     renderControl({ suggestionsHeader: 'People' });
     expect(screen.getByText('People')).toBeInTheDocument();
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('defaults the overlay header to People when no Suggested group is present (UXW2-3-R1-16b)', () => {
+    renderControl();
+    expect(screen.getByText('People')).toBeInTheDocument();
+    expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('defaults the overlay header to Suggested when a Suggested group row exists (UXW2-3-R1-16b)', () => {
+    renderControl({
+      options: [{ ...person(1, 'Ada Lovelace'), group: NAMING_GROUP_SUGGESTED }],
+    });
+    expect(screen.getByText('Suggested')).toBeInTheDocument();
   });
 
   it('surfaces isLoading as an announced pending state', () => {

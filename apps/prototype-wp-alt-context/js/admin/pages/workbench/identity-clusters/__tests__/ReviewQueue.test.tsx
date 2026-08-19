@@ -41,7 +41,11 @@ import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../Review
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
-import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
+import {
+  HOLD_COMMITTING_STATUS_COPY,
+  HOLD_STATUS_COPY,
+  UNDO_HOLD_MS,
+} from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
 
@@ -3626,6 +3630,25 @@ describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {
 
     await user.unhover(status);
     expect(onPausedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('renders committing-phase role=status with HOLD_COMMITTING_STATUS_COPY and no Undo', () => {
+    render(
+      <div>
+        <button type="button">Yes</button>
+        <CommitHoldRegion
+          phase="committing"
+          errorMessage={null}
+          onUndo={() => undefined}
+          onRetry={() => undefined}
+          onPausedChange={() => undefined}
+        />
+      </div>,
+    );
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(HOLD_COMMITTING_STATUS_COPY);
+    expect(status).not.toHaveTextContent('Undo');
   });
 
   it('failed phase renders persistent role=alert; Retry disabled while retryPending (BR-17)', () => {

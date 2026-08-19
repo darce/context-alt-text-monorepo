@@ -252,6 +252,38 @@ describe('SUGGESTION_PROJECTION_INVALIDATION_EVENTS per-site wiring', () => {
         expectCrossFamilyPresent(invalidateSpy, 'clusterLabelSetClear');
       });
     });
+
+    it('successful Library rename invalidates roster.entries (UXW2-3-R1-02)', async () => {
+      // Presence assert matching ClusterLabelingPanel / PersonCommitControl:
+      // after a Library write-through rename, roster.entries() must be invalidated
+      // so the queue-card matcher sees the new person within staleTime.
+      const queryClient = makeQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      vi.mocked(recognitionApi.updateClusterLabel).mockResolvedValue(undefined);
+
+      const { result } = renderHook(
+        () =>
+          useClusterMutations({
+            clusterId: 'cluster-label-1',
+            currentLabel: null,
+            derivedLabel: null,
+          }),
+        { wrapper: wrapperFor(queryClient) },
+      );
+
+      act(() => {
+        result.current.rename('Alice');
+      });
+
+      await waitFor(() => {
+        expect(recognitionApi.updateClusterLabel).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.roster.entries() });
+      });
+    });
   });
 
   describe('clusterMerge', () => {

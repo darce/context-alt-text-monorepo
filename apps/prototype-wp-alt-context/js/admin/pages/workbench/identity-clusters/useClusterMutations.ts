@@ -51,6 +51,7 @@ export const useClusterMutations = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
     // Refresh assignment projection after curation (labels may enable/disable suggestions)
     void invalidateSuggestionProjection(queryClient);
     void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });

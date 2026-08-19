@@ -193,10 +193,10 @@ class ClusterReadService {
 			if ( count( $mapper_ids ) < self::TARGETED_REPAIR_ID_CEILING ) {
 				$extra_ids = $this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id );
 			}
-			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids, $mapper_ids );
-			$dropped      = $this->dependencies->cluster_mapper->dropped_cluster_count();
-			$fetched_page = count( $sovereign_data['clusters'] );
-			$total_count  = null;
+			$scheduled_ids = $this->schedule_repair_from_mapper( $tenant_id, $extra_ids, $mapper_ids );
+			$dropped       = $this->dependencies->cluster_mapper->dropped_cluster_count();
+			$fetched_page  = count( $sovereign_data['clusters'] );
+			$total_count   = null;
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
 				$total_count = (int) $sovereign_data['clusters'][0]['total_count'];
 				$total       = max( 0, $total_count );
@@ -204,7 +204,7 @@ class ClusterReadService {
 				// Missing COUNT(*) OVER() window: do not shrink on mapper drops.
 				$total = $fetched_page;
 			}
-			$repair_pending = array() !== $mapper_ids || $dropped > 0 || array() !== $extra_ids;
+			$repair_pending = array() !== $scheduled_ids || $dropped > 0;
 
 			return new WP_REST_Response(
 				array(
@@ -438,8 +438,9 @@ class ClusterReadService {
 	 *
 	 * @param list<string>      $extra_ids
 	 * @param list<string>|null $mapper_ids Already-normalized mapper ids; fetched when null.
+	 * @return list<string> Normalized ids dispatched to repair, or empty when nothing was scheduled.
 	 */
-	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array(), ?array $mapper_ids = null ): void {
+	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array(), ?array $mapper_ids = null ): array {
 		$mapper_ids = $this->normalize_repair_cluster_ids(
 			$mapper_ids ?? $this->dependencies->cluster_mapper->requested_repair_cluster_ids()
 		);
@@ -453,11 +454,11 @@ class ClusterReadService {
 			$top_up = array_slice( $top_up, 0, $room );
 		}
 		$normalized = array_merge( $mapper_ids, $top_up );
-		if ( array() === $normalized ) {
-			return;
+		if ( array() !== $normalized ) {
+			$this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $normalized );
 		}
 
-		$this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $normalized );
+		return $normalized;
 	}
 
 	/**

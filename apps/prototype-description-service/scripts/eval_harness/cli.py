@@ -792,9 +792,9 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ManifestError(f"{path} is not valid JSON: {exc}") from exc
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ManifestError(f"{path} is unreadable or malformed JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise ManifestError(f"{path} must contain a JSON object")
     wrong = payload.get("wrong_names", [])
@@ -1422,7 +1422,7 @@ def _check_score_determinism_cross_process(
         "from scripts.eval_harness.cli import _manifest_sha, _load_ignore_list; "
         "from scripts.eval_harness.report import build_reports, Audience; "
         "rec_path=Path(sys.argv[1]); "
-        "rec=json.loads(rec_path.read_text()); "
+        "rec=json.loads(rec_path.read_text(encoding='utf-8')); "
         # Metadata-only: child re-score never opens image bytes (must_right/roster only).
         "man=load_manifest(sys.argv[2],skip_hash_verification=True,"
         "hash_skip_reason='score child re-score never opens image bytes',"
@@ -1443,7 +1443,8 @@ def _check_score_determinism_cross_process(
         "audience=aud,rubric_gate=rg); "
         "Path(sys.argv[5]).write_text(json.dumps({"
         "'json':j,'md':m,"
-        "'build_reports_file':build_reports.__code__.co_filename}))"
+        "'build_reports_file':build_reports.__code__.co_filename}),"
+        "encoding='utf-8')"
     )
     # Defer the seed-stability pass line when a frozen compare follows so the
     # operator sees one terminal outcome (OBS-04), not pass-then-mismatch.
@@ -2231,7 +2232,7 @@ def _check_face_determinism_cross_process(
         "from scripts.eval_harness.manifest import load_manifest; "
         "from scripts.eval_harness.cli import _manifest_sha; "
         "from scripts.eval_harness.report import build_face_reports, occlusion_inputs_from_record; "
-        "rec=json.loads(open(sys.argv[1]).read()); "
+        "rec=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')); "
         # Metadata-only: child face re-score never opens image bytes.
         "man=load_manifest(sys.argv[2],skip_hash_verification=True,"
         "hash_skip_reason='face child re-score never opens image bytes',"
@@ -2242,7 +2243,8 @@ def _check_face_determinism_cross_process(
         "occlusion_pairs_by_tag=sp,real_occlusion_pairs_by_tag=rp,public=pub); "
         "Path(sys.argv[4]).write_text(json.dumps({"
         "'json':j,'md':m,"
-        "'build_reports_file':build_face_reports.__code__.co_filename}))"
+        "'build_reports_file':build_face_reports.__code__.co_filename}),"
+        "encoding='utf-8')"
     )
     # Defer seed-stability pass when a frozen compare follows (same as caption).
     # Diagnostics always land in out/ — never beside a committed freeze (F7-01).

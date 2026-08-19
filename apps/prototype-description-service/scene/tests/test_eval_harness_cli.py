@@ -5785,27 +5785,105 @@ _ASCII_LOCALE_ENV = {
 }
 
 
-def _run_score_c_locale(manifest_path: Path, record_path: Path) -> subprocess.CompletedProcess:
+def _run_score_c_locale(
+    manifest_path: Path, record_path: Path, extra_argv: list[str] | None = None
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env.update(_ASCII_LOCALE_ENV)
     env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+        "score",
+        "--manifest",
+        str(manifest_path),
+        "--run-record",
+        str(record_path),
+    ]
+    if extra_argv:
+        argv.extend(extra_argv)
     return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
-            "score",
-            "--manifest",
-            str(manifest_path),
-            "--run-record",
-            str(record_path),
-        ],
+        argv,
         cwd=str(_SERVICE_ROOT),
         env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
+
+
+def test_cmd_score_check_determinism_raw_utf8_run_record_under_c_locale(tmp_path):
+    """VLM6-RV12-Q1-02 / L-02 / EVAL-10: --check-determinism child must pin utf-8.
+
+    Parent read is already pinned; the child snippet rec_path.read_text() is not.
+    Under C locale a café run record makes the child UnicodeDecodeError (rc=1)
+    while plain score exits 0. MUT[drop_child_read_pin]: drop encoding= on the
+    child read → this test fails.
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-det-cafe")
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    payload["items"][0]["describe"]["alt_text_draft"] = "café " + payload["items"][0]["describe"]["alt_text_draft"]
+    record_path.write_bytes((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+    proc = _run_score_c_locale(manifest_path, record_path, extra_argv=["--check-determinism"])
+    assert proc.returncode == 0, proc.stderr
+    assert "determinism check passed" in proc.stdout
+
+
+def test_load_ignore_list_accepts_utf8_bom(tmp_path):
+    """VLM6-RV12-Q1-03 / EVAL-10: BOM-prefixed ignore-list must load.
+
+    MUT[utf8_sig_to_utf8]: encoding='utf-8' → ManifestError Unexpected UTF-8 BOM.
+    """
+    from scripts.eval_harness.cli import _load_ignore_list
+
+    body = json.dumps({"wrong_names": []})
+    (tmp_path / "ignore-list.json").write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    payload = _load_ignore_list(tmp_path)
+    assert payload == {"wrong_names": []}
+
+
+def test_load_ignore_list_invalid_bytes_raises_manifest_error_naming_path(tmp_path):
+    """VLM6-RV12-Q1-03 / EVAL-10: \\xff\\xfe ignore-list → ManifestError naming path.
+
+    MUT[narrow_ignore_guard]: except JSONDecodeError only → UnicodeDecodeError escapes.
+    """
+    from scripts.eval_harness.cli import _load_ignore_list
+    from scripts.eval_harness.manifest import ManifestError
+
+    path = tmp_path / "ignore-list.json"
+    path.write_bytes(b"\xff\xfe")
+    with pytest.raises(ManifestError) as excinfo:
+        _load_ignore_list(tmp_path)
+    msg = str(excinfo.value)
+    assert str(path) in msg
+    assert "Traceback" not in msg
+
+
+def test_cmd_score_ignore_list_jose_under_c_locale(tmp_path):
+    """VLM6-RV12-Q1-03 / EVAL-10: C-locale score with José in ignore-list.
+
+    MUT[drop_ignore_read_pin]: bare read_text() → UnicodeDecodeError (MUT p).
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-jose-ignore")
+    ignore = {"wrong_names": [["mock_images/alice.jpg", "José"]]}
+    (tmp_path / "ignore-list.json").write_bytes((json.dumps(ignore, ensure_ascii=False) + "\n").encode("utf-8"))
+    proc = _run_score_c_locale(manifest_path, record_path)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_cmd_score_audience_public_writes_pi_under_c_locale(tmp_path):
+    """VLM6-RV12-Q2-01 / TEST-15: C-locale --audience public pins public writes.
+
+    MUT[drop_public_write_pin]: drop encoding= on public json/md → UnicodeEncodeError π.
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-public-c")
+    proc = _run_score_c_locale(manifest_path, record_path, extra_argv=["--audience", "public"])
+    assert proc.returncode == 0, proc.stderr
+    public_json = tmp_path / "run-public-c-report.public.json"
+    raw = public_json.read_bytes()
+    assert b"\xcf\x80" in raw
+    assert "π" in public_json.read_text(encoding="utf-8")
 
 
 def test_cmd_score_writes_utf8_report_under_c_locale(tmp_path):

@@ -31,15 +31,15 @@ B5: `identity-clusters/TopClusterCard.tsx:95-107` renders `representatives.slice
 ## Slices
 
 ### Slice 1 — FE count reflects rendered faces (`TopClusterCard.tsx`, `TopClusterCard.test.tsx`)
-- [ ] RED: `identity_count=3`, 2 usable reps → "2 faces · +1 more"; missing-image rep not a blank tile.
-- [ ] Commit `fix(workbench): UXW2-2 face count reflects rendered faces`.
+- [x] RED: `identity_count=3`, 2 usable reps → "2 faces · +1 more"; missing-image rep not a blank tile.
+- [x] Commit `fix(workbench): UXW2-2 face count reflects rendered faces`.
 ### Slice 2 — PHP `identity_count` honesty + memberless exclusion
-- [ ] RED `tests/Unit/ClusterResponseMapperTest.php`: projected 3/observed 2 (rn cap 4) → 2 + repair requested; projected 9/observed 4 → 9.
-- [ ] RED `tests/Unit/ClustersReadRepositoryTest.php`: cluster with 0 member rows not returned by `list_top_unlabeled`.
-- [ ] `docs/workbay/contracts/clustering-api.md` invariant. Commits `fix(sovereign): UXW2-2 identity_count reflects observed members`, `fix(sovereign): UXW2-2 exclude memberless clusters from top-unlabeled`.
+- [x] RED `tests/Unit/ClusterResponseMapperTest.php`: projected 3/observed 2 (rn cap 4) → 2 + repair requested; projected 9/observed 4 → 9.
+- [x] RED `tests/Unit/ClustersReadRepositoryTest.php`: cluster with 0 member rows not returned by `list_top_unlabeled`.
+- [x] `docs/workbay/contracts/clustering-api.md` invariant. Commits `fix(sovereign): UXW2-2 identity_count reflects observed members`, `fix(sovereign): UXW2-2 exclude memberless clusters from top-unlabeled`.
 ### Slice 3 — FE cache drops (`suggestionProjection.ts`, `useSuggestionReviewMutations.ts`, label/merge success paths)
-- [ ] RED `useSuggestionReviewMutations.test.tsx`: after person-commit for X all four caches lack X; `ReviewQueue.test.tsx`: header decrements after panel round-trip without refetch.
-- [ ] Commit `fix(workbench): UXW2-2 drop labelled cluster from review caches`.
+- [x] RED `useSuggestionReviewMutations.test.tsx`: after person-commit for X all four caches lack X; `ReviewQueue.test.tsx`: header decrements after panel round-trip without refetch.
+- [x] Commit `fix(workbench): UXW2-2 drop labelled cluster from review caches`.
 
 ## Verification
 

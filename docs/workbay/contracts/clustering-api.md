@@ -492,7 +492,7 @@ Local and proxy-success responses include:
 }
 ```
 
-`person_id` and `roster_bound` are omitted when the mutation is a no-op acknowledgement. A failed backend proxy (non-2xx) does not persist a local person.
+`person_id` and `roster_bound` are omitted when the mutation is a no-op acknowledgement. A failed backend proxy (non-2xx) does not persist a local person. `roster_bound` is derived from the local persist + bind outcome: it is `true` only when the person was persisted and `bind_person_to_cluster` did not fail. A bind failure on the proxy path returns HTTP 200 with `roster_bound: false`.
 
 ## POST /recognition/clusters/{source_id}/merge
 
@@ -504,7 +504,20 @@ Request body:
 { "target_cluster_id": "...", "target_label": "Alice" }
 ```
 
-Response: `ClusterResponse` for the target cluster.
+When `target_label` is a human name, the plugin binds a roster person to the target. A successful local or proxy-success response may include:
+
+```json
+{
+  "person_id": 12,
+  "roster_bound": true
+}
+```
+
+`roster_bound` is `false` when the local persist succeeded but the cluster bind failed.
+
+If the target cluster is already bound to a **different** person, the plugin returns HTTP `409` with error code `cluster_already_bound`. Remedy: unbind the target cluster first, then retry the merge.
+
+Response: `ClusterResponse` for the target cluster (plus the `person_id` / `roster_bound` fields above when a label was supplied).
 
 ## POST /recognition/clusters/{cluster_id}/split
 

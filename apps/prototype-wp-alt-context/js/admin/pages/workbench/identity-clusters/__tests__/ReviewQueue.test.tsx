@@ -2669,7 +2669,7 @@ describe('ReviewQueue', () => {
 
     expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });
 
@@ -2709,7 +2709,7 @@ describe('ReviewQueue', () => {
     const repair = await screen.findByTestId('acx-review-queue-repair');
     expect(within(repair).getByText('1 group missing face data')).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
-    const resync = screen.getByRole('button', { name: 'Resync' });
+    const resync = screen.getByRole('button', { name: /^Resync review queue$/ });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
     const callsBefore = topMock.mock.calls.length;
@@ -2741,12 +2741,48 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
     const live = screen.getByRole('status');
     expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
     expect(live.textContent).not.toContain('All caught up');
+  });
+
+  it('R5-09: findings Resync and queue Resync have distinct accessible names', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    expect(await screen.findByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Resync findings$/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Resync review queue$/ })).toHaveLength(1);
+    expect(screen.queryAllByRole('button', { name: /^Resync$/ })).toHaveLength(0);
   });
 
   it('R8-01: zero-evidence-only page panel and queue announce the same non-elsewhere claim', async () => {

@@ -468,6 +468,7 @@ export const WorkbenchFindingsPanel = ({
             className="acx-button acx-button--secondary acx-button--small"
             onClick={handleRetryTopUnlabeled}
             aria-describedby="acx-findings-panel-repair-copy"
+            aria-label={__('Resync findings', 'alt-context')}
           >
             {__('Resync', 'alt-context')}
           </button>

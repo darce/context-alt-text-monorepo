@@ -369,3 +369,20 @@ def test_contract_roster_candidates_example_validates_against_schema() -> None:
     end = after.find("```", start)
     example = json.loads(after[start:end])
     jsonschema.validate(example, _schema())
+
+
+def test_schema_and_contract_agree_on_php_candidate_ordering() -> None:
+    desc = _schema()["properties"]["candidates"]["description"]
+    assert "roster_entry_id null rows are uncommittable and kept flagged" not in desc
+    assert "before uncommittable" in desc or "after every committable row" in desc
+    assert "must not re-sort" in desc
+    contract_path = (
+        Path(__file__).resolve().parents[5]
+        / "docs"
+        / "workbay"
+        / "contracts"
+        / "recognition-clustering.md"
+    )
+    text = contract_path.read_text(encoding="utf-8")
+    php_block = text.split("PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`", 1)[1]
+    assert "must not re-sort" in php_block and "client-side" in php_block

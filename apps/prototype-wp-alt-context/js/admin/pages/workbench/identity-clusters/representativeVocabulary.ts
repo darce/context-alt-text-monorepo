@@ -13,9 +13,20 @@ export const REPRESENTATIVE_VOCABULARY = {
 export const repairGatedCount = (zeroEvidenceClusterCount: number, unlabeledClusters: number): number =>
   zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : unlabeledClusters;
 
-export const gatedClusterCopy = (count: number, truncated = false): string => {
+export const gatedClusterCopy = (count: number, truncated = false, servedCount = -1): string => {
   if (count <= 0) {
     return __('Some groups are missing face data', 'alt-context');
+  }
+  if (servedCount === 0) {
+    return sprintf(
+      _n(
+        '%d group elsewhere is missing face data',
+        '%d groups elsewhere are missing face data',
+        count,
+        'alt-context',
+      ),
+      count,
+    );
   }
   if (truncated) {
     return sprintf(

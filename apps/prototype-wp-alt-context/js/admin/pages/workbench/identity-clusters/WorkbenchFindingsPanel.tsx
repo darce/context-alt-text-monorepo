@@ -421,7 +421,11 @@ export const WorkbenchFindingsPanel = ({
             <>
               <p id="acx-findings-panel-repair-copy" className="acx-findings-panel__status">
                 <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-                {gatedClusterCopy(repairGatedCount(zeroEvidenceClusterCount, counts.unlabeledClusters), topUnlabeledTruncated)}
+                {gatedClusterCopy(
+                  repairGatedCount(zeroEvidenceClusterCount, counts.unlabeledClusters),
+                  topUnlabeledTruncated,
+                  Math.max(previews.length, zeroEvidenceClusterCount),
+                )}
               </p>
               <p className="acx-findings-panel__hint">
                 {__('They are hidden from review until their faces sync.', 'alt-context')}

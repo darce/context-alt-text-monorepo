@@ -2718,6 +2718,28 @@ describe('ReviewQueue', () => {
     expect(live.textContent).not.toContain('All caught up');
   });
 
+  it('R5-02: the repair-empty page does not claim groups are on this page', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 24,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(repair).not.toHaveTextContent(/on this page/);
+  });
+
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
   // Omitting data.refetchName() leaves this call count at the initial 1.
   it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {

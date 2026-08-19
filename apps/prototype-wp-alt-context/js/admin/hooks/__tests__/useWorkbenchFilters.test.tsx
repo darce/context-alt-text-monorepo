@@ -9,6 +9,7 @@ import { useTabParam } from '../useTabParam';
 import {
   peekPendingSearchWritesForTests,
   queuePendingPage,
+  queuePendingQueueState,
   reconcilePendingSearchWrites,
   resetPendingSearchWritesForTests,
 } from '../pendingSearchWrites';
@@ -731,5 +732,25 @@ describe('useWorkbenchFilters', () => {
 
     expect(peekPendingSearchWritesForTests().p).toBeUndefined();
     expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-02: queued page-1 from a bare URL lands via pageMatches on the pre-write URL so null-snapshot abandon is unreachable', () => {
+    queuePendingPage(1, null);
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-02: in-flight p write is kept while URL still equals the non-null snapshot', () => {
+    queuePendingPage(2, '1');
+    reconcilePendingSearchWrites(new URLSearchParams('p=1'));
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: '1' });
+  });
+
+  it('UXW2-1-R5-02: rq buffer snapshotted from a bare URL is dropped when dest still has no rq', () => {
+    queuePendingQueueState({ kind: 'assignment', band: 'all', index: 0 }, null);
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+    expect(peekPendingSearchWritesForTests().rq).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().rqSnapshot).toBeUndefined();
   });
 });

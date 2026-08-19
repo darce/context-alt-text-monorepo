@@ -62,8 +62,7 @@ export const reconcilePendingSearchWrites = (searchParams: URLSearchParams): voi
       pendingSearchWrites.rqSnapshot == null ||
       urlRq !== pendingSearchWrites.rqSnapshot
     ) {
-      // URL no longer carries the pending write. A null snapshot with a null
-      // destination is an abandon too (bare URL → overlay href with no rq).
+      // Null snapshot + empty dest is abandon: a landing would have written the value, and hook reconcile runs after setSearchParams flush so this is external-nav not in-flight.
       delete pendingSearchWrites.rq;
       delete pendingSearchWrites.rqSnapshot;
     }
@@ -77,6 +76,7 @@ export const reconcilePendingSearchWrites = (searchParams: URLSearchParams): voi
       pendingSearchWrites.pSnapshot == null ||
       urlP !== pendingSearchWrites.pSnapshot
     ) {
+      // Same contract as the rq null-snapshot arm: empty dest never acquired the pending page.
       delete pendingSearchWrites.p;
       delete pendingSearchWrites.pSnapshot;
     }

@@ -188,6 +188,16 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
   });
 
+  it('type Gra, ArrowDown, then Save name binds Grace — Save and Enter agree (UXW2-3-R3-02)', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Gra');
+    await user.keyboard('{ArrowDown}');
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 2, name: 'Grace Hopper' });
+  });
+
   it('type Gra, ArrowDown, Enter binds Grace and never a non-match (UXW2-3-R2-01a)', async () => {
     const onCommit = vi.fn();
     render(<TypedNameFace onCommit={onCommit} />);
@@ -224,6 +234,28 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
       name: 'ALEX CARTER',
     });
     expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
+  });
+
+  it('Save is not an enabled no-op after a same-fold row click (UXW2-3-R3-02)', async () => {
+    const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
+    const { onCommit } = renderControl({
+      options,
+      value: 'alex carter',
+      onOptionConfirm: undefined,
+    });
+    const user = userEvent.setup();
+
+    const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+    await user.click(confirmOptions[1]);
+    onCommit.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+
+    expect(onCommit).toHaveBeenCalledWith({
+      kind: 'roster',
+      rosterEntryId: 2,
+      name: 'ALEX CARTER',
+    });
+    expect(onCommit).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'create' }));
   });
 
   it('forces an explicit choice when two roster people fold to the same name', async () => {

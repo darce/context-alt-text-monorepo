@@ -328,6 +328,29 @@ export const NameFaceControl = ({
     [onOptionConfirm, onCommit, onValueChange, isPending, isLoading],
   );
 
+  const handleSaveClick = React.useCallback(() => {
+    if (overlayOpen && activeIndex >= 0 && displayedOptions[activeIndex]) {
+      confirmDisplayedOption(displayedOptions[activeIndex]);
+      return;
+    }
+    if (chosenOptionValue !== null) {
+      const chosen = displayedOptions.find((o) => String(o.value) === chosenOptionValue);
+      if (chosen) {
+        confirmDisplayedOption(chosen);
+        return;
+      }
+    }
+    commitValue(value);
+  }, [
+    overlayOpen,
+    activeIndex,
+    displayedOptions,
+    chosenOptionValue,
+    value,
+    confirmDisplayedOption,
+    commitValue,
+  ]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       if (!overlayOpen) {
@@ -553,7 +576,7 @@ export const NameFaceControl = ({
         <button
           type="button"
           className={commitButtonClassName ?? `${classPrefix}__save`}
-          onClick={() => commitValue(value)}
+          onClick={handleSaveClick}
           disabled={isDisabled || !value.trim() || isAmbiguous}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >

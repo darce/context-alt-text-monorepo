@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,10 +20,15 @@ from scene.tests.test_eval_harness_cli import (
     _assert_child_ascii_locale,
     _c_locale_child_env,
 )
+from scene.tests.test_eval_harness_cli_stdio import (
+    _enforce_surrogate_argv_marker,
+    apply_surrogate_argv_gate,
+)
 from scripts.eval_harness.cli import (
     _UNDECODABLE_PATH_PREFIX,
     SCORE_GATE_PREFIX_ABORTED_RECORD,
     SCORE_GATE_PREFIX_RUN_RECORD,
+    SCORE_GATE_PREFIX_RUN_SUMMARY,
     ScoreGateError,
     _printable_exc,
     _printable_message,
@@ -32,10 +38,45 @@ from scripts.eval_harness.cli import (
 from scripts.eval_harness.report import ScoreVerdict
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
+_README_PATH = _SERVICE_ROOT / "scripts" / "eval_harness" / "README.md"
 _CAFE_LATIN1 = b"caf\xe9"
 _SURROGATE_LEAK = b"\\udc"
 _BACKSLASHREPLACE_XE9 = b"\\xe9"
 _CLI_PATH = _SERVICE_ROOT / "scripts" / "eval_harness" / "cli.py"
+# Absolute ScoreGateError wire (VLM6-RV18-01). Raise ScoreGateError with a
+# raw latin-1 surrogate — `_score_gate_fail` pre-encodes, which hides
+# `sys.exit(str(exc))` at cli.py:3197 / unwraps at :2015/:2018.
+_GATE_WIRE = b"score aborted-record gate: see /tmp/run-caf\\xe9.json"
+_STANDALONE_RAW_GATE = b"""
+from scripts.eval_harness import cli as _cli
+def boom(args):
+    raise _cli.ScoreGateError("score aborted-record gate: see /tmp/run-caf\\udce9.json")
+_cli._cmd_score = boom
+_cli.main(["score", "--run-record", "x.json", "--manifest", "m.json"])
+"""
+_RUN_WRAP_RAW_GATE = b"""
+from argparse import Namespace
+from scripts.eval_harness import cli as _cli
+def fake_fetch(args):
+    return ["r.json"]
+def boom(args):
+    raise _cli.ScoreGateError("score aborted-record gate: see /tmp/run-caf\\udce9.json")
+_cli._cmd_fetch = fake_fetch
+_cli._cmd_score = boom
+_cli._cmd_run(Namespace(check_determinism=False, provider=None, audience="local"))
+"""
+_SCORE_UNREADABLE_PREFIX = b"score: run record not found/unreadable: "
+_EXPECT_MARKER = b"matches --expect-report "
+_README_PATH_TEXT_SNIPPETS = (
+    "score: run record not found/unreadable: <path-text>",
+    "matches --expect-report <path-text>",
+    "`<path-text>` is UTF-8 filename bytes",
+)
+
+
+@pytest.fixture(autouse=True)
+def _surrogate_argv_gate(request: pytest.FixtureRequest) -> None:
+    apply_surrogate_argv_gate(request)
 
 
 def _run_python_bytes(
@@ -45,6 +86,7 @@ def _run_python_bytes(
     cwd: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     _assert_child_ascii_locale()
+    _enforce_surrogate_argv_marker(argv)
     env = _c_locale_child_env()
     env["PYTHONWARNINGS"] = "ignore"
     return subprocess.run(
@@ -88,16 +130,23 @@ def test_score_gate_fail_does_not_mark_whole_sentence_for_latin1_slot() -> None:
 
 
 def test_score_gate_fail_keeps_path_slot_marker_inside_sentence() -> None:
-    """Call-site path slot stays a path; the sentence is not a filename."""
+    """Call-site path slot stays a path; the sentence is not a filename.
+
+    Absolute wire pins (VLM6-W18-F2-01). Pre-encoded-only input is a no-op
+    for both encoders, so a second raw-surrogate sentence is required to
+    kill ``_score_gate_fail`` swapping to ``_printable_path``.
+    """
     slot = _printable_path("run-caf\udce9.json")
-    assert slot.startswith(_UNDECODABLE_PATH_PREFIX), slot
+    assert slot == f"{_UNDECODABLE_PATH_PREFIX}run-caf\\xe9.json", slot
     with pytest.raises(ScoreGateError) as cap:
         _score_gate_fail(f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see {slot}")
-    rendered = str(cap.value)
-    assert rendered.startswith(SCORE_GATE_PREFIX_ABORTED_RECORD), rendered
-    assert not rendered.startswith(_UNDECODABLE_PATH_PREFIX), rendered
-    assert _UNDECODABLE_PATH_PREFIX in rendered
-    assert "\\xe9" in rendered
+    assert str(cap.value) == f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see {slot}"
+
+    with pytest.raises(ScoreGateError) as cap_raw:
+        _score_gate_fail(f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see run-caf\udce9.json")
+    raw_expected = f"{SCORE_GATE_PREFIX_ABORTED_RECORD} see run-caf\\xe9.json"
+    assert str(cap_raw.value) == raw_expected
+    assert not str(cap_raw.value).startswith(_UNDECODABLE_PATH_PREFIX)
 
 
 def test_printable_message_is_idempotent_and_non_marking() -> None:
@@ -122,7 +171,12 @@ def test_score_gate_fail_uses_message_encoder_not_path_encoder() -> None:
 
 
 def test_score_gate_fail_json_path_slots_go_through_printable_path() -> None:
-    """MUT: a raw `{json_path}` inside `_score_gate_fail` must go red (TEST-15)."""
+    """MUT: a raw `{json_path}` inside `_score_gate_fail` must go red (TEST-15).
+
+    A wrapped call sitting next to a raw interpolation is still a leak
+    (VLM6-RV18-09). Every ``json_path`` Name in the first arg must be an
+    argument of ``_printable_path(...)`` — existence of one wrap is not enough.
+    """
     tree = ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
     offenders: list[str] = []
 
@@ -139,18 +193,17 @@ def test_score_gate_fail_json_path_slots_go_through_printable_path() -> None:
         if not node.args:
             continue
         arg = node.args[0]
-        json_names = [n for n in ast.walk(arg) if isinstance(n, ast.Name) and n.id == "json_path"]
-        if not json_names:
-            continue
-        wrapped = False
+        wrapped_ids: set[int] = set()
         for inner in ast.walk(arg):
             if not isinstance(inner, ast.Call) or _call_name(inner.func) != "_printable_path":
                 continue
-            if any(isinstance(a, ast.Name) and a.id == "json_path" for a in inner.args):
-                wrapped = True
+            for a in inner.args:
+                if isinstance(a, ast.Name) and a.id == "json_path":
+                    wrapped_ids.add(id(a))
+        for n in ast.walk(arg):
+            if isinstance(n, ast.Name) and n.id == "json_path" and id(n) not in wrapped_ids:
+                offenders.append(f"L{node.lineno}")
                 break
-        if not wrapped:
-            offenders.append(f"L{node.lineno}")
     assert not offenders, f"_score_gate_fail interpolates json_path without _printable_path: {offenders}"
 
 
@@ -167,43 +220,52 @@ def test_printable_exc_does_not_reescape_already_marked_gate_message() -> None:
     assert not out.startswith("\\undecodable:"), out
 
 
-def test_run_and_standalone_handlers_emit_same_gate_payload_for_latin1() -> None:
-    """cli.py:2010/2013 and 3245 must share one wire form (TEST-15 / rg-006)."""
-    standalone = b"""
-from scripts.eval_harness import cli as _cli
-def boom(args):
-    _cli._score_gate_fail("score aborted-record gate: see /tmp/run-caf\\udce9.json")
-_cli._cmd_score = boom
-_cli.main(["score", "--run-record", "x.json", "--manifest", "m.json"])
-"""
-    run_wrap = b"""
-from argparse import Namespace
-from scripts.eval_harness import cli as _cli
-def fake_fetch(args):
-    return ["r.json"]
-def boom(args):
-    _cli._score_gate_fail("score aborted-record gate: see /tmp/run-caf\\udce9.json")
-_cli._cmd_fetch = fake_fetch
-_cli._cmd_score = boom
-_cli._cmd_run(Namespace(check_determinism=False, provider=None, audience="local"))
-"""
-    stand = _run_python_bytes(standalone)
-    wrapped = _run_python_bytes(run_wrap)
-    assert stand.returncode != 0 and wrapped.returncode != 0
-    stand_payload = stand.stderr.strip()
-    assert stand_payload.startswith(SCORE_GATE_PREFIX_ABORTED_RECORD.encode("ascii")), stand.stderr
-    assert not stand_payload.startswith(_UNDECODABLE_PATH_PREFIX.encode("ascii")), stand.stderr
-    assert not stand_payload.startswith(b"\\" + _UNDECODABLE_PATH_PREFIX.encode("ascii")), stand.stderr
-    assert _BACKSLASHREPLACE_XE9 in stand_payload
-    assert _SURROGATE_LEAK not in stand_payload
+def test_standalone_score_gate_error_exit_pins_absolute_latin1_wire() -> None:
+    """MUT cli.py:3197 ``sys.exit(_printable_exc(exc))`` -> ``str(exc)`` (VLM6-RV18-01).
+
+    Raises raw ``ScoreGateError`` (not ``_score_gate_fail``): construction-time
+    encoding would make ``str(exc)`` a no-op and hide the exit-path mutation.
+    """
+    proc = _run_python_bytes(_STANDALONE_RAW_GATE)
+    assert proc.returncode != 0
+    payload = proc.stderr.strip()
+    assert payload == _GATE_WIRE, proc.stderr
+    assert _SURROGATE_LEAK not in payload
+    assert _BACKSLASHREPLACE_XE9 in payload
+
+
+def test_run_wrapper_print_pins_absolute_latin1_gate_payload() -> None:
+    """MUT cli.py:2018 unwrap ``_printable_exc(exc)`` -> ``str(exc)`` (VLM6-W18-F2-02)."""
+    proc = _run_python_bytes(_RUN_WRAP_RAW_GATE)
+    assert proc.returncode != 0
     rec_lines = [
         ln
-        for ln in wrapped.stderr.splitlines()
+        for ln in proc.stderr.splitlines()
         if ln.startswith(SCORE_GATE_PREFIX_RUN_RECORD.encode("ascii"))
     ]
-    assert rec_lines, wrapped.stderr
-    rec_payload = rec_lines[0].split(b"r.json: ", 1)[1]
-    assert rec_payload == stand_payload, (rec_payload, stand_payload)
+    assert rec_lines, proc.stderr
+    expected = SCORE_GATE_PREFIX_RUN_RECORD.encode("ascii") + b" r.json: " + _GATE_WIRE
+    assert rec_lines[0] == expected, rec_lines[0]
+    assert _SURROGATE_LEAK not in rec_lines[0]
+
+
+def test_run_wrapper_summary_pins_absolute_latin1_gate_payload() -> None:
+    """MUT cli.py:2015 unwrap ``_printable_exc(exc)`` -> ``str(exc)`` (VLM6-W18-F2-02)."""
+    proc = _run_python_bytes(_RUN_WRAP_RAW_GATE)
+    assert proc.returncode != 0
+    sum_lines = [
+        ln
+        for ln in proc.stderr.splitlines()
+        if ln.startswith(SCORE_GATE_PREFIX_RUN_SUMMARY.encode("ascii"))
+    ]
+    assert sum_lines, proc.stderr
+    expected = (
+        SCORE_GATE_PREFIX_RUN_SUMMARY.encode("ascii")
+        + b" 1 record(s): r.json: "
+        + _GATE_WIRE
+    )
+    assert sum_lines[0] == expected, sum_lines[0]
+    assert _SURROGATE_LEAK not in sum_lines[0]
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +327,22 @@ _cli.main(["face-bakeoff", "--manifest", "unused.json", "--keep", "1"])
 
 
 def _assert_latin1_path_line(printed: bytes) -> None:
-    assert _UNDECODABLE_PATH_PREFIX.encode("ascii") in printed, printed
-    assert _BACKSLASHREPLACE_XE9 in printed, printed
+    """Pin the documented <path-text> form of a latin-1 0xe9 path slot.
+
+    Rejects double-escaped ``\\\\xe9``, body-lost ``undecodable:\\xe9``,
+    marker mid-sentence, surrogate leak, and raw 0xe9 (VLM6-RV18-10).
+    The slot itself must *start* with the fallback prefix.
+    """
+    prefix = _UNDECODABLE_PATH_PREFIX.encode("ascii")
+    assert printed.startswith(prefix), printed
+    assert b"caf" + _BACKSLASHREPLACE_XE9 in printed, printed
+    assert b"\\\\xe9" not in printed, printed
     assert _SURROGATE_LEAK not in printed, printed
     assert _CAFE_LATIN1 not in printed, printed
+    assert printed.endswith(b".json"), printed
+    body = printed[len(prefix) :].decode("ascii")
+    recovered = body.encode("ascii").decode("unicode_escape").encode("latin-1")
+    assert b"caf\xe9" in recovered, recovered
 
 
 def test_fetch_record_path_stdout_prints_latin1_via_printable_path(tmp_path: Path) -> None:
@@ -451,3 +525,103 @@ def test_printable_message_fallback_backslashreplace_bytes() -> None:
     assert _CAFE_LATIN1 not in wire, wire
     assert _SURROGATE_LEAK not in wire, wire
     assert not out.startswith(_UNDECODABLE_PATH_PREFIX), out
+
+
+# ---------------------------------------------------------------------------
+# VLM6-RV18-10 — latin-1 path-line predicate must reject forged escape forms
+# ---------------------------------------------------------------------------
+
+_FORGED_LATIN1_PATH_LINES = (
+    b"undecodable:caf\\\\xe9.json",
+    b"undecodable:\\xe9",
+    b"see undecodable:foo \\xe9 bar",
+)
+
+
+@pytest.mark.parametrize("forged", _FORGED_LATIN1_PATH_LINES)
+def test_latin1_path_line_predicate_rejects_wrong_escape_forms(forged: bytes) -> None:
+    """OLD predicate accepted all three forgeries (VLM6-RV18-10)."""
+    with pytest.raises(AssertionError):
+        _assert_latin1_path_line(forged)
+
+
+# ---------------------------------------------------------------------------
+# VLM6-RV18-11 — README <path-text> contract rows must match live CLI
+# ---------------------------------------------------------------------------
+
+
+def test_readme_path_text_contract_rows_match_live_cli(tmp_path: Path) -> None:
+    """MUT README ``<path-text>`` -> ``<path>`` must go red (rg-006 / RV18-11)."""
+    readme = _README_PATH.read_text(encoding="utf-8")
+    missing = [snip for snip in _README_PATH_TEXT_SNIPPETS if snip not in readme]
+    assert not missing, f"README lost <path-text> contract row(s): {missing}"
+    assert re.search(r"matches --expect-report <path>(?!-text>)", readme) is None, readme
+    assert re.search(r"run record not found/unreadable: <path>(?!-text>)", readme) is None, readme
+
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    missing_rec = _latin1_named(tmp_path, b"missing")
+    score_proc = _run_python_bytes(
+        b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+        [b"score", b"--manifest", os.fsencode(man), b"--run-record", missing_rec],
+    )
+    assert score_proc.returncode == 2, score_proc.stderr
+    unread = next(
+        ln for ln in score_proc.stderr.splitlines() if ln.startswith(_SCORE_UNREADABLE_PREFIX)
+    )
+    unread_path = unread[len(_SCORE_UNREADABLE_PREFIX) :]
+    _assert_latin1_path_line(unread_path)
+    assert unread == _SCORE_UNREADABLE_PREFIX + unread_path
+
+    expect = _latin1_named(tmp_path, b"anchor")
+    _write_bytes(expect, b"{}")
+    expect_proc = _run_python_bytes(
+        b"""
+import sys
+from pathlib import Path
+from scripts.eval_harness.cli import _check_expect_report, _reconfigure_stdio
+_reconfigure_stdio()
+_check_expect_report(
+    sys.argv[2],
+    Path(sys.argv[1]),
+    label="score",
+    regime="probe",
+    artifact_dir=Path(sys.argv[3]),
+)
+""",
+        [expect, b"{}", os.fsencode(tmp_path)],
+    )
+    assert expect_proc.returncode == 0, expect_proc.stderr
+    expect_line = next(ln for ln in expect_proc.stdout.splitlines() if _EXPECT_MARKER in ln)
+    expect_path = expect_line.split(_EXPECT_MARKER, 1)[1]
+    _assert_latin1_path_line(expect_path)
+
+
+# ---------------------------------------------------------------------------
+# VLM6-RV18-08 — spawn helper must enforce the canonical surrogate-argv marker
+# ---------------------------------------------------------------------------
+
+
+def test_gate_wire_spawn_uses_canonical_surrogate_argv_enforcer() -> None:
+    import scene.tests.test_eval_harness_cli_stdio as stdio
+
+    assert _enforce_surrogate_argv_marker is stdio._enforce_surrogate_argv_marker
+
+
+def test_run_python_bytes_invokes_enforce_surrogate_argv_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[bytes] | None] = []
+
+    def _spy(argv: list[bytes] | None) -> None:
+        calls.append(argv)
+
+    monkeypatch.setattr(sys.modules[__name__], "_enforce_surrogate_argv_marker", _spy)
+    proc = _run_python_bytes(b"import sys; sys.stdout.buffer.write(b'ok')", [b"x"])
+    assert proc.returncode == 0, proc.stderr
+    assert calls == [[b"x"]]
+
+
+def test_run_python_bytes_rejects_unmarked_utf8_cafe_argv() -> None:
+    with pytest.raises(pytest.fail.Exception, match="requires_surrogate_argv"):
+        _run_python_bytes(b"pass", [b"caf\xc3\xa9.json"])

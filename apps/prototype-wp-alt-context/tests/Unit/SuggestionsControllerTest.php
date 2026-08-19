@@ -1437,6 +1437,18 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
     }
 
+    public function testPythonWindowConstantMatchesPythonCapSource(): void
+    {
+        $py = dirname(__DIR__, 4) . '/apps/prototype-description-service/recognition/application/suggestions/roster_candidates.py';
+        $this->assertFileExists($py); // never markTestSkipped — a skip here is a vacuous guard
+        $this->assertSame(1, preg_match('/^MAX_ROSTER_CANDIDATES_TOP_K\s*=\s*(\d+)/m', (string) file_get_contents($py), $m));
+        $this->assertSame(
+            (int) $m[1],
+            (new \ReflectionClass($this->controller))->getConstant('ROSTER_CANDIDATES_PYTHON_WINDOW'),
+            'PHP window must equal the Python hard cap; a mismatch 502s every roster-candidates call'
+        );
+    }
+
     public function testProxyQueryReferencesPythonWindowConstantByTokenForRosterCandidates(): void
     {
         $src = file_get_contents(dirname(__DIR__, 2) . '/src/api/class-suggestions-controller.php');

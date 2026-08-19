@@ -423,9 +423,6 @@ export const ClusterLabelingPanel = ({
   };
 
   const resolveCommit = (resolution: NameFaceResolution): void => {
-    if (submittingRef.current || isBusy) {
-      return;
-    }
     if (resolution.kind === 'ambiguous') {
       return;
     }
@@ -457,16 +454,10 @@ export const ClusterLabelingPanel = ({
   };
 
   const handleOptionConfirm = (option: ComboboxOption): void => {
-    if (submittingRef.current || isBusy) {
-      return;
-    }
     handleSelectOption(String(option.value));
   };
 
   const handleSelectOption = (optionValue: string): void => {
-    if (submittingRef.current || isBusy) {
-      return;
-    }
     const matched = comboboxOptions.find((option) => option.value === optionValue);
     if (!matched) {
       return;

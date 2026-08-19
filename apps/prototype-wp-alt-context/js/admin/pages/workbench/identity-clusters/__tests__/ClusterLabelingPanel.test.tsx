@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '../../../../api/queryKeys';
 import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
+import { NAMING_OPTIONS_LIMIT } from '../buildNamingOptions';
 import {
   fetchClusterMembers,
   listRecognitionClusters,
@@ -1478,6 +1479,61 @@ describe('ClusterLabelingPanel', () => {
     );
     expect(namingAfter).toHaveLength(1);
     expect(namingAfter[0]).toHaveTextContent('1 naming option');
+    vi.useRealTimers();
+  });
+
+  it('type Carter + Enter binds Alex Carter by roster id (UXW2-3-R1-07)', async () => {
+    mockRoster([makeRosterPerson(42, 'Alex Carter')]);
+    renderPanel();
+    const user = await typePanelName('Carter');
+    // Substring match is in the overlay; ArrowDown selects it so Enter confirms
+    // the roster row instead of committing the typed fragment as a create.
+    expect(await screen.findByRole('option', { name: /Confirm match with Alex Carter/i })).toBeInTheDocument();
+    await user.keyboard('{ArrowDown}{Enter}');
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: 42,
+      });
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+  });
+
+  it('type + Enter binds a roster person past the naming-options limit (UXW2-3-R1-07)', async () => {
+    const people = Array.from({ length: NAMING_OPTIONS_LIMIT + 5 }, (_, index) =>
+      makeRosterPerson(index + 1, `Person ${String(index + 1).padStart(2, '0')}`),
+    );
+    const target = people[NAMING_OPTIONS_LIMIT];
+    mockRoster(people);
+    renderPanel();
+    const user = await typePanelName(target.name);
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'source-cluster-id',
+        rosterEntryId: target.id,
+      });
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
+  });
+
+  it('naming-options announcement counts the displayed list not the resolution set (UXW2-3-R1-07)', async () => {
+    vi.useFakeTimers();
+    const people = Array.from({ length: NAMING_OPTIONS_LIMIT + 5 }, (_, index) =>
+      makeRosterPerson(index + 1, `Alex ${String(index + 1).padStart(2, '0')}`),
+    );
+    mockRoster(people);
+    renderPanel();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    await user.type(input, 'Alex');
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(screen.getByText(`${NAMING_OPTIONS_LIMIT} naming options`)).toBeInTheDocument();
+    expect(screen.queryByText(`${people.length} naming options`)).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 });

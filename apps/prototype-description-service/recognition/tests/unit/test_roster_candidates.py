@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,6 +12,7 @@ import pytest
 
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.roster_candidates import (
+    MAX_ROSTER_CANDIDATES_TOP_K,
     QualityFlag,
     SimilarityBand,
     band_for,
@@ -681,3 +684,17 @@ async def test_probe_face_count_equals_dim_filtered_length() -> None:
 
     assert result.probe_face_count == 2
     assert result.candidates
+
+
+def test_php_python_window_matches_python_cap() -> None:
+    php = (
+        Path(__file__).resolve().parents[5]
+        / "apps"
+        / "prototype-wp-alt-context"
+        / "src"
+        / "api"
+        / "class-suggestions-controller.php"
+    ).read_text(encoding="utf-8")
+    m = re.search(r"ROSTER_CANDIDATES_PYTHON_WINDOW\s*=\s*(\d+)\s*;", php)
+    assert m is not None, "PHP window constant not found"
+    assert int(m.group(1)) == MAX_ROSTER_CANDIDATES_TOP_K

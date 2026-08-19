@@ -123,6 +123,9 @@ class ClusterMergeService {
 					$tenant_id,
 					true
 				);
+				if ( false === $bind_result ) {
+					return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+				}
 				$data['roster_bound'] = ClusterCurationWriter::bind_succeeded( $bind_result );
 				$proxied->set_data( $data );
 			}

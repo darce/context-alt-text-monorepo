@@ -297,6 +297,41 @@ class ClusterMergeServiceTest extends TestCase
         $this->assertCount(1, $personInserts);
     }
 
+    public function testProxyMergeWriteSurfacesBindDatabaseFailureAsServerError(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 70;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
+        $wpdb->updateResultsByTable['wp_acx_clusters'] = false;
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"source_cluster_id":"cluster-source","target_cluster_id":"cluster-target"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Proxy Merged');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertSame(500, $response->get_error_data()['status']);
+        $this->assertArrayNotHasKey(
+            'roster_bound',
+            is_array($response->get_error_data()) ? $response->get_error_data() : []
+        );
+        $this->assertArrayNotHasKey(
+            'roster_bound',
+            is_array($response->get_data()) ? $response->get_data() : []
+        );
+    }
+
     public function testMergeReportsRosterBoundFalseWhenBindMatchesNoRow(): void
     {
         global $wpdb;

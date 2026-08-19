@@ -101,7 +101,11 @@ class ClusterLabelService {
 				$data = array();
 			}
 			$data['person_id']    = (int) $resolved['person_id'];
-			$data['roster_bound'] = $this->bind_persisted_person( $cluster_id, (int) $resolved['person_id'], $tenant_id );
+			$bound                = $this->bind_persisted_person( $cluster_id, (int) $resolved['person_id'], $tenant_id );
+			if ( is_wp_error( $bound ) ) {
+				return $bound;
+			}
+			$data['roster_bound'] = $bound;
 			$proxied->set_data( $data );
 
 			return $proxied;
@@ -236,19 +240,23 @@ class ClusterLabelService {
 	}
 
 	/**
-	 * Persist a roster person when the label mutation is proxied (no local cluster row).
+	 * Bind a locally persisted person after a successful proxy label write.
 	 *
-	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|WP_Error
+	 * @return bool|WP_Error true when bound (including already-bound), false when no cluster row matched.
 	 */
-	private function bind_persisted_person( string $cluster_id, int $person_id, string $tenant_id ): bool {
+	private function bind_persisted_person( string $cluster_id, int $person_id, string $tenant_id ): bool|WP_Error {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
-			return false;
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
 		}
 
 		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
 		$bound  = $writer->bind_person_to_cluster( $cluster_id, $person_id, $tenant_id, true );
+		if ( false === $bound ) {
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+		}
+
 		return ClusterCurationWriter::bind_succeeded( $bound );
 	}
 

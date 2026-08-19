@@ -1168,7 +1168,7 @@ describe('WorkbenchFindingsPanel', () => {
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/missing face data/i)).toBeInTheDocument();
+    expect(screen.getByText('5 groups elsewhere are missing face data')).toBeInTheDocument();
   });
 
   it('S2: aggregate repair row renders with the gated cluster count', () => {
@@ -1964,5 +1964,55 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('Some groups are missing face data')).toBeInTheDocument();
     expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
     expect(screen.queryByText('7 groups elsewhere are missing face data')).not.toBeInTheDocument();
+  });
+
+  // R7-03 / TEST-15 / TEST-06: the three counts must be mutually distinct so
+  // a wrong first-arg or servedCount cannot hide behind /missing face data/i.
+  it('R7-03: truncated branch uses the page-local zero count not previews or unlabeled', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [
+          preview({ key: 'p1', thumbUrl: 'http://example.test/p1.jpg' }),
+          preview({ key: 'p2', thumbUrl: 'http://example.test/p2.jpg' }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('At least 2 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups elsewhere are missing face data')).not.toBeInTheDocument();
+  });
+
+  it('R7-03: plain branch uses the page-local zero count', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [
+          preview({ key: 'p1', thumbUrl: 'http://example.test/p1.jpg' }),
+          preview({ key: 'p2', thumbUrl: 'http://example.test/p2.jpg' }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: false,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('2 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 3 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups elsewhere are missing face data')).not.toBeInTheDocument();
   });
 });

@@ -209,7 +209,9 @@ class ScoreGateError(RuntimeError):
 
 def _score_gate_fail(message: str) -> NoReturn:
     """Fail a post-write score gate with a class-unique operator message."""
-    raise ScoreGateError(message)
+    # Construct with a printable message so every consumer (run wrapper,
+    # main() sys.exit, tests) cannot leak PEP 383 surrogates via {exc}.
+    raise ScoreGateError(_printable_path(message))
 
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
@@ -2005,10 +2007,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
         try:
             _cmd_score(args)
         except ScoreGateError as exc:
-            gate_failures.append(f"{record_path}: {exc}")
+            gate_failures.append(f"{_printable_path(record_path)}: {_printable_exc(exc)}")
             # Fixed prefix; path after colon (RF-05 / rg-006).
             print(
-                f"{SCORE_GATE_PREFIX_RUN_RECORD} {_printable_path(record_path)}: {exc}",
+                f"{SCORE_GATE_PREFIX_RUN_RECORD} {_printable_path(record_path)}: {_printable_exc(exc)}",
                 file=sys.stderr,
             )
     if gate_failures:
@@ -2735,7 +2737,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
         except OSError as exc:
             print(
-                f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {exc}",
+                f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {_printable_exc(exc)}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -2765,7 +2767,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
     except OSError as exc:
         print(
-            f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {exc}",
+            f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {_printable_exc(exc)}",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2784,7 +2786,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError as exc:
         print(
-            f"draw-eval-split: cannot write sealed split: {_printable_path(out)}: {exc}",
+            f"draw-eval-split: cannot write sealed split: {_printable_path(out)}: {_printable_exc(exc)}",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2827,6 +2829,18 @@ def _printable_path(path: Path | str) -> str:
             escaped = doubled.decode("utf-8", errors="backslashreplace")
             return f"{_UNDECODABLE_PATH_PREFIX}{escaped}"
     return text
+
+
+def _printable_exc(exc: BaseException) -> str:
+    """OBS-08: exception text for stderr must not leak PEP 383 surrogates.
+
+    OSError: reconstruct with a printable ``filename`` so ``{exc}`` tails
+    stay uniformly escaped (VLM6-RV15-Q1-02). Other exceptions: recover
+    the whole message the same way ``_printable_path`` recovers argv.
+    """
+    if isinstance(exc, OSError) and exc.filename is not None:
+        return str(OSError(exc.errno, exc.strerror, _printable_path(exc.filename)))
+    return _printable_path(str(exc))
 
 
 def _reconfigure_stdio() -> None:

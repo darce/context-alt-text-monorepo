@@ -47,64 +47,105 @@ def _c_locale_child_env() -> dict[str, str]:
         env.pop(key, None)
     env.update(_ASCII_LOCALE_ENV)
     env["PYTHONIOENCODING"] = "ascii"
+    # load_manifest may warn with the raw argv path (manifest.py; not this lane).
+    env["PYTHONWARNINGS"] = "ignore"
     extra = env.get("PYTHONPATH")
     env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + extra if extra else "")
     return env
 
 
-def _run_cli_bytes(argv: list[bytes]) -> subprocess.CompletedProcess[bytes]:
+def _run_python_bytes(script: bytes, argv: list[bytes] | None = None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
-        [
-            os.fsencode(sys.executable),
-            b"-c",
-            b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
-            *argv,
-        ],
+        [os.fsencode(sys.executable), b"-c", script, *(argv or [])],
         cwd=os.fsencode(_SERVICE_ROOT),
         env=_c_locale_child_env(),
         capture_output=True,
     )
 
 
+def _run_cli_bytes(argv: list[bytes], *, setup: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+    code = setup + b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])"
+    return _run_python_bytes(code, argv)
+
+
+def _cafe_named(tmp_path: Path, stem: bytes, suffix: bytes = b".json") -> bytes:
+    return os.fsencode(tmp_path) + b"/" + stem + b"-" + _CAFE_UTF8 + suffix
+
+
+_TINY_SPLIT_PAYLOAD = {
+    "manifest_version": 3,
+    "annotation_mode": "roster_only",
+    "roster": ["Alice", "Bob"],
+    "entries": [
+        {
+            "path": "alice.jpg",
+            "sha256": "a" * 64,
+            "media_id": 1,
+            "face_count": 1,
+            "present_identities": ["Alice"],
+            "must_right": ["Alice"],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": False},
+            "base_caption": "",
+            "provenance": {"source": "fixture", "license": "fixture"},
+        },
+        {
+            "path": "bob.jpg",
+            "sha256": "b" * 64,
+            "media_id": 2,
+            "face_count": 1,
+            "present_identities": ["Bob"],
+            "must_right": ["Bob"],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": False},
+            "base_caption": "",
+            "provenance": {"source": "fixture", "license": "fixture"},
+        },
+    ],
+}
+
+# load_manifest uses read_text; this only trips the post-load Path.read_bytes hash pin.
+_INJECT_MANIFEST_READ_OSERROR = b"""
+from pathlib import Path as _InjectPath
+import sys as _inject_sys
+_inject_orig = _InjectPath.read_bytes
+_inject_target = _InjectPath(_inject_sys.argv[_inject_sys.argv.index("--manifest") + 1]).resolve()
+def _inject_boom(self, *args, **kwargs):
+    if _InjectPath(self).resolve() == _inject_target:
+        raise OSError("injected")
+    return _inject_orig(self, *args, **kwargs)
+_InjectPath.read_bytes = _inject_boom
+"""
+
+_RUN_SCORE_GATE_SCRIPT = b"""
+import sys
+from argparse import Namespace
+from scripts.eval_harness import cli as _cli
+
+_cli._reconfigure_stdio()
+
+def _fake_fetch(args):
+    return list(sys.argv[1:])
+
+def _fake_score(args):
+    raise _cli.ScoreGateError("score must-right failures gate: synthetic")
+
+_cli._cmd_fetch = _fake_fetch
+_cli._cmd_score = _fake_score
+_cli._cmd_run(Namespace(check_determinism=False, provider=None, audience="local"))
+"""
+
+
 def _tiny_split_manifest(tmp_path: Path) -> Path:
     path = tmp_path / "split-man.json"
-    path.write_text(
-        json.dumps(
-            {
-                "manifest_version": 3,
-                "annotation_mode": "roster_only",
-                "roster": ["Alice", "Bob"],
-                "entries": [
-                    {
-                        "path": "alice.jpg",
-                        "sha256": "a" * 64,
-                        "media_id": 1,
-                        "face_count": 1,
-                        "present_identities": ["Alice"],
-                        "must_right": ["Alice"],
-                        "easy_wrong": [],
-                        "policy": {"recognition_enabled": False},
-                        "base_caption": "",
-                        "provenance": {"source": "fixture", "license": "fixture"},
-                    },
-                    {
-                        "path": "bob.jpg",
-                        "sha256": "b" * 64,
-                        "media_id": 2,
-                        "face_count": 1,
-                        "present_identities": ["Bob"],
-                        "must_right": ["Bob"],
-                        "easy_wrong": [],
-                        "policy": {"recognition_enabled": False},
-                        "base_caption": "",
-                        "provenance": {"source": "fixture", "license": "fixture"},
-                    },
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps(_TINY_SPLIT_PAYLOAD), encoding="utf-8")
     return path
+
+
+def _tiny_split_manifest_bytes(dest: bytes) -> bytes:
+    with open(dest, "wb") as fh:
+        fh.write(json.dumps(_TINY_SPLIT_PAYLOAD).encode("utf-8"))
+    return dest
 
 
 def _draw_argv(manifest: Path, out: bytes, *, extra: list[bytes] | None = None) -> list[bytes]:
@@ -364,3 +405,146 @@ def test_reconfigure_stdio_still_zero_arg_and_sets_utf8(monkeypatch: pytest.Monk
         assert fake_err.encoding.lower() in {"utf-8", "utf8"}
         assert fake_out.errors == "backslashreplace"
         assert fake_err.errors == "backslashreplace"
+
+
+# ---------------------------------------------------------------------------
+# MA — VLM6-RV15-Q2-03: mutation-kill the seven surviving _printable_path sites
+# ---------------------------------------------------------------------------
+
+
+def test_run_score_gate_non_ascii_record_stderr_is_utf8_under_c_parent(tmp_path: Path) -> None:
+    """MUT 2011: unwrap _printable_path(record_path) on RUN_RECORD stderr -> red."""
+    cafe_rec = _cafe_named(tmp_path, b"rec")
+    proc = _run_python_bytes(_RUN_SCORE_GATE_SCRIPT, [cafe_rec])
+    assert proc.returncode != 0
+    rec_line = next(ln for ln in proc.stderr.splitlines() if b"run score gate failed:" in ln)
+    assert _CAFE_UTF8 in rec_line
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+def test_draw_check_missing_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2724: unwrap _printable_path(out) on sealed-unreadable -> red."""
+    man = _tiny_split_manifest(tmp_path)
+    missing = _cafe_named(tmp_path, b"missing")
+    proc = _run_cli_bytes(_draw_argv(man, missing, extra=[b"--check"]))
+    assert proc.returncode == 2
+    assert b"draw-eval-split: sealed split not found/unreadable: " in proc.stderr
+    assert _CAFE_UTF8 in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+def test_draw_check_non_object_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2730: unwrap _printable_path(out) on sealed-not-object -> red."""
+    man = _tiny_split_manifest(tmp_path)
+    out_b = _cafe_named(tmp_path, b"split")
+    with open(out_b, "wb") as fh:
+        fh.write(b"[]\n")
+    proc = _run_cli_bytes(_draw_argv(man, out_b, extra=[b"--check"]))
+    assert proc.returncode == 2
+    assert b"draw-eval-split: sealed split is not a JSON object: " in proc.stderr
+    assert _CAFE_UTF8 in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+def test_draw_check_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2738: unwrap _printable_path(args.manifest) on check cannot-read -> red."""
+    man_b = _tiny_split_manifest_bytes(_cafe_named(tmp_path, b"man"))
+    out = tmp_path / "sealed.json"
+    out.write_text('{"ok": true}\n', encoding="utf-8")
+    argv = _draw_argv(tmp_path / "unused.json", os.fsencode(out), extra=[b"--check"])
+    argv[argv.index(b"--manifest") + 1] = man_b
+    proc = _run_cli_bytes(argv, setup=_INJECT_MANIFEST_READ_OSERROR)
+    assert proc.returncode == 2
+    line = next(ln for ln in proc.stderr.splitlines() if b"cannot read manifest:" in ln)
+    assert _CAFE_UTF8 in line
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+def test_draw_refuse_overwrite_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2760: unwrap _printable_path(out) on overwrite refuse -> red."""
+    man = _tiny_split_manifest(tmp_path)
+    out_b = _cafe_named(tmp_path, b"split")
+    with open(out_b, "wb") as fh:
+        fh.write(b"{}\n")
+    proc = _run_cli_bytes(_draw_argv(man, out_b))
+    assert proc.returncode == 3
+    assert b"refusing to overwrite sealed split " in proc.stderr
+    assert _CAFE_UTF8 in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+def test_draw_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2768: unwrap _printable_path(args.manifest) on draw cannot-read -> red."""
+    man_b = _tiny_split_manifest_bytes(_cafe_named(tmp_path, b"man"))
+    out_b = os.fsencode(tmp_path / "split.json")
+    argv = _draw_argv(tmp_path / "unused.json", out_b)
+    man_idx = argv.index(b"--manifest")
+    argv[man_idx + 1] = man_b
+    proc = _run_cli_bytes(argv, setup=_INJECT_MANIFEST_READ_OSERROR)
+    assert proc.returncode == 2
+    line = next(ln for ln in proc.stderr.splitlines() if b"cannot read manifest:" in ln)
+    assert _CAFE_UTF8 in line
+    assert _SURROGATE_LEAK not in proc.stderr
+    assert not (tmp_path / "split.json").exists()
+
+
+def test_draw_cannot_write_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT 2787: unwrap _printable_path(out) on cannot-write -> red."""
+    man = _tiny_split_manifest(tmp_path)
+    out_b = _cafe_named(tmp_path, b"split", suffix=b"")
+    os.mkdir(out_b)
+    proc = _run_cli_bytes(_draw_argv(man, out_b, extra=[b"--force"]))
+    assert proc.returncode == 2
+    prefix = b"draw-eval-split: cannot write sealed split: "
+    line = next(ln for ln in proc.stderr.splitlines() if prefix in ln)
+    rest = line.split(prefix, 1)[1]
+    path_part = rest.split(b": ", 1)[0]
+    assert _CAFE_UTF8 in path_part
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# MA — VLM6-RV15-L-04: gate_failures accumulator must use _printable_path
+# ---------------------------------------------------------------------------
+
+
+def test_run_score_gate_summary_non_ascii_record_is_utf8_under_c_parent(tmp_path: Path) -> None:
+    """MUT L-04: raw record_path in gate_failures.append -> summary leaks / no café."""
+    ascii_rec = os.fsencode(tmp_path / "rec-ascii.json")
+    cafe_rec = _cafe_named(tmp_path, b"rec")
+    proc = _run_python_bytes(_RUN_SCORE_GATE_SCRIPT, [ascii_rec, cafe_rec])
+    assert proc.returncode != 0
+    summary = next(ln for ln in proc.stderr.splitlines() if b"run score gates failed:" in ln)
+    assert _CAFE_UTF8 in summary
+    assert _SURROGATE_LEAK not in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# MA — VLM6-RV15-Q1-02: {exc} tail must not leak surrogates (2786 write-split)
+# ---------------------------------------------------------------------------
+
+
+def test_draw_cannot_write_non_ascii_exc_tail_has_no_surrogate_under_c_parent(
+    tmp_path: Path,
+) -> None:
+    """MUT Q1-02: raw {exc} (OSError filename) on cannot-write -> \\udc leak."""
+    man = _tiny_split_manifest(tmp_path)
+    out_b = _cafe_named(tmp_path, b"split", suffix=b"")
+    os.mkdir(out_b)
+    proc = _run_cli_bytes(_draw_argv(man, out_b, extra=[b"--force"]))
+    assert proc.returncode == 2
+    assert b"cannot write sealed split:" in proc.stderr
+    assert _SURROGATE_LEAK not in proc.stderr
+    assert _CAFE_UTF8 in proc.stderr

@@ -2639,16 +2639,34 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queries[] = $sql;
 
             $result = $this->defaultUpdateResult;
+            $hasExplicitOverride = false;
             if (array_key_exists($table, $this->updateResultsByTable)) {
                 $result = $this->updateResultsByTable[$table];
+                $hasExplicitOverride = true;
             }
             if (array_key_exists($sql, $this->updateResults)) {
                 $result = $this->updateResults[$sql];
+                $hasExplicitOverride = true;
+            }
+            if (!$hasExplicitOverride && ($result === false || $result === null)) {
+                $hasExplicitOverride = true;
             }
 
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (!$hasExplicitOverride && isset($this->tableRows[$table])) {
+                $matched = 0;
+                foreach ($this->tableRows[$table] as $row) {
+                    if ($this->rowMatchesWhere($row, $where)) {
+                        ++$matched;
+                    }
+                }
+                $this->applyUpdateToRows($table, $data, $where);
+                $this->rows_affected = $matched;
+                return $matched;
             }
 
             if (is_int($result)) {

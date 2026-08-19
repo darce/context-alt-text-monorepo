@@ -238,7 +238,7 @@ class ClustersRepositoryTest extends TestCase
         $this->repository->list_top_unlabeled('tenant-auto-labels', 5);
 
         $sql = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
     }
 
     public function testCountTopUnlabeledSingletonsUsesSingletonPredicate(): void
@@ -274,7 +274,7 @@ class ClustersRepositoryTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
         $this->assertStringContainsString('THEN p.name', $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
         $this->assertStringNotContainsString('COALESCE(p.name, c.label)', $sql);
     }
 

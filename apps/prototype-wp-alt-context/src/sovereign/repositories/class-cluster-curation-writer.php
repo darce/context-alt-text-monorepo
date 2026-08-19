@@ -310,7 +310,13 @@ class ClusterCurationWriter {
 		return false === $updated ? false : (int) $updated;
 	}
 
-	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {
+	/**
+	 * Clear local label + person bind in one write. Returns affected rows
+	 * (0 when nothing matched) or false on DB failure.
+	 *
+	 * @return int|false
+	 */
+	public function reset_curation( string $cluster_uuid, string $tenant_id ): int|false {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
@@ -319,40 +325,31 @@ class ClusterCurationWriter {
 			return 0;
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return 0;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return false;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$updated = $wpdb->update(
-			$this->table_name,
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET label = NULL, person_id = NULL, curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, label_cleared_revision = snapshot_version, updated_at = %s WHERE cluster_uuid = %s AND tenant_id = %s',
 			array(
-				'label'             => null,
-				'person_id'         => null,
-				'curation_state'    => 'uncurated',
-				'is_user_confirmed' => 0,
-				'updated_at'        => $now_utc,
-			),
-			array(
-				'cluster_uuid' => $normalized_cluster_uuid,
-				'tenant_id'    => $normalized_tenant_id,
-			),
-			array( null, null, '%s', '%d', '%s' ),
-			array( '%s', '%s' )
+				$this->table_name,
+				'uncurated',
+				$now_utc,
+				$normalized_cluster_uuid,
+				$normalized_tenant_id,
+			)
 		);
-		if ( false === $updated ) {
-			return 0;
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return false;
 		}
 
-		$revision_sql = $this->prepare_query(
-			'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s AND tenant_id = %s',
-			array( $this->table_name, $normalized_cluster_uuid, $normalized_tenant_id )
-		);
-		if ( is_string( $revision_sql ) && '' !== $revision_sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $revision_sql );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		if ( false === $query_result ) {
+			return false;
 		}
 
-		return max( 1, (int) $updated );
+		return is_int( $query_result ) ? $query_result : 0;
 	}
 }

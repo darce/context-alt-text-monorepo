@@ -2323,6 +2323,12 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $result;
             }
 
+            $applied = $this->applyRawQueryToRows($normalizedSql);
+            if ($applied !== null) {
+                $this->rows_affected = $applied;
+                return $applied;
+            }
+
             if (is_int($result)) {
                 $this->rows_affected = $result;
                 return $result;
@@ -2817,6 +2823,96 @@ if (!isset($GLOBALS['wpdb'])) {
             }
 
             return true;
+        }
+
+        /**
+         * Apply a raw UPDATE (and later INSERT…ON DUPLICATE) against tableRows.
+         *
+         * @return int|null Affected row count, or null when the SQL is not handled.
+         */
+        private function applyRawQueryToRows(string $sql): ?int
+        {
+            if (preg_match(
+                '/^UPDATE\s+`?(?P<table>[^\s`]+)`?\s+SET\s+(?P<set>.+?)\s+WHERE\s+(?P<where>.+)$/is',
+                $sql,
+                $matches
+            ) !== 1) {
+                return null;
+            }
+
+            $table = $matches['table'];
+            if (!isset($this->tableRows[$table])) {
+                return null;
+            }
+
+            $assignments = $this->parseSqlAssignmentList($matches['set']);
+            $where = $this->parseSqlWhereEquals($matches['where']);
+            $affected = 0;
+            foreach ($this->tableRows[$table] as $index => $row) {
+                if (!$this->rowMatchesWhere($row, $where)) {
+                    continue;
+                }
+                foreach ($assignments as $column => $expression) {
+                    $this->tableRows[$table][$index][$column] = $this->evaluateSqlAssignment($expression, $this->tableRows[$table][$index]);
+                }
+                ++$affected;
+            }
+
+            return $affected;
+        }
+
+        /** @return array<string,string> */
+        private function parseSqlAssignmentList(string $set): array
+        {
+            $parts = preg_split('/,(?=(?:[^\'"]|\'[^\']*\'|"[^"]*")*$)/', $set);
+            $assignments = [];
+            foreach (is_array($parts) ? $parts : [] as $part) {
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<expr>.+)$/', trim($part), $match) === 1) {
+                    $assignments[$match['column']] = trim($match['expr']);
+                }
+            }
+
+            return $assignments;
+        }
+
+        /** @return array<string,mixed> */
+        private function parseSqlWhereEquals(string $where): array
+        {
+            $conditions = [];
+            $parts = preg_split('/\s+AND\s+/i', trim($where));
+            foreach (is_array($parts) ? $parts : [] as $part) {
+                $part = trim($part);
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*\'(?P<value>.*)\'$/', $part, $match) === 1) {
+                    $conditions[$match['column']] = stripslashes($match['value']);
+                    continue;
+                }
+                if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*=\s*(?P<value>\d+)$/', $part, $match) === 1) {
+                    $conditions[$match['column']] = $match['value'];
+                }
+            }
+
+            return $conditions;
+        }
+
+        private function evaluateSqlAssignment(string $expression, array $row): mixed
+        {
+            if (strcasecmp($expression, 'NULL') === 0) {
+                return null;
+            }
+            if (preg_match('/^\'(.*)\'$/', $expression, $match) === 1) {
+                return stripslashes($match[1]);
+            }
+            if (is_numeric($expression)) {
+                return str_contains($expression, '.') ? (float) $expression : (int) $expression;
+            }
+            if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?\s*\+\s*(?P<delta>\d+)$/', $expression, $match) === 1) {
+                return (int) ($row[$match['column']] ?? 0) + (int) $match['delta'];
+            }
+            if (preg_match('/^`?(?P<column>[A-Za-z0-9_]+)`?$/', $expression, $match) === 1) {
+                return $row[$match['column']] ?? null;
+            }
+
+            return $expression;
         }
 
         private function applyUpdateToRows(string $table, array $data, array $where): void

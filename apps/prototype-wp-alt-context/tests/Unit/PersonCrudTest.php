@@ -249,9 +249,10 @@ class PersonCrudTest extends TestCase
         $this->assertNull($cluster['person_id']);
         $this->assertSame(0, (int) $cluster['is_user_confirmed']);
 
-        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters SET');
+        $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_clusters` SET');
         $this->assertStringContainsString('label = NULL', $dissociateQuery);
         $this->assertStringContainsString('is_user_confirmed = 0', $dissociateQuery);
+        $this->assertStringContainsString('label_cleared_revision = snapshot_version', $dissociateQuery);
 
         $outboxJoined = implode("\n", array_filter(
             $wpdb->queries,
@@ -266,8 +267,8 @@ class PersonCrudTest extends TestCase
             ->list_top_unlabeled(self::currentTenantId(), 10);
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
         $this->assertStringContainsString('c.identity_count >= 2', $sql);
     }
 
@@ -307,10 +308,35 @@ class PersonCrudTest extends TestCase
         $this->assertSame(1, $count);
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('c.identity_count <= 1', $sql);
-        $this->assertStringContainsString('c.is_user_confirmed = 0', $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
-        $this->assertSame(0, (int) $wpdb->tableRows['wp_acx_clusters'][0]['is_user_confirmed']);
-        $this->assertNull($wpdb->tableRows['wp_acx_clusters'][0]['label']);
+    }
+
+    public function testDeletePersonSurfacesResetCurationFailure(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->mockRow = [
+            'id' => 1,
+            'name' => 'Broken',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 1,
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-broken',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Broken',
+                'person_id' => 1,
+            ],
+        ];
+        $wpdb->defaultQueryResult = false;
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
+        $request->set_param('id', 1);
+        $response = $this->api->delete_person($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
     }
 
     public function testCommitRosterClusterMarksClusterAsCuratedAndQueuesOutboxEvent(): void

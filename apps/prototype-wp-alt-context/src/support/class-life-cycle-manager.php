@@ -591,6 +591,7 @@ class LifecycleManager {
 			snapshot_version bigint(20) unsigned NOT NULL,
 			is_user_confirmed tinyint(1) NOT NULL DEFAULT 0,
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
+			label_cleared_revision bigint(20) unsigned DEFAULT NULL,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			last_synced_at datetime NOT NULL,

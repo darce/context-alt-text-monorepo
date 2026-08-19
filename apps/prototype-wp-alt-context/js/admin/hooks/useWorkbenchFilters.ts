@@ -149,11 +149,11 @@ const reconcilePendingSearchWrites = (searchParams: URLSearchParams): void => {
       delete pendingSearchWrites.rq;
       delete pendingSearchWrites.rqSnapshot;
     } else if (
-      pendingSearchWrites.rqSnapshot !== undefined &&
+      pendingSearchWrites.rqSnapshot == null ||
       urlRq !== pendingSearchWrites.rqSnapshot
     ) {
-      // URL moved to something that is neither the pre-write snapshot nor our
-      // pending write (external navigate / non-overlay writer won). Abandon.
+      // URL no longer carries the pending write. A null snapshot with a null
+      // destination is an abandon too (bare URL → overlay href with no rq).
       delete pendingSearchWrites.rq;
       delete pendingSearchWrites.rqSnapshot;
     }
@@ -164,7 +164,7 @@ const reconcilePendingSearchWrites = (searchParams: URLSearchParams): void => {
       delete pendingSearchWrites.p;
       delete pendingSearchWrites.pSnapshot;
     } else if (
-      pendingSearchWrites.pSnapshot !== undefined &&
+      pendingSearchWrites.pSnapshot == null ||
       urlP !== pendingSearchWrites.pSnapshot
     ) {
       delete pendingSearchWrites.p;

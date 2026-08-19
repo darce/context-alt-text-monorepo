@@ -166,8 +166,9 @@ describe('ClusterEditForm', () => {
     const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
     expect(confirmOptions).toHaveLength(2);
     fireEvent.click(confirmOptions[1]);
-    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('ALEX CARTER'));
-    expect(onPersonSelect).not.toHaveBeenCalledWith('Alex Carter');
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('ALEX CARTER', 2));
+    expect(onPersonSelect).not.toHaveBeenCalledWith('Alex Carter', 1);
+    expect(onPersonSelect).not.toHaveBeenCalledWith('ALEX CARTER', 1);
   });
 
   it('person-source confirm uses onPersonSelect and never onConfirmSuggestion (PR-16 / FIX-1)', async () => {
@@ -187,7 +188,7 @@ describe('ClusterEditForm', () => {
     );
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
-    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster'));
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster', 42));
     expect(onSave).not.toHaveBeenCalled();
     expect(onConfirmSuggestion).not.toHaveBeenCalled();
   });

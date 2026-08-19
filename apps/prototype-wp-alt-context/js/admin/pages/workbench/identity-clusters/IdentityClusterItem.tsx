@@ -3,10 +3,14 @@
  */
 
 import React from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
+import { queryKeys } from '../../../api/queryKeys';
 import type { MergeClusterResponse } from '../../../api/recognition';
-import type { ProjectedSuggestion } from './suggestionProjection';
+import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { getClusterMutationErrorMessage } from './clusterMutationUtils';
+import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
@@ -88,6 +92,7 @@ export const IdentityClusterItem = ({
   const saveAbortRef = React.useRef<AbortController | null>(null);
   const matchAbortRef = React.useRef<AbortController | null>(null);
 
+  const queryClient = useQueryClient();
   const { saveStatus, resetSaveStatus, queueSaveStatus, markSaveSuccess } = useClusterSaveStatus();
   const {
     confirmDialog,
@@ -160,6 +165,28 @@ export const IdentityClusterItem = ({
     onAbort: resetSaveStatus,
   });
 
+  const bindToRosterEntry = React.useCallback(
+    (rosterEntryId: number, label: string, _signal?: AbortSignal) => {
+      if (!editableClusterId) {
+        handleMutationError(__('Cannot bind this person: missing group.', 'alt-context'));
+        return;
+      }
+      void commitClusterToRosterEntry({ clusterId: editableClusterId, rosterEntryId })
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+          void invalidateSuggestionProjection(queryClient);
+          handleSaveSuccess();
+        })
+        .catch((error: unknown) => {
+          handleMutationError(getClusterMutationErrorMessage(error, label));
+        });
+    },
+    [editableClusterId, handleMutationError, handleSaveSuccess, queryClient],
+  );
+
   const { handleCancel, handleConfirmSuggestion, handleSave, handlePersonSelect } = useClusterSaveHandlers({
     clusterLabel: cluster.label,
     members: cluster.members,
@@ -177,6 +204,7 @@ export const IdentityClusterItem = ({
       assignToCluster: mutations.assignToCluster,
       rename: mutations.rename,
       createClusterForIdentity: mutations.createClusterForIdentity,
+      bindToRosterEntry,
     },
     findClusterByLabel,
     requestConfirm,

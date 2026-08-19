@@ -14,6 +14,7 @@ from scripts.eval_harness.cli import (
     BoundedStallError,
     MaxCostExceededError,
     ProviderMismatchError,
+    _stdio_encoding_guard,
     fetch_run_record,
     main,
     prune_out_dir,
@@ -21,6 +22,25 @@ from scripts.eval_harness.cli import (
 from scripts.eval_harness.landmark_cache import LandmarkCacheProvenance
 from scripts.eval_harness.manifest import AnnotationMode, GoldenEntry, GoldenManifest
 from scripts.eval_harness.report import build_reports
+
+
+@pytest.fixture(autouse=True)
+def _adopt_stdio_encoding_guard(monkeypatch):
+    """VLM6-RV15-L-03: adopt `_stdio_encoding_guard` at in-process `main()` sites.
+
+    Wraps each test (leak to the next case) and each `main([...])` call (so
+    this module's 76 in-process sites restore before the test continues).
+    """
+    real_main = main
+
+    def _guarded_main(argv=None):
+        with _stdio_encoding_guard():
+            return real_main(argv)
+
+    monkeypatch.setattr(sys.modules[__name__], "main", _guarded_main)
+    with _stdio_encoding_guard():
+        yield
+
 
 _TEST_LINEAGE_NAMED = {
     "labeler_id": "test-labeler",
@@ -5900,10 +5920,11 @@ def test_assert_child_ascii_locale_rejects_non_ascii_preferred_or_utf8_mode(monk
 
 
 def test_ascii_locale_probe_cache_is_keyed_on_env():
-    """VLM6-RV14-Q2-01 / TEST-15: MUT u must not defeat the guard.
+    """VLM6-RV15-Q2-02 / VLM6-RV14-Q2-01 / TEST-15: key includes _ASCII_LOCALE_ENV.
 
-    Pre-seeding the one-slot cache then changing `_ASCII_LOCALE_ENV` must
-    force a re-probe. PYTHONUTF8=1 is a deterministic child observation.
+    Seed cache AND key through `_ascii_locale_probe_key()` (never CACHE_KEY=None),
+    then mutate PYTHONUTF8. Parent-key-only or constant keying returns the
+    stale triple; the live key must re-probe (utf8_mode==1).
     """
     global _ASCII_LOCALE_PROBE_CACHE, _ASCII_LOCALE_PROBE_CACHE_KEY
     saved_cache = _ASCII_LOCALE_PROBE_CACHE
@@ -5911,7 +5932,7 @@ def test_ascii_locale_probe_cache_is_keyed_on_env():
     saved_env = dict(_ASCII_LOCALE_ENV)
     try:
         _ASCII_LOCALE_PROBE_CACHE = ("ascii", "ascii", 0)
-        _ASCII_LOCALE_PROBE_CACHE_KEY = None
+        _ASCII_LOCALE_PROBE_CACHE_KEY = _ascii_locale_probe_key()
         _ASCII_LOCALE_ENV["PYTHONUTF8"] = "1"
         fsenc, pref, utf8_mode = _ascii_locale_probe()
         assert utf8_mode == 1, (
@@ -6240,8 +6261,9 @@ def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
     cafe_record_b = dir_b + b"/" + b"run-caf\xc3\xa9.json"
     with open(cafe_record_b, "wb") as fh:
         fh.write(record_path.read_bytes())
-    # PYTHONIOENCODING=ascii forces errors=strict. C-locale pipes default to
-    # surrogateescape, which would swallow print(md_path) of a non-ASCII stem.
+    # PYTHONIOENCODING=ascii forces errors=strict BEFORE `_reconfigure_stdio`.
+    # C-locale pipes default to surrogateescape. The child prints
+    # sys.stdout.errors first so this env var is load-bearing (TEST-15).
     _assert_child_ascii_locale()
     env = _c_locale_child_env()
     env["PYTHONIOENCODING"] = "ascii"
@@ -6249,7 +6271,10 @@ def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
         [
             os.fsencode(sys.executable),
             b"-c",
-            b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+            (
+                b"import sys; print(sys.stdout.errors, flush=True); "
+                b"from scripts.eval_harness.cli import main; main(sys.argv[1:])"
+            ),
             b"score",
             b"--manifest",
             os.fsencode(manifest_path),
@@ -6265,10 +6290,13 @@ def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
     json_path_basename = b"run-caf\xc3\xa9-report.json"
     assert os.path.exists(dir_b + b"/" + json_path_basename)
     assert os.path.exists(dir_b + b"/" + md_path_basename)
-    # Path is the first line; a stats line follows, so strip() does not end
+    lines = proc.stdout.splitlines()
+    assert lines[0] == b"strict", (
+        f"PYTHONIOENCODING=ascii must pin stdout.errors=strict before reconfigure; got {lines[0]!r}"
+    )
+    # Path is the next line; a stats line follows, so strip() does not end
     # with the basename. Pin the machine-consumable line (OBS-08 / L-02).
-    first_line = proc.stdout.splitlines()[0]
-    assert first_line.endswith(os.fsencode(md_path_basename))
+    assert lines[1].endswith(os.fsencode(md_path_basename))
     assert b"run-caf\\xe9-report.md" not in proc.stdout
 
 
@@ -6311,3 +6339,17 @@ def test_reconfigure_stdio_utf8_stdout_and_stderr(monkeypatch):
     assert escaped_payload not in stdout_buf.getvalue()
     assert utf8_payload in stderr_buf.getvalue()
     assert escaped_payload not in stderr_buf.getvalue()
+
+
+def test_in_process_main_does_not_leak_stdio_encoding():
+    """VLM6-RV15-L-03 / TEST-15: in-process main() must not leak stdio codecs.
+
+    `_reconfigure_stdio` sets utf-8/backslashreplace on process-global streams.
+    The autouse `_stdio_encoding_guard` fixture must restore (encoding, errors)
+    before this assertion sees them.
+    """
+    before = (sys.stdout.encoding, sys.stdout.errors)
+    with pytest.raises(SystemExit):
+        main([])
+    after = (sys.stdout.encoding, sys.stdout.errors)
+    assert after == before, f"stdio leaked across in-process main(): {before!r} -> {after!r}"

@@ -30,7 +30,12 @@ interface ClusterSaveMutations {
     suggestionId?: string,
   ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
-  createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
+  createClusterForIdentity: (
+    identityId: string,
+    label: string,
+    signal?: AbortSignal,
+    rosterEntryId?: number,
+  ) => void;
   bindToRosterEntry?: (rosterEntryId: number, label: string, signal?: AbortSignal) => void;
 }
 
@@ -171,6 +176,14 @@ export const useClusterSaveAction = ({
           if (editableClusterId && mutations.bindToRosterEntry) {
             mutations.bindToRosterEntry(rosterEntryId, canonical, abortController.signal);
             mutationStarted = true;
+          } else if (anchorIdentityId) {
+            mutations.createClusterForIdentity(
+              anchorIdentityId,
+              canonical,
+              abortController.signal,
+              rosterEntryId,
+            );
+            mutationStarted = true;
           } else {
             setError(__('Cannot bind this person: missing group.', 'alt-context'));
           }
@@ -197,6 +210,7 @@ export const useClusterSaveAction = ({
     },
     [
       applyPersonLabel,
+      anchorIdentityId,
       canEdit,
       canSearchForMatch,
       cancelEditing,

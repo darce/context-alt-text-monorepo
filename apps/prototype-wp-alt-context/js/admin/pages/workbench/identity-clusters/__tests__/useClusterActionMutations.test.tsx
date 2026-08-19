@@ -267,9 +267,6 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
         'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
       ),
     );
-    // 409 is the existing label-conflict status; bind-failed must win on the code.
-      ),
-    );
     const { result, onError, invalidateQueries } = renderCreate();
 
     result.current.createClusterForIdentity('anchor-1', 'Alex', undefined, 7);

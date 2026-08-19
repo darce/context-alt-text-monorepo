@@ -125,8 +125,18 @@ export const useClusterActionMutations = ({
 
   const createClusterMutation = useMutation({
     mutationKey: ['create-cluster-for-identity'],
-    mutationFn: async ({ identityId, label, signal }: { identityId: string; label: string; signal?: AbortSignal }) => {
-      return createClusterForIdentity({ identityId, label }, signal);
+    mutationFn: async ({
+      identityId,
+      label,
+      signal,
+      rosterEntryId,
+    }: {
+      identityId: string;
+      label: string;
+      signal?: AbortSignal;
+      rosterEntryId?: number;
+    }) => {
+      return createClusterForIdentity({ identityId, label, rosterEntryId }, signal);
     },
     retry: false,
     onSuccess: (result) => {
@@ -139,6 +149,11 @@ export const useClusterActionMutations = ({
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('acx_cluster_created_bind_failed')) {
+        invalidateQueries();
+        onError?.(__('The group was created but the person was not bound.', 'alt-context'));
+        return;
+      }
       if (message.includes('409')) {
         onError?.(__('Label already exists. Select it from the dropdown to assign.', 'alt-context'));
       } else {
@@ -233,8 +248,12 @@ export const useClusterActionMutations = ({
       signal?: AbortSignal,
       suggestionId?: string,
     ) => assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
-    createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) =>
-      createClusterMutation.mutate({ identityId, label, signal }),
+    createClusterForIdentity: (
+      identityId: string,
+      label: string,
+      signal?: AbortSignal,
+      rosterEntryId?: number,
+    ) => createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),

@@ -179,6 +179,7 @@ export interface SplitClusterRequest {
 export interface CreateClusterForIdentityRequest {
   identityId: string;
   label: string;
+  rosterEntryId?: number;
 }
 
 export interface CreateClusterForIdentityResponse {
@@ -186,4 +187,7 @@ export interface CreateClusterForIdentityResponse {
   label: string;
   identity_id: string;
   message: string;
+  person_id?: number | null;
+  person_uuid?: string | null;
+  person_name?: string | null;
 }

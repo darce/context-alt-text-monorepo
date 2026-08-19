@@ -217,7 +217,7 @@ class ClusterLabelService {
 						'synced'        => false,
 						'status'        => 'pending',
 						'person_id'     => (int) $resolved['person_id'],
-						'roster_bound'  => true,
+						'roster_bound'  => ClusterCurationWriter::bind_succeeded( $bound ),
 					),
 					200
 				);
@@ -249,7 +249,7 @@ class ClusterLabelService {
 
 		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
 		$bound  = $writer->bind_person_to_cluster( $cluster_id, $person_id, $tenant_id, true );
-		return false !== $bound;
+		return ClusterCurationWriter::bind_succeeded( $bound );
 	}
 
 	private function persist_local_person_for_label( string $label ): array|WP_Error {

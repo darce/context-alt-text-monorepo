@@ -49,6 +49,23 @@ class ClusterMergeServiceTest extends TestCase
         );
     }
 
+    /** @param array<string,mixed> $overrides */
+    private function seedClusterRow(string $clusterUuid = 'cluster-target', array $overrides = []): void
+    {
+        global $wpdb;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            array_merge(
+                [
+                    'cluster_uuid' => $clusterUuid,
+                    'tenant_id' => self::currentTenantId(),
+                    'label' => 'Old',
+                    'person_id' => null,
+                ],
+                $overrides
+            ),
+        ];
+    }
+
     public function testMergeClusterQueuesReplayAndTouchesCurationMarker(): void
     {
         global $wpdb;
@@ -121,6 +138,7 @@ class ClusterMergeServiceTest extends TestCase
 
         $wpdb->insert_id = 88;
         $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
         $request->set_param('source_id', 'cluster-source');
@@ -163,6 +181,7 @@ class ClusterMergeServiceTest extends TestCase
         $this->repository->localClusterRows = [];
         $wpdb->insert_id = 70;
         $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
         $this->setOption('acx_recognition_url', 'https://recognition.test');
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -186,6 +205,32 @@ class ClusterMergeServiceTest extends TestCase
             )
         );
         $this->assertCount(1, $personInserts);
+    }
+
+    public function testMergeReportsRosterBoundFalseWhenBindMatchesNoRow(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 70;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [];
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"source_cluster_id":"cluster-source","target_cluster_id":"cluster-target"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Proxy Merged');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse($data['roster_bound']);
     }
 
     public function testMergeRejectsRebindToDifferentPerson(): void

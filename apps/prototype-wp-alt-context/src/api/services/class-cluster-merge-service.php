@@ -123,7 +123,7 @@ class ClusterMergeService {
 					$tenant_id,
 					true
 				);
-				$data['roster_bound'] = false !== $bind_result;
+				$data['roster_bound'] = ClusterCurationWriter::bind_succeeded( $bind_result );
 				$proxied->set_data( $data );
 			}
 
@@ -147,7 +147,8 @@ class ClusterMergeService {
 		$moved_rows = 0;
 		$result     = $this->run_transactional(
 			function () use ( $source_id, $target_cluster_id, $target_label, $tenant_id, $source_cluster, $target_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
-				$moved_rows = $this->members_repository->reassign_cluster_members( $source_id, $target_cluster_id );
+				$moved_rows    = $this->members_repository->reassign_cluster_members( $source_id, $target_cluster_id );
+				$roster_bound  = false;
 				$this->clusters_repository->update_identity_count( $source_id, 0 );
 				$this->clusters_repository->adjust_identity_count( $target_cluster_id, $moved_rows );
 
@@ -158,6 +159,7 @@ class ClusterMergeService {
 					if ( is_wp_error( $bound ) ) {
 						return $bound;
 					}
+					$roster_bound = $bound;
 				}
 
 				$this->clusters_repository->dismiss( $source_id );
@@ -177,16 +179,18 @@ class ClusterMergeService {
 
 				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
-				return new WP_REST_Response(
-					array(
-						'source_cluster_id' => $source_id,
-						'target_cluster_id' => $target_cluster_id,
-						'moved_identity_count' => $moved_rows,
-						'synced' => false,
-						'status' => 'pending',
-					),
-					200
+				$response_data = array(
+					'source_cluster_id'    => $source_id,
+					'target_cluster_id'    => $target_cluster_id,
+					'moved_identity_count' => $moved_rows,
+					'synced'               => false,
+					'status'               => 'pending',
 				);
+				if ( '' !== $target_label ) {
+					$response_data['roster_bound'] = $roster_bound;
+				}
+
+				return new WP_REST_Response( $response_data, 200 );
 			}
 		);
 
@@ -334,7 +338,10 @@ class ClusterMergeService {
 	/**
 	 * @param array<string,mixed> $cluster
 	 */
-	private function bind_person_for_human_label( string $cluster_id, string $label, array $cluster, int $existing_person_id = 0 ): true|WP_Error {
+	/**
+	 * @return bool|WP_Error true when bound (including already-bound), false when no cluster row matched.
+	 */
+	private function bind_person_for_human_label( string $cluster_id, string $label, array $cluster, int $existing_person_id = 0 ): bool|WP_Error {
 		global $wpdb;
 
 		$resolver = new PersonResolutionService();
@@ -388,7 +395,7 @@ class ClusterMergeService {
 			return new WP_Error( 'acx_db_error', 'Could not enqueue person-bind replay operation.', array( 'status' => 500 ) );
 		}
 
-		return true;
+		return ClusterCurationWriter::bind_succeeded( $bound );
 	}
 
 	/**

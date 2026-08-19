@@ -1175,6 +1175,13 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 2,
         nextAction: {
@@ -1251,7 +1258,15 @@ describe('WorkbenchFindingsPanel', () => {
       },
     );
 
-    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    vi.mocked(useWorkbenchFindings).mockReturnValue({
+      ...model,
+      previews: [
+        preview({
+          key: 'served-chip',
+          thumbUrl: 'http://example.test/served.jpg',
+        }),
+      ],
+    });
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
@@ -1325,7 +1340,15 @@ describe('WorkbenchFindingsPanel', () => {
     expect(model.counts.total).toBe(3);
     expect(model.zeroEvidenceClusterCount).toBe(3);
 
-    vi.mocked(useWorkbenchFindings).mockReturnValue(model);
+    vi.mocked(useWorkbenchFindings).mockReturnValue({
+      ...model,
+      previews: [
+        preview({
+          key: 'served-chip',
+          thumbUrl: 'http://example.test/served.jpg',
+        }),
+      ],
+    });
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
@@ -1434,6 +1457,13 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 2,
         nextAction: {
@@ -1861,6 +1891,12 @@ describe('WorkbenchFindingsPanel', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 42, total: 42 },
+        previews: [
+          preview({
+            key: 'served-chip',
+            thumbUrl: 'http://example.test/served.jpg',
+          }),
+        ],
         hasFindings: true,
         zeroEvidenceClusterCount: 3,
         topUnlabeledTruncated: true,
@@ -1873,5 +1909,60 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('At least 3 groups on this page missing face data')).toBeInTheDocument();
     expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
     expect(screen.getByText('42 unlabeled groups')).toBeInTheDocument();
+  });
+
+  // R7-01 / DATA-14 / rg-015: servedCount must be previews.length, not
+  // Math.max(previews.length, zeroEvidenceClusterCount). Empty chips + page
+  // zeros must take the elsewhere branch, not "on this page".
+  it('R7-01: empty previews announce elsewhere not page scope', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
+        previews: [],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 3,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('3 groups elsewhere are missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('At least 3 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
+  });
+
+  // R7-01: repairGatedCount(0, unlabeled) is server-wide. Do not feed that
+  // number into the truncated "on this page" branch when chips are showing.
+  it('R7-01: envelope repair with previews does not use the server-wide unlabeled total as on-this-page', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({
+        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 7, total: 8 },
+        previews: [
+          preview({
+            key: 'assignment-s1',
+            thumbUrl: 'http://example.test/face-1.jpg',
+            label: 'Ada',
+          }),
+          preview({
+            key: 'assignment-s2',
+            thumbUrl: 'http://example.test/face-2.jpg',
+            label: 'Bea',
+          }),
+        ],
+        hasFindings: true,
+        zeroEvidenceClusterCount: 0,
+        repairPending: true,
+        topUnlabeledTruncated: true,
+      }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    expect(screen.getByText('Some groups are missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups elsewhere are missing face data')).not.toBeInTheDocument();
   });
 });

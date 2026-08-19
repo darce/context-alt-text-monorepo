@@ -268,6 +268,12 @@ describe('ReviewQueue', () => {
     };
 
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], limit: 25, offset: 0 });
+    vi.mocked(fetchClusterMembers).mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    });
     vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
       clusters: [],
       limit: 20,
@@ -3601,6 +3607,12 @@ describe('ReviewQueue', () => {
   });
 
   it('R6-03: deferred accept POST renders COMMITTING through the ReviewQueue passthrough', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue({
+      members: [],
+      limit: 25,
+      total: 0,
+      truncated: false,
+    });
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [
         {

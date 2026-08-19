@@ -1470,7 +1470,10 @@ class SuggestionsControllerTest extends TestCase
             preg_match('/function get_roster_candidates.*?\$query = array\((.*?)\n\t\t\);/s', $src, $m),
             'roster-candidates $query block not found'
         );
-        $this->assertStringContainsString('self::ROSTER_CANDIDATES_PYTHON_WINDOW', $m[1]);
-        $this->assertStringNotContainsString('ROSTER_CANDIDATES_TOP_K_MAX', $m[1]);
+        $stripped = preg_replace('~/\*.*?\*/~s', '', $m[1]);
+        $stripped = preg_replace('~//.*$~m', '', (string) $stripped);
+        $this->assertIsString($stripped);
+        $this->assertStringContainsString('self::ROSTER_CANDIDATES_PYTHON_WINDOW', $stripped);
+        $this->assertStringNotContainsString('ROSTER_CANDIDATES_TOP_K_MAX', $stripped);
     }
 }

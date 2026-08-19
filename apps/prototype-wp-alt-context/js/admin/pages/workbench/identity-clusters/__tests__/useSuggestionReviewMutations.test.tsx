@@ -1702,7 +1702,48 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     ).toEqual(['cluster-other']);
   });
 
-  it('R1-24: bulkAccept name type drops every accepted group', async () => {
+  it('R8-03: matching accepted_count still refetches when the response has no ids', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    // Same cardinality as matched.length, different member set is possible.
+    // Without accepted ids the client cannot evict — refetch instead.
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
+  });
+
+  it('R1-24: bulkAccept name type does not guess which above-threshold row the server accepted', async () => {
     queryClient.setQueryData(
       namePendingKey,
       makeNamePage([
@@ -1715,6 +1756,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       topUnlabeledKey,
       makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
     );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
       accepted_count: 1,
       skipped_count: 0,
@@ -1730,12 +1772,11 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
-    ).toEqual(['name-low']);
+    ).toEqual(['name-1', 'name-low']);
     expect(
       queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
-    ).toEqual(['cluster-low']);
-    // Header count for NAME is the remaining name-pending rows.
-    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(1);
+    ).toEqual(['cluster-1', 'cluster-low']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
   });
 
   it('R5-01: a 200 with accepted_count 0 evicts nothing', async () => {
@@ -1847,7 +1888,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     });
   });
 
-  it('R1-24: bulkAccept name type decrements the header count', async () => {
+  it('R1-24: bulkAccept name type invalidates the header source instead of locally decrementing', async () => {
     queryClient.setQueryData(
       namePendingKey,
       makeNamePage([
@@ -1855,6 +1896,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
         { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
       ]),
     );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
       accepted_count: 2,
       skipped_count: 0,
@@ -1868,7 +1910,8 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       });
     });
 
-    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(0);
+    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(2);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
   });
 
   it('R1-24: bulkAccept assignment type is scoped out (no silent drop)', async () => {

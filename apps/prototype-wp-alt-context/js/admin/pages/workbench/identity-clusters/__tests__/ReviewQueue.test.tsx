@@ -2680,7 +2680,8 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByText('1 group missing face data')).toBeInTheDocument();
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(within(repair).getByText('1 group missing face data')).toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
     const resync = screen.getByRole('button', { name: 'Resync' });
     expect(resync.closest('[role="status"]')).toBeNull();
@@ -2693,7 +2694,7 @@ describe('ReviewQueue', () => {
       expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
     });
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
-    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
+    expect(within(screen.getByTestId('acx-review-queue-repair')).getByText('1 group missing face data')).toBeInTheDocument();
   });
 
   it('R2-12: repair_pending with empty served page mounts Resync and does not drain-only', async () => {

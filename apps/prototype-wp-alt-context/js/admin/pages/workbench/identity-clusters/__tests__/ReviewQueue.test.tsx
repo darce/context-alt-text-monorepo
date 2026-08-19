@@ -637,19 +637,28 @@ describe('ReviewQueue', () => {
     });
     const onKindChange = vi.fn();
     const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
     const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
-    const Harness = makeQueueHarness({ onKindChange, onBandChange });
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
     render(withQueueProviders(queryClient, <Harness />));
     await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
     await user.click(screen.getByRole('button', { name: 'Close matches' }));
     expect(onKindChange).toHaveBeenCalledTimes(1);
     expect(onKindChange).toHaveBeenCalledWith('assignment');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
     expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
-    expect(reduceSpy.mock.calls.every(([, action]) => action.type !== QUEUE_ACTION.SET_INDEX)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
     expect(onBandChange).not.toHaveBeenCalled();
     reduceSpy.mockRestore();
   });
@@ -672,19 +681,28 @@ describe('ReviewQueue', () => {
     });
     const onKindChange = vi.fn();
     const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
     const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
-    const Harness = makeQueueHarness({ onKindChange, onBandChange });
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
     const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
     render(withQueueProviders(queryClient, <Harness />));
     await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
     await user.click(screen.getByRole('button', { name: 'Strong matches' }));
     expect(onBandChange).toHaveBeenCalledTimes(1);
     expect(onBandChange).toHaveBeenCalledWith('strong');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
     expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
-    expect(reduceSpy.mock.calls.every(([, action]) => action.type !== QUEUE_ACTION.SET_INDEX)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
     expect(onKindChange).not.toHaveBeenCalled();
     reduceSpy.mockRestore();
   });

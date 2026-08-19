@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -25,9 +26,11 @@ import {
   listRosterEntries,
   type RosterClusterCommitResponse,
 } from '../../../../api/rosterApi';
+import { resetPendingSearchWritesForTests } from '../../../../hooks/pendingSearchWrites';
 import {
   QUEUE_ACTION,
   type QueueAction,
+  useWorkbenchFilters,
 } from '../../../../hooks/useWorkbenchFilters';
 import type {
   ReviewQueueBandParam,
@@ -705,6 +708,89 @@ describe('ReviewQueue', () => {
     expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
     expect(onKindChange).not.toHaveBeenCalled();
     reduceSpy.mockRestore();
+  });
+
+  it('after an abandoned rq write, chip aria-pressed matches the URL (UXW2-1-R4-04)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const UrlOwnedQueue = (): React.JSX.Element => {
+      const { queueState, dispatchQueue, handleSearchChange } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <div>
+          <ReviewQueue
+            index={queueState.index}
+            kind={queueState.kind}
+            band={queueState.band}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            onClampIndex={(next) => dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: next })}
+            onStepIndex={(delta, length) =>
+              dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta, length })
+            }
+            onKindChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: next })}
+            onBandChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: next })}
+            onClearFilters={() => dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS })}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-abandon
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleSearchChange({ target: { value: 'cat' } } as React.ChangeEvent<HTMLInputElement>);
+            }}
+          >
+            unrelated-search
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={withQueueProviders(queryClient, <UrlOwnedQueue />)} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Is this/);
+    act(() => {
+      screen.getByText('overlay-abandon').click();
+    });
+    act(() => {
+      screen.getByText('unrelated-search').click();
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    const assignmentPressed =
+      screen.getByRole('button', { name: 'Close matches' }).getAttribute('aria-pressed') === 'true';
+    expect(loc.includes('rq=assignment')).toBe(assignmentPressed);
+    expect(assignmentPressed).toBe(false);
   });
 
   it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {

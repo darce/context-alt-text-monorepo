@@ -209,8 +209,8 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
         $this->assertStringNotContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
         $this->assertStringContainsString('WHEN p.name IS NOT NULL AND p.name <> \'\' THEN p.name', $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%'", $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
         $this->assertStringContainsString('ELSE NULL', $sql);
     }
 
@@ -231,7 +231,7 @@ class IdentityMembersRepositoryTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringNotContainsString('COALESCE(p.name, c.label)', $sql);
         $this->assertStringContainsString('THEN p.name', $sql);
-        $this->assertStringContainsString("c.label LIKE 'cluster-%%' OR c.label LIKE 'cluster\\_%%'", $sql);
+        $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%' OR LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
     }
 
     public function testGetCuratedMembersForTenantIndexesRowsByIdentityUuid(): void

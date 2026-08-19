@@ -119,13 +119,51 @@ class ClusterCurationWriterTest extends TestCase
     {
         global $wpdb;
         $wpdb->defaultQueryResult = 1;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-reset',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Tory',
+                'person_id' => 4,
+                'is_user_confirmed' => 1,
+                'local_revision' => 3,
+                'snapshot_version' => 14,
+                'curation_state' => 'confirmed',
+            ],
+        ];
 
         $result = $this->writer->reset_curation('cluster-reset', self::currentTenantId());
 
         $this->assertSame(1, $result);
-        $joined = implode("\n", $wpdb->queries);
-        $this->assertStringContainsString('label = NULL', $joined);
-        $this->assertStringContainsString('is_user_confirmed = 0', $joined);
-        $this->assertStringContainsString('local_revision = local_revision + 1', $joined);
+        $updates = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'UPDATE')
+        ));
+        $this->assertCount(1, $updates, 'reset_curation must be a single UPDATE');
+        $this->assertStringContainsString('label = NULL', $updates[0]);
+        $this->assertStringContainsString('person_id = NULL', $updates[0]);
+        $this->assertStringContainsString('is_user_confirmed = 0', $updates[0]);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $updates[0]);
+        $this->assertStringContainsString('label_cleared_revision = snapshot_version', $updates[0]);
+    }
+
+    public function testResetCurationReturnsZeroWhenNoRowMatches(): void
+    {
+        global $wpdb;
+        $wpdb->tableRows['wp_acx_clusters'] = [];
+
+        $result = $this->writer->reset_curation('missing-cluster', self::currentTenantId());
+
+        $this->assertSame(0, $result);
+    }
+
+    public function testResetCurationReturnsFalseOnQueryFailure(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = false;
+
+        $result = $this->writer->reset_curation('cluster-reset', self::currentTenantId());
+
+        $this->assertFalse($result);
     }
 }

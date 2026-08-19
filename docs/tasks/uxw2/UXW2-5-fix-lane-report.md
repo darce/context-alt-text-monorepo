@@ -42,19 +42,6 @@ Close remaining R2 + R3. TDD. Contract SSOT committed. PHP people-grain window p
 | R3-04 | `fix(api): UXW2-5-R3-04 uncommittable rows rank after committable` | `testGetRosterCandidatesRanksUncommittableAfterCommittableForTopK` | `Failed asserting that two arrays are identical.` `- 0 => 1,` `- 1 => 2,` `+ 0 => null,` `+ 1 => 1,` |
 | R3-05 | `fix(tests): UXW2-5-R3-05 empty-probe wire case` | `test_roster_candidates_empty_probe_when_all_reps_fail_quality_gate` | mutant empty-probe `quality_flag=ok`: `AssertionError: assert 'ok' == 'low_quality'` |
 
-## This-round SHAs (lane SHA, non-portable)
-
-| subject | lane SHA (non-portable) |
-|---|---|
-| `fix(contracts): UXW2-5-R2-07 single roster-candidates contract section` | `cfef11922c9a1d94269b8b14b446a9960eb269cf` |
-| `fix(tests): UXW2-5-R2-02 UXW2-5-R3-02 collapse order and people-grain window` | `76ce21837cac522ee6d2f00880dae4aac493bff2` |
-| `fix(api): UXW2-5-R2-10 UXW2-5-R3-01 invalid_top_k from route callback` | `59babd55330591ec27e4eedd064d4a3e5976661a` |
-| `fix(api): UXW2-5-R3-03 python window constant not forwarded verbatim` | `74af4dc7c673fe7226b92923f6f6e57462a84bdd` |
-| `fix(api): UXW2-5-R3-04 uncommittable rows rank after committable` | `0dd7c7fe7ec763564b8a73a37c8110e540473be3` |
-| `fix(tests): UXW2-5-R3-05 empty-probe wire case` | `bd926e658385c64b227eef3b0429b0de7044db51` |
-
-Earlier-round code SHAs used above (lane SHA, non-portable): `40367066fcb93392fdecd5f6a2a9a153c22bda6b` `b528e9567397cc1901960268d89893dc51f3a84e` `9e324879f5d5b3b3ca0fc6d6d54c21dfcbc5a450` `e57b138b9a2aa68d8e7375bc0717970af5a3f2ed` `a96ff5466ae785494fc8f5464b9759f2e934aa40` `f3e46ed901df9cebbd82a1e3cee5a260a187b620` `46afcfd92ef059f98bfe39f9d73bfaffaa8b3cf6` `8953ee64447f2838256d37a7933ab409a7e9d335` `1cd5835ee6aa48f64a739edb736551d0c00c84a8`
-
 ## Decisions (this round)
 
 - One roster-candidates contract section: envelope `quality_flag` + `probe_face_count` + `reference_face_count`; people-grain collapse; PHP window coupled to `MAX_ROSTER_CANDIDATES_TOP_K`; uncommittable rows after committable; low_quality band cap.

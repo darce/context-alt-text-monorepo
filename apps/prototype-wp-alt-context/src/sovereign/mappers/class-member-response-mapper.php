@@ -41,6 +41,7 @@ class MemberResponseMapper {
 				'cluster_label' => is_string( $identity['cluster_label'] ?? null ) ? $identity['cluster_label'] : '',
 			)
 		);
+		$identity['label_state'] = $this->resolve_emitted_label_state( $identity );
 
 		return $identity;
 	}
@@ -96,6 +97,7 @@ class MemberResponseMapper {
 			'media_url'     => $source['media_url'],
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
 			'cluster_label' => $cluster_label,
+			'label_state' => $this->resolve_emitted_label_state( $member_row ),
 			'is_auto_label' => $is_auto_label,
 			'is_pinned' => $is_pinned,
 			'detected_at' => null,

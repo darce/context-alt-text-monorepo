@@ -334,7 +334,11 @@ describe('NameFaceControl distinct confirm names (UXW2-3-R1-15)', () => {
 describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
   it('exposes aria-controls and toggles aria-expanded on Escape / ArrowDown', async () => {
     const onCancel = vi.fn();
-    renderControl({ onCancel });
+    renderControl({
+      options: [{ ...person(1, 'Ada Lovelace'), suggestion_id: 's-ada' }],
+      onRejectSuggestion: vi.fn(),
+      onCancel,
+    });
     const user = userEvent.setup();
     const input = screen.getByRole('combobox', { name: 'Name this person' });
     const listbox = screen.getByRole('listbox');
@@ -342,8 +346,10 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
     expect(input).toHaveAttribute('aria-controls', listbox.id);
     expect(input).toHaveAttribute('aria-expanded', 'true');
     expect(listbox).toHaveAttribute('aria-labelledby', `${listbox.id}-label`);
+    const reject = screen.getByRole('button', { name: 'Reject Ada Lovelace' });
+    expect(reject).toBeInTheDocument();
     for (const option of screen.getAllByRole('option')) {
-      expect(option.querySelector('button')).toBeNull();
+      expect(option).not.toContainElement(reject);
     }
 
     input.focus();
@@ -355,6 +361,39 @@ describe('NameFaceControl APG overlay (UXW2-3-R2-03)', () => {
     await user.keyboard('{ArrowDown}');
     expect(input).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('listbox children are presentational rows and the reject is out of Tab order (UXW2-3-R3-04)', () => {
+    renderControl({
+      options: [{ ...person(1, 'Ada Lovelace'), suggestion_id: 's-ada' }],
+      onRejectSuggestion: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const listbox = screen.getByRole('listbox');
+    for (const child of Array.from(listbox.children)) {
+      if (!child.classList.contains('acx-name-face__suggestions-header')) {
+        expect(child).toHaveAttribute('role', 'presentation');
+      }
+    }
+    expect(screen.getByRole('button', { name: 'Reject Ada Lovelace' })).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('first Escape closes the overlay, second Escape cancels the edit (UXW2-3-R3-14)', async () => {
+    const onCancel = vi.fn();
+    renderControl({
+      options: [{ ...person(1, 'Ada Lovelace'), suggestion_id: 's-ada' }],
+      onRejectSuggestion: vi.fn(),
+      onCancel,
+    });
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+    input.focus();
+    await user.keyboard('{Escape}');
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(input).not.toHaveAttribute('aria-controls');
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it('reject is reachable via keyboard Delete on the active option', async () => {

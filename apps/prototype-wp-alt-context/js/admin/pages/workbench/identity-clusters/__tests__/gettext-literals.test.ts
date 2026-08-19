@@ -65,7 +65,7 @@ describe('gettext first arguments are literals (UXW2-3-R1-10 / R2-06)', () => {
 
   it('fails if useClusterSaveAction reverts the missing-person string', () => {
     const source = readFileSync(path.join(root, 'useClusterSaveAction.ts'), 'utf8');
-    expect(source).toContain("Cannot save this name: missing person.");
+    expect(source).toContain('Cannot save this name: missing person.');
     expect(source).not.toMatch(/Cannot save this name: missing cluster/);
   });
 });

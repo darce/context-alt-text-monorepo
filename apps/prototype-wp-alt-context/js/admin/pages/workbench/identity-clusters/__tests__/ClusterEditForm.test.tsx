@@ -1,7 +1,24 @@
+import React from 'react';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
 import { selectClusterSuggestions } from '../useClusterSuggestions';
+
+const nameFacePropsRef = vi.hoisted(() => ({
+  current: null as null | { ariaLabel?: string; visibleLabel?: string },
+}));
+
+vi.mock('../NameFaceControl', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../NameFaceControl')>();
+  function NameFaceControlSpy(props: React.ComponentProps<typeof actual.NameFaceControl>) {
+    nameFacePropsRef.current = props;
+    return actual.NameFaceControl(props);
+  }
+  return {
+    ...actual,
+    NameFaceControl: NameFaceControlSpy,
+  };
+});
 
 describe('ClusterEditForm', () => {
   const defaultProps = {
@@ -561,5 +578,17 @@ describe('ClusterEditForm', () => {
         'sug-confirm-alice',
       ),
     );
+  });
+
+  it('names the person-name input from the visible label only (UXW2-3-R6-08)', () => {
+    render(<ClusterEditForm {...defaultProps} />);
+    const input = screen.getByRole('combobox', { name: 'Person name' });
+    expect(input).toHaveAccessibleName('Person name');
+    expect(input).not.toHaveAttribute('aria-label');
+    const visible = document.querySelector(`label[for="${input.id}"]`);
+    expect(visible).not.toBeNull();
+    expect(visible).toHaveTextContent('Person name');
+    expect(nameFacePropsRef.current?.ariaLabel).toBeUndefined();
+    expect(nameFacePropsRef.current?.visibleLabel).toBe('Person name');
   });
 });

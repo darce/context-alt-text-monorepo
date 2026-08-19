@@ -35,6 +35,7 @@ class LifecycleManager {
 	private const OPTION_SCHEMA_FINGERPRINT = 'acx_schema_fingerprint';
 	private const OPTION_HEAL_COMPLETE = 'acx_label_heal_complete';
 	private const OPTION_HEAL_ATTEMPTS = 'acx_label_heal_attempts';
+	private const OPTION_HEAL_BLOCKED_REASON = 'acx_label_heal_blocked_reason';
 	private const MAX_HEAL_ATTEMPTS_PER_LOAD = 1;
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
@@ -160,8 +161,15 @@ class LifecycleManager {
 			return;
 		}
 
-		echo '<div class="notice notice-warning"><p>'
-			. esc_html__( 'Alt Context is still repairing unlabeled clusters. The heal will retry on the next page load.', 'alt-context' )
+		$reason = (string) get_option( self::OPTION_HEAL_BLOCKED_REASON, '' );
+		if ( 'tenant_unresolved' === $reason ) {
+			$message = __( 'Alt Context cannot repair unlabeled clusters because tenant identity is unavailable. Configure the tenant, then run `wp acx bind-unbound-labels`.', 'alt-context' );
+		} else {
+			$message = __( 'Alt Context is still repairing unlabeled clusters. If this persists, run `wp acx bind-unbound-labels`.', 'alt-context' );
+		}
+
+		echo '<div class="notice notice-warning" role="status"><p>'
+			. esc_html( $message )
 			. '</p></div>';
 	}
 
@@ -172,19 +180,23 @@ class LifecycleManager {
 
 		$attempts = (int) get_option( self::OPTION_HEAL_ATTEMPTS, 0 );
 		if ( $attempts >= self::MAX_HEAL_ATTEMPTS_PER_LOAD ) {
-			// Bounded per load (rg-007). A later request retries from zero.
+			// Bounded per load (rg-007). A later request must reset the counter first.
 			delete_option( self::OPTION_HEAL_ATTEMPTS );
+			return;
 		}
 
-		update_option( self::OPTION_HEAL_ATTEMPTS, 1 );
+		update_option( self::OPTION_HEAL_ATTEMPTS, $attempts + 1 );
 		$this->heal_unbound_human_labels();
 	}
 
 	private function heal_unbound_human_labels(): void {
 		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
 		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			update_option( self::OPTION_HEAL_BLOCKED_REASON, 'tenant_unresolved' );
 			return;
 		}
+
+		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
 
 		$result = $this->run_label_heal( $tenant_id );
 		if ( ! empty( $result['stalled'] ) ) {

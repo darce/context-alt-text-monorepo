@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMergeService;
+use AltContext\Sovereign\Repositories\ClusterProjectionWriter;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
 use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
@@ -130,6 +131,72 @@ class ClusterMergeServiceTest extends TestCase
 
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'revert_merge_cluster'", $outboxInsert);
+    }
+
+    public function testRevertMergeCreateLocalClusterStoresDistinctPersonNameOnCollision(): void
+    {
+        global $wpdb;
+
+        $repository = new class() extends ClusterMutationsRepositorySpy {
+            public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
+            {
+                $this->createdLocalClusterId = $cluster_uuid;
+                return (new ClusterProjectionWriter('wp_acx_clusters'))
+                    ->create_local_cluster($tenant_id, $cluster_uuid, $label, $identity_count);
+            }
+        };
+        $host = new ClusterMutationsController(
+            $repository,
+            $this->syncStateRepository,
+            $this->membersRepository,
+            null,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+        $service = new ClusterMergeService(
+            $host,
+            $repository,
+            $this->membersRepository,
+            $this->syncStateRepository
+        );
+
+        $wpdb->insert_id = 41;
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 3,
+                'person_uuid' => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'name' => 'Ada Lovelace',
+                'normalized_name' => \AltContext\Api\Services\PersonResolutionService::normalize_name('Ada Lovelace'),
+                'tenant_id' => self::currentTenantId(),
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-other',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Ada Lovelace',
+                'person_id' => 3,
+            ],
+        ];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/revert-merge');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('moved_identity_ids', ['identity-77']);
+        $request->set_param('source_label', 'Ada Lovelace');
+
+        $response = $service->revert_merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $created = null;
+        foreach ($wpdb->tableRows['wp_acx_clusters'] as $row) {
+            if (($row['cluster_uuid'] ?? '') === $repository->createdLocalClusterId) {
+                $created = $row;
+                break;
+            }
+        }
+        $this->assertIsArray($created);
+        $this->assertSame('Ada Lovelace (2)', $created['label']);
+        $this->assertArrayHasKey('person_id', $created);
+        $this->assertSame(41, (int) $created['person_id']);
     }
 
     public function testMergeClusterWithTargetLabelBindsPerson(): void

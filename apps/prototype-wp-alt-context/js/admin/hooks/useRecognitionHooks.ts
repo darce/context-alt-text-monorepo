@@ -114,6 +114,8 @@ export const useClusterIdentities = (options?: UseMutationOptions<ClusterRespons
     ...options,
   });
 
+/** Cooldown-gate membership: recognitionCooldownGate.test mounts this hook
+ *  as one of the six gated pollers. Not a roster UI caller. */
 export const useRecognitionClusters = (params: ClusterListParams = {}) =>
   useQuery<ClusterListResponse>({
     queryKey: queryKeys.clusters.list(params),

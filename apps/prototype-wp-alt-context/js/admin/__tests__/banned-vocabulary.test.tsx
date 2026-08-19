@@ -5,7 +5,7 @@
  * missing from PAGE_SWEEP fails CI. Representative fixtures only — if jargon
  * is injected into a page module under those fixtures, this test fails.
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -779,5 +779,30 @@ describe('banned vocabulary across js/admin pages', () => {
     expect(surface.toLowerCase()).not.toContain('machine-derived');
     expect(surface.toLowerCase()).not.toContain('disposed state');
     expect(surface).not.toMatch(UUID_REGEX);
+  });
+
+  it('js/admin production source has no cluster-jargon toasts or bulk merge/dismiss', () => {
+    const adminDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') {
+            continue;
+          }
+          walk(full);
+          continue;
+        }
+        if (/\.(ts|tsx)$/.test(entry.name)) {
+          files.push(full);
+        }
+      }
+    };
+    walk(adminDir);
+    const joined = files.map((file) => readFileSync(file, 'utf8')).join('\n');
+    expect(joined).not.toMatch(/for cluster %s/);
+    expect(joined).not.toMatch(/bulkMergeMutation|bulkDismissMutation/);
+    expect(joined).not.toMatch(/Clusters merged successfully|Clusters dismissed/);
   });
 });

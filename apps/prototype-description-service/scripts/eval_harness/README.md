@@ -78,7 +78,9 @@ uv run --extra dev python -m scripts.eval_harness.cli score \
 
 Exit **2** is argparse or unreadable operator input (e.g. missing/unreadable `--run-record` → `score: run record not found/unreadable: <path-text>`, `EVAL_EXIT_USAGE`). A `ManifestError` on a missing MANIFEST still exits **1** — that class is not usage.
 
-`<path-text>` is UTF-8 filename bytes when the path is decodable; otherwise `undecodable:` plus a `\xHH` (backslashreplace) form so a C-locale argv path is not emitted as `\udc..` surrogates.
+`<path-text>` is UTF-8 filename bytes when the path is decodable. A decodable name that starts with `undecodable:` (or with one or more backslashes then that marker) is emitted with one extra leading backslash so it cannot collide with the fallback. Otherwise `undecodable:` plus a `\xHH` (backslashreplace) form, with literal backslashes doubled first so the escape is invertible. A C-locale argv path is not emitted as `\udc..` surrogates.
+
+Round-trip: if the text starts with `undecodable:` (no leading backslash), strip the prefix and decode C-style backslash escapes (`\\` → one backslash, `\xHH` → one byte, including `\b` as backspace) to recover the original bytes. If it starts with one or more backslashes followed by `undecodable:`, strip exactly one leading backslash; the rest is the UTF-8 name. Otherwise the text is the UTF-8 name as-is.
 
 Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.
 

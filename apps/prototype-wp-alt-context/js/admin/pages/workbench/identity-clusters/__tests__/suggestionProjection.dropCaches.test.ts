@@ -32,7 +32,7 @@ const seed = (queryClient: QueryClient): void => {
   queryClient.setQueryData<SuggestionReviewPage>(reviewPageKey, {
     items: [
       item({ suggestionId: 'sugg-target', clusterId: 'cluster-1' }),
-      item({ suggestionId: 'sugg-source', clusterId: 'other', sourceClusterId: 'cluster-1' }),
+      item({ suggestionId: 'sugg-source', clusterId: 'other' }),
       item({ suggestionId: 'sugg-sibling', clusterId: 'cluster-other' }),
     ],
     dataSource: DATA_SOURCE.LOCAL_PROJECTION,
@@ -108,7 +108,7 @@ const seed = (queryClient: QueryClient): void => {
 };
 
 describe('dropClusterFromReviewCaches', () => {
-  it('R1-26: label drop keeps assignment rows whose suggested target is the labelled group', () => {
+  it('R1-26: label drop removes assignment rows whose suggested target is the labelled group', () => {
     const queryClient = new QueryClient();
     seed(queryClient);
 
@@ -116,7 +116,7 @@ describe('dropClusterFromReviewCaches', () => {
 
     expect(
       queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((row) => row.suggestionId),
-    ).toEqual(['sugg-target', 'sugg-sibling']);
+    ).toEqual(['sugg-source', 'sugg-sibling']);
   });
 
   it('R1-23: label drop keeps a live merge suggestion that names the labelled group', () => {
@@ -159,6 +159,6 @@ describe('dropClusterFromReviewCaches', () => {
     ).toEqual([]);
     expect(
       queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((row) => row.suggestionId),
-    ).toEqual(['sugg-sibling']);
+    ).toEqual(['sugg-source', 'sugg-sibling']);
   });
 });

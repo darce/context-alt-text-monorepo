@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assignmentRowTouchesDroppedGroup,
+  fromPendingRow,
+  REVIEW_DROP_MODE,
+} from '../../../pages/workbench/identity-clusters/suggestionProjection';
+import {
   mapPendingMergeSuggestion,
   mapPendingSuggestions,
 } from '../identitySuggestionMappers';
@@ -66,6 +71,24 @@ describe('mapPendingSuggestions', () => {
     expect(suggestion.representative_attachment_url).toBeNull();
     expect(suggestion.identity_attachment_url).not.toBeUndefined();
     expect(suggestion.representative_attachment_url).not.toBeUndefined();
+  });
+
+  it('R1-26: assignment drop key is the mapped suggested cluster id from a raw payload', () => {
+    const mapped = mapPendingSuggestions(
+      suggestionEnvelope({
+        suggested_cluster_id: 'cluster-target',
+        identity_cluster_id: 'cluster-src',
+      }),
+    );
+    const projected = fromPendingRow(mapped.suggestions[0]);
+
+    expect(projected.clusterId).toBe('cluster-target');
+    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-target', REVIEW_DROP_MODE.LABEL)).toBe(
+      true,
+    );
+    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-src', REVIEW_DROP_MODE.LABEL)).toBe(
+      false,
+    );
   });
 });
 

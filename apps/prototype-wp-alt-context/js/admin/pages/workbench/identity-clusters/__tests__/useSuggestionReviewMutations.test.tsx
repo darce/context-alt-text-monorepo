@@ -1407,7 +1407,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       reviewPageKey,
       makePage([
         makeItem({ suggestionId: 'sugg-x', clusterId: 'cluster-1' }),
-        makeItem({ suggestionId: 'sugg-source', clusterId: 'elsewhere', sourceClusterId: 'cluster-1' }),
+        makeItem({ suggestionId: 'sugg-source', clusterId: 'elsewhere' }),
         makeItem({ suggestionId: 'sugg-y', clusterId: 'cluster-other' }),
       ]),
     );
@@ -1446,7 +1446,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
 
     expect(
       queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
-    ).toEqual(['sugg-x', 'sugg-y']);
+    ).toEqual(['sugg-source', 'sugg-y']);
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['name-other']);
@@ -1524,7 +1524,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(fetchTop).not.toHaveBeenCalled();
     expect(
       queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
-    ).toEqual(['sugg-x', 'sugg-y']);
+    ).toEqual(['sugg-y']);
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['name-other']);

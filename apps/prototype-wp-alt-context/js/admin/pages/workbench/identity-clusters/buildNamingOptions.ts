@@ -41,7 +41,7 @@ export interface ClusterNamingEntry {
 export interface BuildNamingOptionsParams {
   readonly rosterEntries: readonly RosterNamingEntry[];
   readonly labelMatches: readonly ClusterNamingEntry[];
-  /** Case-insensitive prefix filter applied before slice. Empty = no filter. */
+  /** Case-insensitive substring filter applied before slice. Empty = no filter. */
   readonly filter?: string;
   /** Max options after filter. Defaults to NAMING_OPTIONS_LIMIT. Pass null for no limit. */
   readonly limit?: number | null;
@@ -118,11 +118,48 @@ export const uniqueClusterCollisionTarget = (collisions: readonly NamingOption[]
   return clusters[0] ?? null;
 };
 
-const matchesPrefix = (label: string, filterLower: string): boolean => {
+const matchesFilter = (label: string, filterLower: string): boolean => {
   if (!filterLower) {
     return true;
   }
-  return label.toLowerCase().startsWith(filterLower);
+  return label.toLowerCase().includes(filterLower);
+};
+
+type FilterRank = 0 | 1 | 2;
+
+/** Exact (0), then prefix (1), then remaining substring (2). */
+const filterRank = (label: string, filterLower: string): FilterRank => {
+  const lower = label.toLowerCase();
+  if (lower === filterLower) {
+    return 0;
+  }
+  if (lower.startsWith(filterLower)) {
+    return 1;
+  }
+  return 2;
+};
+
+const rankFilteredOptions = (
+  options: readonly NamingOption[],
+  filterLower: string,
+): NamingOption[] => {
+  if (!filterLower) {
+    return [...options];
+  }
+  const exact: NamingOption[] = [];
+  const prefix: NamingOption[] = [];
+  const substring: NamingOption[] = [];
+  for (const option of options) {
+    const rank = filterRank(option.label, filterLower);
+    if (rank === 0) {
+      exact.push(option);
+    } else if (rank === 1) {
+      prefix.push(option);
+    } else {
+      substring.push(option);
+    }
+  }
+  return [...exact, ...prefix, ...substring];
 };
 
 /**
@@ -131,7 +168,8 @@ const matchesPrefix = (label: string, filterLower: string): boolean => {
  * - Cluster candidates apply isHumanLabeledTarget so auto `cluster-*` labels never appear (BR-17).
  * - collisionsByLabel registers every truthy cluster label (BR-42 raw equality), including machine shapes.
  * - Persons listed before clusters; case-insensitive dedupe prefers the person entry.
- * - Filter-before-slice: prefix-filter then truncate.
+ * - Filter-before-slice: case-insensitive substring filter, then rank exact /
+ *   prefix / remaining substring (stable within each tier), then truncate.
  */
 export const buildNamingOptions = ({
   rosterEntries,
@@ -165,7 +203,7 @@ export const buildNamingOptions = ({
       source: 'person',
     };
     addCollision(option);
-    if (matchesPrefix(name, filterLower)) {
+    if (matchesFilter(name, filterLower)) {
       personCandidates.push(option);
     }
   }
@@ -191,7 +229,7 @@ export const buildNamingOptions = ({
     if (!isHumanLabeledTarget(label)) {
       continue;
     }
-    if (matchesPrefix(label, filterLower)) {
+    if (matchesFilter(label, filterLower)) {
       clusterCandidates.push(option);
     }
   }
@@ -218,7 +256,8 @@ export const buildNamingOptions = ({
     deduped.push(option);
   }
 
-  const options = limit === null ? deduped : deduped.slice(0, limit);
+  const ranked = rankFilteredOptions(deduped, filterLower);
+  const options = limit === null ? ranked : ranked.slice(0, limit);
 
   return {
     options,

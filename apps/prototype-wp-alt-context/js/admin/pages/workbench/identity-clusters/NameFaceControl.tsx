@@ -152,6 +152,11 @@ const matchingOptionsFor = (
 interface NameFaceControlProps {
   /** Naming options (roster persons ∪ labelled groups ∪ similarity suggestions). */
   options: readonly ComboboxOption[];
+  /**
+   * Create-vs-bind candidate set. Defaults to `options`. Pass the unfiltered,
+   * untruncated union so resolution does not inherit the displayed slice.
+   */
+  resolutionOptions?: readonly ComboboxOption[];
   /** Current input value (controlled). */
   value: string;
   onValueChange: (value: string) => void;
@@ -204,6 +209,7 @@ interface NameFaceControlProps {
 
 export const NameFaceControl = ({
   options,
+  resolutionOptions = options,
   value,
   onValueChange,
   onCommit,
@@ -276,8 +282,8 @@ export const NameFaceControl = ({
   }, [matchTotal, isPending, isLoading]);
 
   const commitResolution = React.useMemo(
-    () => resolveNameFaceInput(options, value),
-    [options, value],
+    () => resolveNameFaceInput(resolutionOptions, value),
+    [resolutionOptions, value],
   );
 
   const commitButtonLabel = React.useMemo(() => {
@@ -290,7 +296,7 @@ export const NameFaceControl = ({
       listOpen && !isLoading && activeIndex >= 0 ? displayedOptions[activeIndex] : undefined;
     const resolution =
       previewCommit && activeOption
-        ? resolveNameFaceInput(options, activeOption.label)
+        ? resolveNameFaceInput(resolutionOptions, activeOption.label)
         : commitResolution;
     if (previewCommit && resolution?.kind === 'roster') {
       return sprintf(
@@ -317,12 +323,12 @@ export const NameFaceControl = ({
     isLoading,
     activeIndex,
     displayedOptions,
-    options,
+    resolutionOptions,
   ]);
 
   const ambiguousMatches = React.useMemo(
-    () => (value.trim() ? personMatchesFor(options, value) : []),
-    [options, value],
+    () => (value.trim() ? personMatchesFor(resolutionOptions, value) : []),
+    [resolutionOptions, value],
   );
   const isAmbiguous = ambiguousMatches.length > 1 && chosenOptionValue === null;
 
@@ -351,13 +357,13 @@ export const NameFaceControl = ({
       if (isPending || isLoading) {
         return;
       }
-      const resolution = resolveNameFaceInput(options, raw);
+      const resolution = resolveNameFaceInput(resolutionOptions, raw);
       if (!resolution || resolution.kind === 'ambiguous') {
         return;
       }
       onCommit(resolution);
     },
-    [options, onCommit, isPending, isLoading],
+    [resolutionOptions, onCommit, isPending, isLoading],
   );
 
   const confirmDisplayedOption = React.useCallback(

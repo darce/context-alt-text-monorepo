@@ -1183,6 +1183,85 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
+  it('two rapid Rename anyway clicks fire the mutation once (UXW2-3-R3-06)', async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    vi.mocked(updateClusterLabel).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    renderPanel();
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
+    const renameAnyway = await screen.findByRole('button', { name: 'Rename anyway' });
+    await act(async () => {
+      fireEvent.click(renameAnyway);
+      fireEvent.click(renameAnyway);
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 80);
+      });
+    });
+    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    release?.();
+  });
+
+  it('a second checkmark during an in-flight write is ignored (UXW2-3-R3-21)', async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    vi.mocked(updateClusterLabel).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    renderPanel();
+    await typePanelName('Pat Rivera');
+    const input = screen.getByRole('combobox', { name: 'Name' });
+    const option = screen.queryByRole('option', { name: /confirm match/i });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      if (option) {
+        fireEvent.click(option);
+      }
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 80);
+      });
+    });
+    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    release?.();
+  });
+
+  it('a second option selection during an in-flight write is ignored (UXW2-3-R3-21)', async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    vi.mocked(updateClusterLabel).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    renderPanel();
+    await typePanelName('Pat Rivera');
+    const input = screen.getByRole('combobox', { name: 'Name' });
+    const option = screen.queryByRole('option', { name: /confirm match/i });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      if (option) {
+        fireEvent.click(option);
+        fireEvent.click(option);
+      }
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 80);
+      });
+    });
+    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    release?.();
+  });
+
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
     let release: (() => void) | undefined;
     vi.mocked(listRecognitionClusters).mockImplementation(

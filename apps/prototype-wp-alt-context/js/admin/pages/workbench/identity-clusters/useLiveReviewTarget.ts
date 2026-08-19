@@ -148,7 +148,7 @@ export const useLiveReviewTarget = (
         return;
       }
       handledActionRef.current = 'rebind';
-      announce?.(__(LIVE_TARGET_REBIND_ANNOUNCE, 'alt-context'));
+      announce?.(__('This group was merged — switched to the surviving group.', 'alt-context'));
       rebind(survivorId);
       return;
     }
@@ -157,7 +157,7 @@ export const useLiveReviewTarget = (
       return;
     }
     handledActionRef.current = 'close';
-    announce?.(__(LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'));
+    announce?.(__('This review target is no longer available.', 'alt-context'));
     close?.();
   }, [retired, openClusterId, survivorId]);
 

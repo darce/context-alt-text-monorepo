@@ -16,17 +16,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
 import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
 import { namingOptionValue } from './buildNamingOptions';
-import {
-  MODEL_OUTPUT_DISCLOSURE,
-  PERSON_COMMIT_COMBOBOX_ARIA,
-  PERSON_COMMIT_COMMITTING_COPY,
-  PERSON_COMMIT_CONFIRM_COPY,
-  PERSON_COMMIT_FAILURE_COPY,
-  PERSON_COMMIT_PLACEHOLDER,
-  PERSON_COMMIT_SUCCESS_COPY,
-  VIEW_IN_ROSTER_COPY,
-  viewInRosterHref,
-} from './personCommitCopy';
+import { viewInRosterHref } from './personCommitCopy';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import {
   PERSON_COMMIT_PHASE,
@@ -146,10 +136,10 @@ export const PersonCommitControl = ({
         data-person-commit-primary={isPrimary ? 'true' : 'false'}
       >
         <p className="acx-person-commit__success-message" role="status">
-          {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+          {__('Name saved.', 'alt-context')}
         </p>
         <a className="acx-person-commit__roster-link" href={viewInRosterHref(boundPersonUuid)}>
-          {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+          {__('View in roster →', 'alt-context')}
         </a>
       </div>
     );
@@ -161,7 +151,12 @@ export const PersonCommitControl = ({
       data-testid="acx-person-commit"
       data-person-commit-primary={isPrimary ? 'true' : 'false'}
     >
-      <p className="acx-person-commit__disclosure">{__(MODEL_OUTPUT_DISCLOSURE, 'alt-context')}</p>
+      <p className="acx-person-commit__disclosure">
+        {__(
+          'Suggested by face matching based on similarity — confirm before treating it as fact.',
+          'alt-context',
+        )}
+      </p>
 
       {rosterQuery.isError ? (
         <div className="acx-person-commit__failure" role="alert">
@@ -188,11 +183,11 @@ export const PersonCommitControl = ({
           isPending={phase === PERSON_COMMIT_PHASE.COMMITTING}
           isLoading={rosterQuery.isLoading}
           disabled={disabled || rosterQuery.isError}
-          commitLabel={__(PERSON_COMMIT_CONFIRM_COPY, 'alt-context')}
-          pendingLabel={__(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')}
-          placeholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
-          searchPlaceholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
-          ariaLabel={__(PERSON_COMMIT_COMBOBOX_ARIA, 'alt-context')}
+          commitLabel={__('Save name', 'alt-context')}
+          pendingLabel={__('Saving name…', 'alt-context')}
+          placeholder={__('Type a name…', 'alt-context')}
+          searchPlaceholder={__('Type a name…', 'alt-context')}
+          ariaLabel={__('Name this person', 'alt-context')}
           inputId={`acx-person-commit-${clusterId}`}
           autoFocus={false}
           accentPrimary={isPrimary && accentPrimary}
@@ -218,7 +213,7 @@ export const PersonCommitControl = ({
       {phase === PERSON_COMMIT_PHASE.FAILED ? (
         <div className="acx-person-commit__failure" role="alert">
           <p className="acx-person-commit__failure-message">
-            {errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+            {errorMessage ?? __('Could not save the name. Retry to try again.', 'alt-context')}
           </p>
           <button
             type="button"

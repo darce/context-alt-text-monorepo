@@ -1013,38 +1013,21 @@ export const useSuggestionReviewMutations = ({
       }
       return bulkAcceptSuggestions(request);
     },
-    onSuccess: (data, request) => {
+    onSuccess: (data) => {
       if (data.accepted_count <= 0) {
         void queryClient.invalidateQueries({ queryKey: namePendingKey });
         return;
       }
+      // BulkAcceptResponse carries counts only — equal cardinality is not the
+      // accepted set (concurrent edit, confidence recompute, threshold ties).
+      // rg-015 / DATA-14: do not invent ids. Refetch instead of evicting.
+      void queryClient.invalidateQueries({ queryKey: namePendingKey });
+      // Prefix matches dropClusterFromReviewCaches — no tenant id in this module.
+      void queryClient.invalidateQueries({
+        queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+      });
       if (data.skipped_count > 0) {
-        // Partial accept: the response carries no accepted ids, so any local
-        // eviction would be the same rg-015 guess. Refetch instead.
-        void queryClient.invalidateQueries({ queryKey: namePendingKey });
-        // Prefix matches dropClusterFromReviewCaches — no tenant id in this module.
-        void queryClient.invalidateQueries({
-          queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
-        });
         return;
-      }
-      // Full accept: evict only when the local match set equals accepted_count.
-      // rg-015 / DATA-14: a stale page, tie-break, or rounding drift must not
-      // invent which rows the server accepted.
-      const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
-      const matched = (names?.suggestions ?? []).filter(
-        (item) => (item.confidence_score ?? 0) >= request.min_confidence,
-      );
-      if (matched.length !== data.accepted_count) {
-        void queryClient.invalidateQueries({ queryKey: namePendingKey });
-        void queryClient.invalidateQueries({
-          queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
-        });
-        invalidateReviewCachesWithoutRefetch(queryClient);
-        return;
-      }
-      for (const item of matched) {
-        dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
       }
       invalidateReviewCachesWithoutRefetch(queryClient);
     },

@@ -9,7 +9,8 @@ Lane cwd. Commits cited by subject line only.
 | R2-01 | `fix(fe): UXW2-3-R2-01 overlay filters query; confirm binds chosen id` | NameFaceControl R2-01 / R2-01a / R2-01b | `Unable to find an element with the text: Zed Offslice`; `expected "vi.fn()" to be called with arguments` Ada vs Grace; `Number of calls: 0` on second-id bind |
 | R2-02 | `fix(fe): UXW2-3-R2-02 sync submittingRef across remote guard` | `{Enter}{Enter}` 50ms delayed list | `expected "vi.fn()" to be called 1 times, but got 2 times` |
 | R2-04 + R1-14 + R1-02(panel) | `fix(fe): UXW2-3-R2-04 R1-14 R1-02 panel roster error + invalidate + live region` | roster alert; invalidate roster.entries; 400ms filtered announce | `Unable to find role="alert"`; invalidateQueries missing `roster.entries`; naming status length 1 before debounce |
-| R2-07 + R1-08 + R1-12 + R1-16 | `fix(fe): UXW2-3-R2-07 R1-08 R1-12 R1-16 unify person bind; drop dead onLabel` | ✓-person bind; initialLabel Enter; no form; per-state header; source pin | `Expected the element to have value: Alex Carter Received:`; `Number of calls: 0` on person ✓; `expect(queue).not.toMatch(/onLabel:\s*_onLabel/)` |
+| R2-07 + R1-08 + R1-12 | `fix(fe): UXW2-3-R2-07 R1-08 R1-12 R1-16 unify person bind; drop dead onLabel` | ✓-person bind; initialLabel Enter; no form; per-state header; source pin | `Expected the element to have value: Alex Carter Received:`; `Number of calls: 0` on person ✓; `expect(queue).not.toMatch(/onLabel:\s*_onLabel/)` |
+| R1-16 | **partial** — same subject as R2-07; residual R1-16d / R1-16h mutant rows from the R1 report are not claimed (see Undone) | not re-verified | n/a |
 | R2-03 | `fix(fe): UXW2-3-R2-03 APG overlay close + option reject without nested buttons` | aria-expanded toggle; Delete reject | `aria-labelledby` Received: null; Delete `Number of calls: 0` |
 | R2-06 + R1-05 + R1-06 + R1-10 | `fix(fe): UXW2-3-R2-06 R1-05 R1-06 R1-10 copy sweep, banned words, gettext literals` | banned sweep + gettext-literals | Mutant: `Unable to load unlabeled clusters.` in ReviewQueue; `__(\s*[A-Z_][A-Z0-9_]*\s*,` |
 | R1-03 | `fix(fe): UXW2-3-R1-03 compile SCSS mixin onto shared naming prefixes` | name-face-surface compile | `.acx-person-commit__suggestions-overlay missing`; `@include` length 3 got 2 |
@@ -31,9 +32,24 @@ Follow-ups (same subjects as finding they serve):
 - R2-03: `Expected the element to have attribute: aria-labelledby=... Received: null`
 - R1-03 mutant drop `@include`: `expected [ …(2) ] to have a length of 3 but got 2`
 
-## GREEN evidence
+## Gate evidence (suite green, lint RED)
 
-Last full `npm test` (apps/prototype-wp-alt-context) observed here:
+Prover re-ran `npm test && npm run typecheck && npm run lint` at the r2 HEAD:
+
+```
+Test Files  209 passed (209)
+Tests  2403 passed (2403)
+typecheck ok
+✖ 118 problems (117 errors, 1 warning)
+```
+
+Item-1 baseline (subject `sync: mirror local feature/uxw2-1`): `✖ 120 problems (119 errors, 1 warning)`. settingsApi not in the wave diff. Partition at HEAD: 114 errors + 1 warning in files the wave did not touch (pre-existing); 3 errors in wave-touched files this lane does not own (`SuggestionCards.tsx:51 func-style`, `useLiveReviewTarget.ts:34` and `:132` `@typescript-eslint/no-redundant-type-constituents`). Net 119 → 117 errors. The 117 are not a silent-green gate.
+
+Correction: the round-2 diagnosis of the labeling-panel opener was wrong. The opener was removed by this wave's own first commit (`feat(workbench): UXW2-3 NameFaceControl + single-gesture Save name`), not by round 2.
+
+## Superseded (round 2, before the last fix)
+
+Stale r2 observation (2026-08, before `fix(fe): UXW2-3-R2-03 IdentityClusterList overlay option query` and the prover re-run). Kept as history, not as the gate claim.
 
 ```
 Test Files  1 failed | 208 passed (209)
@@ -41,11 +57,7 @@ Test Files  1 failed | 208 passed (209)
    Duration  481.62s
 ```
 
-Fail: `IdentityClusterList` `getByRole('button', { name: /Ada Lovelace \(Group\)/ })` after R2-03 option-not-button. Fixed by `fix(fe): UXW2-3-R2-03 IdentityClusterList overlay option query`. Isolated re-run after that: 23 passed; 1 timed out (`resolves an inline prompt on every one of 60 unlabeled cards`, 5s) — that case passed in the full 481s run.
-
-`npm run typecheck`: clean (`tsc --noEmit --project tsconfig.type-check.json`).
-
-`npm run lint`: after cleanup **117 errors, 1 warning** (`✖ 118 problems (117 errors, 1 warning)`). R1 report baseline **121 errors**. Changed naming-surface files eslint-clean. Count did not grow.
+Fail: `IdentityClusterList` `getByRole('button', { name: /Ada Lovelace \(Group\)/ })` after R2-03 option-not-button. Isolated re-run after that fix: 23 passed; 1 timed out (`resolves an inline prompt on every one of 60 unlabeled cards`, 5s) — that case passed in the full 481s run. R2 lint paste under the old GREEN heading: `✖ 118 problems (117 errors, 1 warning)` (same RED lint, mislabeled).
 
 ## Files changed (this r2)
 

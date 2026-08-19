@@ -5944,3 +5944,160 @@ def test_cmd_score_missing_run_record_named_exit(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "score: run record not found/unreadable:" in captured.err
     assert str(missing) in captured.err
+
+
+# ---------------------------------------------------------------------------
+# VLM-6 fix wave 12 / Lane IA — score-face fail-closed + C-locale I/O
+# ---------------------------------------------------------------------------
+
+
+def _run_score_face_c_locale(manifest_path: Path, record_path: Path) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env.update(_ASCII_LOCALE_ENV)
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+            "score-face",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(record_path),
+        ],
+        cwd=str(_SERVICE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def _assert_no_score_reports(tmp_path: Path) -> None:
+    leftover = [p.name for p in tmp_path.glob("*report*")]
+    assert leftover == []
+
+
+def test_cmd_score_face_invalid_utf8_run_record_named_exit(tmp_path, capsys):
+    """VLM6-RV12-Q1-01 / L-01: \\xff\\xfe record → named exit 2, no report written.
+
+    MUT[narrow_face_record_guard]: except OSError only → UnicodeDecodeError escapes.
+    """
+    record = tmp_path / "run-bad.json"
+    record.write_bytes(b"\xff\xfe")
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score-face", "--manifest", str(man), "--run-record", str(record)])
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "score-face: run record not found/unreadable:" in captured.err
+    assert str(record) in captured.err
+    _assert_no_score_reports(tmp_path)
+
+
+def test_cmd_score_face_missing_run_record_named_exit(tmp_path, capsys):
+    """VLM6-RV12-Q1-01 / L-01: missing run record → named exit 2."""
+    missing = tmp_path / "no-such-face-run.json"
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score-face", "--manifest", str(man), "--run-record", str(missing)])
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "score-face: run record not found/unreadable:" in captured.err
+    assert str(missing) in captured.err
+    _assert_no_score_reports(tmp_path)
+
+
+def test_cmd_score_face_directory_run_record_named_exit(tmp_path, capsys):
+    """VLM6-RV12-Q1-01 / L-01: directory as record → named exit 2."""
+    record_dir = tmp_path / "run-dir"
+    record_dir.mkdir()
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score-face", "--manifest", str(man), "--run-record", str(record_dir)])
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "score-face: run record not found/unreadable:" in captured.err
+    assert str(record_dir) in captured.err
+    _assert_no_score_reports(tmp_path)
+
+
+def test_cmd_score_face_raw_utf8_run_record_under_c_locale(tmp_path):
+    """VLM6-RV12-Q2-05 / TEST-15: encoding=utf-8 pin on score-face record read.
+
+    Raw-UTF-8 face run-record (image path celebs01/café-a.jpg, bytes c3 a9)
+    must decode under PYTHONUTF8=0 LC_ALL=C LANG=C. MUT n [drop_face_record_read_pin]:
+    bare read_text() → UnicodeDecodeError.
+    """
+    record, manifest = _valid_face_manifest_and_record()
+    record["items"][0]["path"] = "celebs01/café-a.jpg"
+    manifest["entries"][0]["path"] = "celebs01/café-a.jpg"
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_bytes((json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8"))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert b"\xc3\xa9" in rec_path.read_bytes()
+    proc = _run_score_face_c_locale(man_path, rec_path)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_cmd_score_face_writes_utf8_report_under_c_locale(tmp_path):
+    """VLM6-RV12-Q2-02 / TEST-15: score-face report writes must pin utf-8.
+
+    Valid fixture emits § (and ± τ – — → ↔ ∧ ≈ ≥). Unpinned write_text under
+    C locale dies with UnicodeEncodeError '\\xa7'. MUT m [drop_face_write_pin]:
+    bare json_doc/md_doc write_text → this test fails.
+    """
+    record, manifest = _valid_face_manifest_and_record()
+    rec_path = tmp_path / "face-run.json"
+    rec_path.write_text(json.dumps(record), encoding="utf-8")
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest), encoding="utf-8")
+    proc = _run_score_face_c_locale(man_path, rec_path)
+    assert proc.returncode == 0, proc.stderr
+    report_path = tmp_path / "face-run-face-report.json"
+    body = report_path.read_text(encoding="utf-8")
+    assert "§" in body
+
+
+def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
+    """VLM6-RV12-L-03 / EVAL-10: print(md_path) must not crash ASCII stdout.
+
+    cp the clean run record to run-café.json, score under C locale. After
+    reports land, print(md_path) raises UnicodeEncodeError on ASCII stdout
+    unless the CLI entry reconfigures stdout/stderr (errors=backslashreplace).
+    Reverting the reconfigure makes this test fail.
+    """
+    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-clean")
+    cafe_record = tmp_path / "run-café.json"
+    cafe_record.write_bytes(record_path.read_bytes())
+    # PYTHONIOENCODING=ascii forces errors=strict. C-locale pipes default to
+    # surrogateescape, which would swallow print(md_path) of a non-ASCII stem.
+    env = os.environ.copy()
+    env.update(_ASCII_LOCALE_ENV)
+    env["PYTHONIOENCODING"] = "ascii"
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+            "score",
+            "--manifest",
+            str(manifest_path),
+            "--run-record",
+            str(cafe_record),
+        ],
+        cwd=str(_SERVICE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "run-café-report.json").exists()
+    assert (tmp_path / "run-café-report.md").exists()

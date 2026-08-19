@@ -2274,7 +2274,14 @@ def _check_face_determinism_cross_process(
 def _cmd_score_face(args: argparse.Namespace) -> None:
     """Pure offline face score over the full unfiltered corpus (§G)."""
     record_path = Path(args.run_record)
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(
+            f"score-face: run record not found/unreadable: {record_path}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if record.get("kind") == DocKind.FACE_RUN_RECORD.value:
         validate_face_run_record(record)
     # Metadata-only: score_face_run_record / build_face_reports use tags, face_count,
@@ -2784,7 +2791,28 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     print(out)
 
 
+def _reconfigure_stdio() -> None:
+    """EVAL-10 / VLM6-RV12-L-03: a passing score must not die on ASCII stdout.
+
+    After reports are on disk, print(md_path) raises UnicodeEncodeError when
+    the run-record path is non-ASCII and stdout is ASCII/strict. Reconfigure
+    once at CLI entry rather than special-casing each print. Guard None /
+    non-reconfigurable streams (pytest capture, closed pipes).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (OSError, ValueError):
+            continue
+
+
 def main(argv: list[str] | None = None) -> None:
+    _reconfigure_stdio()
     parser = argparse.ArgumentParser(prog="eval_harness", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 

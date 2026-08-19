@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries } from '../../../../api/rosterApi';
-import { LightboxNameFace } from '../LightboxNameFace';
+import { LIGHTBOX_NAME_SAVED_ANNOUNCE, LightboxNameFace } from '../LightboxNameFace';
 import { PERSON_COMMIT_COMBOBOX_ARIA } from '../personCommitCopy';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -48,7 +48,6 @@ const renderNaming = (
   const onCancel = vi.fn();
   const props: React.ComponentProps<typeof LightboxNameFace> = {
     clusterId: 'cluster-1',
-    runSize: 3,
     phase: 'idle',
     errorMessage: null,
     onCommit,
@@ -91,17 +90,15 @@ describe('LightboxNameFace (UXW2-6 slice 2)', () => {
     });
   });
 
-  it('shows an explicit truncation signal when the group is larger than 25', () => {
-    renderNaming({ runSize: 40 });
-
-    expect(
-      screen.getByText('Naming the first 25 faces in this group. 15 more were not included.'),
-    ).toBeInTheDocument();
-  });
-
-  it('does not show truncation when the group fits in the cap', () => {
-    renderNaming({ runSize: 3 });
+  it('does not claim faces were omitted from a cluster-wide name save', () => {
+    renderNaming();
 
     expect(screen.queryByText(/were not included/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/first 25/)).not.toBeInTheDocument();
+  });
+
+  it('announces that the name applies to this person\'s review group without a count', () => {
+    expect(LIGHTBOX_NAME_SAVED_ANNOUNCE).toBe("Name saved for this person's review group.");
+    expect(LIGHTBOX_NAME_SAVED_ANNOUNCE).not.toMatch(/\d/);
   });
 });

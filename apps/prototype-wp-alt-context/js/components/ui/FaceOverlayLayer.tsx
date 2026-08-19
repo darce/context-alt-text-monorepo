@@ -31,6 +31,8 @@ export interface FaceOverlayLayerProps {
   onHighlightChange?: (faceId: string | null) => void;
   /** Face currently under review — rendered as a "?" chip, not a name/marker. */
   reviewFaceId?: string | null;
+  /** Review "?" chip only. Curated/uncurated chips keep `onActivate`. */
+  onReviewActivate?: (faceId: string) => void;
 }
 
 /**
@@ -119,6 +121,7 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
   highlightedFaceId = null,
   onHighlightChange,
   reviewFaceId = null,
+  onReviewActivate,
 }) => {
   // Local hover/focus so outline reveal works without waiting on a parent re-render.
   const [interactionFaceId, setInteractionFaceId] = React.useState<string | null>(null);
@@ -233,7 +236,7 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
                 .join(' ')}
               style={controlStyle(face.bbox, naturalSize)}
               aria-label={accessibleName}
-              onClick={() => onActivate?.(face.identity_id)}
+              onClick={() => onReviewActivate?.(face.identity_id)}
               onFocus={() => handleEnter(face.identity_id)}
               onBlur={() => handleLeave(face.identity_id)}
               onMouseEnter={() => handleEnter(face.identity_id)}

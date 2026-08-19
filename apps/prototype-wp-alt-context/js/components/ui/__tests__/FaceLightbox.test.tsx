@@ -309,6 +309,27 @@ describe('FaceLightbox', () => {
     expect(onReviewFaceActivate).toHaveBeenCalledWith('reviewed');
   });
 
+  it('does not invoke onReviewFaceActivate when a curated chip is activated', async () => {
+    const user = userEvent.setup();
+    const onReviewFaceActivate = vi.fn();
+    renderLightbox(
+      <FaceLightbox
+        open
+        onOpenChange={vi.fn()}
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        label="Face"
+        identities={overlayIdentities}
+        activeFaceId="reviewed"
+        onReviewFaceActivate={onReviewFaceActivate}
+      />,
+    );
+
+    loadFramedImage();
+    await user.click(await screen.findByRole('button', { name: 'Alex' }));
+    expect(onReviewFaceActivate).not.toHaveBeenCalled();
+  });
+
   it('renders reviewNaming inside the open dialog', async () => {
     renderLightbox(
       <FaceLightbox

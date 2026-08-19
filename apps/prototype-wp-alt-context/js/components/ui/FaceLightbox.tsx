@@ -211,7 +211,7 @@ export const FaceLightbox = ({
                   naturalSize={naturalSize}
                   highlightedFaceId={activeFaceId}
                   reviewFaceId={activeFaceId}
-                  onActivate={onReviewFaceActivate}
+                  onReviewActivate={onReviewFaceActivate}
                 />
               </div>
             ) : null}

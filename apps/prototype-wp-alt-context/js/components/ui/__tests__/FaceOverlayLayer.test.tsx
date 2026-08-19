@@ -407,6 +407,7 @@ describe('FaceOverlayLayer', () => {
   describe('review face ? chip (UXW2-6)', () => {
     it('renders a keyboard-operable ? chip named as the face under review', async () => {
       const user = userEvent.setup();
+      const onReviewActivate = vi.fn();
       const onActivate = vi.fn();
       render(
         <FaceOverlayLayer
@@ -427,6 +428,7 @@ describe('FaceOverlayLayer', () => {
           naturalSize={naturalSize}
           reviewFaceId="reviewed"
           onActivate={onActivate}
+          onReviewActivate={onReviewActivate}
         />,
       );
 
@@ -438,7 +440,8 @@ describe('FaceOverlayLayer', () => {
       reviewChip.focus();
       expect(reviewChip).toHaveFocus();
       await user.keyboard('{Enter}');
-      expect(onActivate).toHaveBeenCalledWith('reviewed');
+      expect(onReviewActivate).toHaveBeenCalledWith('reviewed');
+      expect(onActivate).not.toHaveBeenCalled();
     });
 
     it('pairs the review accessible name with a human label when the face is named', () => {

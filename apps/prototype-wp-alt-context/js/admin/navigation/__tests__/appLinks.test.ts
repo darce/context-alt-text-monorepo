@@ -8,6 +8,7 @@ import {
   buildWorkbenchOverlayHref,
   parsePanes,
   parseRunParam,
+  reviewPanelUrl,
   serializePanes,
   serializeRunParam,
   toDashboard,
@@ -19,6 +20,7 @@ import {
   toWorkbench,
   type PanesState,
 } from '../appLinks';
+import { readReviewFromParams } from '../../pages/workbench/ClusterPanelContext';
 
 /** Parse a contract href into path + URLSearchParams (round-trip helper). */
 const parseHref = (hashHref: string): { path: string; params: URLSearchParams } => {
@@ -55,6 +57,17 @@ describe('appLinks builders', () => {
     expect(toWorkbench({ tab: 'scan', panel: 'review', cluster: 'cluster-42' })).toBe(
       '#/workbench?tab=scan&panel=review&cluster=cluster-42',
     );
+    expect(reviewPanelUrl('cluster-42')).toBe('#/workbench?tab=scan&panel=review&cluster=cluster-42');
+  });
+
+  it('toWorkbench review/conflicts round-trips through readReviewFromParams', () => {
+    const reviewHref = toWorkbench({ tab: 'scan', panel: 'review', cluster: 'c-1' });
+    const { params: reviewParams } = parseHref(reviewHref);
+    expect(readReviewFromParams(reviewParams)).toEqual({ mode: 'review', clusterId: 'c-1' });
+
+    const conflictsHref = toWorkbench({ tab: 'scan', panel: 'conflicts' });
+    const { params: conflictsParams } = parseHref(conflictsHref);
+    expect(readReviewFromParams(conflictsParams)).toEqual({ mode: 'none', clusterId: null });
   });
 
   it('toWorkbench round-trips option objects through hash query params', () => {

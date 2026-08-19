@@ -77,9 +77,13 @@ export const parsePanes = (raw: string | null | undefined): PanesState =>
 export const serializePanes = (v: PanesState): string | null =>
   v === APP_LINK_VALUES.panesBoth ? null : v;
 
+/** Legal workbench `panel` values: review | conflicts | dead-letter. */
 export type WorkbenchPanelValue =
   | Exclude<WorkbenchOverlay, null>
   | typeof APP_LINK_VALUES.panelReview;
+
+export const reviewPanelUrl = (clusterId: string): string =>
+  toWorkbench({ tab: 'scan', panel: APP_LINK_VALUES.panelReview, cluster: clusterId });
 
 export interface ToWorkbenchOptions {
   status?: WorkbenchMediaStatus;

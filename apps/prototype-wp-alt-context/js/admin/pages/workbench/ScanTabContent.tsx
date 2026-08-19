@@ -58,7 +58,19 @@ export const ScanTabContent = (): React.JSX.Element => {
   } = useAriaAnnounce();
 
   const focusQueueRoot = React.useCallback((): void => {
-    findingsDetailRef.current?.focus({ preventScroll: true });
+    const restore = (): void => {
+      const trigger = findingsDetailRef.current?.querySelector<HTMLElement>('[data-acx-review-trigger]');
+      if (trigger) {
+        trigger.focus({ preventScroll: true });
+        return;
+      }
+      findingsDetailRef.current?.focus({ preventScroll: true });
+    };
+    if (findingsDetailRef.current?.querySelector('[data-acx-review-trigger]')) {
+      restore();
+      return;
+    }
+    queueMicrotask(restore);
   }, []);
 
   // Open-target retirement lifecycle (§11 / FBT-1 ⑤). Owned here (always mounted)

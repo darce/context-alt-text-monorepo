@@ -33,6 +33,10 @@ const WorkbenchNavContext = createContext<WorkbenchNavContextValue | null>(null)
 export const WorkbenchNavProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useTabParam<WorkbenchTab>('tab', TAB_IDS.scan, [TAB_IDS.scan]);
+  // Legal `panel` values: `review` | `conflicts` | `dead-letter`.
+  // This overlay host owns conflicts/dead-letter (review is ignored here so
+  // ClusterReviewPanel can occupy the same key). ClusterPanelContext restores
+  // a previously-open overlay on review close instead of deleting `panel`.
   const [activeOverlay, setActiveOverlay] = useOverlayParam<Exclude<WorkbenchOverlay, null>>('panel', [
     'conflicts',
     'dead-letter',

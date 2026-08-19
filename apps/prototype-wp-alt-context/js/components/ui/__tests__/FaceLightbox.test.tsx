@@ -288,8 +288,43 @@ describe('FaceLightbox', () => {
     expect(screen.queryByRole('dialog')).toBeInTheDocument();
   });
 
+  it('invokes onReviewFaceActivate when the ? chip is activated', async () => {
+    const user = userEvent.setup();
+    const onReviewFaceActivate = vi.fn();
+    renderLightbox(
+      <FaceLightbox
+        open
+        onOpenChange={vi.fn()}
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        label="Face"
+        identities={overlayIdentities}
+        activeFaceId="reviewed"
+        onReviewFaceActivate={onReviewFaceActivate}
+      />,
+    );
+
+    loadFramedImage();
+    await user.click(await screen.findByRole('button', { name: 'Face under review' }));
+    expect(onReviewFaceActivate).toHaveBeenCalledWith('reviewed');
+  });
+
+  it('renders reviewNaming inside the open dialog', async () => {
+    renderLightbox(
+      <FaceLightbox
+        open
+        onOpenChange={vi.fn()}
+        mediaUrl={mediaUrl}
+        bbox={bbox}
+        label="Face"
+        reviewNaming={<div>Lightbox naming surface</div>}
+      />,
+    );
+
+    expect(screen.getByRole('dialog')).toContainElement(screen.getByText('Lightbox naming surface'));
+  });
+
   it('announces loading while identities are in flight and still shows the photo', async () => {
-    fetchMediaIdentities.mockReturnValue(new Promise(() => undefined));
 
     renderLightbox(
       <FaceLightbox

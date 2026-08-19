@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
@@ -32,6 +32,7 @@ import {
   listRosterEntries,
   type RosterClusterCommitResponse,
 } from '../../../../api/rosterApi';
+import { fetchMediaIdentities } from '../../../../api/recognition/identityQueriesApi';
 import { resetPendingSearchWritesForTests } from '../../../../hooks/pendingSearchWrites';
 import {
   QUEUE_ACTION,
@@ -174,6 +175,13 @@ vi.mock('../../../../api/recognition', async () => {
     updateClusterLabel: vi.fn().mockResolvedValue(undefined),
   };
 });
+
+vi.mock('../../../../api/recognition/identityQueriesApi', () => ({
+  fetchMediaIdentities: vi.fn().mockResolvedValue({
+    identities_by_media: {},
+    data_source: 'local_projection',
+  }),
+}));
 
 vi.mock('../../../../api/rosterApi', () => ({
   commitClusterToRosterEntry: vi.fn().mockResolvedValue({
@@ -4989,6 +4997,154 @@ describe('ReviewQueue', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  const loadLightboxImage = (alt = 'Candidate face'): void => {
+    const frame = document.querySelector('.acx-review-card-lightbox__frame');
+    expect(frame).toBeInstanceOf(HTMLElement);
+    Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 400 });
+    Object.defineProperty(frame, 'clientHeight', { configurable: true, value: 300 });
+    const img = screen.getByRole('img', { name: alt });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 200 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 150 });
+    fireEvent.load(img);
+  };
+
+  it('names the reviewed face from the lightbox for the whole same-group run', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchMediaIdentities).mockResolvedValue({
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      identities_by_media: {
+        '42': [
+          {
+            identity_id: 'identity-1',
+            media_id: 42,
+            similarity: null,
+            confidence: 0.9,
+            bbox: { x: 10, y: 20, width: 40, height: 50 },
+            cluster_id: 'cluster-1',
+            cluster_label: null,
+            is_auto_label: true,
+          },
+          {
+            identity_id: 'identity-other',
+            media_id: 42,
+            similarity: null,
+            confidence: 0.8,
+            bbox: { x: 120, y: 30, width: 30, height: 30 },
+            cluster_id: null,
+            cluster_label: 'Jordan',
+            is_auto_label: false,
+          },
+        ],
+      },
+    });
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+          identity_media_id: 42,
+          identity_media_url: 'https://example.com/candidate.jpg',
+          identity_bbox: { x: 10, y: 20, width: 40, height: 50 },
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+          identity_media_id: 43,
+          identity_media_url: 'https://example.com/candidate-2.jpg',
+          identity_bbox: { x: 8, y: 8, width: 20, height: 20 },
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    await screen.findByRole('dialog', { name: 'Original media with face highlight' });
+    loadLightboxImage();
+
+    await user.click(await screen.findByRole('button', { name: 'Face under review' }));
+    const naming = await screen.findByTestId('acx-lightbox-name-face');
+    expect(naming).toBeInTheDocument();
+    expect(screen.queryByText(/were not included/)).not.toBeInTheDocument();
+
+    const input = within(naming).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+    await user.type(input, 'Pat Rivera{Enter}');
+
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-1',
+        rosterEntryId: undefined,
+        newEntryName: 'Pat Rivera',
+      });
+    });
+    expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Name saved for 2 faces.',
+      );
+    });
+  });
+
+  it('surfaces truncation when the same-group run is larger than 25', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchMediaIdentities).mockResolvedValue({
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      identities_by_media: {
+        '42': [
+          {
+            identity_id: 'identity-0',
+            media_id: 42,
+            similarity: null,
+            confidence: 0.9,
+            bbox: { x: 10, y: 20, width: 40, height: 50 },
+            cluster_id: 'cluster-big',
+            cluster_label: null,
+            is_auto_label: true,
+          },
+        ],
+      },
+    });
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: Array.from({ length: 26 }, (_, index) => ({
+        id: `sugg-${index}`,
+        identity_id: `identity-${index}`,
+        suggested_cluster_id: 'cluster-big',
+        representative_similarity: 0.9 - index * 0.001,
+        avg_member_similarity: 0.8,
+        cluster_label: 'Alex',
+        cluster_identity_count: 26,
+        identity_media_id: 42,
+        identity_media_url: 'https://example.com/candidate.jpg',
+        identity_bbox: { x: 10, y: 20, width: 40, height: 50 },
+      })),
+      limit: 30,
+      offset: 0,
+    });
+
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    await screen.findByRole('dialog');
+    loadLightboxImage();
+    await user.click(await screen.findByRole('button', { name: 'Face under review' }));
+
+    expect(
+      await screen.findByText('Naming the first 25 faces in this group. 1 more were not included.'),
+    ).toBeInTheDocument();
   });
 });
 

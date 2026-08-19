@@ -24,6 +24,7 @@ import {
   type ReviewQueueBandParam,
   type ReviewQueueKindParam,
 } from '../../../hooks/workbenchQueueUrl';
+import { faceOverlayDomId } from '../../../../components/ui/FaceOverlayLayer';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
@@ -31,6 +32,7 @@ import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
 import { viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
+import { LightboxNameFace, lightboxNameSavedAnnouncement } from './LightboxNameFace';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
@@ -282,6 +284,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const { resolveSurvivor } = useMergeSurvivors();
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
+    const [lightboxNaming, setLightboxNaming] = React.useState(false);
     // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
     // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
@@ -1443,7 +1446,18 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
               onLabel={onLabel}
-              onOpenOriginal={(target) => setLightbox(target)}
+              onOpenOriginal={(target) => {
+                setLightboxNaming(false);
+                if (currentItem.kind === NEXT_ACTION_KIND.ASSIGNMENT) {
+                  setLightbox({
+                    ...target,
+                    ...(currentItem.clusterId ? { clusterId: currentItem.clusterId } : {}),
+                    runSize: currentItem.runSize,
+                  });
+                  return;
+                }
+                setLightbox(target);
+              }}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
               announce={setLiveMessage}
@@ -1483,6 +1497,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             onOpenChange={(open) => {
               if (!open) {
                 setLightbox(null);
+                setLightboxNaming(false);
               }
             }}
             mediaUrl={lightbox.mediaUrl}
@@ -1490,6 +1505,60 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             label={lightbox.label}
             mediaId={lightbox.mediaId}
             activeFaceId={lightbox.identityId}
+            onReviewFaceActivate={() => {
+              if (lightbox.clusterId) {
+                setLightboxNaming(true);
+              }
+            }}
+            reviewNaming={
+              lightboxNaming && lightbox.clusterId ? (
+                <LightboxNameFace
+                  clusterId={lightbox.clusterId}
+                  runSize={lightbox.runSize ?? 1}
+                  phase={
+                    data.personCommit.clusterId === null ||
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.phase
+                      : PERSON_COMMIT_PHASE.IDLE
+                  }
+                  errorMessage={
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.errorMessage
+                      : null
+                  }
+                  disabled={
+                    data.personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING ||
+                    data.personCommitPending
+                  }
+                  onCommit={(request) => {
+                    const groupSize = lightbox.runSize ?? 1;
+                    void data.schedulePersonCommit(request).then((result) => {
+                      if (result.outcome === 'committed') {
+                        setLiveMessage(lightboxNameSavedAnnouncement(groupSize));
+                        setLightboxNaming(false);
+                        setLightbox(null);
+                      } else if (result.outcome === 'not_attempted_prior_failed') {
+                        setLiveMessage(
+                          __(
+                            'Retry the item that failed to save before assigning a person.',
+                            'alt-context',
+                          ),
+                        );
+                      }
+                    });
+                  }}
+                  onCancel={() => {
+                    setLightboxNaming(false);
+                    if (lightbox.identityId) {
+                      document.getElementById(faceOverlayDomId(lightbox.identityId))?.focus();
+                    }
+                  }}
+                  onRetry={() => {
+                    void data.retryPersonCommit();
+                  }}
+                />
+              ) : null
+            }
           />
         ) : null}
       </div>

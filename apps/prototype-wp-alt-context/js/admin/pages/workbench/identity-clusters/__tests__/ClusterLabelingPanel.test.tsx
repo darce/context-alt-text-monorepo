@@ -102,6 +102,31 @@ const makeClusterMembersResponse = (members: ClusterIdentity[] = []): ClusterMem
   truncated: false,
 });
 
+const makeRosterPerson = (id: number, name: string) => ({
+  id,
+  name,
+  person_uuid: `p${id}`,
+  tags: [] as string[],
+  cluster_count: 0,
+  clusters: [] as const,
+  queue_memberships: [] as const,
+  updated_at: '',
+  source_version: 0,
+  projection_status: 'current' as const,
+  projection_refreshed_at: '',
+});
+
+const mockRoster = (people: ReturnType<typeof makeRosterPerson>[]) => {
+  vi.mocked(useRosterEntries).mockReturnValue(
+    createMockQuery({
+      data: people,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    }),
+  );
+};
+
 describe('ClusterLabelingPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1246,36 +1271,43 @@ describe('ClusterLabelingPanel', () => {
     release?.();
   });
 
-  it('a second checkmark during an in-flight write is ignored (UXW2-3-R3-21)', async () => {
+  it('two rapid Confirm-match clicks fire the bind once (UXW2-3-R3-21)', async () => {
     let release: (() => void) | undefined;
-    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
-    vi.mocked(updateClusterLabel).mockImplementation(
+    mockRoster([makeRosterPerson(42, 'Alex Carter')]);
+    vi.mocked(commitClusterToRosterEntry).mockImplementation(
       () =>
         new Promise((resolve) => {
-          release = () => resolve(undefined);
+          release = () =>
+            resolve({
+              cluster_id: 'source-cluster-id',
+              person_id: 42,
+              person_uuid: 'p42',
+              person_name: 'Alex Carter',
+              updated_at: '',
+            });
         }),
     );
     renderPanel();
-    await typePanelName('Pat Rivera');
-    const input = screen.getByRole('combobox', { name: 'Name' });
-    const option = screen.queryByRole('option', { name: /confirm match/i });
+    await typePanelName('Alex');
+    const option = await screen.findByRole('option', { name: /Confirm match with Alex Carter/i });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'Enter' });
-      if (option) {
-        fireEvent.click(option);
-      }
-      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.click(option);
+      fireEvent.click(option);
       await new Promise((resolve) => {
         window.setTimeout(resolve, 80);
       });
     });
-    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+      clusterId: 'source-cluster-id',
+      rosterEntryId: 42,
+    });
+    expect(updateClusterLabel).not.toHaveBeenCalled();
     release?.();
   });
 
-  it('a second option selection during an in-flight write is ignored (UXW2-3-R3-21)', async () => {
+  it('two rapid Save clicks fire the create write once (UXW2-3-R3-21)', async () => {
     let release: (() => void) | undefined;
-    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
     vi.mocked(updateClusterLabel).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -1284,20 +1316,16 @@ describe('ClusterLabelingPanel', () => {
     );
     renderPanel();
     await typePanelName('Pat Rivera');
-    const input = screen.getByRole('combobox', { name: 'Name' });
-    const option = screen.queryByRole('option', { name: /confirm match/i });
+    const save = screen.getByRole('button', { name: 'Save name' });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'Enter' });
-      if (option) {
-        fireEvent.click(option);
-        fireEvent.click(option);
-      }
-      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.click(save);
+      fireEvent.click(save);
       await new Promise((resolve) => {
         window.setTimeout(resolve, 80);
       });
     });
     expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    expect(commitClusterToRosterEntry).not.toHaveBeenCalled();
     release?.();
   });
 

@@ -259,7 +259,11 @@ class PersonResolutionService {
 
 		return new WP_Error(
 			'acx_name_collision',
-			__( 'Could not create a distinct person for the colliding label.', 'alt-context' ),
+			\sprintf(
+				/* translators: %s: colliding display name */
+				__( 'Could not create a distinct person for the colliding label "%s".', 'alt-context' ),
+				$base
+			),
 			array( 'status' => 409 )
 		);
 	}

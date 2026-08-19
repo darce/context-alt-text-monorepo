@@ -283,7 +283,11 @@ class ClusterMergeService {
 		$moved_rows = 0;
 		$result     = $this->run_transactional(
 			function () use ( $tenant_id, $source_cluster_id, $restored_label, $sanitized_ids, $target_cluster_id, $target_member_count, $target_cluster, &$moved_rows ): WP_REST_Response|WP_Error {
-				if ( $this->clusters_repository->create_local_cluster( $tenant_id, $source_cluster_id, $restored_label, count( $sanitized_ids ) ) <= 0 ) {
+				$created = $this->clusters_repository->create_local_cluster( $tenant_id, $source_cluster_id, $restored_label, count( $sanitized_ids ) );
+				if ( is_wp_error( $created ) ) {
+					return $created;
+				}
+				if ( $created <= 0 ) {
 					return new WP_Error( 'acx_db_error', 'Could not create restored local cluster projection.', array( 'status' => 500 ) );
 				}
 

@@ -7,10 +7,12 @@ namespace AltContext\Api\Services;
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once __DIR__ . '/class-person-resolution-service.php';
+require_once __DIR__ . '/../../sovereign/repositories/class-cluster-curation-writer.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
 use AltContext\Support\DetectsSystemDefinedLabels;
+use AltContext\Sovereign\Repositories\ClusterCurationWriter;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -72,7 +74,7 @@ class ClusterLabelService {
 		}
 
 		if ( $this->host->should_proxy_mutation_to_backend( $tenant_id ) ) {
-			return $this->host->proxy_cluster_mutation(
+			$proxied = $this->host->proxy_cluster_mutation(
 				'PATCH',
 				sprintf( '/recognition/clusters/%s', $cluster_id ),
 				array(
@@ -80,6 +82,33 @@ class ClusterLabelService {
 					'label'     => $label,
 				)
 			);
+			if ( is_wp_error( $proxied ) ) {
+				return $proxied;
+			}
+
+			$status = $proxied instanceof WP_REST_Response ? $proxied->get_status() : 0;
+			if ( $status < 200 || $status >= 300 ) {
+				return $proxied;
+			}
+
+			$resolved = $this->persist_local_person_for_label( $label );
+			if ( is_wp_error( $resolved ) ) {
+				return $resolved;
+			}
+
+			$data = $proxied->get_data();
+			if ( ! is_array( $data ) ) {
+				$data = array();
+			}
+			$data['person_id']    = (int) $resolved['person_id'];
+			$bound                = $this->bind_persisted_person( $cluster_id, (int) $resolved['person_id'], $tenant_id );
+			if ( is_wp_error( $bound ) ) {
+				return $bound;
+			}
+			$data['roster_bound'] = $bound;
+			$proxied->set_data( $data );
+
+			return $proxied;
 		}
 
 		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
@@ -163,20 +192,8 @@ class ClusterLabelService {
 					return $resolved;
 				}
 
-				$table_clusters = $wpdb->prefix . 'acx_clusters';
-				$now            = current_time( 'mysql' );
-				$bound          = $wpdb->update(
-					$table_clusters,
-					array(
-						'person_id'         => $resolved['person_id'],
-						'curation_state'    => 'confirmed',
-						'is_user_confirmed' => 1,
-						'updated_at'        => $now,
-					),
-					array( 'cluster_uuid' => $cluster_id ),
-					array( '%d', '%s', '%d', '%s' ),
-					array( '%s' )
-				);
+				$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
+				$bound  = $writer->bind_person_to_cluster( $cluster_id, (int) $resolved['person_id'], $tenant_id, true );
 				if ( false === $bound ) {
 					return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
 				}
@@ -197,18 +214,14 @@ class ClusterLabelService {
 				$person_write_through = true;
 				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
-				// Contract Impact (E21-9 plan §Contract and Boundary Impact):
-				// PATCH cluster-label gains person-binding side effects; request/response
-				// shapes remain unchanged. Bound person identity is observable on the next
-				// roster read (write-through-to-read), not via response-field enrichment.
-				// Slice 1 response-schema parity (person_id/uuid/name) applies to
-				// commit_roster_cluster create+rebind only — not this surface.
 				return new WP_REST_Response(
 					array(
-						'cluster_id' => $cluster_id,
-						'label'      => $label,
-						'synced'     => false,
-						'status'     => 'pending',
+						'cluster_id'    => $cluster_id,
+						'label'         => $label,
+						'synced'        => false,
+						'status'        => 'pending',
+						'person_id'     => (int) $resolved['person_id'],
+						'roster_bound'  => ClusterCurationWriter::bind_succeeded( $bound ),
 					),
 					200
 				);
@@ -222,6 +235,56 @@ class ClusterLabelService {
 		if ( $affected_rows > 0 || $person_write_through ) {
 			$this->host->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-label-update' );
 		}
+
+		return $result;
+	}
+
+	/**
+	 * Bind a locally persisted person after a successful proxy label write.
+	 *
+	 * @return bool|WP_Error true when bound (including already-bound), false when no cluster row matched.
+	 */
+	private function bind_persisted_person( string $cluster_id, int $person_id, string $tenant_id ): bool|WP_Error {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+		}
+
+		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
+		$bound  = $writer->bind_person_to_cluster( $cluster_id, $person_id, $tenant_id, true );
+		if ( false === $bound ) {
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+		}
+
+		return ClusterCurationWriter::bind_succeeded( $bound );
+	}
+
+	private function persist_local_person_for_label( string $label ): array|WP_Error {
+		$result = $this->run_transactional(
+			function () use ( $label ): array|WP_Error {
+				$resolver = new PersonResolutionService();
+				return $resolver->resolve_or_create(
+					$label,
+					function ( string $person_uuid, string $name, array $tags ): bool {
+						return $this->host->enqueue_curation_operation(
+							'person_created',
+							$person_uuid,
+							array(
+								'local_revision'   => 0,
+								'snapshot_version' => 0,
+							),
+							array(
+								'person_uuid' => $person_uuid,
+								'name'        => $name,
+								'tags'        => $tags,
+							),
+							'person'
+						);
+					}
+				);
+			}
+		);
 
 		return $result;
 	}

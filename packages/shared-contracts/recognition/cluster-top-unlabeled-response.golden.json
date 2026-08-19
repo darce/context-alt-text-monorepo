@@ -4,6 +4,7 @@
       "id": "cluster-top-1",
       "tenant_id": "tenant-1",
       "label": null,
+      "label_state": "unlabeled",
       "is_labeled": false,
       "is_auto_label": true,
       "identity_count": 4,

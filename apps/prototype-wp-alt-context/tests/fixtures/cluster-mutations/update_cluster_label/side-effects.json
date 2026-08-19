@@ -1,1 +1,1 @@
-{"touched_tenant_id":"33380427-1819-5ad2-922b-cdd246fac3a0","outbox_operation":"cluster_label_updated","transaction_queries":["START TRANSACTION","COMMIT"],"topology_command_type":"","refresh_curation_metrics":false}
+{"touched_tenant_id":"33380427-1819-5ad2-922b-cdd246fac3a0","outbox_operations":["cluster_label_updated","person_created","cluster_person_bound"],"transaction_queries":["START TRANSACTION","COMMIT"],"topology_command_type":"","refresh_curation_metrics":false}

@@ -27,7 +27,7 @@ vi.mock('../../../hooks/useRosterHooks', () => ({
 }));
 
 const RESERVED_LABEL_MESSAGE =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.';
 
 const makeEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
   id: 1,

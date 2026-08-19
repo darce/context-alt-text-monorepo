@@ -44,7 +44,7 @@ const bandLabel = (band: SimilarityBand): string => {
     case SIMILARITY_BAND.WEAK:
       return __('weak match', 'alt-context');
     case SIMILARITY_BAND.PENDING:
-      return __('Similarity pending next projection refresh.', 'alt-context');
+      return __('Similarity pending the next refresh.', 'alt-context');
     default: {
       const _exhaustive: never = band;
       return _exhaustive;
@@ -60,7 +60,7 @@ export const getSelectedFaceMetadataLines = (evidence: EvidenceMetadata | null |
   const lines: string[] = [bandLabel(classifySimilarity(evidence.similarity))];
 
   if (isFiniteNumber(evidence.similarity)) {
-    lines.push(__('Match evidence from current cluster response', 'alt-context'));
+    lines.push(__('Match evidence from the current face group', 'alt-context'));
     lines.push(__('Compared with selected person', 'alt-context'));
     lines.push(__('Higher is closer within this batch', 'alt-context'));
   }
@@ -68,8 +68,8 @@ export const getSelectedFaceMetadataLines = (evidence: EvidenceMetadata | null |
   if (isFiniteNumber(evidence.similarity) && isFiniteNumber(evidence.similarity_threshold)) {
     lines.push(
       evidence.similarity >= evidence.similarity_threshold
-        ? __('Above this cluster’s current threshold', 'alt-context')
-        : __('Below this cluster’s current threshold', 'alt-context'),
+        ? __('Above this face group’s current threshold', 'alt-context')
+        : __('Below this face group’s current threshold', 'alt-context'),
     );
   }
 

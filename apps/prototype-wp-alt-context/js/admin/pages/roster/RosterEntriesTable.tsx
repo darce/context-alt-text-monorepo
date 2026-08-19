@@ -10,7 +10,7 @@ import { derivePersonState, PERSON_STATES, type PersonState } from './personStat
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
 
 const RESERVED_LABEL_MESSAGE = __(
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
   'alt-context',
 );
 
@@ -57,7 +57,7 @@ const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => 
 
   // Decorative empty alt only when a non-blank name label sits beside the face
   // [A11Y-21]. Unnamed rows have no adjacent text equivalent — omit alt so
-  // IdentityThumbnail's default ("Identity from media %d") names the face [S6-BR-03].
+  // IdentityThumbnail's default ("Face from media %d") names the face [S6-BR-03].
   const decorativeAlt = entry.name.trim() !== '' ? '' : undefined;
 
   // Empty cases: no clusters / null representative / null media_url → placeholder.
@@ -281,7 +281,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
         onCancel={() => setIsDeleteConfirmOpen(false)}
         title={__('Delete person', 'alt-context')}
         description={__(
-          'Are you sure you want to delete this person? Assigned clusters will be dissociated.',
+          'Are you sure you want to delete this person? Assigned faces return to the review queue.',
           'alt-context',
         )}
         confirmLabel={__('Delete', 'alt-context')}
@@ -293,7 +293,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
 
 export const RosterEntriesTable = ({ entries }: RosterEntriesTableProps): React.JSX.Element => {
   if (entries.length === 0) {
-    return <p>{__('No people yet. Add one manually or assign a cluster.', 'alt-context')}</p>;
+    return <p>{__('No people yet. Add one manually or assign a face group.', 'alt-context')}</p>;
   }
 
   return (
@@ -301,10 +301,10 @@ export const RosterEntriesTable = ({ entries }: RosterEntriesTableProps): React.
       <table className="acx-roster-entries__table">
         <thead>
           <tr>
-            <th>{__('Identity', 'alt-context')}</th>
+            <th>{__('Person', 'alt-context')}</th>
             <th>{__('State', 'alt-context')}</th>
             <th>{__('Tags', 'alt-context')}</th>
-            <th>{__('Clusters', 'alt-context')}</th>
+            <th>{__('Face groups', 'alt-context')}</th>
             <th>{__('Actions', 'alt-context')}</th>
           </tr>
         </thead>

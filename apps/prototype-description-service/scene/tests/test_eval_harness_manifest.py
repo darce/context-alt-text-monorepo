@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import unicodedata
 import warnings
 from pathlib import Path
@@ -20,6 +22,7 @@ from scripts.eval_harness.manifest import (
     RubricEmptyWarning,
     ScoreInvariant,
     SliceTag,
+    load_legacy_manifest,
     load_manifest,
 )
 
@@ -1279,3 +1282,61 @@ def test_load_manifest_empty_images_dir_raises(tmp_path, monkeypatch):
     path = _write_manifest(tmp_path, _valid_manifest_dict())
     with pytest.raises(ManifestError, match="images_dir must be a real directory path; use metadata_only=True"):
         load_manifest(path, images_dir="")
+
+
+# --- VLM6-RV10-Q1-01: UTF-8 pin + ValueError guard (EVAL-10 / AGT-21) ----------
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[2]
+_ASCII_LOCALE_ENV = {
+    "LC_ALL": "C",
+    "LANG": "C",
+    "PYTHONUTF8": "0",
+    "PYTHONCOERCECLOCALE": "0",
+}
+
+
+def test_load_manifest_utf8_under_c_locale():
+    """C-locale subprocess must load golden.json (Breiðamerkurjökull) as UTF-8.
+
+    MUT[drop_manifest_encoding_pin]: bare read_text() → UnicodeDecodeError
+    under LC_ALL=C LANG=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0.
+    """
+    env = os.environ.copy()
+    env.update(_ASCII_LOCALE_ENV)
+    env.pop("GOLDEN_IMAGES_DIR", None)
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    golden = "scene/tests/seed/golden.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scripts.eval_harness.manifest import load_manifest; "
+                f"load_manifest({golden!r}, skip_hash_verification=True)"
+            ),
+        ],
+        cwd=str(_SERVICE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "UnicodeDecodeError" not in proc.stderr
+
+
+@pytest.mark.parametrize("loader_name", ["load_manifest", "load_legacy_manifest"])
+def test_non_utf8_manifest_is_manifest_error(tmp_path, loader_name):
+    """Invalid UTF-8 bytes → ManifestError (not uncaught UnicodeDecodeError).
+
+    MUT[narrow_manifest_guard]: except (OSError, json.JSONDecodeError) lets
+    UnicodeDecodeError escape. Both loaders fail at read_text before version
+    checks, so a v3-shaped payload reaches the legacy loader's decode site.
+    """
+    path = tmp_path / "bad.json"
+    path.write_bytes(b'{"manifest_version": 3, "x": "\xff\xfe"}')
+    loader = load_manifest if loader_name == "load_manifest" else load_legacy_manifest
+    kwargs = {"skip_hash_verification": True} if loader_name == "load_manifest" else {}
+    with pytest.raises(ManifestError, match="unreadable or malformed JSON") as excinfo:
+        loader(str(path), **kwargs)
+    message = str(excinfo.value)
+    assert "codec" in message or "utf-8" in message.lower() or "utf_8" in message.lower()

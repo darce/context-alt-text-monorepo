@@ -222,6 +222,48 @@ class ClusterMergeServiceTest extends TestCase
         $this->assertSame(41, (int) $created['person_id']);
     }
 
+    public function testLocalMergeReportsRosterBoundTrueWhenBindMatches(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 88;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Merged Person');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertEmpty($this->getHttpCalls(), 'local merge must not proxy');
+        $this->assertTrue($response->get_data()['roster_bound']);
+    }
+
+    public function testLocalMergeReportsRosterBoundFalseWhenBindMatchesNoRow(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 88;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/merge');
+        $request->set_param('source_id', 'cluster-source');
+        $request->set_param('target_cluster_id', 'cluster-target');
+        $request->set_param('target_label', 'Merged Person');
+
+        $response = $this->service->merge_cluster($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertEmpty($this->getHttpCalls(), 'local merge must not proxy');
+        $this->assertFalse($response->get_data()['roster_bound']);
+    }
+
     public function testMergeClusterWithTargetLabelBindsPerson(): void
     {
         global $wpdb;

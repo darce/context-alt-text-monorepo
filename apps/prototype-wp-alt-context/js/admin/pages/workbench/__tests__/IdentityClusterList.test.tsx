@@ -542,7 +542,7 @@ describe('IdentityClusterList', () => {
       await resolveFindClusterDeferreds(null);
     });
 
-    expect(screen.getByRole('button', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
     await actFlow(async () => {
       await user.click(screen.getByRole('button', { name: /cancel/i }));
     });

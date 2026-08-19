@@ -453,6 +453,37 @@ import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import type { RosterEntry } from '../api/rosterApi';
 import { ClusterDrawerPanel } from '../pages/roster/ClusterDrawerPanel';
 import { PersonWorkspacePanel } from '../pages/roster/PersonWorkspacePanel';
+import { ClusterReviewPanel } from '../pages/workbench/identity-clusters/ClusterReviewPanel';
+
+const reviewMembersState = vi.hoisted(() => ({
+  members: [
+    {
+      identity_id: 'face-1',
+      media_id: 7,
+      similarity: 0.9,
+      confidence: 0.9,
+      bbox: null,
+      thumb_url: 'https://example.com/face-7.jpg',
+      attachment_url: null,
+      media_url: 'https://example.com/face-7.jpg',
+    },
+  ],
+}));
+
+vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => ({
+  useShowAllClusterMembers: () => ({
+    members: reviewMembersState.members,
+    isLoading: false,
+    isError: false,
+    truncated: false,
+    total: reviewMembersState.members.length,
+    isFullyLoaded: true,
+    isExpanding: false,
+    expandError: null,
+    showAll: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
 
 const pageRenderers: Record<PageName, () => React.JSX.Element> = {
   DashboardPage: () => <DashboardPage />,
@@ -479,7 +510,24 @@ const wrap = (node: React.JSX.Element) => {
   );
 };
 
-const collectVisibleText = (container: HTMLElement): string => container.textContent ?? '';
+const collectVisibleText = (container: HTMLElement): string => {
+  const attrBits = Array.from(
+    container.querySelectorAll('[alt],[aria-label],[aria-description],[title],[placeholder]'),
+  )
+    .map((el) =>
+      [
+        el.getAttribute('alt'),
+        el.getAttribute('aria-label'),
+        el.getAttribute('aria-description'),
+        el.getAttribute('title'),
+        el.getAttribute('placeholder'),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(' '),
+    )
+    .join(' ');
+  return `${container.textContent ?? ''} ${attrBits}`;
+};
 
 describe('banned vocabulary across js/admin pages', () => {
   beforeEach(() => {
@@ -605,7 +653,8 @@ describe('banned vocabulary across js/admin pages', () => {
    * rendered directly here with representative fixtures.
    */
   it('roster surfaces render without cluster/identity jargon', () => {
-    const ROSTER_BANNED = ['cluster', 'identity', 'identities', 'projected instances'] as const;
+    const ROSTER_BANNED = ['cluster', 'identity', 'identities', 'member', 'projected instances'] as const;
+    const SURFACE_BANNED = [...BANNED_STRINGS, ...ROSTER_BANNED];
 
     const drawerCluster: ClusterSummary = {
       id: 'drawer-fixture-1',
@@ -684,20 +733,28 @@ describe('banned vocabulary across js/admin pages', () => {
 
     const { container: pageContainer } = render(wrap(<RosterPage />));
 
+    const { container: reviewContainer } = render(
+      wrap(<ClusterReviewPanel clusterId="review-fixture-1" onClose={vi.fn()} />),
+    );
+
     const drawerText = collectVisibleText(drawerContainer).toLowerCase();
     expect(drawerText).toContain('unnamed face group');
     const workspaceText = collectVisibleText(workspaceContainer).toLowerCase();
     expect(workspaceText).toContain('alice');
+    expect(workspaceText).toContain('data status');
     const pageText = collectVisibleText(pageContainer).toLowerCase();
     expect(pageText).toMatch(/unnamed faces|face groups waiting|reviewed in the workbench/);
+    const reviewText = collectVisibleText(reviewContainer).toLowerCase();
+    expect(reviewText).toContain('review these faces');
 
     for (const [label, text] of [
       ['drawer', drawerText],
       ['workspace', workspaceText],
       ['page', pageText],
+      ['review', reviewText],
     ] as const) {
-      for (const banned of ROSTER_BANNED) {
-        expect(text, `${label} leaked "${banned}"`).not.toContain(banned);
+      for (const banned of SURFACE_BANNED) {
+        expect(text, `${label} leaked "${banned}"`).not.toContain(banned.toLowerCase());
       }
       expect(text).not.toMatch(UUID_REGEX);
     }

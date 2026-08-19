@@ -548,7 +548,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
 
     const workspace = screen.getByRole('region', { name: 'Person workspace: Alice' });
     expect(workspace).toBeInTheDocument();
-    expect(screen.getByText('Projection status: current')).toBeInTheDocument();
+    expect(screen.getByText('Data status: current')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Singleton proposals queue' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Hard examples queue' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Needs confirmation after merge queue' })).toBeInTheDocument();

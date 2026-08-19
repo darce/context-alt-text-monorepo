@@ -45,6 +45,7 @@ vi.mock('@tanstack/react-query', async () => {
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (text: string, ...values: (string | number)[]) => {
     let index = 0;
     return text
@@ -284,7 +285,7 @@ describe('ClusterReviewPanel', () => {
       'src',
       'http://example.test/thumb-envelope.jpg',
     );
-    expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No faces in this group.')).not.toBeInTheDocument();
   });
 
   // UI-05: members error must offer retry that re-invokes the members query.
@@ -367,7 +368,7 @@ describe('ClusterReviewPanel', () => {
 
     // AT affordance: completion is announced and focus lands on the member
     // grid because the show-all button just unmounted.
-    expect(screen.getByText('All 2 members shown')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('All 2 faces shown')).toHaveAttribute('role', 'status');
     expect(container.querySelector('.acx-cluster-review-panel__grid')).toHaveFocus();
   });
 
@@ -401,7 +402,7 @@ describe('ClusterReviewPanel', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByLabelText('Remove this face from the face group'));
-    await user.click(screen.getByRole('button', { name: 'Remove member' }));
+    await user.click(screen.getByRole('button', { name: 'Remove face' }));
 
     await waitFor(() => {
       expect(removeClusterMemberMock).toHaveBeenCalledWith('identity-1', true);
@@ -571,7 +572,7 @@ describe('ClusterReviewPanel', () => {
 
     renderPanel('cluster-loading');
 
-    expect(screen.getByText('Loading members...')).toBeInTheDocument();
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
   });
 
   it('shows error message when members cannot be loaded', () => {

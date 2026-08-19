@@ -24,19 +24,19 @@ const QUEUE_SECTIONS = [
     id: 'singleton-proposals',
     label: __('Singleton proposals', 'alt-context'),
     queuedAction: __('Open singleton proposals queue', 'alt-context'),
-    emptyMessage: __('Singleton proposals will appear after the next projection refresh.', 'alt-context'),
+    emptyMessage: __('Singleton proposals will appear after the next refresh.', 'alt-context'),
   },
   {
     id: 'hard-examples',
     label: __('Hard examples', 'alt-context'),
     queuedAction: __('Open hard examples queue', 'alt-context'),
-    emptyMessage: __('Hard examples will appear after the next projection refresh.', 'alt-context'),
+    emptyMessage: __('Hard examples will appear after the next refresh.', 'alt-context'),
   },
   {
     id: 'needs-confirmation-after-merge',
     label: __('Needs confirmation after merge', 'alt-context'),
     queuedAction: __('Open needs confirmation after merge queue', 'alt-context'),
-    emptyMessage: __('Confirmation requests will appear after the next projection refresh.', 'alt-context'),
+    emptyMessage: __('Confirmation requests will appear after the next refresh.', 'alt-context'),
   },
 ] as const;
 
@@ -220,13 +220,13 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
         </p>
         <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Projection status: %s', 'alt-context'), entry.projection_status)}
+          {sprintf(__('Data status: %s', 'alt-context'), entry.projection_status)}
         </p>
         <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Projection refreshed: %s', 'alt-context'), formatTimestamp(entry.projection_refreshed_at))}
+          {sprintf(__('Last refreshed: %s', 'alt-context'), formatTimestamp(entry.projection_refreshed_at))}
         </p>
         <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Source version: %d', 'alt-context'), entry.source_version)}
+          {sprintf(__('Record version: %d', 'alt-context'), entry.source_version)}
         </p>
       </header>
 
@@ -315,7 +315,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                       onOpenLightbox: setLightbox,
                     })
                   ) : (
-                    <p>{__('Representative face unavailable until the next projection refresh.', 'alt-context')}</p>
+                    <p>{__('Representative face unavailable until the next refresh.', 'alt-context')}</p>
                   )}
                   {getSelectedFaceMetadataLines(cluster.representative_identity).map((line) => (
                     <p key={`${cluster.cluster_id}-representative-${line}`}>{line}</p>
@@ -350,7 +350,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
       </section>
 
       <section aria-labelledby="acx-person-workspace-queues-title">
-        <h4 id="acx-person-workspace-queues-title">{__('Curriculum review queues', 'alt-context')}</h4>
+        <h4 id="acx-person-workspace-queues-title">{__('Review queues', 'alt-context')}</h4>
         <div>
           {QUEUE_SECTIONS.map((queueSection) => {
             const isQueued = queueMemberships.has(queueSection.id);
@@ -379,7 +379,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                     <button type="button" className="acx-link-button" disabled>
                       {queueSection.queuedAction}
                     </button>
-                    <p>{__('Person identifier unavailable until the next projection refresh.', 'alt-context')}</p>
+                    <p>{__('Person identifier unavailable until the next refresh.', 'alt-context')}</p>
                   </>
                 ) : (
                   <p>{queueSection.emptyMessage}</p>

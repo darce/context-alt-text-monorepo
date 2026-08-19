@@ -329,11 +329,11 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     const workspace = screen.getByRole('region', { name: /Person workspace: Alice/i });
     expect(workspace).toBeInTheDocument();
-    expect(within(workspace).getByText('Projection status: current')).toBeInTheDocument();
+    expect(within(workspace).getByText('Data status: current')).toBeInTheDocument();
     expect(
-      within(workspace).getByText(`Projection refreshed: ${new Date(refreshedAt).toLocaleString()}`),
+      within(workspace).getByText(`Last refreshed: ${new Date(refreshedAt).toLocaleString()}`),
     ).toBeInTheDocument();
-    expect(within(workspace).getByText('Source version: 11')).toBeInTheDocument();
+    expect(within(workspace).getByText('Record version: 11')).toBeInTheDocument();
     expect(within(workspace).getByText('Face group detail')).toBeInTheDocument();
     expect(
       within(workspace).getByText('2 face groups are currently assigned to this person.'),
@@ -370,7 +370,7 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(within(hardExamplesQueue).getByText('No queued items for this person yet.')).toBeInTheDocument();
     expect(
-      within(hardExamplesQueue).getByText('Hard examples will appear after the next projection refresh.'),
+      within(hardExamplesQueue).getByText('Hard examples will appear after the next refresh.'),
     ).toBeInTheDocument();
 
     expect(within(confirmationQueue).getByText('Queued for review in this workspace.')).toBeInTheDocument();
@@ -425,7 +425,7 @@ describe('RosterPage projection-aware workspace shell', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Open hard examples queue' })).toBeDisabled();
-    expect(screen.getByText('Person identifier unavailable until the next projection refresh.')).toBeInTheDocument();
+    expect(screen.getByText('Person identifier unavailable until the next refresh.')).toBeInTheDocument();
     expect(onOpenQueue).not.toHaveBeenCalled();
   });
 
@@ -544,7 +544,7 @@ describe('RosterPage projection-aware workspace shell', () => {
 
     expect(screen.getAllByText('strong match').length).toBeGreaterThan(0);
     expect(screen.getAllByText('likely match').length).toBeGreaterThan(0);
-    expect(screen.getByText('Similarity pending next projection refresh.')).toBeInTheDocument();
+    expect(screen.getByText('Similarity pending the next refresh.')).toBeInTheDocument();
   });
 
   it('[PAG-M5-S5] renders threshold metadata when projected score thresholds are present', () => {

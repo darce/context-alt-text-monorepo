@@ -197,6 +197,13 @@ class PersonLabelBackfillServiceTest extends TestCase
         );
         $this->assertNotEmpty($personInserts);
         $this->assertStringContainsString("'John Smith (2)'", $personInserts[0]);
+        $createdIds = array_values(array_filter(
+            array_map(static fn(array $row): int => (int) ($row['id'] ?? 0), $wpdb->tableRows['wp_acx_persons']),
+            static fn(int $id): bool => $id > 0
+        ));
+        $this->assertContains(3, $createdIds);
+        $this->assertContains(80, $createdIds);
+        $this->assertCount(count(array_unique($createdIds)), $createdIds, 'collision insert must receive a distinct person id');
     }
 
     public function testAutomaticBindReusesPersonAlreadyBoundToThisCluster(): void

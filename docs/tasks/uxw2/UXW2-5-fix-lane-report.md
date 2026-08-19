@@ -40,7 +40,7 @@ Close remaining R2 + R3. TDD. Contract SSOT committed. PHP people-grain window p
 | R3-02 | same as R2-02 | `testGetRosterCandidatesReordersAndSlicesOutOfOrderPythonWindow`; tie `testGetRosterCandidatesTieBreaksEqualSimilarityByClusterIdAsc` | array_slice removed: `Failed asserting that actual size 4 matches expected size 2.` |
 | R3-03 | `fix(api): UXW2-5-R3-03 python window constant not forwarded verbatim` | register description + mapping query uses `ROSTER_CANDIDATES_PYTHON_WINDOW` | `does not contain "Forwarded verbatim"`; `Failed asserting that false is identical to 50.` |
 | R3-04 | `fix(api): UXW2-5-R3-04 uncommittable rows rank after committable` | `testGetRosterCandidatesRanksUncommittableAfterCommittableForTopK` | `Failed asserting that two arrays are identical.` `- 0 => 1,` `- 1 => 2,` `+ 0 => null,` `+ 1 => 1,` |
-| R3-05 | `fix(tests): UXW2-5-R3-05 empty-probe wire case` | `test_roster_candidates_empty_probe_when_all_reps_fail_quality_gate` | mutant empty-probe `quality_flag=ok`: `AssertionError: assert 'ok' == 'low_quality'` |
+| R3-05 | `fix(tests): UXW2-5-R3-05 empty-probe wire case` | `test_roster_candidates_empty_probe_when_reps_have_zero_dim_embeddings` | mutant empty-probe `quality_flag=ok`: `AssertionError: assert 'ok' == 'low_quality'` |
 
 ## Decisions (this round)
 

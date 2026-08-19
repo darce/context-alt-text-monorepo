@@ -891,6 +891,135 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame($mapperIds, $scheduled);
     }
 
+    /**
+     * R4-04: 25 raw mapper ids that collapse below the ceiling after
+     * unique-normalize must still run the off-page drift scan.
+     * Mutant: gate on the raw requested_repair_cluster_ids() array.
+     */
+    public function testListTopUnlabeledDuplicateMapperIdsStillRunDriftScan(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+        $driftCalls = 0;
+
+        $rawIds = [];
+        for ($i = 1; $i <= ClusterReadService::TARGETED_REPAIR_ID_CEILING - 1; $i++) {
+            $rawIds[] = sprintf('dup-%02d', $i);
+        }
+        $rawIds[] = 'dup-01';
+
+        $mapper = new class($rawIds) extends ClusterResponseMapper {
+            /** @param list<string> $forcedIds */
+            public function __construct(private array $forcedIds)
+            {
+            }
+
+            public function requested_repair_cluster_ids(): array
+            {
+                return $this->forcedIds;
+            }
+        };
+
+        $clustersRepo = new class($driftCalls) extends NullClustersRepository {
+            public function __construct(private int &$driftCalls)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                ++$this->driftCalls;
+                return ['aaa-drift'];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            cluster_mapper: $mapper
+        );
+
+        $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertSame(
+            1,
+            $driftCalls,
+            'duplicate-bearing 25 raw mapper ids must still run the off-page drift scan'
+        );
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0]['args'][1];
+        $this->assertContains('aaa-drift', $scheduled);
+        $this->assertCount(ClusterReadService::TARGETED_REPAIR_ID_CEILING, $scheduled);
+    }
+
+    /**
+     * R4-04: all-blank mapper ids normalize to empty, so repair_pending is
+     * false when nothing was dropped and no extras were queued.
+     * Mutant: set repair_pending from the raw requested_repair_cluster_ids() array.
+     */
+    public function testListTopUnlabeledAllBlankMapperIdsDoNotSetRepairPending(): void
+    {
+        $host = $this->localHost();
+
+        $mapper = new class() extends ClusterResponseMapper {
+            public function requested_repair_cluster_ids(): array
+            {
+                return ['', '   ', ''];
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 2],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo,
+            cluster_mapper: $mapper
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertFalse(
+            $data['repair_pending'],
+            'all-blank mapper ids must not publish repair_pending'
+        );
+    }
+
     public function testListTopUnlabeledProxyBootstrappingFallbackEnvelope(): void
     {
         $GLOBALS['__ac_scheduled'] = [];
@@ -1241,7 +1370,8 @@ class ClusterReadServiceTest extends TestCase
         ?NullClustersRepository $clusters_repository = null,
         ?SyncPullJobInterface $sync_pull_job = null,
         ?NullIdentityMembersRepository $members_repository = null,
-        bool $count_repair_calls = false
+        bool $count_repair_calls = false,
+        ?ClusterResponseMapper $cluster_mapper = null
     ): ClusterReadService {
         $syncHost = new class($use_local_projection) implements ClustersHostInterface {
             public function __construct(private bool $use_local_projection) {}
@@ -1311,7 +1441,7 @@ class ClusterReadServiceTest extends TestCase
             $clustersRepo,
             $membersRepo,
             new ClusterFacade($clustersRepo, $membersRepo),
-            new ClusterResponseMapper(),
+            $cluster_mapper ?? new ClusterResponseMapper(),
             new MemberResponseMapper(),
             $projectionSync,
             new ClusterResponseEnvelopeService(),

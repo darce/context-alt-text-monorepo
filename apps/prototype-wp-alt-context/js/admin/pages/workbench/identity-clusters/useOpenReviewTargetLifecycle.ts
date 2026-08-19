@@ -26,11 +26,7 @@ import { useEffect, useRef, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import { useMergeSurvivors } from './MergeSurvivorContext';
-import {
-  LIVE_TARGET_CLOSE_ANNOUNCE,
-  LIVE_TARGET_REBIND_ANNOUNCE,
-  useLiveReviewTarget,
-} from './useLiveReviewTarget';
+import { useLiveReviewTarget } from './useLiveReviewTarget';
 
 export interface UseOpenReviewTargetLifecycleParams {
   /** Review cluster id the panel reducer currently requests (user open), or null. */
@@ -99,7 +95,9 @@ export const useOpenReviewTargetLifecycle = ({
   ) {
     handledRef.current = openTarget;
     onAnnounce(
-      __(status === 'rebound' ? LIVE_TARGET_REBIND_ANNOUNCE : LIVE_TARGET_CLOSE_ANNOUNCE, 'alt-context'),
+      status === 'rebound'
+        ? __('This group was merged — switched to the surviving group.', 'alt-context')
+        : __('This review target is no longer available.', 'alt-context'),
     );
     setOpenTarget(resolvedClusterId);
     if (resolvedClusterId === null) {

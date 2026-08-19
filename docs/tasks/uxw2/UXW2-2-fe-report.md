@@ -1,6 +1,6 @@
 # REPORT — UXW2-2 FE fix lane
 
-Cite commits by **subject line**. SHAs below are `lane SHA (non-portable)` from `git log --format=%H` in this checkout after the commit existed.
+Cite commits by **subject line** only.
 
 ## R1 (prior)
 
@@ -44,8 +44,6 @@ Choice **(b)** for R1-26: no PHP/Python emitter for `identity_cluster_id`. Delet
 | R1-24 | `fix(workbench): UXW2-2-R1-24 bulkAccept name-only no guessed ids` | delete name drop loop → header/namePending length not 0. assignment/merge `promise resolved "undefined" instead of rejecting`. |
 | R1-29 + R3-11/12 | `fix(ux-map): UXW2-2-R1-29 UXW2-2-R3-11 UXW2-2-R3-12 i18n announce and map` | revert announce → `expected '' to be 'Name saved. Back to review suggestions.'` |
 | R1-15 verify | no production change | delete NAME-scope `tombstoneReviewGroup` → `expected '1 of 2 on this page' to be '1 of 1 on this page'` |
-
-Lane SHAs (non-portable): `7fee0318b247df03b892fdf771ef4f72b5bf1ddc` `e1f0ce4a67ec2c211d4001bd264ba7e23a4e007b` `784142c4f2670dfee527c467e8919274d3a14e9d` `f13755b46c1704f7f6a11435bce22e70af72f63d` `98ada6545cae3d3adb090b0ef0725b5acdd6050d` `ce8dfbe8f1d2dc5259cee979d5278b0d00cf7e34` `3a9bf7d0fb0685356f0cc3068becb6068ccb7f7b` `4edfbfb925fc09f9245f2875c2a997082e0478d2`
 
 Canon: rg-015, DATA-14, TEST-15, TEST-06, rg-002, REF-25, RLSE-04, A11Y-21, COG-03, HAI-08, INT-06, NAV-11, REF-09, A11Y-06.
 

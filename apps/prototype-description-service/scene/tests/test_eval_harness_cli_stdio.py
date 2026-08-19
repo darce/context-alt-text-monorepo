@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness.cli import (
+    _UNDECODABLE_PATH_PREFIX,
     _printable_path,
     _reconfigure_stdio,
     _stdio_encoding_guard,
@@ -54,18 +55,38 @@ def _c_locale_child_env() -> dict[str, str]:
     return env
 
 
-def _run_python_bytes(script: bytes, argv: list[bytes] | None = None) -> subprocess.CompletedProcess[bytes]:
+def _run_python_bytes(
+    script: bytes,
+    argv: list[bytes] | None = None,
+    *,
+    cwd: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         [os.fsencode(sys.executable), b"-c", script, *(argv or [])],
-        cwd=os.fsencode(_SERVICE_ROOT),
+        cwd=cwd if cwd is not None else os.fsencode(_SERVICE_ROOT),
         env=_c_locale_child_env(),
         capture_output=True,
     )
 
 
-def _run_cli_bytes(argv: list[bytes], *, setup: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+def _run_cli_bytes(
+    argv: list[bytes],
+    *,
+    setup: bytes = b"",
+    cwd: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     code = setup + b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])"
-    return _run_python_bytes(code, argv)
+    return _run_python_bytes(code, argv, cwd=cwd)
+
+
+def _documented_round_trip(rendered: str) -> bytes:
+    """Exactly the ``_printable_path`` / README round-trip recipe (rg-006)."""
+    if rendered.startswith(_UNDECODABLE_PATH_PREFIX):
+        body = rendered[len(_UNDECODABLE_PATH_PREFIX) :]
+        return body.encode("ascii").decode("unicode_escape").encode("latin-1")
+    if rendered.startswith("\\") and rendered.lstrip("\\").startswith(_UNDECODABLE_PATH_PREFIX):
+        return rendered[1:].encode("utf-8")
+    return rendered.encode("utf-8")
 
 
 def _cafe_named(tmp_path: Path, stem: bytes, suffix: bytes = b".json") -> bytes:
@@ -548,3 +569,44 @@ def test_draw_cannot_write_non_ascii_exc_tail_has_no_surrogate_under_c_parent(
     assert b"cannot write sealed split:" in proc.stderr
     assert _SURROGATE_LEAK not in proc.stderr
     assert _CAFE_UTF8 in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# MC — VLM6-RV15-Q2-01 / L-02: invertible doubling + out-of-band marker
+# ---------------------------------------------------------------------------
+
+_Q2_01_RAW = b"a\\b-caf\xe9.json"
+_Q2_01_SURROGATE = "a\\b-caf\udce9.json"
+_L02_MARKED_NAME = b"undecodable:xyz.json"
+_SCORE_UNREADABLE_PREFIX = b"score: run record not found/unreadable: "
+
+
+def test_printable_path_backslash_and_undecodable_byte_round_trips() -> None:
+    """Q2-01: MUT_drop_doubling must go red — \\\\ and \\xHH stay invertible."""
+    rendered = _printable_path(_Q2_01_SURROGATE)
+    assert _documented_round_trip(rendered) == _Q2_01_RAW
+
+
+def test_printable_path_marker_and_undecodable_differ_on_cli_stderr(tmp_path: Path) -> None:
+    """L-02: real undecodable: name and a fallback path must not alias (TEST-15)."""
+    cwd_b = os.fsencode(tmp_path)
+    (tmp_path / "man.json").write_text("{}", encoding="utf-8")
+    for name in (_L02_MARKED_NAME, _Q2_01_RAW):
+        with open(cwd_b + b"/" + name, "wb") as fh:
+            fh.write(b"not-json")
+
+    def _stderr_path(name: bytes) -> bytes:
+        proc = _run_cli_bytes(
+            [b"score", b"--manifest", b"man.json", b"--run-record", name],
+            cwd=cwd_b,
+        )
+        assert proc.returncode == 2, proc.stderr
+        line = next(ln for ln in proc.stderr.splitlines() if _SCORE_UNREADABLE_PREFIX in ln)
+        return line.split(_SCORE_UNREADABLE_PREFIX, 1)[1]
+
+    marked = _stderr_path(_L02_MARKED_NAME)
+    undec = _stderr_path(_Q2_01_RAW)
+    assert marked != undec
+    assert marked == b"\\" + _L02_MARKED_NAME
+    assert _documented_round_trip(marked.decode("ascii")) == _L02_MARKED_NAME
+    assert _documented_round_trip(undec.decode("ascii")) == _Q2_01_RAW

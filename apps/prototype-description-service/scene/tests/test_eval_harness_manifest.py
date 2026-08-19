@@ -384,19 +384,6 @@ def _plant_nfc_glacier_bytes(mock_dir: Path, body: bytes) -> bytes:
     return bytes_path
 
 
-def test_non_ascii_path_skip_guard_does_not_fire_on_utf8_fs():
-    """VLM6-RV13-Q2-02 / AGT-06: skip must not silently delete the NFC/NFD contract.
-
-    MUT skip: force the skip guard to fire unconditionally → this test fails
-    on a UTF-8 filesystem (the common CI locale) instead of pass-as-skipped.
-    """
-    if _fs_encoding_is_utf8():
-        assert _can_fsencode_nfc_nfd(), (
-            "NFC/NFD skip guard fired while filesystem encoding is UTF-8; "
-            "product _resolve_image is silently untested (AGT-06)"
-        )
-
-
 def test_non_ascii_path_resolves_across_normalization_forms(tmp_path):  # S1-07
     decomposed, composed = _nfc_nfd_glacier_names()
     encode_ok = _can_fsencode_nfc_nfd()

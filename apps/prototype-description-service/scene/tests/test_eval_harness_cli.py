@@ -5797,6 +5797,7 @@ _ASCII_LOCALE_PARENT_KEYS = (
 )
 _ASCII_FS_ENCODINGS = frozenset({"ascii", "ansi-x3.4-1968", "us-ascii"})
 _ASCII_LOCALE_PROBE_CACHE: tuple[str, str, int] | None = None
+_ASCII_LOCALE_PROBE_CACHE_KEY: tuple[tuple[tuple[str, str], ...], tuple[str, ...]] | None = None
 
 
 def _c_locale_child_env() -> dict[str, str]:
@@ -5809,14 +5810,21 @@ def _c_locale_child_env() -> dict[str, str]:
     return env
 
 
+def _ascii_locale_probe_key() -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    """Hashable snapshot of the env the child will actually see (TEST-15)."""
+    return (tuple(sorted(_ASCII_LOCALE_ENV.items())), tuple(_ASCII_LOCALE_PARENT_KEYS))
+
+
 def _ascii_locale_probe() -> tuple[str, str, int]:
-    """One child process per session: observe encodings, not the env dict (TEST-15).
+    """One child process per distinct env: observe encodings (TEST-15).
 
     functools.lru_cache cannot be imported here (E402 / ownership is this region
-    only). A one-slot cache is the same session cost.
+    only). A one-slot cache keyed on `_ASCII_LOCALE_ENV` + stripped-key set is
+    the same session cost as before, but MUT u can no longer pin a stale triple.
     """
-    global _ASCII_LOCALE_PROBE_CACHE
-    if _ASCII_LOCALE_PROBE_CACHE is not None:
+    global _ASCII_LOCALE_PROBE_CACHE, _ASCII_LOCALE_PROBE_CACHE_KEY
+    key = _ascii_locale_probe_key()
+    if _ASCII_LOCALE_PROBE_CACHE is not None and key == _ASCII_LOCALE_PROBE_CACHE_KEY:
         return _ASCII_LOCALE_PROBE_CACHE
     proc = subprocess.run(
         [
@@ -5841,19 +5849,79 @@ def _ascii_locale_probe() -> tuple[str, str, int]:
     if len(lines) < 3:
         raise AssertionError(f"C-locale encoding probe returned {lines!r} stderr={proc.stderr!r}")
     _ASCII_LOCALE_PROBE_CACHE = (lines[0], lines[1], int(lines[2]))
+    _ASCII_LOCALE_PROBE_CACHE_KEY = key
     return _ASCII_LOCALE_PROBE_CACHE
 
 
 def _assert_child_ascii_locale() -> None:
     fsenc, pref, utf8_mode = _ascii_locale_probe()
-    fs_ok = fsenc.lower().replace("_", "-") in _ASCII_FS_ENCODINGS
+    # getfilesystemencoding() is a platform property (always utf-8 on Darwin).
+    # Product I/O pins need preferred/stdio ASCII + utf8_mode==0 (TEST-15).
     pref_ok = pref.lower().replace("_", "-") in _ASCII_FS_ENCODINGS
-    if not (fs_ok and pref_ok and utf8_mode == 0):
+    if not (pref_ok and utf8_mode == 0):
         raise AssertionError(
             "C-locale child probe is not ASCII / utf8_mode=0: "
             f"getfilesystemencoding={fsenc!r} getpreferredencoding={pref!r} "
             f"utf8_mode={utf8_mode} (dict keys={sorted(_ASCII_LOCALE_ENV)!r})"
         )
+
+
+def test_assert_child_ascii_locale_accepts_utf8_filesystem_encoding(monkeypatch):
+    """VLM6-RV14-L-01 / TEST-15: fs encoding is a platform property.
+
+    Darwin hard-wires getfilesystemencoding() to utf-8. The guard must still
+    accept a child whose preferred encoding is ASCII and utf8_mode==0.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_ascii_locale_probe",
+        lambda: ("utf-8", "ANSI_X3.4-1968", 0),
+    )
+    _assert_child_ascii_locale()
+
+
+def test_assert_child_ascii_locale_rejects_non_ascii_preferred_or_utf8_mode(monkeypatch):
+    """VLM6-RV14-L-01 / TEST-15: preferred encoding + utf8_mode stay hard."""
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_ascii_locale_probe",
+        lambda: ("utf-8", "utf-8", 0),
+    )
+    with pytest.raises(AssertionError, match="getpreferredencoding"):
+        _assert_child_ascii_locale()
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_ascii_locale_probe",
+        lambda: ("utf-8", "ascii", 1),
+    )
+    with pytest.raises(AssertionError, match="utf8_mode"):
+        _assert_child_ascii_locale()
+
+
+def test_ascii_locale_probe_cache_is_keyed_on_env():
+    """VLM6-RV14-Q2-01 / TEST-15: MUT u must not defeat the guard.
+
+    Pre-seeding the one-slot cache then changing `_ASCII_LOCALE_ENV` must
+    force a re-probe. PYTHONUTF8=1 is a deterministic child observation.
+    """
+    global _ASCII_LOCALE_PROBE_CACHE, _ASCII_LOCALE_PROBE_CACHE_KEY
+    saved_cache = _ASCII_LOCALE_PROBE_CACHE
+    saved_key = _ASCII_LOCALE_PROBE_CACHE_KEY
+    saved_env = dict(_ASCII_LOCALE_ENV)
+    try:
+        _ASCII_LOCALE_PROBE_CACHE = ("ascii", "ascii", 0)
+        _ASCII_LOCALE_PROBE_CACHE_KEY = None
+        _ASCII_LOCALE_ENV["PYTHONUTF8"] = "1"
+        fsenc, pref, utf8_mode = _ascii_locale_probe()
+        assert utf8_mode == 1, (
+            f"probe cache is not keyed on env: PYTHONUTF8=1 still returned stale {(fsenc, pref, utf8_mode)!r} (MUT u)"
+        )
+    finally:
+        _ASCII_LOCALE_ENV.clear()
+        _ASCII_LOCALE_ENV.update(saved_env)
+        _ASCII_LOCALE_PROBE_CACHE = saved_cache
+        _ASCII_LOCALE_PROBE_CACHE_KEY = saved_key
 
 
 def _run_score_c_locale(
@@ -6174,10 +6242,9 @@ def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
         fh.write(record_path.read_bytes())
     # PYTHONIOENCODING=ascii forces errors=strict. C-locale pipes default to
     # surrogateescape, which would swallow print(md_path) of a non-ASCII stem.
-    env = os.environ.copy()
-    env.update(_ASCII_LOCALE_ENV)
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
     env["PYTHONIOENCODING"] = "ascii"
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     proc = subprocess.run(
         [
             os.fsencode(sys.executable),

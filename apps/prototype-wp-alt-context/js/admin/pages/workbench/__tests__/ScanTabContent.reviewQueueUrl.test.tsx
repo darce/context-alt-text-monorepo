@@ -11,7 +11,11 @@ import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { QUEUE_ACTION, useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
+import {
+  QUEUE_ACTION,
+  resetPendingSearchWritesForTests,
+  useWorkbenchFilters,
+} from '../../../hooks/useWorkbenchFilters';
 
 import {
   fetchPendingMergeSuggestions,
@@ -260,6 +264,7 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
     });
     vi.mocked(listRosterEntries).mockResolvedValue([]);
     resetConfigCache();
+    resetPendingSearchWritesForTests();
   });
 
   it('chip click → aria-pressed=true AND rq=assignment.all.0; Next keeps it; chip again removes rq', async () => {
@@ -339,9 +344,57 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Strong matches' }));
     await waitFor(() => {
-      expect(locSearch()).toContain('rq=merge.strong');
+      expect(locSearch()).toContain('rq=merge.strong.0');
     });
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('two Next clicks in one tick write rq index+2 (R2-05)', async () => {
+    mountScanTab('/');
+    await screen.findByText(/Is this/);
+    const next = screen.getByRole('button', { name: 'Next review item' });
+    act(() => {
+      next.click();
+      next.click();
+    });
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=all.all.2');
+    });
+  });
+
+  it('Strong chip from rq=assignment.all.1 writes the full rq=assignment.strong.0 (R2-05)', async () => {
+    const user = userEvent.setup();
+    mountScanTab('/?rq=assignment.all.1');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
+    });
+    expect(await screen.findByText('2 of 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=assignment.strong.0');
+    });
+    expect(locSearch()).not.toContain('rq=assignment.strong.1');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('deep link rq=assignment.strong.1 Prev keeps the full rq=assignment.strong.0 (R2-05)', async () => {
+    const user = userEvent.setup();
+    mountScanTab('/?rq=assignment.strong.1');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
+    });
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByText('2 of 2')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Previous review item' }));
+    await waitFor(() => {
+      expect(locSearch()).toContain('rq=assignment.strong.0');
+    });
+    expect(locSearch()).not.toContain('rq=assignment.all.');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
   });
 

@@ -135,7 +135,7 @@ const FindingsRetryButton = ({
   <QueryRetryButton
     describedBy={describedBy}
     retrying={retrying}
-    retryingLabel={__(QUERY_RETRY_COPY.RETRYING_FINDINGS, 'alt-context')}
+    retryingLabel={QUERY_RETRY_COPY.RETRYING_FINDINGS}
     statusId={FINDINGS_RETRY_STATUS_ID}
     statusClassName="acx-findings-panel__status"
     onClick={onClick}
@@ -316,8 +316,8 @@ export const WorkbenchFindingsPanel = ({
             {retrying
               ? null
               : retryFailed
-                ? __(QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS, 'alt-context')
-                : __(QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS, 'alt-context')}
+                ? QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS
+                : QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS}
           </p>
         </div>
         <FindingsRetryButton

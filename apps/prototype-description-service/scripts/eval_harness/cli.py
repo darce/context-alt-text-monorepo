@@ -209,9 +209,9 @@ class ScoreGateError(RuntimeError):
 
 def _score_gate_fail(message: str) -> NoReturn:
     """Fail a post-write score gate with a class-unique operator message."""
-    # Construct with a printable message so every consumer (run wrapper,
-    # main() sys.exit, tests) cannot leak PEP 383 surrogates via {exc}.
-    raise ScoreGateError(_printable_path(message))
+    # Message encoder, not path-slot encoder: the whole sentence is not a
+    # filename (API-11 / VLM6-RV16-L-02). Path slots are wrapped at call sites.
+    raise ScoreGateError(_printable_message(message))
 
 
 def _score_schema_error_message(dotted_path: str, expected: str) -> str:
@@ -1742,12 +1742,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     # VLM6-F-03 / EVAL-13: fetch/score manifest drift hard-fails unless the
     # operator explicitly opted into archival relabel (non_comparable verdict).
     if relabel_exit is not None:
-        _score_gate_fail(f"{relabel_exit} (see {json_path})")
+        _score_gate_fail(f"{relabel_exit} (see {_printable_path(json_path)})")
     # VLM6-S2A-A-02: aborted records must never green-exit (partial evidence).
     if record.get("aborted"):
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_ABORTED_RECORD} run-record is aborted "
-            f"(partial evidence only; see {json_path}); refusing to certify"
+            f"(partial evidence only; see {_printable_path(json_path)}); refusing to certify"
         )
     # Fail loud when any item was skipped from scoring (S7-01): a "passing" run
     # that dropped NFC-miss / remote errors must not look like full-corpus evidence.
@@ -1759,7 +1759,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if failed > 0:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_FAILED_ITEMS} {failed} item(s) not scored "
-            f"(see failures[] in {json_path}); "
+            f"(see failures[] in {_printable_path(json_path)}); "
             "refusing to treat a partial corpus as full eval evidence"
         )
     scored_n = int(scored["counts"]["scored"])
@@ -1767,7 +1767,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_ZERO_SCORED} scored=0 items (counts.total="
             f"{scored['counts'].get('total', 0)}); no evidence to certify "
-            f"(see {json_path})"
+            f"(see {_printable_path(json_path)})"
         )
     # Corpus truncation via partial run-record (fetch --limit N): media-id multiset
     # must match the score-time manifest. counts.total alone is self-referential
@@ -1783,7 +1783,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"{SCORE_GATE_PREFIX_TRUNCATION} run-record media-id multiset differs "
             f"from manifest "
             f"(missing={media_id_missing}, extra={media_id_extra}; "
-            f"record_items={record_n}, manifest_entries={manifest_n}; see {json_path})"
+            f"record_items={record_n}, manifest_entries={manifest_n}; see {_printable_path(json_path)})"
         )
     # Fetch-time provenance self-consistency (record must name its own manifest).
     # Score-time vs fetch-time digest equality is the VLM6-F-03 hard gate above
@@ -1794,7 +1794,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"{SCORE_GATE_PREFIX_MANIFEST_MISMATCH} run-record provenance missing "
             f"fetch-time "
             f"manifest_sha256 — record is not self-consistent with its fetch provenance "
-            f"(see {json_path})"
+            f"(see {_printable_path(json_path)})"
         )
     # Archival relabel path: verdict is non_comparable and must not green-exit as
     # a certifiable pass (compare rejects it; process still exits non-zero so an
@@ -1803,7 +1803,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_MANIFEST_RELABEL} "
             f"verdict={ScoreVerdict.NON_COMPARABLE.value} "
-            f"(archival relabel only; not adoption-comparable; see {json_path})"
+            f"(archival relabel only; not adoption-comparable; see {_printable_path(json_path)})"
         )
     # fx8 / gx1 / EVAL-13 / TEST-15: under --freeze-certification the exit code
     # means scoring-path byte-stability once measurement integrity has passed.
@@ -1819,7 +1819,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             _score_gate_fail(
                 f"{SCORE_GATE_PREFIX_FREEZE_CERT_REFUSED} post-cert fold re-serialised "
                 "the document (schema/evidence/relabel); certified bytes are not "
-                f"the written bytes (see {json_path}); not a frozen scoring path"
+                f"the written bytes (see {_printable_path(json_path)}); not a frozen scoring path"
             )
         print(
             "freeze-certification passed [score]: scoring-path is byte-stable "
@@ -1839,12 +1839,12 @@ def _cmd_score(args: argparse.Namespace) -> None:
     if must_right_defined == 0:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_EMPTY_RUBRIC} must_right is vacuous corpus-wide "
-            f"(must_right_defined_images=0); caption hard gate is vacuous (see {json_path})"
+            f"(must_right_defined_images=0); caption hard gate is vacuous (see {_printable_path(json_path)})"
         )
     if easy_wrong_defined == 0:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_EMPTY_RUBRIC} easy_wrong is vacuous corpus-wide "
-            f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {json_path})"
+            f"(easy_wrong_defined_images=0); wrong-name trap is vacuous (see {_printable_path(json_path)})"
         )
     # Schema hard-keys already folded above (pre-write). Re-read gate inputs from
     # the validated scored dict for the remaining exit messages.
@@ -1864,7 +1864,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_MUST_RIGHT_FAILURES} {must_right_failed} image(s) "
             f"failed Must-Right "
-            f"caption hard-gate (caption corruption / missing required names; see {json_path})"
+            f"caption hard-gate (caption corruption / missing required names; see {_printable_path(json_path)})"
         )
     # F1-5 / EVAL-19: wrong-name floor is vacuous when images were scored but zero
     # entered identification counting (recognition_enabled false corpus-wide).
@@ -1888,7 +1888,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             f"is empty "
             f"(evaluated_images=0, excluded_images={excluded_n}); "
             f"wrong-name floor is vacuous — no image contributed to identification "
-            f"(recognition_enabled false corpus-wide or none scored; see {json_path})"
+            f"(recognition_enabled false corpus-wide or none scored; see {_printable_path(json_path)})"
         )
     # VLM-6 S2A: wrong-name floor — hallucinated human names on photographs are
     # the highest-severity failure this harness detects; gate, do not merely report.
@@ -1911,7 +1911,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_WRONG_NAME_FLOOR} wrong_name_rate={display_rate} "
             f"exceeds "
-            f"floor={floor} (ignored_wrong_names={ignored_n}; see {json_path})"
+            f"floor={floor} (ignored_wrong_names={ignored_n}; see {_printable_path(json_path)})"
         )
     # VLM6-OBS-04 (live path): process exit must match the persisted artifact.
     # A corpus with vacuous critical categories writes verdict=not_ready;
@@ -1935,7 +1935,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         reason_hint = "; ".join(quality_floor_reasons[:3])
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_QUALITY_FLOOR} {reason_hint} "
-            f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {json_path})"
+            f"(verdict={ScoreVerdict.FAIL.value}; not adoption-eligible; see {_printable_path(json_path)})"
         )
     # VLM6-DELTA-03 / VLM6-GATE-INT-01 (category-vacuity / identification-refused
     # interaction): a refused identification block (boxed GT missing / unboxed
@@ -1972,7 +1972,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             _score_gate_fail(
                 f"{SCORE_GATE_PREFIX_CATEGORY_VACUITY} "
                 f"verdict={ScoreVerdict.NOT_READY.value} "
-                f"({reason_hint}; not adoption-eligible; see {json_path})"
+                f"({reason_hint}; not adoption-eligible; see {_printable_path(json_path)})"
             )
     raise_if_unconsented_refusals(scored, getattr(args, "allow_refused", None), command="score")
 
@@ -2336,11 +2336,11 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         scored = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written face report {json_path}: {exc}"
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} cannot read back written face report {_printable_path(json_path)}: {exc}"
         )
     if not isinstance(scored, dict):
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} written face report is not a JSON object (see {json_path})"
+            f"{SCORE_GATE_PREFIX_FACE_REPORT_READBACK} written face report is not a JSON object (see {_printable_path(json_path)})"
         )
     scored_n = int((scored.get("counts") or {}).get("scored") or 0)
     failed = int((scored.get("counts") or {}).get("failed") or 0)
@@ -2367,17 +2367,17 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
     if record.get("aborted"):
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_ABORTED_RECORD} score-face: run-record is aborted "
-            f"(partial evidence only; see {json_path}); refusing to certify"
+            f"(partial evidence only; see {_printable_path(json_path)}); refusing to certify"
         )
     if scored_n == 0:
         _score_gate_fail(
             f"{SCORE_GATE_PREFIX_ZERO_SCORED} score-face: scored=0 items "
             f"(counts.total={total_n}); "
-            f"no evidence to certify (see {json_path})"
+            f"no evidence to certify (see {_printable_path(json_path)})"
         )
     if failed > 0:
         _score_gate_fail(
-            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} score-face: {failed} item(s) not scored (see failures[] in {json_path})"
+            f"{SCORE_GATE_PREFIX_FAILED_ITEMS} score-face: {failed} item(s) not scored (see failures[] in {_printable_path(json_path)})"
         )
     # fx8 / gx1 / EVAL-13: under --freeze-certification exit = scoring-path
     # byte-stability after integrity gates above have passed.
@@ -2796,6 +2796,26 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
 _UNDECODABLE_PATH_PREFIX = "undecodable:"
 
 
+def _printable_message(message: str) -> str:
+    """Make operator text printable without claiming it is a filename (API-11).
+
+    Recovers PEP 383 surrogates the same way ``_printable_path`` recovers argv,
+    but never applies the ``undecodable:`` path-slot marker and never prepends
+    a backslash for an already-marked string. Idempotent: a second pass is a
+    no-op (VLM6-RV16-L-02 / L-03).
+    """
+    try:
+        message.encode("utf-8")
+    except UnicodeEncodeError:
+        raw = os.fsencode(message)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            doubled = raw.replace(b"\\", b"\\\\")
+            return doubled.decode("utf-8", errors="backslashreplace")
+    return message
+
+
 def _escape_undecodable_marker(text: str) -> str:
     """Keep ``undecodable:`` out-of-band on decodable names (L-02).
 
@@ -2856,11 +2876,12 @@ def _printable_exc(exc: BaseException) -> str:
 
     OSError: reconstruct with a printable ``filename`` so ``{exc}`` tails
     stay uniformly escaped (VLM6-RV15-Q1-02). Other exceptions: recover
-    the whole message the same way ``_printable_path`` recovers argv.
+    the whole message via ``_printable_message`` (a message is not a path
+    slot — API-11 / VLM6-RV16-L-03). Idempotent on already-encoded text.
     """
     if isinstance(exc, OSError) and exc.filename is not None:
         return str(OSError(exc.errno, exc.strerror, _printable_path(exc.filename)))
-    return _printable_path(str(exc))
+    return _printable_message(str(exc))
 
 
 def _reconfigure_stdio() -> None:
@@ -3245,7 +3266,8 @@ def main(argv: list[str] | None = None) -> None:
     except ScoreGateError as exc:
         # B-10: score gates raise; standalone score/score-face map to SystemExit
         # so existing tests and operators still see non-zero exits with messages.
-        sys.exit(str(exc))
+        # Same encoder as the run wrapper (VLM6-RV16-L-03) — a second pass is a no-op.
+        sys.exit(_printable_exc(exc))
     except (
         ManifestError,
         RemoteClientError,

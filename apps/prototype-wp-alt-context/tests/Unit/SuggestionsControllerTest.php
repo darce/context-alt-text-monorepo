@@ -1313,7 +1313,7 @@ class SuggestionsControllerTest extends TestCase
 
     public function testGetRosterCandidatesTieBreaksEqualSimilarityByClusterIdAsc(): void
     {
-        $far = 'ffffffff-0000-0000-0000-00000000000f';
+        $far = 'eeeeeeee-0000-0000-0000-00000000000e';
         $ann = 'aaaaaaaa-0000-0000-0000-00000000000a';
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],

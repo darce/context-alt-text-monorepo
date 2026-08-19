@@ -3599,6 +3599,79 @@ describe('ReviewQueue', () => {
       expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     });
   });
+
+  it('R6-03: deferred accept POST renders COMMITTING through the ReviewQueue passthrough', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    let resolveAccept: ((value: {
+      suggestion_id: string;
+      resolution: 'accepted';
+      identity_id: string;
+      cluster_id: string;
+      message: string;
+    }) => void) | null = null;
+    vi.mocked(acceptSuggestion).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAccept = resolve;
+        }),
+    );
+
+    renderQueue();
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        yes.click();
+      });
+      const holding = document.querySelector('.acx-review-queue__hold');
+      expect(holding).toBeInstanceOf(HTMLElement);
+      expect(holding).toHaveTextContent(HOLD_STATUS_COPY);
+      expect(within(holding as HTMLElement).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_HOLD_MS);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const committing = document.querySelector('.acx-review-queue__hold');
+      expect(committing).toBeInstanceOf(HTMLElement);
+      expect(wholeHoldText(committing as HTMLElement)).toBe(HOLD_COMMITTING_STATUS_COPY);
+      expect(wholeHoldText(committing as HTMLElement)).toBe('Saving…');
+      expect(committing).not.toHaveTextContent('Undo');
+      expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+
+      await act(async () => {
+        resolveAccept?.({
+          suggestion_id: 'sugg-1',
+          resolution: 'accepted',
+          identity_id: 'identity-1',
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {

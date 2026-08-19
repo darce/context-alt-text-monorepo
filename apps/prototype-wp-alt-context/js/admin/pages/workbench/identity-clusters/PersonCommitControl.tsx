@@ -93,7 +93,11 @@ export const PersonCommitControl = ({
         rosterEntries: rosterQuery.data ?? [],
         labelMatches: [],
         limit: null,
-      }).options,
+      }).options.map((option) => ({
+        value: option.value,
+        label: option.label,
+        source: option.source,
+      })),
     [rosterQuery.data],
   );
 
@@ -195,6 +199,7 @@ export const PersonCommitControl = ({
           disabled={disabled || rosterQuery.isError}
           commitLabel={__('Save name', 'alt-context')}
           pendingLabel={__('Saving name…', 'alt-context')}
+          previewCommit
           placeholder={__('Type a name…', 'alt-context')}
           searchPlaceholder={__('Type a name…', 'alt-context')}
           visibleLabel={__('Name this person', 'alt-context')}

@@ -62,9 +62,11 @@ const renderControl = (overrides: Partial<React.ComponentProps<typeof NameFaceCo
 const TypedNameFace = ({
   options = defaultProps.options,
   onCommit,
+  previewCommit = false,
 }: {
   options?: readonly ComboboxOption[];
   onCommit: (resolution: NameFaceResolution) => void;
+  previewCommit?: boolean;
 }): React.JSX.Element => {
   const [value, setValue] = React.useState('');
   return (
@@ -75,6 +77,7 @@ const TypedNameFace = ({
       onCommit={onCommit}
       commitLabel="Save name"
       ariaLabel="Name this person"
+      previewCommit={previewCommit}
     />
   );
 };
@@ -202,7 +205,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Gra');
     await user.keyboard('{ArrowDown}');
-    await user.click(screen.getByRole('button', { name: 'Create person "Gra"' }));
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
     expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 2, name: 'Grace Hopper' });
   });
 
@@ -431,7 +434,7 @@ describe('NameFaceControl pending Enter (UXW2-3-R1-04)', () => {
 describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
   it('exact roster match previews Save as the option label', async () => {
     const onCommit = vi.fn();
-    render(<TypedNameFace onCommit={onCommit} />);
+    render(<TypedNameFace onCommit={onCommit} previewCommit />);
     const user = userEvent.setup();
     await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Ada Lovelace');
     expect(screen.getByRole('button', { name: 'Save as Ada Lovelace' })).toBeInTheDocument();
@@ -439,7 +442,7 @@ describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
 
   it('novel name previews Create person with the typed value', async () => {
     const onCommit = vi.fn();
-    render(<TypedNameFace onCommit={onCommit} />);
+    render(<TypedNameFace onCommit={onCommit} previewCommit />);
     const user = userEvent.setup();
     await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Pat Rivera');
     expect(screen.getByRole('button', { name: 'Create person "Pat Rivera"' })).toBeInTheDocument();
@@ -447,15 +450,24 @@ describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
 
   it('two same-fold entries keep commitLabel and do not claim a bind', () => {
     const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
-    renderControl({ options, value: 'Alex Carter' });
+    renderControl({ options, value: 'Alex Carter', previewCommit: true });
     expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create person/ })).not.toBeInTheDocument();
   });
 
   it('empty value keeps the commitLabel prop', () => {
-    renderControl({ value: '' });
+    renderControl({ value: '', previewCommit: true });
     expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+  });
+
+  it('without previewCommit the button stays on commitLabel', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('combobox', { name: 'Name this person' }), 'Ada Lovelace');
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();
   });
 
   it('pendingLabel wins over the preview while isPending', () => {
@@ -463,6 +475,7 @@ describe('NameFaceControl create-vs-bind preview (UXW2-3-R1-07)', () => {
       value: 'Ada Lovelace',
       isPending: true,
       pendingLabel: 'Saving name…',
+      previewCommit: true,
     });
     expect(screen.getByRole('button', { name: 'Saving name…' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Save as/ })).not.toBeInTheDocument();

@@ -211,12 +211,6 @@
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "loading", "error", "empty"]
-        },
-        {
-          "id": "z-review-name",
-          "label": "Name control",
-          "role": "form",
-          "states": ["default"]
         }
       ]
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RosterEntry } from '../../../api/rosterApi';
+import { serializeQueueState } from '../../../hooks/workbenchQueueUrl';
 import {
   ROSTER_SURFACE,
   isUnlabeledCluster,
@@ -119,5 +120,11 @@ describe('isUnlabeledCluster + workbench deep link (E21-9 Slice 5b contract)', (
     // cluster= dropped (jobId precedent): workbench has no cluster reader.
     expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=assignment.all.0');
     expect(workbenchReviewQueueUrl()).not.toContain('cluster=');
+  });
+
+  it('encodes rq via serializeQueueState (REF-09, no hand-coded token)', () => {
+    const encoded = serializeQueueState({ kind: 'assignment', band: 'all', index: 0 });
+    expect(encoded).toBe('assignment.all.0');
+    expect(workbenchReviewQueueUrl()).toBe(`#/workbench?tab=scan&rq=${encoded}`);
   });
 });

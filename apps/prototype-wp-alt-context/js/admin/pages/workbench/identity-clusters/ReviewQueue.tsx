@@ -43,8 +43,6 @@ import {
   intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
-  nextQueueIndex,
-  prevQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_DRAIN_MESSAGE,
@@ -130,13 +128,33 @@ export interface ReviewQueueHandle {
 export interface ReviewQueueProps {
   /** Controlled queue index (lifted — survives panel unmount). */
   index: number;
-  onIndexChange: (index: number) => void;
-  /** Controlled kind filter from URL. */
+  /**
+   * Absolute clamp after queue length is known. Parent MUST dispatch
+   * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
+   */
+  onClampIndex: (index: number) => void;
+  /**
+   * Relative next/prev. Parent MUST reduce `STEP_INDEX {delta, length}`
+   * against pending queue state so two taps before re-render advance by 2.
+   */
+  onStepIndex: (delta: number, length: number) => void;
+  /**
+   * Controlled kind filter from URL.
+   * Parent MUST reset index to 0 on kind change (reducer SET_KIND does this).
+   */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
-  /** Controlled band filter from URL (`rq=` band enum). */
+  /**
+   * Controlled band filter from URL (`rq=` band enum).
+   * Parent MUST reset index to 0 on band change (reducer SET_BAND does this).
+   */
   band: ReviewQueueBandParam;
   onBandChange: (band: ReviewQueueBandParam) => void;
+  /**
+   * UXW2-1: single-write escape hatch — clears kind AND band (and resets the
+   * index) in ONE owner dispatch. Never wire this to per-filter callbacks.
+   */
+  onClearFilters: () => void;
   /**
    * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
    * unmount). Default empty; controlled prop pair into bulk hooks.
@@ -254,11 +272,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   function ReviewQueue(
     {
       index,
-      onIndexChange,
+      onClampIndex,
+      onStepIndex,
       kind,
       onKindChange,
       band,
       onBandChange,
+      onClearFilters,
       selectedIds,
       onSelectedIdsChange,
       onLabel,
@@ -445,17 +465,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // assignment+merge resolve must not wipe a restored rq= index.
     const queueSettled = findings.queueSettled;
 
-    // Clamp restored/oversized index back to parent (PR-54).
+    // Clamp restored/oversized index back to parent (PR-54 / R1-03).
     React.useEffect(() => {
       if (!queueSettled) {
         return;
       }
       if (length > 0 && index !== safeIndex) {
-        onIndexChange(safeIndex);
+        onClampIndex(safeIndex);
       } else if (length === 0 && index !== 0) {
-        onIndexChange(0);
+        onClampIndex(0);
       }
-    }, [index, safeIndex, length, onIndexChange, queueSettled]);
+    }, [index, safeIndex, length, onClampIndex, queueSettled]);
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;
@@ -549,10 +569,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
 
+    const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+
     // Card transition announce + post-removal focus placement.
     React.useEffect(() => {
+      const recoveredFromFilteredEmpty = prevFilteredEmptyRef.current && !filteredEmptyWithWork;
+      prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
-        if (previousItemKeyRef.current !== null) {
+        if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
           setLiveMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
@@ -721,16 +745,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
+    // UXW2-1: ONE callback per click — the owner resets the index inside the
+    // reducer; a second same-tick write would read a stale URL snapshot.
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
       navigateAfterFlush(() => {
         // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
         if (nextFilter === filter) {
           onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-          onIndexChange(0);
           return;
         }
         onKindChange(filterToKindParam(nextFilter));
-        onIndexChange(0);
       });
     };
 
@@ -739,23 +763,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Band chips toggle like KIND chips — active → all.
         if (nextBand === activeBand) {
           onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-          onIndexChange(0);
           return;
         }
         onBandChange(bandToBandParam(nextBand));
-        onIndexChange(0);
       });
     };
 
     const handlePrev = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(prevQueueIndex(safeIndex, length));
+        onStepIndex(-1, length);
       });
     };
 
     const handleNext = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(nextQueueIndex(safeIndex, length));
+        onStepIndex(1, length);
       });
     };
 
@@ -1277,8 +1299,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     type="button"
                     className="button"
                     onClick={() => {
-                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                      navigateAfterFlush(() => {
+                        pendingFocusAfterRemovalRef.current = true;
+                        onClearFilters();
+                      });
                     }}
                   >
                     {__('Clear filters', 'alt-context')}

@@ -58,6 +58,7 @@
 | Filter and select library media; run scan faces / describ… |
 +------------------------------------------------------------+
 | ZONES                                                      |
+|   - Review queue (queue) states=[default,filtered_empty,… |
 |   - Status / search filters (form) states=[default,edge_i… |
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |

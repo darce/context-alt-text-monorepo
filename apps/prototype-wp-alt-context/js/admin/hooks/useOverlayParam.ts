@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { commitSearchParams } from './pendingSearchWrites';
+
 export const useOverlayParam = <T extends string>(
   paramName: string,
   validValues: readonly T[],
@@ -12,18 +14,13 @@ export const useOverlayParam = <T extends string>(
 
   const setOverlay = useCallback(
     (value: T | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value) {
-            next.set(paramName, value);
-          } else {
-            next.delete(paramName);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      commitSearchParams(setSearchParams, (next) => {
+        if (value) {
+          next.set(paramName, value);
+        } else {
+          next.delete(paramName);
+        }
+      });
     },
     [paramName, setSearchParams],
   );

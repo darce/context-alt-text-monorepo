@@ -1023,9 +1023,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <div className="acx-review-queue__nav">
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
-                ? data.isTopUnlabeledError
+                ? data.isTopUnlabeledError || findings.repairPending
                   ? // [A11Y] a bare em dash announces as punctuation and loses the
                     // position entirely; state the unmeasurable count explicitly.
+                    // R5-03: repair-empty is not an authoritative drain — same
+                    // unmeasurable-count copy as the projection-failure path.
                     __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(

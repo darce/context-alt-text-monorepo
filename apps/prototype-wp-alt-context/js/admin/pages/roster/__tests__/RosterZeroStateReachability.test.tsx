@@ -3,10 +3,9 @@ import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { RosterClusterCommitResponse, RosterEntry } from '../../../api/rosterApi';
-import type { BatchAnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../../api/recognition';
-import { useRecognitionCluster, useRecognitionClusters } from '../../../hooks/useRecognitionHooks';
+import type { BatchAnalyzeResponse, ClusterSummary } from '../../../api/recognition';
+import { useRecognitionCluster } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
-import { useClusterSelection } from '../../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import { RosterPage } from '../../RosterPage';
 import { RosterEntriesSection } from '../RosterEntriesSection';
@@ -24,8 +23,11 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../../hooks/useRecognitionHooks', () => ({
-  useRecognitionClusters: vi.fn(),
   useRecognitionCluster: vi.fn(),
+}));
+
+vi.mock('../hooks/useTopUnlabeledTotal', () => ({
+  useTopUnlabeledTotal: vi.fn(() => null),
 }));
 
 vi.mock('../../../hooks/useRosterHooks', () => ({
@@ -33,10 +35,6 @@ vi.mock('../../../hooks/useRosterHooks', () => ({
   useCreatePerson: vi.fn(),
   useUpdatePerson: vi.fn(),
   useDeletePerson: vi.fn(),
-}));
-
-vi.mock('../../../hooks/useClusterSelection', () => ({
-  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../hooks/useClusterMediaMap', () => ({
@@ -65,13 +63,6 @@ const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => (
   projection_refreshed_at: '2026-05-07T12:00:00Z',
   ...overrides,
 });
-
-const baseClusters: ClusterListResponse = {
-  clusters: [],
-  limit: 20,
-  total: 0,
-  truncated: false,
-};
 
 const dragDropState = {
   dragPayload: null,
@@ -105,19 +96,6 @@ const clusterActionState = {
       isPending: false,
     },
   ),
-  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkMergeProgress: null,
-  bulkMergeFailure: null,
-  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -125,18 +103,6 @@ const clusterActionState = {
   },
   errorMessage: null,
   resetAll: vi.fn(),
-};
-
-const selectionState = {
-  selectedIds: new Set<string>(),
-  toggle: vi.fn(),
-  selectRange: vi.fn(),
-  selectAll: vi.fn(),
-  retainVisible: vi.fn(),
-  clear: vi.fn(),
-  isAllSelected: vi.fn(() => false),
-  isSelected: vi.fn(() => false),
-  count: 0,
 };
 
 const renderRosterPage = (route = '/'): ReturnType<typeof render> => {
@@ -162,13 +128,11 @@ const expectListAndAddPerson = (): void => {
 };
 
 describe('Roster zero-state reachability (rg-003)', () => {
-  const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
   const mockedUseUpdatePerson = vi.mocked(useUpdatePerson);
   const mockedUseDeletePerson = vi.mocked(useDeletePerson);
-  const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -176,16 +140,12 @@ describe('Roster zero-state reachability (rg-003)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockedUseRecognitionClusters.mockReturnValue(
-      createMockQuery({ data: baseClusters, isLoading: false, isError: false, refetch: vi.fn() }),
-    );
     mockedUseRecognitionCluster.mockReturnValue(
       createMockQuery<ClusterSummary, Error>({ data: undefined, isLoading: false, isError: false }),
     );
     mockedUseCreatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseUpdatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseDeletePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
-    mockedUseClusterSelection.mockReturnValue(selectionState);
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState);
     mockedUseClusterActions.mockReturnValue(clusterActionState);
@@ -204,13 +164,14 @@ describe('Roster zero-state reachability (rg-003)', () => {
     expect(zeroState).toHaveTextContent(/No people yet/i);
     expect(zeroState.querySelector('.acx-roster-section__empty-icon')).toBeTruthy();
     expect(screen.getByRole('link', { name: /run a scan/i })).toBeInTheDocument();
-    // rg-003: Needs-assignment rail stays reachable at zero state (disabled-with-reason).
-    expect(screen.getByTestId('needs-assignment-section')).toBeInTheDocument();
-    expect(screen.getByTestId('needs-assignment-zero')).toBeInTheDocument();
-    // The count belongs in the accessible name: at zero selection it is the only
-    // channel that states *why* the control is dimmed (title is not reliably
-    // announced), so rg-003's "disabled with reason" is carried by the label.
-    expect(screen.getByRole('button', { name: /^Merge 0 clusters$/i })).toBeDisabled();
+    // rg-003 + NAV-05: the rail is retired; the workbench review queue stays
+    // reachable from the true zero state via the CTA card.
+    expect(screen.getByTestId('roster-review-cta')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan&rq=all.all.0',
+    );
+    expect(screen.queryByTestId('needs-assignment-section')).not.toBeInTheDocument();
   });
 
   it('pairs the active filter badge with an icon second channel', () => {

@@ -389,6 +389,41 @@ class IdentityBatchSuggestionsResponse(BaseModel):
     matches: dict[str, list[ClusterSuggestionMatch]]
 
 
+class RosterCandidateThresholdsResponse(BaseModel):
+    """Live profile thresholds that produced candidate bands (PROV-06 / DRIFT-03)."""
+
+    suggestion_floor: float
+    suggestion_ceiling: float
+    similarity_threshold: float
+
+
+class RosterCandidateResponse(BaseModel):
+    """One labelled cluster ranked against the probe. PHP maps cluster_id → roster_entry_id."""
+
+    cluster_id: str
+    name: str
+    similarity: float
+    band: Literal["strong", "possible", "none"]
+
+    @field_validator("cluster_id")
+    @classmethod
+    def validate_candidate_cluster_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class RosterCandidatesResponse(BaseModel):
+    """PROV-06 typed payload for GET /recognition/clusters/{id}/roster-candidates."""
+
+    model_id: str
+    embedding_model: str
+    computed_at: datetime
+    probe_face_count: int
+    reference_face_count: int
+    quality_flag: Literal["ok", "low_quality", "occluded"]
+    thresholds: RosterCandidateThresholdsResponse
+    candidates: list[RosterCandidateResponse] = Field(default_factory=list)
+
+
 class ScanProgressEnvelopeResponse(BaseModel):
     """Poll-cheap scan progress envelope (E15-27 Slice 2)."""
 

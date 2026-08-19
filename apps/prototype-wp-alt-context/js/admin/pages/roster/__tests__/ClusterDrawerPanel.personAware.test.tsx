@@ -67,7 +67,7 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
-    expect(screen.getByText('Assigned cluster')).toBeInTheDocument();
+    expect(screen.getByText('Assigned face group')).toBeInTheDocument();
     const reviewLink = screen.getByRole('link', { name: 'Open person review' });
     expect(reviewLink).toHaveAttribute('href', `#/roster?person=${personUuid}`);
     expect(screen.queryByRole('button', { name: 'Open person workspace' })).not.toBeInTheDocument();
@@ -128,7 +128,7 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
-    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.getByText('Unresolved face group')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Open person review' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
@@ -145,7 +145,7 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
-    expect(screen.getByText('Assigned cluster')).toBeInTheDocument();
+    expect(screen.getByText('Assigned face group')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open person review' })).toHaveAttribute(
       'href',
       `#/roster?person=${personUuid}`,
@@ -162,7 +162,7 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
-    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.getByText('Unresolved face group')).toBeInTheDocument();
     expect(screen.queryByText('Singleton proposal')).not.toBeInTheDocument();
     expect(
       screen.queryByText('This face group is a proposal, not a curated person. Review it before assigning.'),
@@ -179,7 +179,7 @@ describe('ClusterDrawerPanel person-aware states (E15-17 S4)', () => {
       />,
     );
 
-    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.getByText('Unresolved face group')).toBeInTheDocument();
     expect(screen.getByLabelText('Commit to roster entry')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Open person review' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();

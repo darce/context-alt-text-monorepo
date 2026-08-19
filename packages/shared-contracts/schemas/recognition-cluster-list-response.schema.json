@@ -14,6 +14,7 @@
         "required": [
           "id",
           "label",
+          "label_state",
           "identity_count",
           "member_ids",
           "representative_identity",
@@ -28,6 +29,11 @@
           "label": {
             "type": "string",
             "description": "Resolved cluster label presented by the admin UI."
+          },
+          "label_state": {
+            "type": "string",
+            "enum": ["person", "unlabeled", "unbound"],
+            "description": "Named label authority: person (bound person name), unlabeled (empty/null or reserved cluster-*), unbound (human label with no person bind)."
           },
           "is_auto_label": {
             "type": "boolean",

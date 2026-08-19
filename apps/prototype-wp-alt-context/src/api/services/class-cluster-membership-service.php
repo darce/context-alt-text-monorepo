@@ -169,7 +169,11 @@ class ClusterMembershipService {
 
 		$result = $this->run_transactional(
 			function () use ( $tenant_id, $new_cluster_id, $label, $identity_id, $source_cluster_id ): WP_REST_Response|WP_Error {
-				if ( $this->clusters_repository->create_local_cluster( $tenant_id, $new_cluster_id, $label, 1 ) <= 0 ) {
+				$created = $this->clusters_repository->create_local_cluster( $tenant_id, $new_cluster_id, $label, 1 );
+				if ( is_wp_error( $created ) ) {
+					return $created;
+				}
+				if ( $created <= 0 ) {
 					return new WP_Error( 'acx_db_error', 'Could not create local cluster projection.', array( 'status' => 500 ) );
 				}
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
 
@@ -171,7 +172,8 @@ class LifecycleManagerTest extends TestCase
                 'roster_entry_id' => 7,
             ],
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace' AND tenant_id = '{$tenant}'"] = null;
 
         $this->manager->activate();
 
@@ -205,7 +207,8 @@ class LifecycleManagerTest extends TestCase
 
         $this->setOption('acx_roster_entries', $legacyEntries);
         $this->setOption('acx_roster_assignments', $legacyAssignments);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper' AND tenant_id = '{$tenant}'"] = null;
         $wpdb->defaultUpdateResult = 0;
 
         $this->manager->activate();
@@ -236,7 +239,8 @@ class LifecycleManagerTest extends TestCase
             ],
         ]);
 
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson'"] = 13;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson' AND tenant_id = '{$tenant}'"] = 13;
         $wpdb->queryResults["SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1"] = 13;
         $wpdb->defaultUpdateResult = 0;
 
@@ -271,7 +275,8 @@ class LifecycleManagerTest extends TestCase
             ],
             'cluster-invalid' => 'skip-me',
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan' AND tenant_id = '{$tenant}'"] = null;
 
         $this->manager->activate();
 
@@ -487,6 +492,277 @@ class LifecycleManagerTest extends TestCase
             get_option('acx_schema_fingerprint'),
             'successful upgrade must stamp schema fingerprint'
         );
+    }
+
+    public function testMaybeUpgradeHealsUnboundHumanLabelsIncludingUnderscoreSkip(): void
+    {
+        $this->setOption('acx_version', '0.0.1-stale');
+        global $wpdb;
+        $wpdb->insert_id = 3;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-heal',
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->manager->maybe_upgrade();
+
+        $listSql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("LIKE 'cluster\\_%%'", $listSql);
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertNotEmpty($personInserts);
+    }
+
+    public function testMaybeUpgradeHealsUnboundHumanLabelSoRosterReadIsNotNull(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        global $wpdb;
+        $tenant = self::currentTenantId();
+        $wpdb->insert_id = 8;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-unbound-human',
+                'tenant_id' => $tenant,
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_identity_members'] = [
+            [
+                'identity_uuid' => 'member-unbound',
+                'cluster_uuid' => 'cluster-unbound-human',
+                'attachment_id' => 42,
+            ],
+        ];
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-unbound-human',
+                'label' => 'Tory Guzman',
+                'person_id' => null,
+            ],
+        ];
+
+        $this->assertNull(
+            $this->projectedRosterLabel(null, 'Tory Guzman'),
+            'pre-upgrade CASE must hide a human label with no person bind'
+        );
+
+        $this->manager->maybe_upgrade();
+
+        $personName = trim((string) ($wpdb->tableRows['wp_acx_persons'][0]['name'] ?? ''));
+        $personId = $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] ?? null;
+        $this->assertSame('Tory Guzman', $personName);
+        $this->assertTrue(is_numeric($personId) && (int) $personId > 0, 'upgrade must bind the unbound human label');
+        $this->assertSame(
+            'Tory Guzman',
+            $this->projectedRosterLabel($personName, (string) $wpdb->tableRows['wp_acx_clusters'][0]['label'])
+        );
+
+        $wpdb->mockResults = [];
+        $wpdb->queries = [];
+        (new \AltContext\Sovereign\Repositories\IdentityMembersReadRepository(
+            'wp_acx_identity_members',
+            'wp_acx_clusters'
+        ))->list_for_media_ids($tenant, [42]);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('THEN p.name', $sql);
+        $this->assertStringContainsString('ELSE NULL END', $sql);
+    }
+
+    public function testMaybeUpgradeDoesNotMarkHealCompleteWhenStalledAndRetries(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            public int $healRuns = 0;
+
+            protected function run_label_heal(string $tenant_id): array
+            {
+                ++$this->healRuns;
+                return array(
+                    'bound' => 0,
+                    'created' => 0,
+                    'persons' => 0,
+                    'skipped' => 0,
+                    'examined' => 3,
+                    'collisions' => 0,
+                    'stalls' => 3,
+                    'stalled' => true,
+                    'empty' => false,
+                );
+            }
+        };
+
+        $manager->maybe_upgrade();
+        $this->assertSame(1, $manager->healRuns);
+        $this->assertNotSame('1', (string) get_option('acx_label_heal_complete', ''));
+
+        delete_option('acx_label_heal_attempts');
+        $manager->maybe_upgrade();
+        $this->assertSame(2, $manager->healRuns, 'stalled heal must re-run on the next load');
+        $this->assertNotSame('1', (string) get_option('acx_label_heal_complete', ''));
+    }
+
+    public function testHealDoesNotRunAgainOnceThePerLoadCapIsHit(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            public int $healRuns = 0;
+
+            protected function run_label_heal(string $tenant_id): array
+            {
+                ++$this->healRuns;
+                return array(
+                    'bound' => 0,
+                    'created' => 0,
+                    'persons' => 0,
+                    'skipped' => 0,
+                    'examined' => 3,
+                    'collisions' => 0,
+                    'stalls' => 3,
+                    'stalled' => true,
+                    'empty' => false,
+                );
+            }
+        };
+
+        $manager->maybe_upgrade();
+        $manager->maybe_upgrade();
+        $this->assertSame(1, $manager->healRuns);
+    }
+
+    public function testRenderLabelHealNoticeNamesTheRemedyWhenTenantIsUnresolved(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_label_heal_complete', '');
+        $this->setOption('acx_label_heal_blocked_reason', 'tenant_unresolved');
+
+        ob_start();
+        $this->manager->render_label_heal_notice();
+        $html = (string) ob_get_clean();
+
+        $this->assertStringContainsString('role="status"', $html);
+        $this->assertStringContainsString('wp acx bind-unbound-labels', $html);
+        $this->assertStringContainsString('tenant', $html);
+    }
+
+    public function testMaybeUpgradeMarksHealCompleteWhenHealFinishes(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            protected function run_label_heal(string $tenant_id): array
+            {
+                return array(
+                    'bound' => 1,
+                    'created' => 1,
+                    'persons' => 1,
+                    'skipped' => 0,
+                    'examined' => 1,
+                    'collisions' => 0,
+                    'stalls' => 0,
+                    'stalled' => false,
+                    'empty' => false,
+                );
+            }
+        };
+
+        $manager->maybe_upgrade();
+        $this->assertSame('1', (string) get_option('acx_label_heal_complete'));
+
+        $manager = new class() extends LifecycleManager {
+            public int $healRuns = 0;
+
+            protected function run_label_heal(string $tenant_id): array
+            {
+                ++$this->healRuns;
+                return array(
+                    'bound' => 0,
+                    'created' => 0,
+                    'persons' => 0,
+                    'skipped' => 0,
+                    'examined' => 0,
+                    'collisions' => 0,
+                    'stalls' => 0,
+                    'stalled' => false,
+                    'empty' => true,
+                );
+            }
+        };
+        $manager->maybe_upgrade();
+        $this->assertSame(0, $manager->healRuns, 'completed heal must not re-run');
+    }
+
+    public function testMaybeUpgradeDoesNotStampHealCompleteWhenCappedAndPassesBatchBound(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            public ?int $seenMaxBatches = null;
+
+            protected function create_person_label_backfill_service(): PersonLabelBackfillService
+            {
+                $cap = (new \ReflectionClass(LifecycleManager::class))->getConstant('MAX_HEAL_BATCHES_PER_LOAD');
+                $this->seenMaxBatches = is_int($cap) ? $cap : null;
+
+                return new class($this->seenMaxBatches) extends PersonLabelBackfillService {
+                    public function backfill_tenant(string $tenant_id, int $batch_size = self::BATCH_SIZE, bool $dry_run = false): array
+                    {
+                        return [
+                            'bound' => 500,
+                            'created' => 0,
+                            'persons' => 500,
+                            'skipped' => 0,
+                            'examined' => 500,
+                            'collisions' => 0,
+                            'stalls' => 0,
+                            'stalled' => false,
+                            'empty' => false,
+                            'capped' => true,
+                        ];
+                    }
+                };
+            }
+        };
+
+        $manager->maybe_upgrade();
+
+        $this->assertSame(5, $manager->seenMaxBatches, 'upgrade heal must bound batches per load');
+        $this->assertNotSame(
+            '1',
+            (string) get_option('acx_label_heal_complete', ''),
+            'capped heal must not stamp success (remainder must resume)'
+        );
+    }
+
+    public function testUninstallRemovesLabelHealOptions(): void
+    {
+        $this->setOption('acx_label_heal_complete', '1');
+        $this->setOption('acx_label_heal_attempts', 2);
+        $this->setOption('acx_label_heal_blocked_reason', 'tenant_unresolved');
+
+        $this->manager->uninstall();
+
+        $this->assertFalse(get_option('acx_label_heal_complete'));
+        $this->assertFalse(get_option('acx_label_heal_attempts'));
+        $this->assertFalse(get_option('acx_label_heal_blocked_reason'));
     }
 
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
@@ -893,6 +1169,29 @@ class LifecycleManagerTest extends TestCase
             $wpdb->queries,
             'acx_description_usage must not be orphaned on uninstall (BR-09)'
         );
+    }
+
+    private function projectedRosterLabel(?string $personName, ?string $clusterLabel): ?string
+    {
+        $person = trim((string) $personName);
+        if ('' !== $person) {
+            return $person;
+        }
+
+        $reserved = (new class() {
+            use \AltContext\Support\DetectsSystemDefinedLabels;
+
+            public function check(string $label): bool
+            {
+                return $this->is_reserved_label_shape($label);
+            }
+        })->check((string) $clusterLabel);
+
+        if (null === $clusterLabel || '' === $clusterLabel || $reserved) {
+            return $clusterLabel;
+        }
+
+        return null;
     }
 
     private function findQueryContaining(array $queries, string $needle): string

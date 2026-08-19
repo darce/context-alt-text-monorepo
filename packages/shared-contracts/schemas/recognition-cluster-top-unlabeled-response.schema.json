@@ -15,6 +15,7 @@
           "id",
           "tenant_id",
           "label",
+          "label_state",
           "is_labeled",
           "is_auto_label",
           "identity_count",
@@ -30,6 +31,11 @@
           },
           "label": {
             "type": ["string", "null"]
+          },
+          "label_state": {
+            "type": "string",
+            "enum": ["person", "unlabeled", "unbound"],
+            "description": "Named label authority: person (bound person name), unlabeled (empty/null or reserved cluster-*), unbound (human label with no person bind)."
           },
           "is_labeled": {
             "type": "boolean"

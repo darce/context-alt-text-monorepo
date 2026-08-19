@@ -6,7 +6,9 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMembershipService;
+use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\ProjectionQueryException;
+use AltContext\Sovereign\Repositories\ClusterProjectionWriter;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\Support\ClusterMutationsMembersSpy;
 use AltContext\Tests\Support\ClusterMutationsOutboxWriterSpy;
@@ -275,6 +277,71 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertSame('acx_db_error', $response->get_error_code());
         $this->assertContains('ROLLBACK', $wpdb->queries);
         $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testCreateForIdentitySurfacesNameCollisionAs409(): void
+    {
+        global $wpdb;
+
+        $repository = new class() extends ClusterMutationsRepositorySpy {
+            public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int|\WP_Error
+            {
+                return (new ClusterProjectionWriter('wp_acx_clusters'))
+                    ->create_local_cluster($tenant_id, $cluster_uuid, $label, $identity_count);
+            }
+        };
+        $host = new ClusterMutationsController(
+            $repository,
+            $this->syncStateRepository,
+            $this->membersRepository,
+            null,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+        $service = new ClusterMembershipService(
+            $host,
+            $repository,
+            $this->membersRepository,
+            $this->syncStateRepository
+        );
+
+        $rows = [
+            [
+                'id' => 1,
+                'person_uuid' => 'aaaaaaaa-bbbb-cccc-dddd-000000000001',
+                'name' => 'Ada Lovelace',
+                'normalized_name' => PersonResolutionService::normalize_name('Ada Lovelace'),
+                'tenant_id' => self::currentTenantId(),
+            ],
+        ];
+        for ($suffix = 2; $suffix <= 99; $suffix++) {
+            $name = 'Ada Lovelace (' . $suffix . ')';
+            $rows[] = [
+                'id' => $suffix,
+                'person_uuid' => sprintf('aaaaaaaa-bbbb-cccc-dddd-%012d', $suffix),
+                'name' => $name,
+                'normalized_name' => PersonResolutionService::normalize_name($name),
+                'tenant_id' => self::currentTenantId(),
+            ];
+        }
+        $wpdb->tableRows['wp_acx_persons'] = $rows;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-other',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Ada Lovelace',
+                'person_id' => 1,
+            ],
+        ];
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Ada Lovelace');
+
+        $response = $service->create_cluster_for_identity($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('acx_name_collision', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status']);
     }
 
     private function serviceWithFailingOutbox(): ClusterMembershipService

@@ -326,10 +326,16 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertContains('START TRANSACTION', $wpdb->queries);
         $this->assertContains('COMMIT', $wpdb->queries);
 
-        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
-        $this->assertStringContainsString("'cluster_merged'", $outboxInsert);
-        $this->assertStringContainsString("'cluster-source'", $outboxInsert);
-        $this->assertStringContainsString('cluster-target', $outboxInsert);
+        $outboxJoined = implode(
+            "\n",
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+            )
+        );
+        $this->assertStringContainsString("'cluster_merged'", $outboxJoined);
+        $this->assertStringContainsString("'cluster-source'", $outboxJoined);
+        $this->assertStringContainsString('cluster-target', $outboxJoined);
         $this->assertSame([], $this->getHttpCalls());
     }
 

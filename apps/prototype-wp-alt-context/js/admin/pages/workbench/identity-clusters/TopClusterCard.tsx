@@ -251,6 +251,7 @@ export const TopClusterCard = ({
           <button
             type="button"
             className="button acx-top-cluster-card__review-btn"
+            data-acx-review-trigger="true"
             onClick={() => onReview(cluster.id)}
             disabled={isBusy}
           >

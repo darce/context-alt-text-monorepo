@@ -14,6 +14,7 @@ from sqlalchemy.orm import joinedload
 
 from db.models import IdentityCluster, MediaIdentity
 from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.embedding_space import representative_embedding_model
 from recognition.config.settings import resolve_effective_clustering_settings
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
@@ -217,11 +218,7 @@ async def infer_suggested_label(
             seen_unresolved: set[str] = set()
             for _cluster, cluster_reps in labeled_clusters:
                 for rep in cluster_reps:
-                    rep_model = getattr(rep, "embedding_model", None)
-                    if rep_model is None:
-                        identity = getattr(rep, "identity", None)
-                        if identity is not None:
-                            rep_model = getattr(identity, "embedding_model", None)
+                    rep_model = representative_embedding_model(rep)
                     if rep_model is not None:
                         continue
                     identity_id = getattr(rep, "identity_id", None)
@@ -264,11 +261,7 @@ async def infer_suggested_label(
                 continue
             for rep in cluster_reps:
                 if same_model_identity_ids is not None:
-                    rep_model = getattr(rep, "embedding_model", None)
-                    if rep_model is None:
-                        identity = getattr(rep, "identity", None)
-                        if identity is not None:
-                            rep_model = getattr(identity, "embedding_model", None)
+                    rep_model = representative_embedding_model(rep)
                     if rep_model is not None:
                         if str(rep_model) != str(target_model):
                             continue

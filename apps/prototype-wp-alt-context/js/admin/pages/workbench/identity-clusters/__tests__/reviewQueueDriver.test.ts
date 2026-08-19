@@ -26,6 +26,8 @@ import {
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
+  REVIEW_GROUP_ACCEPT_CAP,
+  closeMatchGroupForAccept,
   STRONG_SIMILARITY_MIN,
   isValidQueueOrdinalPair,
   queueItemToNextAction,
@@ -331,6 +333,100 @@ describe('band filter (④) + matrix M2 composition', () => {
     expect(matchesSimilarityBand(undefined, REVIEW_QUEUE_BAND.STRONG)).toBe(false);
     expect(matchesSimilarityBand(undefined, REVIEW_QUEUE_BAND.ALL)).toBe(true);
     expect(matchesSimilarityBand(0.1, REVIEW_QUEUE_BAND.ALL)).toBe(true);
+  });
+
+  describe('closeMatchGroupForAccept (UXW2-6 slice 3)', () => {
+    const assignment = (
+      overrides: Partial<{
+        suggestionId: string;
+        clusterId: string | null;
+        label: string | null;
+        similarity: number;
+        runSize: number;
+        runIndex: number;
+      }> = {},
+    ) =>
+      ({
+        kind: NEXT_ACTION_KIND.ASSIGNMENT,
+        suggestionId: 'sugg-a',
+        clusterId: 'cluster-1',
+        label: 'Alex',
+        similarity: 0.9,
+        runSize: 3,
+        runIndex: 0,
+        ...overrides,
+      }) as const;
+
+    it('excludes the accepted item and keeps same-cluster strong ASSIGNMENT items in queue order', () => {
+      const accepted = assignment({ suggestionId: 'sugg-a', runIndex: 0 });
+      const group = closeMatchGroupForAccept(
+        [
+          accepted,
+          assignment({ suggestionId: 'sugg-b', similarity: 0.8, runIndex: 1 }),
+          assignment({ suggestionId: 'sugg-c', similarity: 0.7, runIndex: 2 }),
+          assignment({
+            suggestionId: 'sugg-other',
+            clusterId: 'cluster-2',
+            similarity: 0.95,
+            runSize: 1,
+            runIndex: 0,
+          }),
+        ],
+        accepted,
+      );
+
+      expect(group.included.map((item) => item.suggestionId)).toEqual(['sugg-b', 'sugg-c']);
+      expect(group.omitted).toBe(0);
+      expect(group.truncated).toBe(false);
+    });
+
+    it('uses the strong band helper so weaker siblings and non-assignment kinds never enter', () => {
+      const accepted = assignment();
+      const group = closeMatchGroupForAccept(
+        [
+          accepted,
+          assignment({ suggestionId: 'sugg-strong-floor', similarity: STRONG_SIMILARITY_MIN, runIndex: 1 }),
+          assignment({ suggestionId: 'sugg-weaker', similarity: STRONG_SIMILARITY_MIN - 0.01, runIndex: 2 }),
+          { kind: NEXT_ACTION_KIND.MERGE, suggestionId: 'merge-1', similarity: 0.99 },
+          { kind: NEXT_ACTION_KIND.NAME, suggestionId: 'name-1', clusterId: 'cluster-1' },
+          { kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'cluster-1' },
+        ],
+        accepted,
+      );
+
+      expect(group.included.map((item) => item.suggestionId)).toEqual(['sugg-strong-floor']);
+    });
+
+    it('returns an empty group when nothing else qualifies (no 0-count offer seed)', () => {
+      const accepted = assignment({ runSize: 1, runIndex: 0 });
+      expect(closeMatchGroupForAccept([accepted], accepted)).toEqual({
+        included: [],
+        omitted: 0,
+        truncated: false,
+      });
+    });
+
+    it('caps at 25 and reports how many close matches were not included', () => {
+      expect(REVIEW_GROUP_ACCEPT_CAP).toBe(25);
+      const accepted = assignment({ suggestionId: 'sugg-0', runSize: 27, runIndex: 0 });
+      const items = [
+        accepted,
+        ...Array.from({ length: 26 }, (_, index) =>
+          assignment({
+            suggestionId: `sugg-${index + 1}`,
+            similarity: 0.9 - index * 0.001,
+            runSize: 27,
+            runIndex: index + 1,
+          }),
+        ),
+      ];
+      const group = closeMatchGroupForAccept(items, accepted);
+      expect(group.included).toHaveLength(25);
+      expect(group.included[0]?.suggestionId).toBe('sugg-1');
+      expect(group.included[24]?.suggestionId).toBe('sugg-25');
+      expect(group.omitted).toBe(1);
+      expect(group.truncated).toBe(true);
+    });
   });
 
   it('band predicate applies to ASSIGNMENT similarity only; merges excluded like name/cluster (BR-60)', () => {

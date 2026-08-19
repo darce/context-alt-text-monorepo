@@ -5099,6 +5099,228 @@ describe('ReviewQueue', () => {
     });
     expect(document.querySelector('.acx-review-queue__live')).not.toHaveTextContent(/\d/);
   });
+
+  describe('UXW2-6 slice 3 group accept of close matches', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const seedSameClusterAssignments = (
+      rows: Array<{ id: string; similarity: number; clusterId?: string; label?: string }>,
+    ): void => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: rows.map((row) => ({
+          id: row.id,
+          identity_id: `identity-${row.id}`,
+          suggested_cluster_id: row.clusterId ?? 'cluster-1',
+          representative_similarity: row.similarity,
+          avg_member_similarity: row.similarity,
+          cluster_label: row.label ?? 'Alex',
+          cluster_identity_count: rows.length,
+        })),
+        limit: 40,
+        offset: 0,
+      });
+    };
+
+    it('does not offer a 0-count close-match dialog when nothing else qualifies', async () => {
+      seedSameClusterAssignments([{ id: 'sugg-1', similarity: 0.9, clusterId: 'cluster-solo' }]);
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+      expect(screen.queryByRole('dialog', { name: 'Accept close matches?' })).not.toBeInTheDocument();
+      expect(screen.queryByText(/0 close match/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Undo' }));
+    });
+
+    it('offers the close-match count before any write and confirms through the bulk sequencer', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9 },
+        { id: 'sugg-2', similarity: 0.8 },
+        { id: 'sugg-3', similarity: 0.7 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        }),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 2 close matches?');
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+
+      const marked = document.querySelectorAll('[data-acx-accent-primary]');
+      expect(marked).toHaveLength(1);
+      expect(marked[0]).toHaveAccessibleName('Accept close matches');
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Accept close matches' }).click();
+          await Promise.resolve();
+        });
+        expect(acceptSuggestion).not.toHaveBeenCalled();
+        expect(screen.getByTestId('acx-bulk-hold')).toHaveTextContent('Saving 3… — Undo');
+
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalledTimes(3);
+      });
+      expect(vi.mocked(acceptSuggestion).mock.calls.map((call) => call[0])).toEqual([
+        'sugg-1',
+        'sugg-2',
+        'sugg-3',
+      ]);
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+          'Accepted 2 close matches.',
+        );
+      });
+    });
+
+    it('Just this one accepts only the current suggestion', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9 },
+        { id: 'sugg-2', similarity: 0.8 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        }),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+      await screen.findByRole('dialog', { name: 'Accept close matches?' });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Just this one' }).click();
+          await Promise.resolve();
+        });
+        expect(acceptSuggestion).not.toHaveBeenCalled();
+        const holding = document.querySelector('.acx-review-queue__hold');
+        expect(holding).toBeInstanceOf(HTMLElement);
+
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await waitFor(() => {
+        expect(acceptSuggestion).toHaveBeenCalledTimes(1);
+      });
+      expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('excludes weaker siblings from the offered close-match count', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9 },
+        { id: 'sugg-strong', similarity: 0.45 },
+        { id: 'sugg-weak', similarity: 0.44 },
+      ]);
+
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 1 close match?');
+      expect(offer).not.toHaveTextContent('Also accept 2 close matches?');
+    });
+
+    it('caps the offer at 25 and states how many close matches were not included', async () => {
+      seedSameClusterAssignments(
+        Array.from({ length: 27 }, (_, index) => ({
+          id: `sugg-${index}`,
+          similarity: 0.9 - index * 0.001,
+        })),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 25 close matches?');
+      expect(offer).toHaveTextContent(
+        'Accepting the first 25 close matches. 1 more were not included.',
+      );
+    });
+
+    it('reuses pinned partial-failure copy when a group accept stops mid-sequence', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9 },
+        { id: 'sugg-2', similarity: 0.8 },
+        { id: 'sugg-3', similarity: 0.7 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+      await screen.findByRole('dialog', { name: 'Accept close matches?' });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Accept close matches' }).click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      expect(failure).toHaveTextContent("1 of 3 accepted — 'Accept' failed for Alex; 1 not attempted");
+      expect(failure).not.toHaveTextContent(/some|several|a few|failed to save/i);
+    });
+  });
 });
 
 describe('CommitHoldRegion (shipped hold chrome — BR-19)', () => {

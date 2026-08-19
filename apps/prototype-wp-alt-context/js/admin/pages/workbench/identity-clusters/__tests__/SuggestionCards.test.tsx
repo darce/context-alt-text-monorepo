@@ -115,6 +115,25 @@ describe('SuggestionCard BR-41 group accname', () => {
     expect(screen.queryByText(/Face suggestion \d+ of \d+/)).toBeNull();
   });
 
+  it('Yes fires onAccept once and does not preview a close-match group on the card', async () => {
+    const onAccept = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    expect(onAccept).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/close matches/i)).not.toBeInTheDocument();
+  });
+
   it('renders the face-count string and review title (UXW2-3-R1-11)', () => {
     render(
       <SuggestionCard

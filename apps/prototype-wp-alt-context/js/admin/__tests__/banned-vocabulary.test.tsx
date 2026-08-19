@@ -690,8 +690,12 @@ describe('banned vocabulary across js/admin pages', () => {
     // Slice 5: bulk commit / hold / PR-38 labels.
     const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
     const lightboxNameCopy = await import('../pages/workbench/identity-clusters/LightboxNameFace');
+    const closeMatchCopy = await import('../pages/workbench/identity-clusters/CloseMatchAcceptOffer');
 
     const personCommitStrings = Object.values(personCommitCopy).filter(
+      (value) => typeof value === 'string',
+    ) as string[];
+    const closeMatchStrings = Object.values(closeMatchCopy.CLOSE_MATCH_OFFER_COPY).filter(
       (value) => typeof value === 'string',
     ) as string[];
     const surface = [
@@ -702,6 +706,10 @@ describe('banned vocabulary across js/admin pages', () => {
       REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER],
       ...personCommitStrings,
       lightboxNameCopy.LIGHTBOX_NAME_SAVED_ANNOUNCE,
+      ...closeMatchStrings,
+      closeMatchCopy.closeMatchOfferDescription(2),
+      closeMatchCopy.closeMatchAcceptedAnnouncement(2, 0),
+      closeMatchCopy.closeMatchAcceptedAnnouncement(25, 3),
       bulkCopy.bulkCommitLabel(4, 'Maria'),
       bulkCopy.bulkCommitLabel(3, null),
       bulkCopy.bulkHoldStatusCopy(5),

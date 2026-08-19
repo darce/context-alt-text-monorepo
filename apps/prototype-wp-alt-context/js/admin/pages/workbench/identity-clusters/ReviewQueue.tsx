@@ -32,10 +32,15 @@ import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
 import { viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
+import {
+  CloseMatchAcceptOffer,
+  closeMatchAcceptedAnnouncement,
+} from './CloseMatchAcceptOffer';
 import { LightboxNameFace, LIGHTBOX_NAME_SAVED_ANNOUNCE } from './LightboxNameFace';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
+  closeMatchGroupForAccept,
   filterReviewQueueComposite,
   intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
@@ -43,6 +48,7 @@ import {
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
+  type AssignmentQueueItem,
   type ReviewQueueBand,
   type ReviewQueueFilter,
   type ReviewQueueItem,
@@ -285,6 +291,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
     const [lightboxNaming, setLightboxNaming] = React.useState(false);
+    const [closeMatchOffer, setCloseMatchOffer] = React.useState<{
+      acceptedId: string;
+      label: string | null;
+      included: AssignmentQueueItem[];
+      omitted: number;
+      truncated: boolean;
+    } | null>(null);
+    const closeMatchAnnounceRef = React.useRef<{ count: number; omitted: number } | null>(null);
+    const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
     // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
     // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
@@ -374,6 +389,33 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       isBulkActiveRef: data.isBulkActiveRef,
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
     });
+
+    React.useEffect(() => {
+      const previous = closeMatchBulkPhaseRef.current;
+      closeMatchBulkPhaseRef.current = bulk.bulk.phase;
+      const pending = closeMatchAnnounceRef.current;
+      if (!pending) {
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.COMMITTING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        setLiveMessage(closeMatchAcceptedAnnouncement(pending.count, pending.omitted));
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED) {
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.HOLDING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        closeMatchAnnounceRef.current = null;
+      }
+    }, [bulk.bulk.phase, setLiveMessage]);
 
     // BR-59: the truncation gate targets only the clusters the commit can fire —
     // the filter-intersected selection, not the full selectedIds set.
@@ -918,10 +960,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // so the card keeps it. Guarded so exactly one element carries the accent.
     const bulkCommitOwnsAccent =
       selectionOpen && filteredSelectedIds.length > 0 && !truncationBlocksCommit;
+    const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
 
     // The queue owns the viewport's single accent primary when either the card marker
     // renders or the bulk commit does — this is what drives footer demotion.
-    const queueOwnsAccentPrimary = cardPrimaryPresent || bulkCommitOwnsAccent;
+    const queueOwnsAccentPrimary =
+      (cardPrimaryPresent && !closeMatchOfferOwnsAccent) ||
+      bulkCommitOwnsAccent ||
+      closeMatchOfferOwnsAccent;
 
     // BR-80: report presence in a layout effect (fires before paint) so the footer
     // demotion and the card/bulk marker commit in the SAME visual frame — no transient
@@ -1410,7 +1456,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               item={currentItem}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
-              accentPrimary={!bulkCommitOwnsAccent}
+              accentPrimary={!bulkCommitOwnsAccent && !closeMatchOfferOwnsAccent}
+              reviewQueueItems={findings.queue}
+              onCloseMatchOffer={setCloseMatchOffer}
               // BR-35: same 1-based numbers as the visible position span; omit when the
               // REVIEW_QUEUE_POSITION_UNAVAILABLE outage path makes count unmeasurable
               // (length===0 — CurrentCard is not mounted then, but keep the gate explicit).
@@ -1485,6 +1533,60 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   ? () => bulk.toggleSelect(itemSuggestionId(currentItem)!)
                   : undefined
               }
+            />
+            <CloseMatchAcceptOffer
+              open={closeMatchOffer !== null}
+              count={closeMatchOffer?.included.length ?? 0}
+              omitted={closeMatchOffer?.omitted ?? 0}
+              truncated={closeMatchOffer?.truncated ?? false}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setCloseMatchOffer(null);
+                }
+              }}
+              onConfirm={() => {
+                if (!closeMatchOffer) {
+                  return;
+                }
+                const items: BulkCommitItem[] = [
+                  {
+                    suggestionId: closeMatchOffer.acceptedId,
+                    commitKind: 'accept',
+                    label: closeMatchOffer.label,
+                  },
+                  ...closeMatchOffer.included.map((row) => ({
+                    suggestionId: row.suggestionId,
+                    commitKind: 'accept' as const,
+                    label: row.label,
+                  })),
+                ];
+                closeMatchAnnounceRef.current = {
+                  count: closeMatchOffer.included.length,
+                  omitted: closeMatchOffer.omitted,
+                };
+                setCloseMatchOffer(null);
+                markAdvanceFocus();
+                void bulk.initiateBulkFromItems(items);
+              }}
+              onSkip={() => {
+                const acceptedId = closeMatchOffer?.acceptedId;
+                setCloseMatchOffer(null);
+                if (!acceptedId) {
+                  return;
+                }
+                markAdvanceFocus();
+                void data.scheduleAccept(acceptedId).then((result) => {
+                  if (result.outcome !== 'committed') {
+                    clearAdvanceFocus();
+                  }
+                  if (result.outcome === 'not_attempted_prior_failed') {
+                    setLiveMessage(
+                      __('Retry the item that failed to save before reviewing another.', 'alt-context'),
+                    );
+                  }
+                });
+              }}
+              accentPrimary={closeMatchOfferOwnsAccent}
             />
             </>
           )}
@@ -1617,6 +1719,14 @@ interface CurrentCardProps {
   isSelected: boolean;
   isSelectDisabled: boolean;
   onToggleSelect?: () => void;
+  reviewQueueItems: readonly ReviewQueueItem[];
+  onCloseMatchOffer: (offer: {
+    acceptedId: string;
+    label: string | null;
+    included: AssignmentQueueItem[];
+    omitted: number;
+    truncated: boolean;
+  }) => void;
 }
 
 /** Per-card Select affordance (PA-14) — accumulates into the lifted selection set. */
@@ -1755,6 +1865,8 @@ const CurrentCard = ({
   isSelected,
   isSelectDisabled,
   onToggleSelect,
+  reviewQueueItems,
+  onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
@@ -1900,7 +2012,23 @@ const CurrentCard = ({
             queueTotal={queueTotal}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
-              runScheduled(() => scheduleAccept(suggestion.suggestionId));
+              const group = closeMatchGroupForAccept(reviewQueueItems, item);
+              if (group.included.length === 0) {
+                runScheduled(() => scheduleAccept(suggestion.suggestionId));
+                return;
+              }
+              const offer = {
+                acceptedId: suggestion.suggestionId,
+                label: item.label,
+                included: group.included,
+                omitted: group.omitted,
+                truncated: group.truncated,
+              };
+              // Open after the Yes click finishes so Radix does not treat that
+              // pointer as an outside-dismiss of the new dialog.
+              window.setTimeout(() => {
+                onCloseMatchOffer(offer);
+              }, 0);
             }}
             onReject={() => {
               runScheduled(() => scheduleReject(suggestion.suggestionId));

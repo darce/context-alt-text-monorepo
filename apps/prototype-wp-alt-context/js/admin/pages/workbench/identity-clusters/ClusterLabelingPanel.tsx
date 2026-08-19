@@ -110,6 +110,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   const [showAllAnnouncement, setShowAllAnnouncement] = useState<string | null>(null);
   const memberGridRef = useRef<HTMLDivElement | null>(null);
   const wasExpandingRef = useRef(false);
+  const submittingRef = useRef(false);
   const queryClient = useQueryClient();
 
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
@@ -333,43 +334,48 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     if (!trimmed) {
       return;
     }
-    if (labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
       return;
     }
+    submittingRef.current = true;
     setError(null);
 
-    // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
-    if (isReservedLabel(trimmed)) {
-      setError(getReservedLabelMessage());
-      return;
-    }
-
-    if (!allowRenameAnyway) {
-      const localGuard = evaluateDuplicateGuard(trimmed);
-      const skipPersonOnly = Boolean(options?.skipPersonOnlyGuard && localGuard && !localGuard.mergeTarget);
-      if (localGuard && !skipPersonOnly) {
-        setDuplicateGuard(localGuard);
-        return;
-      }
-      const remoteGuard = await evaluateRemoteDuplicateGuard(trimmed);
-      if (remoteGuard) {
-        setDuplicateGuard(remoteGuard);
-        return;
-      }
-    }
-
-    setDuplicateGuard(null);
-    setAllowRenameAnyway(false);
-
     try {
-      await labelMutation.mutateAsync(trimmed);
-    } catch (err) {
-      setError(getErrorMessage(err));
+      // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
+      if (isReservedLabel(trimmed)) {
+        setError(getReservedLabelMessage());
+        return;
+      }
+
+      if (!allowRenameAnyway) {
+        const localGuard = evaluateDuplicateGuard(trimmed);
+        const skipPersonOnly = Boolean(options?.skipPersonOnlyGuard && localGuard && !localGuard.mergeTarget);
+        if (localGuard && !skipPersonOnly) {
+          setDuplicateGuard(localGuard);
+          return;
+        }
+        const remoteGuard = await evaluateRemoteDuplicateGuard(trimmed);
+        if (remoteGuard) {
+          setDuplicateGuard(remoteGuard);
+          return;
+        }
+      }
+
+      setDuplicateGuard(null);
+      setAllowRenameAnyway(false);
+
+      try {
+        await labelMutation.mutateAsync(trimmed);
+      } catch (err) {
+        setError(getErrorMessage(err));
+      }
+    } finally {
+      submittingRef.current = false;
     }
   };
 
   const resolveCommit = (resolution: NameFaceResolution): void => {
-    if (labelMutation.isPending || mergeMutation.isPending) {
+    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
       return;
     }
     if (resolution.kind === 'ambiguous') {
@@ -402,6 +408,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   };
 
   const handleSelectOption = (optionValue: string): void => {
+    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+      return;
+    }
     const matched = comboboxOptions.find((option) => option.value === optionValue);
     if (!matched) {
       return;

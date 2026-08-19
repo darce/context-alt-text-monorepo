@@ -44,7 +44,7 @@ const bandLabel = (band: SimilarityBand): string => {
     case SIMILARITY_BAND.WEAK:
       return __('weak match', 'alt-context');
     case SIMILARITY_BAND.PENDING:
-      return __('Similarity pending next projection refresh.', 'alt-context');
+      return __('Similarity pending the next refresh.', 'alt-context');
     default: {
       const _exhaustive: never = band;
       return _exhaustive;

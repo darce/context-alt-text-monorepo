@@ -21,7 +21,7 @@
 
 import React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { removeClusterMember } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
@@ -77,8 +77,8 @@ export const ClusterReviewPanel = ({
     if (wasExpandingRef.current && !isExpanding && isFullyLoaded && !expandError) {
       setShowAllAnnouncement(
         sprintf(
-          /* translators: %d: total member count */
-          __('All %d members shown', 'alt-context'),
+          /* translators: %d: total face count */
+          _n('All %d face shown', 'All %d faces shown', total, 'alt-context'),
           total,
         ),
       );
@@ -131,7 +131,7 @@ export const ClusterReviewPanel = ({
 
       <div className="acx-cluster-review-panel__content">
         {isLoading ? (
-          <p>{__('Loading members...', 'alt-context')}</p>
+          <p>{__('Loading faces…', 'alt-context')}</p>
         ) : isError ? (
           <div className="acx-cluster-review-panel__error" role="alert" data-testid="acx-cluster-members-error">
             <p>{__('Unable to load faces.', 'alt-context')}</p>
@@ -185,9 +185,9 @@ export const ClusterReviewPanel = ({
                   data-total={total}
                 >
                   {isExpanding
-                    ? __('Loading all members…', 'alt-context')
+                    ? __('Loading all faces…', 'alt-context')
                     : sprintf(
-                        /* translators: %d: total member count */
+                        /* translators: %d: total face count */
                         __('Show all (%d)', 'alt-context'),
                         total,
                       )}
@@ -201,7 +201,7 @@ export const ClusterReviewPanel = ({
             ) : null}
           </>
         ) : (
-          <p>{__('No members found.', 'alt-context')}</p>
+          <p>{__('No faces in this group.', 'alt-context')}</p>
         )}
       </div>
 
@@ -226,7 +226,7 @@ export const ClusterReviewPanel = ({
                   {__('Cancel', 'alt-context')}
                 </button>
                 <button type="button" className="button button-primary" onClick={handleConfirmRemoval}>
-                  {__('Remove member', 'alt-context')}
+                  {__('Remove face', 'alt-context')}
                 </button>
               </div>
             </div>

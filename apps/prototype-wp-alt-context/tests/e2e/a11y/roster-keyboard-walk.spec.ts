@@ -80,20 +80,32 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
   await openRoster(base, page);
 
   const clusterId = await page.evaluate(async () => {
+    const seeded = (
+      window as unknown as { acxE2eSeed?: { unlabeledClusterId?: string } }
+    ).acxE2eSeed?.unlabeledClusterId;
+    if (seeded) {
+      return seeded;
+    }
     const config = (
       window as unknown as {
-        acxAdmin?: { tenantId?: string; restUrl?: string; nonce?: string };
+        AltContextAdmin?: {
+          nonce?: string;
+          tenant_id?: string;
+          endpoints?: Record<string, string>;
+        };
       }
-    ).acxAdmin;
-    const restBase = config?.restUrl ?? '/wp-json/acx/v1/';
-    const tenant = config?.tenantId ?? '';
-    const url = new URL(`${restBase.replace(/\/?$/, '/')}recognition/clusters/top-unlabeled`, window.location.origin);
-    if (tenant) {
-      url.searchParams.set('tenant_id', tenant);
+    ).AltContextAdmin;
+    const clustersBase = config?.endpoints?.recognitionClusters;
+    if (!clustersBase || !config?.nonce) {
+      return null;
+    }
+    const url = new URL(`${clustersBase.replace(/\/?$/, '/')}top-unlabeled`, window.location.origin);
+    if (config.tenant_id) {
+      url.searchParams.set('tenant_id', config.tenant_id);
     }
     url.searchParams.set('limit', '1');
     const response = await fetch(url.toString(), {
-      headers: config?.nonce ? { 'X-WP-Nonce': config.nonce } : {},
+      headers: { 'X-WP-Nonce': config.nonce },
     });
     if (!response.ok) {
       return null;
@@ -103,7 +115,10 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
   });
 
   if (!clusterId) {
-    test.skip(true, 'No unlabeled face group from /clusters/top-unlabeled — drawer walk needs a live row');
+    test.skip(
+      true,
+      'seeded fixture acxE2eSeed.unlabeledClusterId / top-unlabeled row absent — drawer walk needs a live face group',
+    );
     return;
   }
 
@@ -111,7 +126,42 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
 
   const drawer = page.locator('.acx-cluster-drawer');
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('button', { name: /^Close$/i })).toBeVisible();
-  await expect(drawer.getByText(/Move faces between groups in the Workbench/i)).toBeVisible();
+  const close = drawer.getByRole('button', { name: /^Close$/i });
+  await expect(close).toBeVisible();
+  const box = await close.boundingBox();
+  expect(box, 'Close target ≥24×24').not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(24);
+  expect(box!.height).toBeGreaterThanOrEqual(24);
+  await expect(drawer.getByText(/Face moves happen in the Workbench review queue/i)).toBeVisible();
   await expect(drawer.getByRole('button', { name: /Move to/i })).toHaveCount(0);
+
+  const interactive = drawer.locator(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  const count = await interactive.count();
+  expect(count).toBeGreaterThan(0);
+  await close.focus();
+  await expect(close).toBeFocused();
+  const visited = new Set<string>();
+  for (let step = 0; step < count + 2; step += 1) {
+    await page.keyboard.press('Tab');
+    const id = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || !el.closest('.acx-cluster-drawer')) {
+        return null;
+      }
+      return el.tagName + (el.getAttribute('aria-label') ?? el.textContent ?? '').slice(0, 40);
+    });
+    if (id) {
+      visited.add(id);
+    }
+  }
+  expect(visited.size, 'Tab walk visits drawer controls').toBeGreaterThan(0);
+});
+
+test('roster review CTA follows to the workbench default review queue', async ({ page, baseURL }) => {
+  await openRoster(requireBaseUrl(baseURL), page);
+  await page.getByRole('link', { name: /Review in Workbench/i }).click();
+  await expect(page).toHaveURL(/page=alt-context-workbench/);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#/workbench?tab=scan&rq=all.all.0');
 });

@@ -479,8 +479,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return map;
     }, [topUnlabeledClusters]);
 
-    // BR-27: per-kind primary — NAME/CLUSTER prefer person-commit (combobox when confirm
-    // disabled); skip disabled elements before falling back; never land on body.
+    // BR-27 / R6-02: NAME/CLUSTER prefer person-commit. Combobox first so a
+    // prefilled Save cannot take Enter/Space before the operator reads the name.
     const focusPrimaryInCard = React.useCallback((): void => {
       const root = cardRegionRef.current;
       if (!root) {
@@ -493,8 +493,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         currentItem?.kind === NEXT_ACTION_KIND.CLUSTER;
 
       const personCommitSelectors = [
-        '.acx-person-commit__confirm:not([disabled])',
         '.acx-person-commit [role="combobox"]:not([disabled])',
+        '.acx-person-commit__confirm:not([disabled])',
         '.acx-person-commit button:not([disabled])',
         '.acx-person-commit a[href]',
       ] as const;

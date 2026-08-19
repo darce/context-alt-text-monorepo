@@ -126,15 +126,7 @@ export const ClusterReviewPanel = ({
         >
           {__('← Back to Review Suggestions', 'alt-context')}
         </button>
-        <h2 id="acx-workbench-queue-heading">{__('Review this face group', 'alt-context')}</h2>
-        <button
-          type="button"
-          className="acx-close-button"
-          onClick={onClose}
-          aria-label={__('Close face-group review', 'alt-context')}
-        >
-          ×
-        </button>
+        <h2 id="acx-workbench-queue-heading">{__('Review these faces', 'alt-context')}</h2>
       </div>
 
       <div className="acx-cluster-review-panel__content">

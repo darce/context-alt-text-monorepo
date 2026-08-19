@@ -616,7 +616,7 @@ describe('ClusterReviewPanel', () => {
     expect(removeClusterMemberMock).not.toHaveBeenCalled();
   });
 
-  it('calls onClose when close button is clicked', async () => {
+  it('calls onClose when Back is clicked (single exit)', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const onClose = vi.fn();
     fetchClusterMembersMock.mockResolvedValue(makeClusterMembersResponse());
@@ -624,7 +624,7 @@ describe('ClusterReviewPanel', () => {
     renderPanel('cluster-close', onClose);
     const user = userEvent.setup();
 
-    await user.click(screen.getByLabelText('Close face-group review'));
+    await user.click(screen.getByRole('button', { name: '← Back to Review Suggestions' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

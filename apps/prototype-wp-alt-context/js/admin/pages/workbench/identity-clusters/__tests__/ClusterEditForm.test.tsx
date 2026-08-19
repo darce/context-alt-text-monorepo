@@ -292,6 +292,18 @@ describe('ClusterEditForm', () => {
     );
   });
 
+  it('roster-only Library overlay is headed People (UXW2-3-R1-16b)', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Pat"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+      />,
+    );
+    expect(document.querySelector('.acx-identity-cluster__suggestions-header')).toHaveTextContent('People');
+    expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
   it('default idle commit button is Save name (UXW2-3-R1-16i)', () => {
     render(<ClusterEditForm {...defaultProps} />);
     expect(screen.getByRole('button', { name: 'Save name' })).toHaveAccessibleName('Save name');

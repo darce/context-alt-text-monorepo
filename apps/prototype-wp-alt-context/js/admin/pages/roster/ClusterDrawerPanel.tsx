@@ -232,7 +232,7 @@ export const ClusterDrawerPanel = ({
     rootRef: drawerRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    activeKey: cluster?.id ?? null,
+    activeKey: cluster?.id ?? requestedClusterId ?? null,
   });
 
   const handlePickerKeyDown = React.useCallback(
@@ -326,14 +326,24 @@ export const ClusterDrawerPanel = ({
         <header className="acx-cluster-drawer__header">
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">
-              {drawerState === CLUSTER_DRAWER_STATES.ASSIGNED
-                ? __('Assigned face group', 'alt-context')
-                : drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL
-                  ? __('Singleton proposal', 'alt-context')
-                  : __('Unresolved face group', 'alt-context')}
+              {!cluster && detailError
+                ? __('Unavailable', 'alt-context')
+                : drawerState === CLUSTER_DRAWER_STATES.ASSIGNED
+                  ? __('Assigned face group', 'alt-context')
+                  : drawerState === CLUSTER_DRAWER_STATES.SINGLETON_PROPOSAL
+                    ? __('Singleton proposal', 'alt-context')
+                    : cluster
+                      ? __('Unresolved face group', 'alt-context')
+                      : __('Face group', 'alt-context')}
             </span>
             <h3 className="acx-cluster-drawer__title">
-              {cluster?.label?.trim() ? cluster.label : __('Unnamed face group', 'alt-context')}
+              {!cluster && detailError
+                ? __('Face group unavailable', 'alt-context')
+                : cluster?.label?.trim()
+                  ? cluster.label
+                  : cluster
+                    ? __('Unnamed face group', 'alt-context')
+                    : __('Face group', 'alt-context')}
             </h3>
             {cluster ? (
               <ul className="acx-cluster-drawer__meta">
@@ -373,6 +383,8 @@ export const ClusterDrawerPanel = ({
         <div className="acx-cluster-drawer__faces">
           {isDetailLoading ? (
             <p>{__('Loading faces…', 'alt-context')}</p>
+          ) : detailError && !cluster ? (
+            <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>
           ) : !hasIdentities ? (
             <p>{__('No faces found in this face group.', 'alt-context')}</p>
           ) : (
@@ -486,7 +498,9 @@ export const ClusterDrawerPanel = ({
           {statusMessage}
         </p>
 
-        {detailError && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>}
+        {detailError && cluster ? (
+          <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>
+        ) : null}
 
         {cluster ? (
         <div className="acx-cluster-drawer__dropzone-wrapper">

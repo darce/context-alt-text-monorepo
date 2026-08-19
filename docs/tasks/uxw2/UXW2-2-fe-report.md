@@ -54,6 +54,8 @@ Canon: rg-015, DATA-14, TEST-15, TEST-06, rg-002, REF-25, RLSE-04, A11Y-21, COG-
 ## LAST
 
 - Items 1–10 committed. TDD RED lines in commit bodies + table above.
+- Follow-ups: `fix(tests): UXW2-2-R2-12 repair empty drops drain asserts`; `fix(workbench): UXW2-2 drop unused assignment drop-mode param`; this report commit.
+- `npm test`: **211 files, 2373 passed, 0 failed**. `npm run typecheck` clean. Touched-file `eslint` 0 errors (repo-wide lint still has pre-existing debt).
 - Scope: frontend only. No `src/`, `tests/`, contracts, or `UXW2-2-r1-fix-report.md`.
 - `sourceClusterId` gone from `js/admin` production.
 - Shared invalidate refetches; review path still `refetchType: 'none'`.

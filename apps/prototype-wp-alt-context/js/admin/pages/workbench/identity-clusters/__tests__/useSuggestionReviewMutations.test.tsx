@@ -1811,36 +1811,54 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   });
 
   it('R5-01: a partial accept refetches instead of guessing', async () => {
-    queryClient.setQueryData(
-      namePendingKey,
-      makeNamePage([
-        { ...makeName('name-1'), confidence_score: 0.95 },
-        { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
-      ]),
-    );
+    const namePage = makeNamePage([
+      { ...makeName('name-1'), confidence_score: 0.95 },
+      { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+    ]);
     const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
-    queryClient.setQueryData(
-      topUnlabeledKey,
-      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
-    );
+    const topPage = makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]);
+    queryClient.setQueryData(namePendingKey, namePage);
+    queryClient.setQueryData(topUnlabeledKey, topPage);
+    const fetchName = vi.fn().mockResolvedValue(namePage);
+    const fetchTop = vi.fn().mockResolvedValue(topPage);
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
       accepted_count: 1,
       skipped_count: 1,
     });
 
-    const { result } = renderMutations();
+    const { result } = renderHook(
+      () => {
+        const name = useQuery({ queryKey: namePendingKey, queryFn: fetchName, staleTime: 0 });
+        const top = useQuery({ queryKey: topUnlabeledKey, queryFn: fetchTop, staleTime: 0 });
+        const m = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+        return { name, top, m };
+      },
+      { wrapper },
+    );
+
     await act(async () => {
-      await result.current.mutations.bulkAccept.mutateAsync({
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fetchName.mockClear();
+    fetchTop.mockClear();
+
+    await act(async () => {
+      await result.current.m.mutations.bulkAccept.mutateAsync({
         suggestion_type: 'name',
         min_confidence: 0.8,
       });
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
     });
+    expect(fetchName).toHaveBeenCalled();
+    expect(fetchTop).toHaveBeenCalled();
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['name-1', 'name-low']);

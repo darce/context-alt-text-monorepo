@@ -95,10 +95,28 @@ describe('useClusterMutations invalidate refetch (R3-05)', () => {
     fetchProjection.mockClear();
     fetchMergePending.mockClear();
 
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
     await act(async () => {
       result.current.mutations.pinRepresentative('rep-1', true);
       await Promise.resolve();
       await Promise.resolve();
+    });
+
+    expect(invalidateSpy, 'media.identities').toHaveBeenCalledWith({
+      queryKey: queryKeys.media.identities(),
+    });
+    expect(invalidateSpy, 'clusters.labels').toHaveBeenCalledWith({
+      queryKey: queryKeys.clusters.labels(),
+    });
+    expect(invalidateSpy, 'clusters.all').toHaveBeenCalledWith({
+      queryKey: queryKeys.clusters.all,
+    });
+    expect(invalidateSpy, 'suggestions.projection.all').toHaveBeenCalledWith({
+      queryKey: queryKeys.suggestions.projection.all,
+    });
+    expect(invalidateSpy, 'suggestions.mergePending').toHaveBeenCalledWith({
+      queryKey: queryKeys.suggestions.mergePending(),
     });
 
     await waitFor(() => {

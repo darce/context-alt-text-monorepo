@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  containFit,
   cropTransformFor,
   isCompleteFiniteBbox,
   isCroppableBbox,
+  isPositiveMediaId,
   isUsableNaturalSize,
   overlayRectFor,
 } from '../faceGeometry';
@@ -141,6 +143,51 @@ describe('isUsableNaturalSize / isCompleteFiniteBbox', () => {
   it('isCompleteFiniteBbox accepts the PHP zero-extent placeholder {0,0,0,0}', () => {
     // trait-maps-response-fields.php emits this when bbox_json is missing/undecodable.
     expect(isCompleteFiniteBbox({ x: 0, y: 0, width: 0, height: 0 })).toBe(true);
+  });
+});
+
+describe('containFit', () => {
+  it('letterboxes a wide image in a taller frame (same math as FaceLightbox)', () => {
+    const fit = containFit({ width: 200, height: 150 }, { width: 400, height: 300 });
+    expect(fit).toEqual({
+      scale: 2,
+      displayWidth: 400,
+      displayHeight: 300,
+      offsetX: 0,
+      offsetY: 0,
+    });
+  });
+
+  it('pillarboxes a tall image in a wide frame', () => {
+    const fit = containFit({ width: 100, height: 200 }, { width: 400, height: 200 });
+    expect(fit).toEqual({
+      scale: 1,
+      displayWidth: 100,
+      displayHeight: 200,
+      offsetX: 150,
+      offsetY: 0,
+    });
+  });
+
+  it('returns null when natural or frame size is unusable', () => {
+    expect(containFit({ width: 0, height: 100 }, { width: 400, height: 300 })).toBeNull();
+    expect(containFit({ width: 100, height: 100 }, { width: Number.NaN, height: 300 })).toBeNull();
+  });
+});
+
+describe('isPositiveMediaId', () => {
+  it('accepts finite integers greater than zero', () => {
+    expect(isPositiveMediaId(1)).toBe(true);
+    expect(isPositiveMediaId(42)).toBe(true);
+  });
+
+  it('rejects zero, negatives, non-finite, and non-numbers', () => {
+    expect(isPositiveMediaId(0)).toBe(false);
+    expect(isPositiveMediaId(-3)).toBe(false);
+    expect(isPositiveMediaId(Number.NaN)).toBe(false);
+    expect(isPositiveMediaId(null)).toBe(false);
+    expect(isPositiveMediaId(undefined)).toBe(false);
+    expect(isPositiveMediaId('12')).toBe(false);
   });
 });
 

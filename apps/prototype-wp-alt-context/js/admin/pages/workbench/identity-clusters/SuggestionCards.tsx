@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { isPositiveMediaId } from '../../../../components/ui/faceGeometry';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
@@ -15,6 +16,10 @@ export interface FaceOriginalTarget {
   mediaUrl: string;
   bbox: BoundingBox;
   label?: string;
+  mediaId?: number;
+  identityId?: string;
+  clusterId?: string;
+  runSize?: number;
 }
 
 interface SuggestionCardProps {
@@ -59,11 +64,15 @@ const FaceCropControl = ({
   bbox,
   alt,
   onOpen,
+  mediaId,
+  identityId,
 }: {
   mediaUrl: string;
   bbox: BoundingBox;
   alt: string;
   onOpen?: (target: FaceOriginalTarget) => void;
+  mediaId?: number;
+  identityId?: string;
 }): React.JSX.Element => {
   if (!onOpen) {
     return (
@@ -77,11 +86,22 @@ const FaceCropControl = ({
     );
   }
 
+  const openOriginal = (): void => {
+    const target: FaceOriginalTarget = { mediaUrl, bbox, label: alt };
+    if (isPositiveMediaId(mediaId)) {
+      target.mediaId = mediaId;
+    }
+    if (typeof identityId === 'string' && identityId.length > 0) {
+      target.identityId = identityId;
+    }
+    onOpen(target);
+  };
+
   return (
     <button
       type="button"
       className="acx-face-crop-control"
-      onClick={() => onOpen({ mediaUrl, bbox, label: alt })}
+      onClick={openOriginal}
       aria-label={__('View original photo', 'alt-context')}
     >
       <FaceThumbnail
@@ -149,6 +169,8 @@ export const SuggestionCard = ({
               bbox={identityFace.bbox}
               alt={__('Candidate face', 'alt-context')}
               onOpen={onOpenOriginal}
+              mediaId={suggestion.enrichment?.identityMediaId ?? undefined}
+              identityId={suggestion.identityId}
             />
           ) : identityThumbUrl ? (
             <Avatar

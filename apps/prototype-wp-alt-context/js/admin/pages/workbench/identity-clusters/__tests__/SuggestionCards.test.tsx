@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ReviewSuggestion } from '../suggestionReviewItems';
@@ -131,6 +132,71 @@ describe('SuggestionCard BR-41 group accname', () => {
       'title',
       'Review these faces',
     );
+  });
+});
+
+describe('SuggestionCard lightbox target (UXW2-6)', () => {
+  it('passes identity media id and face id when opening the candidate original', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityId: 'identity-1',
+          enrichment: {
+            identityMediaId: 42,
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: 'https://example.com/candidate.jpg',
+      bbox: { x: 5, y: 6, width: 40, height: 50 },
+      label: 'Candidate face',
+      mediaId: 42,
+      identityId: 'identity-1',
+    });
+  });
+
+  it('omits mediaId when the candidate media id is missing so the lightbox does not fetch', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityId: 'identity-1',
+          enrichment: {
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: 'https://example.com/candidate.jpg',
+      bbox: { x: 5, y: 6, width: 40, height: 50 },
+      label: 'Candidate face',
+      identityId: 'identity-1',
+    });
+    expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
   });
 });
 

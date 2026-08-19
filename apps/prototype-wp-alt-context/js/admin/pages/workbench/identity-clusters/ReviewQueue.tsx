@@ -1488,6 +1488,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             mediaUrl={lightbox.mediaUrl}
             bbox={lightbox.bbox}
             label={lightbox.label}
+            mediaId={lightbox.mediaId}
+            activeFaceId={lightbox.identityId}
           />
         ) : null}
       </div>

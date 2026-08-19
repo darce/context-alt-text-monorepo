@@ -486,6 +486,74 @@ class ClusterReadServiceTest extends TestCase
     }
 
     /**
+     * R4-05: missing total_count falls back to the pre-drop fetched-row
+     * count, not the post-drop served length. Mutant: $total = count( $unlabeled_items ).
+     */
+    public function testListTopUnlabeledMissingTotalCountDoesNotShrinkOnDrop(): void
+    {
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-drop-matched',
+                        'label' => '',
+                        'identity_count' => 1,
+                        'is_user_confirmed' => 0,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-drop-matched' => [
+                        ['identity_uuid' => 'id-d1', 'attachment_id' => 1],
+                    ],
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 3],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame(
+            2,
+            $data['total'],
+            'missing total_count must fall back to pre-drop fetched-row count'
+        );
+        $this->assertFalse($data['truncated']);
+        $this->assertTrue($data['repair_pending']);
+    }
+
+    /**
      * R2-11: drift ids for clusters absent from this page merge into the repair event.
      */
     public function testListTopUnlabeledMergesOffPageDriftIdsIntoRepairEvent(): void

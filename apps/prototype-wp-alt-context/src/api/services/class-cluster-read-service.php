@@ -192,14 +192,16 @@ class ClusterReadService {
 				$extra_ids = $this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id );
 			}
 			$this->schedule_repair_from_mapper( $tenant_id, $extra_ids );
-			$dropped = $this->dependencies->cluster_mapper->dropped_cluster_count();
-			$total   = count( $unlabeled_items );
-			$total_count = null;
+			$dropped      = $this->dependencies->cluster_mapper->dropped_cluster_count();
+			$fetched_page = count( $sovereign_data['clusters'] );
+			$total_count  = null;
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
 				$total_count = (int) $sovereign_data['clusters'][0]['total_count'];
 				$total       = max( 0, $total_count );
+			} else {
+				// Missing COUNT(*) OVER() window: do not shrink on mapper drops.
+				$total = $fetched_page;
 			}
-			$fetched_page = count( $sovereign_data['clusters'] );
 			$repair_pending = array() !== $mapper_ids || $dropped > 0 || array() !== $extra_ids;
 
 			return new WP_REST_Response(

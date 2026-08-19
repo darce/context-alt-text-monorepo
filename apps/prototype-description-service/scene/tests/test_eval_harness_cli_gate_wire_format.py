@@ -20,6 +20,7 @@ from scene.tests.test_eval_harness_cli import (
     _c_locale_child_env,
 )
 from scripts.eval_harness.cli import (
+    _UNDECODABLE_PATH_PREFIX,
     SCORE_GATE_PREFIX_ABORTED_RECORD,
     SCORE_GATE_PREFIX_RUN_RECORD,
     ScoreGateError,
@@ -27,7 +28,6 @@ from scripts.eval_harness.cli import (
     _printable_message,
     _printable_path,
     _score_gate_fail,
-    _UNDECODABLE_PATH_PREFIX,
 )
 from scripts.eval_harness.report import ScoreVerdict
 

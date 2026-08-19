@@ -3,6 +3,7 @@
 @use '../admin/styles/tokens/radius';
 @use '../admin/styles/tokens/spacing';
 @use '../admin/styles/tokens/typography';
+@use '../admin/styles/components/face-overlay';
 
 /* AttachmentFacesApp shell (UXP-5 slice 3). */
 
@@ -127,5 +128,3 @@
     }
   }
 }
-
-@use '../admin/styles/components/face-overlay';

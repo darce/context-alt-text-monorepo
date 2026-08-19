@@ -333,8 +333,8 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 * overload signal handled by is_backend_overloaded). Honest provenance is
 	 * ENDPOINT_ERROR, not UNAVAILABLE — the endpoint is up but failing.
 	 */
-	protected function is_proxy_endpoint_error( WP_REST_Response|WP_Error $response, int $min_status = 500 ): bool {
-		return ! is_wp_error( $response ) && $response->get_status() >= $min_status;
+	protected function is_proxy_endpoint_error( WP_REST_Response|WP_Error $response ): bool {
+		return ! is_wp_error( $response ) && $response->get_status() >= 500;
 	}
 
 	protected function is_backend_overloaded( WP_REST_Response|WP_Error $response ): bool {

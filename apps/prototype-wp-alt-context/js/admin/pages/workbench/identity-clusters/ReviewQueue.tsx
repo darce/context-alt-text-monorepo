@@ -32,7 +32,7 @@ import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
 import { viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
-import { LightboxNameFace, lightboxNameSavedAnnouncement } from './LightboxNameFace';
+import { LightboxNameFace, LIGHTBOX_NAME_SAVED_ANNOUNCE } from './LightboxNameFace';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
@@ -1452,7 +1452,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   setLightbox({
                     ...target,
                     ...(currentItem.clusterId ? { clusterId: currentItem.clusterId } : {}),
-                    runSize: currentItem.runSize,
                   });
                   return;
                 }
@@ -1514,7 +1513,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               lightboxNaming && lightbox.clusterId ? (
                 <LightboxNameFace
                   clusterId={lightbox.clusterId}
-                  runSize={lightbox.runSize ?? 1}
                   phase={
                     data.personCommit.clusterId === null ||
                     data.personCommit.clusterId === lightbox.clusterId
@@ -1531,10 +1529,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     data.personCommitPending
                   }
                   onCommit={(request) => {
-                    const groupSize = lightbox.runSize ?? 1;
                     void data.schedulePersonCommit(request).then((result) => {
                       if (result.outcome === 'committed') {
-                        setLiveMessage(lightboxNameSavedAnnouncement(groupSize));
+                        setLiveMessage(LIGHTBOX_NAME_SAVED_ANNOUNCE);
                         setLightboxNaming(false);
                         setLightbox(null);
                       } else if (result.outcome === 'not_attempted_prior_failed') {

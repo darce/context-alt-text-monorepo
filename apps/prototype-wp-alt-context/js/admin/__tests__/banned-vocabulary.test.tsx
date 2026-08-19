@@ -689,6 +689,7 @@ describe('banned vocabulary across js/admin pages', () => {
     const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
     // Slice 5: bulk commit / hold / PR-38 labels.
     const bulkCopy = await import('../pages/workbench/identity-clusters/useBulkReviewCommit');
+    const lightboxNameCopy = await import('../pages/workbench/identity-clusters/LightboxNameFace');
 
     const personCommitStrings = Object.values(personCommitCopy).filter(
       (value) => typeof value === 'string',
@@ -700,6 +701,7 @@ describe('banned vocabulary across js/admin pages', () => {
       REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG],
       REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER],
       ...personCommitStrings,
+      lightboxNameCopy.LIGHTBOX_NAME_SAVED_ANNOUNCE,
       bulkCopy.bulkCommitLabel(4, 'Maria'),
       bulkCopy.bulkCommitLabel(3, null),
       bulkCopy.bulkHoldStatusCopy(5),

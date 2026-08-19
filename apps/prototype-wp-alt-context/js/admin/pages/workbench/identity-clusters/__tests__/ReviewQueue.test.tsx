@@ -5094,57 +5094,10 @@ describe('ReviewQueue', () => {
     expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
-        'Name saved for 2 faces.',
+        "Name saved for this person's review group.",
       );
     });
-  });
-
-  it('surfaces truncation when the same-group run is larger than 25', async () => {
-    const user = userEvent.setup();
-    vi.mocked(fetchMediaIdentities).mockResolvedValue({
-      data_source: DATA_SOURCE.LOCAL_PROJECTION,
-      identities_by_media: {
-        '42': [
-          {
-            identity_id: 'identity-0',
-            media_id: 42,
-            similarity: null,
-            confidence: 0.9,
-            bbox: { x: 10, y: 20, width: 40, height: 50 },
-            cluster_id: 'cluster-big',
-            cluster_label: null,
-            is_auto_label: true,
-          },
-        ],
-      },
-    });
-    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
-      suggestions: Array.from({ length: 26 }, (_, index) => ({
-        id: `sugg-${index}`,
-        identity_id: `identity-${index}`,
-        suggested_cluster_id: 'cluster-big',
-        representative_similarity: 0.9 - index * 0.001,
-        avg_member_similarity: 0.8,
-        cluster_label: 'Alex',
-        cluster_identity_count: 26,
-        identity_media_id: 42,
-        identity_media_url: 'https://example.com/candidate.jpg',
-        identity_bbox: { x: 10, y: 20, width: 40, height: 50 },
-      })),
-      limit: 30,
-      offset: 0,
-    });
-
-    renderQueue();
-    await screen.findByRole('button', { name: 'Yes' });
-    await user.click(screen.getByRole('button', { name: 'View original photo' }));
-    await screen.findByRole('dialog');
-    loadLightboxImage();
-    await user.click(await screen.findByRole('button', { name: 'Face under review' }));
-
-    expect(
-      await screen.findByText('Naming the first 25 faces in this group. 1 more were not included.'),
-    ).toBeInTheDocument();
+    expect(document.querySelector('.acx-review-queue__live')).not.toHaveTextContent(/\d/);
   });
 });
 

@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
@@ -12,36 +12,19 @@ import { listRosterEntries } from '../../../api/rosterApi';
 import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
 import { buildNamingOptions } from './buildNamingOptions';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
-import { reviewGroupNameScope } from './reviewQueueDriver';
 import {
   PERSON_COMMIT_PHASE,
   type PersonCommitPhase,
   type PersonCommitRequest,
 } from './useSuggestionReviewMutations';
 
-export const LIGHTBOX_NAME_TRUNCATION = __(
-  'Naming the first %1$d faces in this group. %2$d more were not included.',
+export const LIGHTBOX_NAME_SAVED_ANNOUNCE = __(
+  "Name saved for this person's review group.",
   'alt-context',
 );
 
-export const lightboxNameSavedAnnouncement = (runSize: number): string => {
-  const { included, omitted, truncated } = reviewGroupNameScope(runSize);
-  if (truncated) {
-    return sprintf(
-      __('Name saved for %1$d faces. %2$d more were not included.', 'alt-context'),
-      included,
-      omitted,
-    );
-  }
-  return sprintf(
-    _n('Name saved for %d face.', 'Name saved for %d faces.', included, 'alt-context'),
-    included,
-  );
-};
-
 export interface LightboxNameFaceProps {
   clusterId: string;
-  runSize: number;
   phase: PersonCommitPhase;
   errorMessage: string | null;
   disabled?: boolean;
@@ -52,7 +35,6 @@ export interface LightboxNameFaceProps {
 
 export const LightboxNameFace = ({
   clusterId,
-  runSize,
   phase,
   errorMessage,
   disabled = false,
@@ -63,7 +45,6 @@ export const LightboxNameFace = ({
   const [draft, setDraft] = React.useState('');
   const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === PERSON_COMMIT_PHASE.COMMITTING || disabled;
-  const scope = reviewGroupNameScope(runSize);
 
   const rosterQuery = useQuery({
     queryKey: queryKeys.roster.entries(),
@@ -111,17 +92,7 @@ export const LightboxNameFace = ({
   };
 
   return (
-    <div
-      className="acx-review-card-lightbox__naming"
-      data-testid="acx-lightbox-name-face"
-      data-run-size={runSize}
-    >
-      {scope.truncated ? (
-        <p className="acx-review-card-lightbox__truncation" role="status">
-          {sprintf(LIGHTBOX_NAME_TRUNCATION, scope.included, scope.omitted)}
-        </p>
-      ) : null}
-
+    <div className="acx-review-card-lightbox__naming" data-testid="acx-lightbox-name-face">
       {rosterQuery.isError ? (
         <div className="acx-person-commit__failure" role="alert">
           <p className="acx-person-commit__failure-message">

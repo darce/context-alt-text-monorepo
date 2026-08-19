@@ -26,8 +26,6 @@ import {
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
-  REVIEW_GROUP_NAME_CAP,
-  reviewGroupNameScope,
   STRONG_SIMILARITY_MIN,
   isValidQueueOrdinalPair,
   queueItemToNextAction,
@@ -603,19 +601,6 @@ describe('buildReviewQueue — flattening', () => {
       runSize: 1,
       runIndex: 0,
     });
-  });
-});
-
-describe('reviewGroupNameScope (UXW2-6 group cap)', () => {
-  it('includes the full run when it is at or below the cap', () => {
-    expect(REVIEW_GROUP_NAME_CAP).toBe(25);
-    expect(reviewGroupNameScope(1)).toEqual({ included: 1, omitted: 0, truncated: false });
-    expect(reviewGroupNameScope(25)).toEqual({ included: 25, omitted: 0, truncated: false });
-  });
-
-  it('caps at 25 and reports how many were omitted', () => {
-    expect(reviewGroupNameScope(26)).toEqual({ included: 25, omitted: 1, truncated: true });
-    expect(reviewGroupNameScope(40)).toEqual({ included: 25, omitted: 15, truncated: true });
   });
 });
 

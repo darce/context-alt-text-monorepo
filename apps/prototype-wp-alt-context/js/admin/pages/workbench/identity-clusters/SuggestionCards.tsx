@@ -19,7 +19,6 @@ export interface FaceOriginalTarget {
   mediaId?: number;
   identityId?: string;
   clusterId?: string;
-  runSize?: number;
 }
 
 interface SuggestionCardProps {

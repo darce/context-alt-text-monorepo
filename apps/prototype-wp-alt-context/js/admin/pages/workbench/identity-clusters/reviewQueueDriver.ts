@@ -137,18 +137,6 @@ export const REVIEW_QUEUE_BAND_CHIP_LABEL = {
   string
 >;
 
-/** Max queue items a lightbox name-commit presents as the review group. */
-export const REVIEW_GROUP_NAME_CAP = 25;
-
-export const reviewGroupNameScope = (
-  runSize: number,
-): { included: number; omitted: number; truncated: boolean } => {
-  const size = Number.isFinite(runSize) && runSize > 0 ? Math.floor(runSize) : 1;
-  const included = Math.min(size, REVIEW_GROUP_NAME_CAP);
-  const omitted = Math.max(0, size - included);
-  return { included, omitted, truncated: omitted > 0 };
-};
-
 export type ReviewQueueItem =
   | {
       kind: typeof NEXT_ACTION_KIND.ASSIGNMENT;

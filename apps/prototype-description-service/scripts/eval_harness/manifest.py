@@ -805,7 +805,7 @@ class GoldenManifest(BaseModel):
             if entry.face_count < n_ids:
                 raise ManifestError(
                     f"present_identities_fit_face_count: entry[{index}] "
-                    f"{entry.path}: face_count={entry.face_count} < "
+                    f"{_printable_path(entry.path)}: face_count={entry.face_count} < "
                     f"len(present_identities)={n_ids}",
                     invariant="present_identities_fit_face_count",
                     entry_index=index,
@@ -825,7 +825,7 @@ class GoldenManifest(BaseModel):
                 if n_boxes != entry.face_count:
                     raise ManifestError(
                         f"boxes_cover_face_count: exhaustive entry[{index}] "
-                        f"{entry.path}: len(face_boxes)={n_boxes} != "
+                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} != "
                         f"face_count={entry.face_count}",
                         invariant="boxes_cover_face_count",
                         entry_index=index,
@@ -835,7 +835,7 @@ class GoldenManifest(BaseModel):
                 if n_boxes > entry.face_count:
                     raise ManifestError(
                         f"boxes_cover_face_count: roster_only entry[{index}] "
-                        f"{entry.path}: len(face_boxes)={n_boxes} > "
+                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} > "
                         f"face_count={entry.face_count}",
                         invariant="boxes_cover_face_count",
                         entry_index=index,
@@ -848,7 +848,7 @@ class GoldenManifest(BaseModel):
             for box_index, box in enumerate(entry.face_boxes):
                 if box.lineage is None:
                     raise ManifestError(
-                        f"label_lineage_required: entry[{index}] {entry.path} "
+                        f"label_lineage_required: entry[{index}] {_printable_path(entry.path)} "
                         f"box[{box_index}] has no LabelLineage",
                         invariant="label_lineage_required",
                         entry_index=index,
@@ -878,7 +878,7 @@ class GoldenManifest(BaseModel):
                     )
                     raise ManifestError(
                         f"capture_session_id_required: exhaustive entry[{index}] "
-                        f"{entry.path} box[{box_index}] {detail}",
+                        f"{_printable_path(entry.path)} box[{box_index}] {detail}",
                         invariant="capture_session_id_required",
                         entry_index=index,
                         entry_path=entry.path,
@@ -913,10 +913,10 @@ def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
             continue
         path = raw_entry.get("path")
         entry_path = path if isinstance(path, str) else None
-        label = entry_path if entry_path else f"entry[{index}]"
         raise ManifestError(
             f"annotation_mode is document-level; per-entry stamp is not a "
-            f"persisted contract ({label})",
+            f"persisted contract ("
+            f"{_printable_path(entry_path) if entry_path else f'entry[{index}]'})",
             invariant=ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT,
             entry_index=index,
             entry_path=entry_path,
@@ -1079,20 +1079,20 @@ def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
     root = Path(images_root)
     if not root.is_dir():
         raise ManifestError(
-            f"images directory not found: {root} — set GOLDEN_IMAGES_DIR to the "
+            f"images directory not found: {_printable_path(root)} — set GOLDEN_IMAGES_DIR to the "
             "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md) before "
             "reading image bytes"
         )
     image_path = _resolve_image(root, entry.path)
     if image_path is None:
         raise ManifestError(
-            f"image file missing: {entry.path} (under {root}) — re-rsync fixtures or "
+            f"image file missing: {_printable_path(entry.path)} (under {_printable_path(root)}) — re-rsync fixtures or "
             "fix the manifest path (see scene/tests/seed/README.md)"
         )
     digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
     if digest != entry.sha256:
         raise ManifestError(
-            f"sha256 mismatch for {entry.path}: manifest {entry.sha256}, file {digest} — "
+            f"sha256 mismatch for {_printable_path(entry.path)}: manifest {entry.sha256}, file {digest} — "
             "image bytes drifted from the pinned corpus; re-bootstrap GOLDEN_IMAGES_DIR "
             "or update the manifest pin after an intentional replacement"
         )
@@ -1162,7 +1162,16 @@ def load_manifest(
         )
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(
+                f"golden manifest unreadable or malformed JSON: {exc.strerror}"
+            ) from exc
+        raise ManifestError(
+            f"golden manifest unreadable or malformed JSON: "
+            f"{exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
         raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -1198,16 +1207,19 @@ def load_manifest(
     # corpus does not author a reference caption (e.g. bake-off subset).
     if raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
         for raw_entry in entries_raw or []:
+            path_slot = raw_entry.get("path")
             if "base_caption" not in raw_entry:
                 raise ManifestError(
                     f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
                     f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
-                    f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                    f"use empty string when not applicable"
                 )
             if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
                 raise ManifestError(
                     f"manifest_version {SUPPORTED_MANIFEST_VERSION} rejects null base_caption "
-                    f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                    f"(media_id={raw_entry.get('media_id')!r} path="
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
                     f"use empty string when not applicable, or set base_caption_optional=true"
                 )
 
@@ -1220,9 +1232,9 @@ def load_manifest(
             entry_path = raw_entry.get("path")
             media_id = raw_entry.get("media_id")
             if isinstance(entry_path, str) and entry_path:
-                label = entry_path
+                label = _printable_path(entry_path)
                 if media_id is not None:
-                    label = f"{entry_path} (media_id={media_id})"
+                    label = f"{label} (media_id={media_id})"
             else:
                 label = f"media_id={media_id!r}"
             missing_provenance.append(label)
@@ -1251,17 +1263,23 @@ def load_manifest(
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(f"duplicate media_id {entry.media_id} ({entry.path})")
+            raise ManifestError(
+                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
+            )
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(f"duplicate path {entry.path!r} (each image must appear once)")
+            raise ManifestError(
+                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
+            )
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+                raise ManifestError(
+                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
+                )
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
             raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
@@ -1356,11 +1374,20 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     manifest_path = Path(path)
     if not manifest_path.is_file():
         raise ManifestError(
-            f"legacy manifest not found: {manifest_path}"
+            f"legacy manifest not found: {_printable_path(manifest_path)}"
         )
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(
+                f"legacy manifest unreadable or malformed JSON: {exc.strerror}"
+            ) from exc
+        raise ManifestError(
+            f"legacy manifest unreadable or malformed JSON: "
+            f"{exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
         raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -1387,16 +1414,19 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
                 )
 
     for raw_entry in entries_raw or []:
+        path_slot = raw_entry.get("path")
         if "base_caption" not in raw_entry:
             raise ManifestError(
                 f"manifest_version {LEGACY_MANIFEST_VERSION} requires 'base_caption' on "
                 f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
-                f"{raw_entry.get('path')!r}); use empty string when not applicable"
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                f"use empty string when not applicable"
             )
         if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
             raise ManifestError(
                 f"manifest_version {LEGACY_MANIFEST_VERSION} rejects null base_caption "
-                f"(media_id={raw_entry.get('media_id')!r} path={raw_entry.get('path')!r}); "
+                f"(media_id={raw_entry.get('media_id')!r} path="
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
                 f"use empty string when not applicable, or set base_caption_optional=true"
             )
 
@@ -1417,17 +1447,23 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
     seen_paths: set[str] = set()
     for entry in manifest.entries:
         if entry.media_id in seen_ids:
-            raise ManifestError(f"duplicate media_id {entry.media_id} ({entry.path})")
+            raise ManifestError(
+                f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})"
+            )
         seen_ids.add(entry.media_id)
         if entry.path in seen_paths:
-            raise ManifestError(f"duplicate path {entry.path!r} (each image must appear once)")
+            raise ManifestError(
+                f"duplicate path {_printable_path(entry.path)} (each image must appear once)"
+            )
         seen_paths.add(entry.path)
 
     roster = set(manifest.roster)
     for entry in manifest.entries:
         for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
             if name not in roster:
-                raise ManifestError(f"identity {name!r} in {entry.path} is not in the roster")
+                raise ManifestError(
+                    f"identity {name!r} in {_printable_path(entry.path)} is not in the roster"
+                )
     for cohort_key in manifest.roster_cohorts:
         if cohort_key not in roster:
             raise ManifestError(
@@ -1442,7 +1478,7 @@ def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenMani
 def _verify_hashes(manifest: GoldenManifest, images_root: Path) -> None:
     if not images_root.is_dir():
         raise ManifestError(
-            f"images directory not found: {images_root} — set GOLDEN_IMAGES_DIR to the "
+            f"images directory not found: {_printable_path(images_root)} — set GOLDEN_IMAGES_DIR to the "
             "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md)"
         )
     for entry in manifest.entries:

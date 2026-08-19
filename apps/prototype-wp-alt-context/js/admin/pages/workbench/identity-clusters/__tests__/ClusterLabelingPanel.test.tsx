@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1032,8 +1032,14 @@ describe('ClusterLabelingPanel', () => {
     expect(mergeCluster).not.toHaveBeenCalled();
   });
 
-  it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04)', async () => {
+  it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
     let release: (() => void) | undefined;
+    vi.mocked(listRecognitionClusters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          window.setTimeout(() => resolve(makeClusterListResponse([])), 50);
+        }),
+    );
     vi.mocked(updateClusterLabel).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -1041,11 +1047,16 @@ describe('ClusterLabelingPanel', () => {
         }),
     );
     renderPanel();
-    const user = await typePanelName('Pat Rivera');
-    await user.keyboard('{Enter}{Enter}');
-    await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    await typePanelName('Pat Rivera');
+    const input = screen.getByRole('combobox', { name: 'Name' });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 80);
+      });
     });
+    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     release?.();
   });
 });

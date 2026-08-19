@@ -19,6 +19,7 @@ use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\Stubs\SpySyncPullJob;
+use AltContext\Tests\Support\TopUnlabeledSchemaValidator;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -873,6 +874,128 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame('unavailable', $data['data_source']);
         $this->assertSame('bootstrapping', $data['projection_status']);
         $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+    }
+
+    /**
+     * R8-05: the bootstrapping/unavailable 200 envelope must satisfy the
+     * shared top-unlabeled schema, including required repair_pending.
+     * Mutant: omit 'repair_pending' => false from the unavailable envelope.
+     */
+    public function testListTopUnlabeledBootstrappingEnvelopeValidatesAgainstSchema(): void
+    {
+        $host = new class() implements ClustersHostInterface {
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                return new WP_Error('upstream_unavailable', 'Recognition service unavailable.', ['status' => 503]);
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return false;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return false;
+            }
+        };
+
+        $service = $this->makeService($host, use_local_projection: false);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('limit', 5);
+        $response = $service->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        TopUnlabeledSchemaValidator::validate($response->get_data());
+    }
+
+    /**
+     * R8-05: backend_proxy must guarantee repair_pending. Upstream omission
+     * normalizes to false — do not invent true.
+     */
+    public function testListTopUnlabeledBackendProxyOmittingRepairPendingValidatesAgainstSchema(): void
+    {
+        $host = new class() implements ClustersHostInterface {
+            public function get_tenant_id(): string
+            {
+                return 'tenant-1';
+            }
+
+            public function proxy_recognition_request(
+                string $method,
+                string $path,
+                array $body = [],
+                array $query = [],
+                string $request_class = 'auto',
+                string $body_kind = 'json',
+                ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                return new WP_REST_Response(
+                    [
+                        'clusters' => [
+                            [
+                                'id' => 'cluster-proxy-omit',
+                                'tenant_id' => 'tenant-1',
+                                'label' => null,
+                                'is_labeled' => false,
+                                'is_auto_label' => false,
+                                'identity_count' => 2,
+                                'user_confirmed' => false,
+                                'representatives' => [
+                                    [
+                                        'id' => 'rep-omit',
+                                        'media_id' => 101,
+                                        'is_pinned' => false,
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'limit' => 10,
+                        'total' => 1,
+                        'truncated' => false,
+                    ],
+                    200
+                );
+            }
+
+            public function host_should_use_local_projection_gate(
+                SyncStateRepositoryInterface $sync_state_repository,
+                string $tenant_id
+            ): bool {
+                return false;
+            }
+
+            public function host_is_projection_stale(?string $updated_at): bool
+            {
+                return false;
+            }
+        };
+
+        $service = $this->makeService($host, use_local_projection: false);
+        $response = $service->list_top_unlabeled_clusters(
+            new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source']);
+        $this->assertArrayHasKey('repair_pending', $data);
+        $this->assertFalse($data['repair_pending']);
+        TopUnlabeledSchemaValidator::validate($data);
     }
 
     public function testListClustersWipeClassServesLocalWithAsyncHealAndZeroSynchronousHttp(): void

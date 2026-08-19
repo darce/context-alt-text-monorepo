@@ -284,6 +284,7 @@ Response (envelope):
   "limit": 10,
   "total": 24,
   "truncated": true,
+  "repair_pending": false,
   "singleton_count": 3,
   "data_source": "local_projection",
   "projection_status": "available"
@@ -292,15 +293,15 @@ Response (envelope):
 
 Notes:
 
-- The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source }` on this route.
+- The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source, repair_pending }` on this route.
 - `backend_proxy` envelopes drop any cluster whose `representatives` is empty or absent before the response is returned (same `minItems: 1` invariant as `local_projection`). Dropped rows set `repair_pending: true` and do not shrink `total`; `truncated` is not set from that filter (same rule as the local-projection leg).
 - Returns clusters from **sovereign local projection** when available.
 - When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope. If the upstream backend still emits a legacy bare array, the proxy normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false` before tagging the response with `data_source: "backend_proxy"`. That fallback is best-effort only: without canonical upstream envelope metadata the proxy cannot detect hidden truncation, so bare-array fallback responses never report `truncated=true`.
 - A partial envelope such as `{ "clusters": [...], "limit": 10 }` without `total` or `truncated` is a contract violation. The proxy surfaces that upstream failure as `502 invalid_top_unlabeled_envelope` instead of inventing the missing metadata.
-- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `limit`, `total: 0`, `truncated: false`, `data_source: "unavailable"`, and `projection_status: "bootstrapping"`.
+- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `limit`, `total: 0`, `truncated: false`, `repair_pending: false`, `data_source: "unavailable"`, and `projection_status: "bootstrapping"`.
 - `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
-- WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
+- WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, `data_source`, and `repair_pending` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - The controller clamps excessive `limit` requests to the canonical `LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT=500` before local or proxied reads, and the response `limit` field reports that effective capped value.
 - Clusters with fewer than 2 observed member rows, `is_user_confirmed = true`, or `dismissed_at` set are excluded. Size is `COUNT(acx_identity_members)`, not the stale `identity_count` column. The mapper applies the same `< 2` threshold as the SQL predicate (one threshold only).
 - Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty (`minItems: 1`); `identity_count` is the observed member-row count when the preview fetch is not truncated (fetch cap+1 so `observed == 4` is exact and `observed > 4` is truncation). When `observed > cap` the fetch is truncated: `identity_count = max(projected, representatives.length)` and request repair only when the projection is stale-low (`projected <= cap`). A healthy oversized cluster (`projected > cap`) is expected truncation of a cap+1 fetch, not a repair trigger. Do not publish `observed` as an exact count. The queue predicate is backed by `acx_identity_members` rows (`COUNT(m) >= 2`), so a cluster whose members were reprojected away is not served.

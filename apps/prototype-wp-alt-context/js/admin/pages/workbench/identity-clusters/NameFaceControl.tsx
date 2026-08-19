@@ -310,10 +310,6 @@ export const NameFaceControl = ({
 
   const confirmDisplayedOption = React.useCallback(
     (option: ComboboxOption) => {
-      if (onOptionConfirm) {
-        onOptionConfirm(option);
-        return;
-      }
       if (optionSource(option) === 'person') {
         const parsed = parseNamingOptionValue(String(option.value));
         const rosterEntryId = Number.parseInt(parsed?.id ?? '', 10);
@@ -321,6 +317,10 @@ export const NameFaceControl = ({
           setChosenOptionValue(String(option.value));
           onCommit({ kind: 'roster', rosterEntryId, name: option.label.trim() });
         }
+        return;
+      }
+      if (onOptionConfirm) {
+        onOptionConfirm(option);
         return;
       }
       onValueChange(option.label);

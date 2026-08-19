@@ -89,10 +89,19 @@ export const ClusterEditForm = ({
       if (resolution.kind === 'ambiguous') {
         return;
       }
-      if (normalizeNameFaceLabel(resolution.name) === normalizeNameFaceLabel(prefillRef.current)) {
-        return;
-      }
       if (resolution.kind === 'roster') {
+        const folded = normalizeNameFaceLabel(resolution.name);
+        const sameFoldCount = options.filter(
+          (option) =>
+            (option.source === 'person' ||
+              parseNamingOptionValue(String(option.value))?.source === 'person') &&
+            normalizeNameFaceLabel(option.label) === folded,
+        ).length;
+        // Prefill no-op stays for a single exact match (R1-13). Same-fold
+        // row confirm must still bind the chosen roster id (R3-12).
+        if (sameFoldCount <= 1 && folded === normalizeNameFaceLabel(prefillRef.current)) {
+          return;
+        }
         if (onPersonSelect) {
           onPersonSelect(resolution.name);
         } else {
@@ -100,24 +109,18 @@ export const ClusterEditForm = ({
         }
         return;
       }
-      onSave(resolution.name);
-    },
-    [onPersonSelect, onSave],
-  );
-
-  // Row ✓: person rows use the dedicated person path; cluster rows unwrap the
-  // namespaced id and thread suggestion_id (BR-16 / L1R-01).
-  const handleOptionConfirm = React.useCallback(
-    (option: ComboboxOption) => {
-      const parsed = parseNamingOptionValue(String(option.value));
-      if (parsed?.source === 'person' || option.source === 'person') {
-        if (onPersonSelect) {
-          onPersonSelect(option.label);
-        } else {
-          onSave(option.label);
-        }
+      if (normalizeNameFaceLabel(resolution.name) === normalizeNameFaceLabel(prefillRef.current)) {
         return;
       }
+      onSave(resolution.name);
+    },
+    [onPersonSelect, onSave, options],
+  );
+
+  // Row ✓: cluster/suggestion rows unwrap the namespaced id and thread
+  // suggestion_id (BR-16 / L1R-01). Person rows bind via onCommit.
+  const handleOptionConfirm = React.useCallback(
+    (option: ComboboxOption) => {
       // Namespaced cluster: values only (no bare-id fallback — FIX-10).
       const clusterId = unwrapClusterOptionId(String(option.value));
       if (onConfirmSuggestion && clusterId) {
@@ -130,7 +133,7 @@ export const ClusterEditForm = ({
         onSave(option.label);
       }
     },
-    [onConfirmSuggestion, onPersonSelect, onSave],
+    [onConfirmSuggestion, onSave],
   );
 
   return (

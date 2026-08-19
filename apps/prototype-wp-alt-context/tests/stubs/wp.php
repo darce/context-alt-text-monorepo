@@ -2571,18 +2571,26 @@ if (!isset($GLOBALS['wpdb'])) {
                 $this->rows_affected = 1;
             }
 
-            if ($this->insert_id === 0) {
-                $this->insert_id = 1;
-            }
-
             if (!isset($this->tableRows[$table])) {
                 $this->tableRows[$table] = [];
             }
 
             $row = $data;
-            if (!array_key_exists('id', $row)) {
-                $row['id'] = $this->insert_id > 0 ? $this->insert_id : (count($this->tableRows[$table]) + 1);
+            $maxStoredId = 0;
+            foreach ($this->tableRows[$table] as $existing) {
+                if (isset($existing['id']) && is_numeric($existing['id'])) {
+                    $maxStoredId = max($maxStoredId, (int) $existing['id']);
+                }
             }
+            $rowCount = count($this->tableRows[$table]);
+            if (!array_key_exists('id', $row)) {
+                if ($this->insert_id > $maxStoredId) {
+                    $row['id'] = $this->insert_id;
+                } else {
+                    $row['id'] = max($this->insert_id, $maxStoredId, $rowCount) + 1;
+                }
+            }
+            $this->insert_id = (int) $row['id'];
 
             $this->tableRows[$table][] = $row;
 

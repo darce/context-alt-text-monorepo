@@ -361,6 +361,54 @@ describe('useWorkbenchFilters', () => {
     expect(peekPendingSearchWritesForTests()).toEqual({});
   });
 
+  it('a p write snapshotted from a bare URL is abandoned when the destination also omits p (UXW2-1-R4-01)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { setCurrentPage, dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentPage(2);
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav-p
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+            }}
+          >
+            unrelated-rq
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav-p').click();
+    });
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+    act(() => {
+      screen.getByText('unrelated-rq').click();
+    });
+    expect(screen.getByTestId('loc').textContent).not.toContain('p=2');
+  });
+
   it('a p write abandoned by an external navigate does not resurrect (UXW2-1-R3-05)', () => {
     const Probe = (): React.JSX.Element => {
       const { setCurrentPage } = useWorkbenchFilters();

@@ -304,9 +304,39 @@ describe('useWorkbenchFilters', () => {
   });
 
   it('unmounting the last hook instance clears the pending search buffer (R2-02)', () => {
-    const { result, unmount } = renderHook(() => useWorkbenchFilters(), { wrapper });
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            fill
+          </button>
+        </div>
+      );
+    };
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?rq=merge.all.0']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
     act(() => {
-      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+      screen.getByText('fill').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toEqual({
+      kind: 'assignment',
+      band: 'all',
+      index: 0,
     });
     unmount();
     expect(peekPendingSearchWritesForTests()).toEqual({});

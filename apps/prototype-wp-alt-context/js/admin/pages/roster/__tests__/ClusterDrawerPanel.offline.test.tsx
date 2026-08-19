@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ClusterIdentity, ClusterSummary } from '../../../api/recognition';
@@ -191,5 +191,79 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     expect(onFaceDragStart).not.toHaveBeenCalled();
     expect(screen.queryByText('Drop faces here to remove them from this face group.')).not.toBeInTheDocument();
     expect(onDiscardDrop).not.toHaveBeenCalled();
+  });
+});
+
+/** Same selector the drawer trap and the e2e walk use. */
+const DRAWER_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const HONEST_MOVE_COPY = /Face moves happen in the Workbench review queue/i;
+
+const renderBoardedUpDrawer = () =>
+  render(
+    <ClusterDrawerPanel
+      {...baseProps}
+      reassignUnavailableReason="Face moves happen in the Workbench review queue."
+    />,
+  );
+
+const drawerRoot = (): HTMLElement => {
+  const drawer = document.querySelector('.acx-cluster-drawer');
+  if (!(drawer instanceof HTMLElement)) {
+    throw new Error('expected .acx-cluster-drawer');
+  }
+  return drawer;
+};
+
+const accessibleNameOf = (el: HTMLElement): string => {
+  const labelled = el.getAttribute('aria-label');
+  if (labelled) {
+    return labelled;
+  }
+  const titled = el.getAttribute('title');
+  if (titled) {
+    return titled;
+  }
+  return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+};
+
+describe('ClusterDrawerPanel boarded-up a11y walk (UXW2-4-R1-24)', () => {
+  it('Close is a named button, honest Move copy is shown, and Move to count is 0', () => {
+    renderBoardedUpDrawer();
+    const drawer = drawerRoot();
+
+    const close = within(drawer).getByRole('button', { name: /^Close$/i });
+    expect(close.tagName).toBe('BUTTON');
+    expect(close).toHaveAttribute('type', 'button');
+
+    expect(within(drawer).getByText(HONEST_MOVE_COPY)).toBeInTheDocument();
+    expect(within(drawer).queryAllByRole('button', { name: /Move to/i })).toHaveLength(0);
+  });
+
+  it('focusable set starts at Close and no control is tabindex=-1 trapped', () => {
+    renderBoardedUpDrawer();
+    const drawer = drawerRoot();
+    const close = within(drawer).getByRole('button', { name: /^Close$/i });
+
+    expect(close).toHaveFocus();
+
+    const focusables = Array.from(drawer.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE_SELECTOR));
+    expect(focusables.length).toBeGreaterThan(0);
+    expect(focusables[0]).toBe(close);
+
+    const trapped = focusables.filter((el) => el.getAttribute('tabindex') === '-1');
+    expect(trapped).toEqual([]);
+
+    const names = focusables.map(accessibleNameOf);
+    expect(names[0]).toMatch(/^Close$/i);
+    expect(names.some((name) => /Rescan with sensitive settings/i.test(name))).toBe(true);
+    expect(names.some((name) => /Commit to roster entry/i.test(name))).toBe(true);
+    expect(names.every((name) => !/Move to/i.test(name))).toBe(true);
+
+    for (const el of focusables) {
+      el.focus();
+      expect(el).toHaveFocus();
+    }
   });
 });

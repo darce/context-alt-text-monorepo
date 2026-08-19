@@ -107,7 +107,8 @@
           "label": "Identity / findings preview (AI-assisted)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading"]
+          "states": ["default", "empty", "loading", "error", "degraded", "unavailable", "repair", "zero_evidence"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx"
         },
         {
           "id": "z-review-suggestions-header",

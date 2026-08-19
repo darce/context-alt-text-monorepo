@@ -1423,6 +1423,31 @@ describe('ReviewQueue', () => {
     });
   });
 
+  it('R7-04: filtered-empty-with-work does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assign-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue({ initialKind: 'merge' });
+
+    await screen.findByText('No items match the current filters.');
+    const position = document.querySelector('.acx-review-queue__position');
+    expect(position).not.toHaveTextContent('0 of 0');
+    expect(position).toHaveTextContent('Position unavailable');
+  });
+
   it('shows true drain copy when unfiltered queue is empty', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
@@ -3696,8 +3721,10 @@ describe('ReviewQueue', () => {
       // Merge ∩ strong band → empty (merge similarity is a different domain).
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
-        expect(screen.getByText('0 of 0')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
       });
+      expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+      expect(screen.getByText('Position unavailable')).toBeInTheDocument();
     });
 
     it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind; fired ids = intersection (BR-61); split tray copy (BR-63)', async () => {

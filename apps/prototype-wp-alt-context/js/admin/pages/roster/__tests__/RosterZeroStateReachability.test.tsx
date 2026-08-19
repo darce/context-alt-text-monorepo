@@ -6,7 +6,6 @@ import type { RosterClusterCommitResponse, RosterEntry } from '../../../api/rost
 import type { BatchAnalyzeResponse, ClusterSummary } from '../../../api/recognition';
 import { useRecognitionCluster } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
-import { useClusterSelection } from '../../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import { RosterPage } from '../../RosterPage';
 import { RosterEntriesSection } from '../RosterEntriesSection';
@@ -36,10 +35,6 @@ vi.mock('../../../hooks/useRosterHooks', () => ({
   useCreatePerson: vi.fn(),
   useUpdatePerson: vi.fn(),
   useDeletePerson: vi.fn(),
-}));
-
-vi.mock('../../../hooks/useClusterSelection', () => ({
-  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../hooks/useClusterMediaMap', () => ({
@@ -101,19 +96,6 @@ const clusterActionState = {
       isPending: false,
     },
   ),
-  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkMergeProgress: null,
-  bulkMergeFailure: null,
-  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -121,18 +103,6 @@ const clusterActionState = {
   },
   errorMessage: null,
   resetAll: vi.fn(),
-};
-
-const selectionState = {
-  selectedIds: new Set<string>(),
-  toggle: vi.fn(),
-  selectRange: vi.fn(),
-  selectAll: vi.fn(),
-  retainVisible: vi.fn(),
-  clear: vi.fn(),
-  isAllSelected: vi.fn(() => false),
-  isSelected: vi.fn(() => false),
-  count: 0,
 };
 
 const renderRosterPage = (route = '/'): ReturnType<typeof render> => {
@@ -163,7 +133,6 @@ describe('Roster zero-state reachability (rg-003)', () => {
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
   const mockedUseUpdatePerson = vi.mocked(useUpdatePerson);
   const mockedUseDeletePerson = vi.mocked(useDeletePerson);
-  const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -177,7 +146,6 @@ describe('Roster zero-state reachability (rg-003)', () => {
     mockedUseCreatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseUpdatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseDeletePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
-    mockedUseClusterSelection.mockReturnValue(selectionState);
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState);
     mockedUseClusterActions.mockReturnValue(clusterActionState);

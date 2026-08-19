@@ -4,7 +4,7 @@
   "title": "Recognition Cluster Top Unlabeled Response",
   "description": "WordPress recognition proxy envelope for the top-unlabeled naming queue.",
   "type": "object",
-  "required": ["clusters", "limit", "total", "truncated", "data_source"],
+  "required": ["clusters", "limit", "total", "truncated", "data_source", "repair_pending"],
   "properties": {
     "clusters": {
       "type": "array",

@@ -32,6 +32,7 @@
   "limit": 10,
   "total": 24,
   "truncated": true,
+  "repair_pending": false,
   "singleton_count": 3,
   "data_source": "local_projection",
   "projection_status": "available"

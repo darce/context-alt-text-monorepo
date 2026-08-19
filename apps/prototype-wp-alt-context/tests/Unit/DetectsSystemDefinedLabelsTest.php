@@ -131,4 +131,69 @@ class DetectsSystemDefinedLabelsTest extends TestCase
             'underscore auto label' => [null, 'cluster_ab12', 'unlabeled'],
         ];
     }
+
+    /**
+     * M1: evaluate the CASE SQL against real person/label rows. Arm literals
+     * are read from projected_cluster_label_state_sql(), so swapping the
+     * unbound and unlabeled THEN/ELSE arms fails this test.
+     */
+    public function testProjectedLabelStateSqlClassifiesBoundPersonVersusUnboundHumanOnRealRows(): void
+    {
+        $detector = new class() {
+            use DetectsSystemDefinedLabels;
+
+            public function sql(string $person, string $label): string
+            {
+                return $this->projected_cluster_label_state_sql($person, $label);
+            }
+
+            public function reserved(string $label): bool
+            {
+                return $this->is_reserved_label_shape($label);
+            }
+        };
+
+        $sql = $detector->sql('p.name', 'c.label');
+
+        $this->assertSame(
+            'person',
+            $this->evaluateProjectedLabelStateSql($sql, 'Ada Lovelace', 'Ada Lovelace', $detector)
+        );
+        $this->assertSame(
+            'unbound',
+            $this->evaluateProjectedLabelStateSql($sql, null, 'Tory Guzman', $detector)
+        );
+        $this->assertSame(
+            'unlabeled',
+            $this->evaluateProjectedLabelStateSql($sql, null, '', $detector)
+        );
+        $this->assertSame(
+            'unlabeled',
+            $this->evaluateProjectedLabelStateSql($sql, null, 'cluster_ab12', $detector)
+        );
+    }
+
+    /**
+     * @param object{reserved(string): bool} $detector
+     */
+    private function evaluateProjectedLabelStateSql(string $sql, ?string $person, ?string $label, object $detector): string
+    {
+        if (preg_match("/THEN '([^']*)' WHEN .+ THEN '([^']*)' ELSE '([^']*)' END/s", $sql, $matches) !== 1) {
+            self::fail('could not parse projected_cluster_label_state_sql CASE arms from: ' . $sql);
+        }
+
+        $personArm           = $matches[1];
+        $emptyOrReservedArm  = $matches[2];
+        $elseArm             = $matches[3];
+
+        if (is_string($person) && '' !== $person) {
+            return $personArm;
+        }
+
+        if (null === $label || '' === $label || $detector->reserved((string) $label)) {
+            return $emptyOrReservedArm;
+        }
+
+        return $elseArm;
+    }
 }

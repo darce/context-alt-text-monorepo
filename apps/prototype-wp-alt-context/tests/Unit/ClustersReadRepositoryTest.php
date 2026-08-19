@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Repositories\ClustersReadRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersReadRepository;
 use AltContext\Tests\TestCase;
 
 /**
@@ -259,5 +260,57 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertCount(1, $wpdb->queries);
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString('c.is_user_confirmed = 0', $wpdb->queries[0]);
+    }
+
+    /**
+     * M3: both cluster and identity-members read paths emit AS label_state
+     * with the same three-valued CASE. Reverting the clusters-read SELECT
+     * change fails this. Labeled-only WHERE still interpolates the label
+     * value CASE (as label alias is not a faithful swap of
+     * projected_cluster_label_select_sql).
+     */
+    public function testClusterReadsAgreeWithIdentityMembersOnLabelStateShape(): void
+    {
+        global $wpdb;
+
+        $this->repository->list_for_tenant(self::currentTenantId(), 10, 0);
+        $this->repository->list_for_tenant(self::currentTenantId(), 10, 0, ['labeled_only' => true]);
+        $this->repository->list_for_tenant(self::currentTenantId(), 10, 0, ['search' => 'Alice']);
+        $this->repository->list_for_tenant(
+            self::currentTenantId(),
+            10,
+            0,
+            [
+                'labeled_only' => true,
+                'search' => 'Alice',
+            ]
+        );
+        $this->repository->list_top_unlabeled(self::currentTenantId(), 10);
+        $this->repository->find_by_uuid('cluster-find');
+
+        $clusterSql = $wpdb->queries;
+        $this->assertCount(6, $clusterSql, 'four list_for_tenant variants + top-unlabeled + find_by_uuid');
+
+        $wpdb->queries = [];
+        $members = new IdentityMembersReadRepository('wp_acx_identity_members', 'wp_acx_clusters');
+        $members->list_for_cluster('cluster-ab12', 10, 0, self::currentTenantId());
+        $members->list_for_cluster('cluster-ab12', 10, 0);
+        $members->list_for_cluster_uuids(['cluster-ab12'], 3);
+        $members->list_for_media_ids(self::currentTenantId(), [1]);
+        $memberSql = $wpdb->queries;
+        $this->assertCount(4, $memberSql, 'all four identity-members reads must be observed');
+
+        foreach (array_merge($clusterSql, $memberSql) as $sql) {
+            $this->assertStringContainsString('AS label_state', $sql, $sql);
+            $this->assertStringContainsString("THEN 'person'", $sql, $sql);
+            $this->assertStringContainsString("THEN 'unlabeled'", $sql, $sql);
+            $this->assertStringContainsString("ELSE 'unbound'", $sql, $sql);
+        }
+
+        $labeledOnly = $clusterSql[1];
+        $this->assertStringContainsString(' as label, ', $labeledOnly);
+        $this->assertStringContainsString('AS label_state', $labeledOnly);
+        $this->assertDoesNotMatchRegularExpression('/AS label_state\s+IS NOT NULL/', $labeledOnly);
+        $this->assertStringContainsString('IS NOT NULL', $labeledOnly);
     }
 }

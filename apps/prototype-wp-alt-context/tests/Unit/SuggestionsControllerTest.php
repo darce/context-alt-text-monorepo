@@ -891,6 +891,9 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(1, $topK['minimum'] ?? null);
         $this->assertSame(50, $topK['maximum'] ?? null);
         $this->assertArrayNotHasKey('validate_callback', $topK);
+        $description = (string) ($topK['description'] ?? '');
+        $this->assertStringNotContainsString('Forwarded verbatim', $description);
+        $this->assertStringContainsStringIgnoringCase('people-grain', $description);
     }
 
     /**
@@ -1018,7 +1021,9 @@ class SuggestionsControllerTest extends TestCase
         $query = [];
         $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
         parse_str(is_string($queryString) ? $queryString : '', $query);
-        $this->assertSame('50', (string) ($query['top_k'] ?? ''), 'PHP fetches Python max window; people-grain top_k is applied after collapse');
+        $pythonWindow = (new \ReflectionClass($this->controller))->getConstant('ROSTER_CANDIDATES_PYTHON_WINDOW');
+        $this->assertSame(50, $pythonWindow);
+        $this->assertSame((string) $pythonWindow, (string) ($query['top_k'] ?? ''), 'PHP fetches Python max window; people-grain top_k is applied after collapse');
         $this->assertNotEmpty($query['tenant_id'] ?? '');
 
         $data = $response->get_data();
@@ -1215,7 +1220,8 @@ class SuggestionsControllerTest extends TestCase
         $query = [];
         $queryString = parse_url($calls[0]['url'], PHP_URL_QUERY);
         parse_str(is_string($queryString) ? $queryString : '', $query);
-        $this->assertSame('50', (string) ($query['top_k'] ?? ''), 'PHP must fetch the Python max window then slice people-grain top_k');
+        $pythonWindow = (new \ReflectionClass($this->controller))->getConstant('ROSTER_CANDIDATES_PYTHON_WINDOW');
+        $this->assertSame((string) $pythonWindow, (string) ($query['top_k'] ?? ''), 'PHP must fetch the Python max window then slice people-grain top_k');
 
         $this->assertCount(2, $data['candidates']);
         $this->assertSame(1, $data['candidates'][0]['roster_entry_id']);

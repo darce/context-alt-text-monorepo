@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -488,6 +488,10 @@ vi.mock('../api/recognition', async () => {
     ...actual,
     fetchClusterMembers: vi.fn().mockResolvedValue({ members: [], limit: 1, total: 0, truncated: false }),
     listRecognitionClusters: vi.fn().mockResolvedValue({ clusters: [], limit: 10, total: 0, truncated: false }),
+    fetchPendingSuggestions: vi.fn(() => new Promise(() => undefined)),
+    fetchPendingMergeSuggestions: vi.fn(() => new Promise(() => undefined)),
+    fetchPendingNameSuggestions: vi.fn(() => new Promise(() => undefined)),
+    fetchTopUnlabeledClusters: vi.fn(() => new Promise(() => undefined)),
     updateClusterLabel: vi.fn(),
     mergeCluster: vi.fn(),
     revertMergeCluster: vi.fn(),
@@ -726,7 +730,7 @@ describe('banned vocabulary across js/admin pages', () => {
     ['TopClusterCard default', 'top-default'],
     ['ReviewQueue empty', 'queue-empty'],
     ['ReviewQueue pending', 'queue-pending'],
-    ['merge-dialog-open', 'merge-dialog-open'],
+    ['merge-undo-banner', 'merge-undo-banner'],
     ['cluster-actions', 'cluster-actions'],
     ['identity-cluster-item', 'identity-cluster-item'],
   ] as const)('%s has no banned review vocabulary', async (_label, state) => {
@@ -742,6 +746,32 @@ describe('banned vocabulary across js/admin pages', () => {
     const showAll = await import('../pages/workbench/identity-clusters/useShowAllClusterMembers');
     const actions = await import('../pages/workbench/identity-clusters/ClusterActions');
     const clusterItem = await import('../pages/workbench/identity-clusters/IdentityClusterItem');
+    const recognition = await import('../api/recognition');
+
+    if (state === 'queue-empty') {
+      const emptySuggestions = {
+        suggestions: [],
+        limit: 10,
+        offset: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      };
+      vi.mocked(recognition.fetchPendingSuggestions).mockResolvedValueOnce(emptySuggestions);
+      vi.mocked(recognition.fetchPendingMergeSuggestions).mockResolvedValueOnce(emptySuggestions);
+      vi.mocked(recognition.fetchPendingNameSuggestions).mockResolvedValueOnce({
+        suggestions: [],
+        limit: 25,
+        offset: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      });
+      vi.mocked(recognition.fetchTopUnlabeledClusters).mockResolvedValueOnce({
+        clusters: [],
+        limit: 20,
+        total: 0,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      });
+    }
 
     if (state === 'error') {
       vi.mocked(showAll.useShowAllClusterMembers).mockReturnValueOnce({
@@ -821,7 +851,7 @@ describe('banned vocabulary across js/admin pages', () => {
             onSelectedIdsChange={() => undefined}
           />
         </survivors.MergeSurvivorProvider>
-      ) : state === 'merge-dialog-open' ? (
+      ) : state === 'merge-undo-banner' ? (
         <undo.MergeUndoBanner
           mergeResult={{
             source_id: 's1',
@@ -939,13 +969,22 @@ describe('banned vocabulary across js/admin pages', () => {
         />
       );
 
-    render(wrap(node));
+    const { container } = render(wrap(node));
     if (state === 'identity-cluster-item') {
       const remove = Array.from(document.body.querySelectorAll('button')).find(
         (button) => button.textContent === 'Remove from group',
       );
       expect(remove, 'identity-cluster-item fixture must render the remove control').toBeTruthy();
       fireEvent.click(remove as HTMLButtonElement);
+    }
+    if (state === 'queue-empty') {
+      await waitFor(() => {
+        expect(container.querySelector('.acx-review-queue__empty')).toBeTruthy();
+        expect(container.textContent).toMatch(/no .*review/i);
+      });
+    }
+    if (state === 'queue-pending') {
+      expect(container.textContent).toMatch(/loading/i);
     }
     assertNoBannedReviewWords(document.body);
   });

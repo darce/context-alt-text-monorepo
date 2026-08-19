@@ -61,8 +61,6 @@ import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
   COMMIT_HOLD_PHASE,
-  HOLD_COMMITTING_STATUS_COPY,
-  HOLD_STATUS_COPY,
   PERSON_COMMIT_PHASE,
   type CommitHoldPhase,
   type PersonCommitRequest,
@@ -885,8 +883,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 <>
                   <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
                   {retryFailed
-                    ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
-                    : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+                    ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
+                    : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
                 </>
               )}
             </p>
@@ -894,7 +892,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
-            retryingLabel={__(QUERY_RETRY_COPY.RETRYING_SUGGESTIONS, 'alt-context')}
+            retryingLabel={QUERY_RETRY_COPY.RETRYING_SUGGESTIONS}
             statusId="acx-review-queue-retrying"
             statusClassName="acx-review-queue__status"
             onClick={retrySuggestionQueries}
@@ -1536,7 +1534,9 @@ export const CommitHoldRegion = ({
   }
 
   const holdMessage =
-    phase === COMMIT_HOLD_PHASE.COMMITTING ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
+    phase === COMMIT_HOLD_PHASE.COMMITTING
+      ? __('Saving…', 'alt-context')
+      : __('Saving… — Undo', 'alt-context');
 
   return (
     <div
@@ -1553,7 +1553,7 @@ export const CommitHoldRegion = ({
       onPointerEnter={() => onPausedChange(true)}
       onPointerLeave={() => onPausedChange(false)}
     >
-      <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
+      <span className="acx-review-queue__hold-message">{holdMessage}</span>
       {phase === COMMIT_HOLD_PHASE.HOLDING ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}

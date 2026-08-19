@@ -1,10 +1,10 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { useSearchParams } from 'react-router-dom';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import { useRecognitionCluster } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
-import { useClusterSelection } from '../hooks/useClusterSelection';
+
 import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
 import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
@@ -31,10 +31,6 @@ import {
 
 export const RosterPage = (): React.JSX.Element => {
   const [searchParams, setSearchParams] = useSearchParams();
-
-  const selection = useClusterSelection();
-  const clearSelection = selection.clear;
-  const selectAllSelection = selection.selectAll;
 
   const parsedRoute = React.useMemo(() => parseRosterRoute(searchParams), [searchParams]);
   const selectedClusterId = parsedRoute.selectedClusterId;
@@ -118,9 +114,6 @@ export const RosterPage = (): React.JSX.Element => {
   const actions = useClusterActions({
     onReassignSettled: dragDrop.resetDragState,
     onCommitSettled: dragDrop.resetDragState,
-    onBulkMergeSettled: clearSelection,
-    onBulkMergeFailure: selectAllSelection,
-    onBulkDismissSettled: clearSelection,
   });
 
   const handleDropFace = (targetClusterId: string | null): void => {
@@ -134,13 +127,6 @@ export const RosterPage = (): React.JSX.Element => {
     }
     actions.reassignMutation.mutate({ faceId: payload.faceId, targetClusterId });
   };
-
-  const handleReassignFace = React.useCallback(
-    (faceId: string, targetClusterId: string): void => {
-      actions.reassignMutation.mutate({ faceId, targetClusterId });
-    },
-    [actions.reassignMutation],
-  );
 
   const handleRescanCluster = (cluster: ClusterSummary, identities: ClusterIdentity[]): void => {
     const sourceIdentities = identities.length > 0 ? identities : cluster.sample_identities;
@@ -229,17 +215,20 @@ export const RosterPage = (): React.JSX.Element => {
                 ? __('No unnamed face groups right now', 'alt-context')
                 : __('Unnamed faces waiting', 'alt-context')}
           </h2>
-          <p role={topUnlabeledTotal !== null ? 'status' : undefined}>
+          <p role="status">
             {topUnlabeledTotal === null
-              ? __('Unnamed faces are reviewed in the Workbench.', 'alt-context')
+              ? ''
               : topUnlabeledTotal === 0
                 ? __('Nothing waiting in the review queue.', 'alt-context')
                 : sprintf(
                     // translators: %d: server-reported count of unnamed face groups
-                    __('%d face groups waiting', 'alt-context'),
+                    _n('%d face group waiting', '%d face groups waiting', topUnlabeledTotal, 'alt-context'),
                     topUnlabeledTotal,
                   )}
           </p>
+          {topUnlabeledTotal === null ? (
+            <p>{__('Unnamed faces are reviewed in the Workbench.', 'alt-context')}</p>
+          ) : null}
           <a className="acx-button acx-button--secondary" href={workbenchReviewQueueUrl()}>
             {__('Review in Workbench', 'alt-context')}
           </a>
@@ -252,7 +241,7 @@ export const RosterPage = (): React.JSX.Element => {
         reassignUnavailableReason={
           selectedClusterId === null
             ? null
-            : __('Move faces between groups in the Workbench review queue.', 'alt-context')
+            : __('Face moves happen in the Workbench review queue.', 'alt-context')
         }
         identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
@@ -278,7 +267,8 @@ export const RosterPage = (): React.JSX.Element => {
         dropTarget={dragDrop.dropTarget}
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
-        onReassignFace={handleReassignFace}
+        // UXW2-4-R1-16: picker boarded up on the cluster= shim (no scoped
+        // reassignTargets query). Follow-up: restore via a scoped query (REF-25).
         isReassigning={actions.reassignMutation.isPending}
         reassignErrorMessage={actions.reassignMutation.error?.message ?? null}
       />

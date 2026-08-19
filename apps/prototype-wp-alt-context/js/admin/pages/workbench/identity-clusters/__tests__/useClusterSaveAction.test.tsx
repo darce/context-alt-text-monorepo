@@ -11,6 +11,7 @@ const baseMutations = () => ({
   assignToCluster: vi.fn(),
   rename: vi.fn(),
   createClusterForIdentity: vi.fn(),
+  bindToRosterEntry: vi.fn(),
 });
 
 const member = (overrides: Partial<ClusterGroup['members'][number]> = {}): ClusterGroup['members'][number] => ({

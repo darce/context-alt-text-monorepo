@@ -414,7 +414,8 @@ def test_schema_and_contract_agree_on_php_candidate_ordering() -> None:
     )
     candidates_line = next(line for line in python_body.splitlines() if "`candidates[]`" in line)
     assert "Python cluster-grain" in candidates_line
-    assert "people-grain" in php_block
+    rank_line = next(line for line in php_block.splitlines() if "Server rank" in line)
+    assert "people-grain" in rank_line
     assert "Browser/SPA" in php_block
     assert "mapping proxy" in php_block or "PHP-layer" in php_block
     assert "must not re-sort" in php_block

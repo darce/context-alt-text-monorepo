@@ -1571,6 +1571,7 @@ class SuggestionsControllerTest extends TestCase
         );
         $stripped = preg_replace('~/\*.*?\*/~s', '', $m[1]);
         $stripped = preg_replace('~//.*$~m', '', (string) $stripped);
+        $stripped = preg_replace('~#.*$~m', '', (string) $stripped);
         $this->assertIsString($stripped);
         $this->assertStringContainsString('self::ROSTER_CANDIDATES_PYTHON_WINDOW', $stripped);
         $this->assertStringNotContainsString('ROSTER_CANDIDATES_TOP_K_MAX', $stripped);

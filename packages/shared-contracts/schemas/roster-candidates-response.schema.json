@@ -46,7 +46,7 @@
     },
     "data_source": {
       "type": "string",
-      "description": "Optional WordPress proxy provenance. Absent on the python 200 wire. Degraded proxy paths use HTTP 502/503 error envelopes instead of fabricating this 200 schema."
+      "description": "Optional WordPress proxy provenance. Absent on the python 200 wire. Degraded proxy paths use HTTP 502/503 error envelopes instead of fabricating this 200 schema. Upstream 4xx (404 cluster-not-found, 401/403, 429 with Retry-After) pass through with their status and detail; only a 400 whose detail names top_k is remapped to 502."
     },
     "thresholds": {
       "type": "object",

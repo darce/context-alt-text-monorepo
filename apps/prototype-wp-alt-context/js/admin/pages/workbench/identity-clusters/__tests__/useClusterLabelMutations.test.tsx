@@ -28,7 +28,7 @@ vi.mock('../../../../api/recognition', () => ({
 }));
 
 const mergeResponse = {
-  source_id: 'source-c',
+  source_id: 'retired-source-id',
   source_label: 'Source',
   target_id: 'target-c',
   target_label: 'Target',
@@ -67,7 +67,7 @@ const renderLabelMutations = () => {
   const { result } = renderHook(
     () =>
       useClusterLabelMutations({
-        clusterId: 'source-c',
+        clusterId: 'panel-c',
         currentLabel: 'Source',
         derivedLabel: null,
         onMergeSuccess,
@@ -104,7 +104,7 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
 
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     expect(recognitionApi.mergeCluster).toHaveBeenCalledWith(
-      'source-c',
+      'panel-c',
       'target-c',
       'Target',
       undefined,
@@ -153,7 +153,7 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
 
   it('R1-25: rename drops the labelled group from namePending and topUnlabeled', async () => {
     vi.mocked(recognitionApi.updateClusterLabel).mockResolvedValue({
-      cluster_id: 'source-c',
+      cluster_id: 'panel-c',
       label: 'Renamed',
     } as never);
     const { result, invalidateQueries, queryClient } = renderLabelMutations();
@@ -163,7 +163,7 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
       suggestions: [
         {
           id: 'name-1',
-          cluster_id: 'source-c',
+          cluster_id: 'panel-c',
           suggested_name: 'Alex',
           confidence_score: 0.9,
           source: 'test',
@@ -187,7 +187,7 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
     queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
       clusters: [
         {
-          id: 'source-c',
+          id: 'panel-c',
           tenant_id: 't',
           label: null,
           is_labeled: false,
@@ -230,7 +230,17 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
     queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
       clusters: [
         {
-          id: 'source-c',
+          id: 'retired-source-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'panel-c',
           tenant_id: 't',
           label: null,
           is_labeled: false,
@@ -261,6 +271,6 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     expect(
       queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((row) => row.id),
-    ).toEqual(['target-c']);
+    ).toEqual(['panel-c', 'target-c']);
   });
 });

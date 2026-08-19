@@ -45,7 +45,7 @@ vi.mock('../../../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
 }));
 
-const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'source-cluster-id') => {
+const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'panel-cluster-id') => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -101,7 +101,7 @@ describe('ClusterLabelingPanel', () => {
     vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
     vi.mocked(updateClusterLabel).mockResolvedValue(undefined);
     vi.mocked(mergeCluster).mockResolvedValue({
-      source_id: 'source-cluster-id',
+      source_id: 'retired-source-id',
       source_label: null,
       target_id: 'target-cluster-id',
       target_label: 'Slate Willow',
@@ -110,7 +110,7 @@ describe('ClusterLabelingPanel', () => {
       target_identity_count: 10,
     });
     vi.mocked(revertMergeCluster).mockResolvedValue({
-      restored_cluster_id: 'source-cluster-id',
+      restored_cluster_id: 'panel-cluster-id',
       restored_label: null,
       restored_identity_count: 5,
       target_cluster_id: 'target-cluster-id',
@@ -164,7 +164,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge into cluster "Slate Willow"' }));
 
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'target-cluster-id', 'Slate Willow');
+      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'target-cluster-id', 'Slate Willow');
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
@@ -173,7 +173,7 @@ describe('ClusterLabelingPanel', () => {
   it('R1-17: merge success drops result.source_id from topUnlabeled', async () => {
     vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
     vi.mocked(mergeCluster).mockResolvedValue({
-      source_id: 'source-cluster-id',
+      source_id: 'retired-source-id',
       source_label: 'Source',
       target_id: 'target-cluster-id',
       target_label: 'Slate Willow',
@@ -186,7 +186,17 @@ describe('ClusterLabelingPanel', () => {
     queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
       clusters: [
         {
-          id: 'source-cluster-id',
+          id: 'retired-source-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'panel-cluster-id',
           tenant_id: 't',
           label: null,
           is_labeled: false,
@@ -207,7 +217,7 @@ describe('ClusterLabelingPanel', () => {
         },
       ],
       limit: 20,
-      total: 2,
+      total: 3,
       truncated: false,
       has_clusters: true,
       data_source: DATA_SOURCE.LOCAL_PROJECTION,
@@ -220,7 +230,7 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(
       queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((cluster) => cluster.id),
-    ).toEqual(['target-cluster-id']);
+    ).toEqual(['panel-cluster-id', 'target-cluster-id']);
   });
 
   it('offers rename-anyway without merge when only a person collides (no unique cluster target)', async () => {
@@ -262,7 +272,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Rename anyway' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Only Person', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Only Person', expect.any(AbortSignal));
     });
   });
 
@@ -272,7 +282,7 @@ describe('ClusterLabelingPanel', () => {
       makeClusterListResponse([
         {
           ...duplicateClusterMatch,
-          id: 'source-cluster-id',
+          id: 'panel-cluster-id',
           label: 'Self Name',
         },
       ]),
@@ -284,7 +294,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Self Name', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Self Name', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     await waitFor(() => {
@@ -301,7 +311,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'A New Person', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'A New Person', expect.any(AbortSignal));
     });
     expect(mergeCluster).not.toHaveBeenCalled();
     await waitFor(() => {
@@ -360,7 +370,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     await waitFor(() => {
@@ -420,7 +430,7 @@ describe('ClusterLabelingPanel', () => {
       expect(container.querySelectorAll('.acx-cluster-labeling-panel__face')).toHaveLength(2);
     });
     expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith('source-cluster-id', { limit: 1, offset: 1 });
+    expect(fetchMock).toHaveBeenCalledWith('panel-cluster-id', { limit: 1, offset: 1 });
 
     // AT affordance: completion is announced and focus lands on the member
     // grid because the show-all button just unmounted.
@@ -446,7 +456,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
@@ -476,7 +486,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
@@ -504,7 +514,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
@@ -555,7 +565,7 @@ describe('ClusterLabelingPanel', () => {
   it('shows projection-not-ready error inline with alert role', async () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
       new Error(
-        'Request to /recognition/clusters/source-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
+        'Request to /recognition/clusters/panel-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
       ),
     );
 
@@ -669,7 +679,7 @@ describe('ClusterLabelingPanel', () => {
     );
     rerender(
       <QueryClientProvider client={queryClient}>
-        <ClusterLabelingPanel clusterId="source-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
+        <ClusterLabelingPanel clusterId="panel-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
       </QueryClientProvider>,
     );
 
@@ -685,7 +695,7 @@ describe('ClusterLabelingPanel', () => {
     });
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
-        <ClusterLabelingPanel clusterId="source-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
+        <ClusterLabelingPanel clusterId="panel-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
       </QueryClientProvider>,
     );
 
@@ -863,7 +873,7 @@ describe('ClusterLabelingPanel', () => {
 
     await user.click(mergeButton);
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'real-match-id', 'Pat Rivera');
+      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'real-match-id', 'Pat Rivera');
     });
   });
 
@@ -902,7 +912,7 @@ describe('ClusterLabelingPanel', () => {
         true,
       );
       expect(updateClusterLabel).toHaveBeenCalledWith(
-        'source-cluster-id',
+        'panel-cluster-id',
         'Unique Name Zq',
         expect.any(AbortSignal),
       );
@@ -967,7 +977,7 @@ describe('ClusterLabelingPanel', () => {
 
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith(
-        'source-cluster-id',
+        'panel-cluster-id',
         'Cluster-Dad',
         expect.any(AbortSignal),
       );
@@ -1027,7 +1037,7 @@ describe('ClusterLabelingPanel', () => {
       makeClusterListResponse([
         {
           ...duplicateClusterMatch,
-          id: 'source-cluster-id',
+          id: 'panel-cluster-id',
           label: 'Self Name',
         },
       ]),
@@ -1049,7 +1059,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'self name', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'self name', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
   });

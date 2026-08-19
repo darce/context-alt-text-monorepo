@@ -1592,6 +1592,49 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     ).toEqual(['cluster-2']);
   });
 
+  it('R3-08: unmount during acceptMerge still drops the retired source', async () => {
+    const mergeRow = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-1',
+      cluster_b_id: 'cluster-2',
+      source_cluster_id: 'cluster-1',
+      target_cluster_id: 'cluster-2',
+    };
+    queryClient.setQueryData(mergePendingKey, makeMergePage([mergeRow, makeMerge('merge-sib')]));
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+
+    let resolveAccept: (value: PendingMergeSuggestion) => void = () => undefined;
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAccept = resolve;
+        }),
+    );
+
+    const { result, unmount } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    unmount();
+
+    await act(async () => {
+      resolveAccept(mergeRow);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-sib']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-2']);
+  });
+
   it('R1-21: foreign source_cluster_id does not evict an innocent group', async () => {
     queryClient.setQueryData(
       reviewPageKey,

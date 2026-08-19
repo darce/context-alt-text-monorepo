@@ -7,6 +7,7 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-media-detail-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/services/class-person-resolution-service.php';
+require_once __DIR__ . '/services/class-cluster-person-bind-service.php';
 require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../sovereign/repositories/class-roster-entry-projection-repository.php';
@@ -18,6 +19,7 @@ require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.ph
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Api\RecognitionController;
+use AltContext\Api\Services\ClusterPersonBindService;
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -490,62 +492,81 @@ class Api {
 
 		$now = current_time( 'mysql' );
 
-		$update_data = array(
-			'person_id'         => $person_id,
-			'curation_state'    => 'confirmed',
-			'is_user_confirmed' => 1,
-			'updated_at'        => $now,
-		);
-		$update_fmt  = array( '%d', '%s', '%d', '%s' );
+		if ( null !== $person_id ) {
+			$binder = new ClusterPersonBindService();
+			$bound  = $binder->bind_cluster_to_person(
+				$cluster_id,
+				$person_id,
+				function ( string $operation_type, string $bound_cluster_id, int $local_revision, array $payload ): bool {
+					return $this->enqueue_curation_operation(
+						$operation_type,
+						'cluster',
+						$bound_cluster_id,
+						$local_revision,
+						$payload
+					);
+				},
+				is_string( $person_uuid ) ? $person_uuid : null,
+				is_string( $resolved_person_name ) ? $resolved_person_name : null
+			);
+			if ( is_wp_error( $bound ) ) {
+				$this->rollback_database_transaction();
+				return $bound;
+			}
+			$person_uuid          = $bound['person_uuid'];
+			$resolved_person_name = $bound['person_name'];
+			$now                  = $bound['updated_at'];
+		} else {
+			$update_data = array(
+				'person_id'         => $person_id,
+				'curation_state'    => 'confirmed',
+				'is_user_confirmed' => 1,
+				'updated_at'        => $now,
+			);
+			$update_fmt  = array( null, '%s', '%d', '%s' );
 
-		if ( null === $person_id ) {
-			$update_fmt[0] = null;
-		} elseif ( is_string( $resolved_person_name ) && '' !== trim( $resolved_person_name ) ) {
-			$update_data['label'] = trim( $resolved_person_name );
-			$update_fmt[]         = '%s';
-		}
-
-		$cluster_updated = $wpdb->update(
-			$table_clusters,
-			$update_data,
-			array( 'cluster_uuid' => $cluster_id ),
-			$update_fmt,
-			array( '%s' )
-		);
-		if ( false === $cluster_updated ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not update cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
-		}
-
-		$revision_updated = $wpdb->query(
-			$wpdb->prepare(
-				'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s',
+			$cluster_updated = $wpdb->update(
 				$table_clusters,
-				$cluster_id
-			)
-		);
-		if ( false === $revision_updated ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not update cluster revision.', 'alt-context' ), array( 'status' => 500 ) );
-		}
+				$update_data,
+				array( 'cluster_uuid' => $cluster_id ),
+				$update_fmt,
+				array( '%s' )
+			);
+			if ( false === $cluster_updated ) {
+				$this->rollback_database_transaction();
+				return new WP_Error( 'acx_db_error', __( 'Could not update cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+			}
 
-		$local_revision = (int) $wpdb->get_var(
-			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_id )
-		);
-		$queued = $this->enqueue_curation_operation(
-			( null === $person_id ? 'cluster_person_unbound' : 'cluster_person_bound' ),
-			'cluster',
-			$cluster_id,
-			max( 1, $local_revision ),
-			array(
-				'cluster_uuid' => $cluster_id,
-				'person_uuid'  => ( null === $person_id ) ? null : ( is_string( $person_uuid ) ? $person_uuid : null ),
-				'person_name'  => ( null === $person_id || ! is_string( $resolved_person_name ) || '' === trim( $resolved_person_name ) ) ? null : trim( $resolved_person_name ),
-			)
-		);
-		if ( ! $queued ) {
-			$this->rollback_database_transaction();
-			return new WP_Error( 'acx_db_error', __( 'Could not queue curation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+			$revision_updated = $wpdb->query(
+				$wpdb->prepare(
+					'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s',
+					$table_clusters,
+					$cluster_id
+				)
+			);
+			if ( false === $revision_updated ) {
+				$this->rollback_database_transaction();
+				return new WP_Error( 'acx_db_error', __( 'Could not update cluster revision.', 'alt-context' ), array( 'status' => 500 ) );
+			}
+
+			$local_revision = (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_id )
+			);
+			$queued = $this->enqueue_curation_operation(
+				'cluster_person_unbound',
+				'cluster',
+				$cluster_id,
+				max( 1, $local_revision ),
+				array(
+					'cluster_uuid' => $cluster_id,
+					'person_uuid'  => null,
+					'person_name'  => null,
+				)
+			);
+			if ( ! $queued ) {
+				$this->rollback_database_transaction();
+				return new WP_Error( 'acx_db_error', __( 'Could not queue curation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+			}
 		}
 
 		if ( ! $this->commit_database_transaction() ) {

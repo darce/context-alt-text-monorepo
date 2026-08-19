@@ -151,9 +151,6 @@ class ClusterResponseEnvelopeService {
 			}
 
 			$total = max( 0, (int) $data['total'] );
-			if ( $dropped > 0 ) {
-				$total = max( 0, $total - $dropped );
-			}
 
 			return new WP_REST_Response(
 				array(

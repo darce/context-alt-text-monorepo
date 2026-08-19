@@ -300,7 +300,7 @@ class ClusterResponseMapper {
 					// Stale-low projected during truncation: observed is a
 					// lower bound, not an exact count (R2-07). Never publish
 					// identity_count below the served preview length.
-					if ( $projected_count <= $preview_limit && '' !== $cluster_id ) {
+					if ( '' !== $cluster_id ) {
 						$this->requested_repair_cluster_ids[] = $cluster_id;
 					}
 					return max( $projected_count, $preview_limit );

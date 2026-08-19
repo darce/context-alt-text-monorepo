@@ -16,4 +16,10 @@ describe('repairGatedCount', () => {
   it('R5-02: a non-empty page keeps page-scoped wording', () => {
     expect(gatedClusterCopy(3, true, 9)).toMatch(/on this page/);
   });
+
+  it('R7-03: the three gatedClusterCopy branches are exact sentences', () => {
+    expect(gatedClusterCopy(3, true, 0)).toBe('3 groups elsewhere are missing face data');
+    expect(gatedClusterCopy(3, true, 2)).toBe('At least 3 groups on this page missing face data');
+    expect(gatedClusterCopy(3, false, 2)).toBe('3 groups missing face data');
+  });
 });

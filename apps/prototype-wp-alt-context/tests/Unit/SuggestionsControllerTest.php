@@ -940,7 +940,13 @@ class SuggestionsControllerTest extends TestCase
             $response = $this->invokeRosterCandidatesRoute($topK);
             $this->assertInstanceOf(\WP_Error::class, $response, 'top_k=' . var_export($topK, true));
             $this->assertSame('invalid_top_k', $response->get_error_code(), 'top_k=' . var_export($topK, true));
-            $this->assertSame('top_k must be an integer between 1 and 50.', $response->get_error_message());
+            $ref = new \ReflectionClass($this->controller);
+            $expected = sprintf(
+                'top_k must be an integer between %d and %d.',
+                $ref->getConstant('ROSTER_CANDIDATES_TOP_K_MIN'),
+                $ref->getConstant('ROSTER_CANDIDATES_TOP_K_MAX')
+            );
+            $this->assertSame($expected, $response->get_error_message());
             $this->assertSame(400, $response->get_error_data()['status'] ?? null);
             $this->assertSame([], $this->getHttpCalls());
         }

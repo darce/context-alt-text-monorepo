@@ -43,7 +43,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	/** Coupled to recognition.application.suggestions.roster_candidates.MAX_ROSTER_CANDIDATES_TOP_K (roster_candidates.py:19). */
 	private const ROSTER_CANDIDATES_PYTHON_WINDOW = 50;
 	private const INVALID_TOP_K_CODE = 'invalid_top_k';
-	private const INVALID_TOP_K_MESSAGE = 'top_k must be an integer between 1 and 50.';
+	private const INVALID_TOP_K_MESSAGE = 'top_k must be an integer between %d and %d.';
 
 	private ?ClustersReadRepository $clusters_read_repository;
 
@@ -373,7 +373,15 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	}
 
 	private function invalid_top_k_error(): WP_Error {
-		return new WP_Error( self::INVALID_TOP_K_CODE, self::INVALID_TOP_K_MESSAGE, array( 'status' => 400 ) );
+		return new WP_Error(
+			self::INVALID_TOP_K_CODE,
+			sprintf(
+				self::INVALID_TOP_K_MESSAGE,
+				self::ROSTER_CANDIDATES_TOP_K_MIN,
+				self::ROSTER_CANDIDATES_TOP_K_MAX
+			),
+			array( 'status' => 400 )
+		);
 	}
 
 	/**

@@ -2663,7 +2663,7 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
     collected = list(notes or [])
     if exposure_file:
         try:
-            collected.extend(Path(exposure_file).read_text(encoding="utf-8").splitlines())
+            collected.extend(Path(exposure_file).read_text(encoding="utf-8-sig").splitlines())
         except (OSError, UnicodeDecodeError):
             print(
                 f"draw-eval-split: exposure file not found/unreadable: {exposure_file}",
@@ -2702,7 +2702,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         raise SystemExit(2)
     if args.check:
         try:
-            artifact = json.loads(out.read_text())
+            artifact = json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             print(
                 f"draw-eval-split: sealed split not found/unreadable: {out}",
@@ -2765,7 +2765,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
     )
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+        out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError as exc:
         print(
             f"draw-eval-split: cannot write sealed split: {out}: {exc}",

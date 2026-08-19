@@ -26,9 +26,11 @@ use function is_int;
 use function is_numeric;
 use function is_object;
 use function is_string;
+use function is_wp_error;
 use function range;
 use function sanitize_text_field;
 use function sprintf;
+use function stripos;
 use function usort;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
@@ -374,6 +376,24 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return new WP_Error( self::INVALID_TOP_K_CODE, self::INVALID_TOP_K_MESSAGE, array( 'status' => 400 ) );
 	}
 
+	/**
+	 * Drift-only: PHP always sends ROSTER_CANDIDATES_PYTHON_WINDOW, so an
+	 * upstream 400 whose detail names top_k means the two caps drifted.
+	 * Never classify by status range — 404/401/403/429 and other 400s pass
+	 * through with their upstream status and detail.
+	 */
+	private function is_roster_candidates_top_k_drift( WP_REST_Response|WP_Error $response ): bool {
+		if ( is_wp_error( $response ) || 400 !== $response->get_status() ) {
+			return false;
+		}
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return false;
+		}
+		$detail = $data['detail'] ?? null;
+		return is_string( $detail ) && false !== stripos( $detail, 'top_k' );
+	}
+
 	public function get_roster_candidates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 
@@ -408,7 +428,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( $this->is_backend_overloaded( $response ) ) {
 			return parent::backend_overloaded_response( $response );
 		}
-		if ( $this->is_proxy_redirect_refused( $response ) || $this->is_proxy_endpoint_error( $response, 400 ) ) {
+		if ( $this->is_proxy_redirect_refused( $response )
+			|| $this->is_proxy_endpoint_error( $response )
+			|| $this->is_roster_candidates_top_k_drift( $response ) ) {
 			return new WP_Error(
 				'recognition_endpoint_error',
 				'Recognition roster-candidates endpoint is unavailable.',

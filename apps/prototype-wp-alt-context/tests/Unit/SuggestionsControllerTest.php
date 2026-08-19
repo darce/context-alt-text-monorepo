@@ -1419,11 +1419,62 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
     }
 
+    public function testGetRosterCandidatesUpstream404PassesThroughClusterNotFound(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => '{"detail":"Cluster not found"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $response,
+            'upstream 404 Cluster not found must not be widened to 502 endpoint_error'
+        );
+        $this->assertSame(404, $response->get_status());
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertSame('Cluster not found', $data['detail'] ?? null);
+        $this->assertArrayNotHasKey('candidates', $data);
+    }
+
+    public function testGetRosterCandidatesUpstream429PreservesRetryAfter(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 429, 'message' => 'Too Many Requests'],
+            'headers' => ['Retry-After' => '7'],
+            'body' => '{"detail":"rate limited"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $response,
+            'upstream 429 must not be widened to 502 endpoint_error'
+        );
+        $this->assertSame(429, $response->get_status());
+        $this->assertSame('7', $response->get_headers()['Retry-After'] ?? null);
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertSame('rate limited', $data['detail'] ?? null);
+    }
+
     public function testGetRosterCandidatesUpstream400IsEndpointErrorNotMappedPayload(): void
     {
         $this->queueHttpResponse([
             'response' => ['code' => 400, 'message' => 'Bad Request'],
             'body' => '{"detail":"top_k out of range"}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 400, 'message' => 'Bad Request'],
+            'body' => '{"detail":"Invalid cluster_id"}',
         ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
@@ -1440,6 +1491,18 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
         $this->assertArrayNotHasKey('total', (array) $response->get_error_data());
         $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
+
+        $passthrough = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $passthrough,
+            'non-top_k upstream 400 must not be classified as endpoint_error; === 400 is too wide'
+        );
+        $this->assertSame(400, $passthrough->get_status());
+        $data = $passthrough->get_data();
+        $this->assertIsArray($data);
+        $this->assertSame('Invalid cluster_id', $data['detail'] ?? null);
+        $this->assertArrayNotHasKey('candidates', $data);
     }
 
     public function testRosterCandidatesTopKValidatorIsNotPublicApi(): void

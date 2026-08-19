@@ -559,7 +559,7 @@ Ranks labelled, user-confirmed clusters (the python-side stand-in for roster per
 - `thresholds` — live `suggestion_floor` / `suggestion_ceiling` / `similarity_threshold`.
 - `candidates[]` — labelled clusters in **Python cluster-grain** rank order: similarity DESC then `cluster_id` ASC. The PHP passthrough re-ranks after collapse (see the passthrough block). Negative cosine is `band=none` (floor is `-1.0`, not `0.0`). Dimension-mismatched reps are skipped. Same-space guard is the in-process FIR23-01 helper (`embedding_space.same_space_vector`); unlike label inference there is no MediaIdentity SQL fallback because `get_labeled_with_representatives` eager-loads identity — unresolved models are excluded.
 - `band` is computed server-side from the active profile's live floors (`strong` ≥ ceiling, `possible` ∈ [floor, ceiling), `none` < floor). Clients must not invent bands (DRIFT-03). `similarity` is a ranking cosine, not a calibrated probability (CAL-03 / HAI-08 / MEAS-05).
-- Three empties: no usable probe (`probe_face_count` 0 / `reference_face_count` 0 / `quality_flag` `low_quality` / `candidates` []); empty labelled roster (`probe_face_count` > 0 / `reference_face_count` 0 / `ok` / `candidates` []); low-quality probe (bands capped at `possible`). Missing cluster is 404.
+- Three empties: no usable probe (`probe_face_count` 0 / `reference_face_count` 0 / `quality_flag` `low_quality` / `candidates` []); empty labelled roster (`probe_face_count` > 0 / `reference_face_count` 0 / `ok` / `candidates` []); low-quality probe (bands capped at `possible`). Missing cluster is 404 (PHP passthrough keeps upstream status and `detail`; it is not remapped to 502).
 
 PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`:
 
@@ -570,7 +570,7 @@ PHP passthrough `GET acx/v1/recognition/clusters/{id}/roster-candidates`:
 - `roster_entry_id: null` rows are uncommittable (no person to commit to). They are ranked after every committable row so they do not occupy people-grain `top_k` slots; they appear only if the window still has room.
 - Server rank is committable-first, then similarity DESC, then `cluster_id` ASC. Clients must render in payload order and must not re-sort client-side.
 - Invalid PHP `top_k` (non-integer, < 1, or > 50) is validated inside the route callback and returns `WP_Error('invalid_top_k', 'top_k must be an integer between 1 and 50.', {status: 400})`. Route `args` keep `type`/`minimum`/`maximum` as schema only — there is no `validate_callback`, because WP core `has_valid_params` wraps a callback `WP_Error` into top-level `rest_invalid_param`.
-- Degraded/offline: HTTP 502 (endpoint_error / refused 3xx) or 503 (unreachable / overloaded). Do not return a 200 `{candidates:[], data_source}` envelope — that is not schema-conformant and is indistinguishable from an empty roster.
+- Degraded/offline: HTTP 502 (endpoint_error / refused 3xx) or 503 (unreachable / overloaded). Upstream 4xx pass through with their status and `detail` (missing cluster 404; auth 401/403; rate-limit 429 including `Retry-After`). Exception: an upstream 400 whose `detail` names `top_k` (PHP/Python window drift) is classified as endpoint_error 502 — never by status range. Do not return a 200 `{candidates:[], data_source}` envelope — that is not schema-conformant and is indistinguishable from an empty roster.
 
 ## Media identities
 

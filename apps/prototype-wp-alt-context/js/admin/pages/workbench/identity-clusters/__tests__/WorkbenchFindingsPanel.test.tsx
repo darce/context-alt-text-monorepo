@@ -1169,6 +1169,7 @@ describe('WorkbenchFindingsPanel', () => {
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('5 groups elsewhere are missing face data')).toBeInTheDocument();
+    expect(screen.queryByText('5 groups missing face data')).not.toBeInTheDocument();
   });
 
   it('S2: aggregate repair row renders with the gated cluster count', () => {
@@ -1911,10 +1912,10 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('42 unlabeled groups')).toBeInTheDocument();
   });
 
-  // R7-01 / DATA-14 / rg-015: servedCount must be previews.length, not
-  // Math.max(previews.length, zeroEvidenceClusterCount). Empty chips + page
-  // zeros must take the elsewhere branch, not "on this page".
-  it('R7-01: empty previews announce elsewhere not page scope', () => {
+  // R8-01 / R7-03: previews.length is evidence chips, not gated-cluster servedCount.
+  // N zeros on this page + zero evidence previews must NOT say "elsewhere".
+  // unlabeledClusters=7 vs zeros=3 so a swapped repairGatedCount cannot hide.
+  it('R8-01: zero-evidence-only page does not claim the gated groups are elsewhere', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 7, total: 7 },
@@ -1922,16 +1923,16 @@ describe('WorkbenchFindingsPanel', () => {
         hasFindings: true,
         zeroEvidenceClusterCount: 3,
         repairPending: true,
-        topUnlabeledTruncated: true,
+        topUnlabeledTruncated: false,
       }),
     );
 
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByText('3 groups elsewhere are missing face data')).toBeInTheDocument();
+    expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
+    expect(screen.queryByText(/elsewhere/)).not.toBeInTheDocument();
+    expect(screen.queryByText('7 groups missing face data')).not.toBeInTheDocument();
     expect(screen.queryByText('At least 3 groups on this page missing face data')).not.toBeInTheDocument();
-    expect(screen.queryByText('At least 7 groups on this page missing face data')).not.toBeInTheDocument();
-    expect(screen.queryByText('3 groups missing face data')).not.toBeInTheDocument();
   });
 
   // R7-01: repairGatedCount(0, unlabeled) is server-wide. Do not feed that

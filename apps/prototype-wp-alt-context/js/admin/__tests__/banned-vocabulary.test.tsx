@@ -745,6 +745,7 @@ describe('banned vocabulary across js/admin pages', () => {
     const actions = await import('../pages/workbench/identity-clusters/ClusterActions');
     const clusterItem = await import('../pages/workbench/identity-clusters/IdentityClusterItem');
     const recognition = await import('../api/recognition');
+    const roster = await import('../api/rosterApi');
 
     if (state === 'queue-empty') {
       const emptySuggestions = {
@@ -753,15 +754,15 @@ describe('banned vocabulary across js/admin pages', () => {
         offset: 0,
         data_source: DATA_SOURCE.BACKEND_PROXY,
       };
-      vi.mocked(recognition.fetchPendingSuggestions).mockResolvedValueOnce(emptySuggestions);
-      vi.mocked(recognition.fetchPendingMergeSuggestions).mockResolvedValueOnce(emptySuggestions);
-      vi.mocked(recognition.fetchPendingNameSuggestions).mockResolvedValueOnce({
+      vi.mocked(recognition.fetchPendingSuggestions).mockResolvedValue(emptySuggestions);
+      vi.mocked(recognition.fetchPendingMergeSuggestions).mockResolvedValue(emptySuggestions);
+      vi.mocked(recognition.fetchPendingNameSuggestions).mockResolvedValue({
         suggestions: [],
         limit: 25,
         offset: 0,
         data_source: DATA_SOURCE.BACKEND_PROXY,
       });
-      vi.mocked(recognition.fetchTopUnlabeledClusters).mockResolvedValueOnce({
+      vi.mocked(recognition.fetchTopUnlabeledClusters).mockResolvedValue({
         clusters: [],
         limit: 20,
         total: 0,
@@ -771,8 +772,17 @@ describe('banned vocabulary across js/admin pages', () => {
       });
     }
 
+    if (state === 'queue-pending') {
+      const hang = () => new Promise<never>(() => undefined);
+      vi.mocked(recognition.fetchPendingSuggestions).mockImplementation(hang);
+      vi.mocked(recognition.fetchPendingMergeSuggestions).mockImplementation(hang);
+      vi.mocked(recognition.fetchPendingNameSuggestions).mockImplementation(hang);
+      vi.mocked(recognition.fetchTopUnlabeledClusters).mockImplementation(hang);
+    }
+
     if (state === 'error') {
-      vi.mocked(showAll.useShowAllClusterMembers).mockReturnValueOnce({
+      // Persist across remounts — mockReturnValueOnce is consumed by the first hook call.
+      vi.mocked(showAll.useShowAllClusterMembers).mockReturnValue({
         members: [],
         isLoading: false,
         isError: true,
@@ -784,6 +794,12 @@ describe('banned vocabulary across js/admin pages', () => {
         showAll: vi.fn(),
         refetch: vi.fn(),
       } as unknown as ReturnType<typeof showAll.useShowAllClusterMembers>);
+    }
+
+    if (state === 'commit-loading') {
+      vi.mocked(roster.listRosterEntries).mockImplementation(() => new Promise(() => undefined));
+    } else {
+      vi.mocked(roster.listRosterEntries).mockResolvedValue([]);
     }
 
     const option = { value: 'person:1', label: 'Ada', source: 'person' as const, group: 'All Labels' };
@@ -968,6 +984,22 @@ describe('banned vocabulary across js/admin pages', () => {
       );
 
     const { container } = render(wrap(node));
+    if (state === 'default') {
+      expect(container.querySelector('[data-testid="acx-cluster-members-error"]')).toBeNull();
+      expect(container.textContent).toMatch(/Name this person/i);
+    }
+    if (state === 'error') {
+      expect(
+        container.querySelector('[data-testid="acx-cluster-members-error"]'),
+        'error fixture must enter the members-error state',
+      ).toBeTruthy();
+      expect(container.textContent).toMatch(/Unable to load these faces/i);
+    }
+    if (state === 'commit-loading') {
+      await waitFor(() => {
+        expect(container.textContent).toMatch(/Loading people/i);
+      });
+    }
     if (state === 'identity-cluster-item') {
       const remove = Array.from(document.body.querySelectorAll('button')).find(
         (button) => button.textContent === 'Remove from group',
@@ -982,7 +1014,11 @@ describe('banned vocabulary across js/admin pages', () => {
       });
     }
     if (state === 'queue-pending') {
-      expect(container.textContent).toMatch(/loading/i);
+      expect(
+        container.querySelector('.acx-review-queue--loading'),
+        'queue-pending fixture must enter the loading branch',
+      ).toBeTruthy();
+      expect(container.textContent).toMatch(/Loading review queue/i);
     }
     assertNoBannedReviewWords(document.body);
   });

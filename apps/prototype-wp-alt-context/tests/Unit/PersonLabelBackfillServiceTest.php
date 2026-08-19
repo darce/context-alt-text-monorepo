@@ -248,4 +248,31 @@ class PersonLabelBackfillServiceTest extends TestCase
         );
         $this->assertCount(0, $personInserts);
     }
+
+    public function testBackfillHonorsMaxBatchesAndReportsCapped(): void
+    {
+        $service = new class(2) extends PersonLabelBackfillService {
+            public int $pages = 0;
+
+            protected function list_unbound_human_labels(string $tenant_id, int $limit): array
+            {
+                ++$this->pages;
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-cap-' . $this->pages,
+                        'label' => 'Tory Guzman',
+                        'person_id' => null,
+                    ],
+                ];
+            }
+        };
+
+        $result = $service->backfill_tenant(self::currentTenantId(), 1, true);
+
+        $this->assertTrue($result['capped']);
+        $this->assertFalse($result['stalled']);
+        $this->assertSame(2, $service->pages);
+        $this->assertSame(2, $result['bound']);
+        $this->assertSame(2, $result['examined']);
+    }
 }

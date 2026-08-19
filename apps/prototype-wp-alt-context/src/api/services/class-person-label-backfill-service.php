@@ -36,8 +36,14 @@ class PersonLabelBackfillService {
 	public const BATCH_SIZE = 100;
 	public const MAX_STALLS = 3;
 
+	private ?int $max_batches;
+
+	public function __construct( ?int $max_batches = null ) {
+		$this->max_batches = null === $max_batches ? null : max( 1, $max_batches );
+	}
+
 	/**
-	 * @return array{bound:int,created:int,persons:int,skipped:int,examined:int,collisions:int,stalls:int,stalled:bool,empty:bool}
+	 * @return array{bound:int,created:int,persons:int,skipped:int,examined:int,collisions:int,stalls:int,stalled:bool,empty:bool,capped:bool}
 	 */
 	public function backfill_tenant( string $tenant_id, int $batch_size = self::BATCH_SIZE, bool $dry_run = false ): array {
 		$normalized_tenant = trim( $tenant_id );
@@ -48,6 +54,8 @@ class PersonLabelBackfillService {
 		$collisions        = 0;
 		$stalls            = 0;
 		$stalled           = false;
+		$capped            = false;
+		$batches           = 0;
 		$person_ids        = array();
 		$seen              = array();
 		$limit             = max( 1, min( $batch_size, self::BATCH_SIZE ) );
@@ -62,6 +70,7 @@ class PersonLabelBackfillService {
 			'stalls'     => 0,
 			'stalled'    => false,
 			'empty'      => true,
+			'capped'     => false,
 		);
 
 		if ( '' === $normalized_tenant ) {
@@ -69,6 +78,11 @@ class PersonLabelBackfillService {
 		}
 
 		while ( true ) {
+			if ( null !== $this->max_batches && $batches >= $this->max_batches ) {
+				$capped = true;
+				break;
+			}
+
 			$rows = $this->list_unbound_human_labels( $normalized_tenant, $limit );
 			if ( array() === $rows ) {
 				break;
@@ -110,6 +124,7 @@ class PersonLabelBackfillService {
 			}
 
 			$bound += $batch_bound;
+			++$batches;
 			if ( 0 === $batch_bound ) {
 				++$stalls;
 				if ( $stalls >= self::MAX_STALLS ) {
@@ -131,13 +146,14 @@ class PersonLabelBackfillService {
 			'stalls'     => $stalls,
 			'stalled'    => $stalled,
 			'empty'      => 0 === $examined,
+			'capped'     => $capped,
 		);
 	}
 
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function list_unbound_human_labels( string $tenant_id, int $limit ): array {
+	protected function list_unbound_human_labels( string $tenant_id, int $limit ): array {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {

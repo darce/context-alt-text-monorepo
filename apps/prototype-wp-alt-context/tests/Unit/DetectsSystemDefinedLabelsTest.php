@@ -85,4 +85,50 @@ class DetectsSystemDefinedLabelsTest extends TestCase
         $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster-%%'", $sql);
         $this->assertStringContainsString("LOWER(c.label) LIKE 'cluster\\_%%'", $sql);
     }
+
+    public function testProjectedLabelStateSqlNamesUnboundUnlabeledAndPerson(): void
+    {
+        $detector = new class() {
+            use DetectsSystemDefinedLabels;
+
+            public function sql(string $person, string $label): string
+            {
+                return $this->projected_cluster_label_state_sql($person, $label);
+            }
+        };
+
+        $sql = $detector->sql('p.name', 'c.label');
+        $this->assertStringContainsString("THEN 'person'", $sql);
+        $this->assertStringContainsString("THEN 'unlabeled'", $sql);
+        $this->assertStringContainsString("ELSE 'unbound'", $sql);
+        $this->assertStringContainsString("LIKE 'cluster\\_%%'", $sql);
+    }
+
+    #[DataProvider('labelStateProvider')]
+    public function testResolveClusterLabelStateNamesAuthority(?string $person, ?string $label, string $expected): void
+    {
+        $detector = new class() {
+            use DetectsSystemDefinedLabels;
+
+            public function state(?string $person, ?string $label): string
+            {
+                return $this->resolve_cluster_label_state($person, $label);
+            }
+        };
+
+        $this->assertSame($expected, $detector->state($person, $label));
+    }
+
+    /** @return array<string,array{?string,?string,string}> */
+    public static function labelStateProvider(): array
+    {
+        return [
+            'bound person wins' => ['Ada Lovelace', 'Tory Guzman', 'person'],
+            'unbound human' => [null, 'Tory Guzman', 'unbound'],
+            'empty label' => [null, '', 'unlabeled'],
+            'null label' => [null, null, 'unlabeled'],
+            'hyphen auto label' => [null, 'cluster-abcdef01', 'unlabeled'],
+            'underscore auto label' => [null, 'cluster_ab12', 'unlabeled'],
+        ];
+    }
 }

@@ -137,19 +137,38 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
 
     expect(screen.getByRole('button', { name: /^Close$/i })).toBeInTheDocument();
     expect(screen.getByText('Unable to load face group details.')).toBeInTheDocument();
+    expect(screen.queryByText('No faces found in this face group.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unnamed face group')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Face group unavailable' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
+  });
+
+  it('does not paint empty copy while the requested cluster is still loading', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={null}
+        identities={[]}
+        requestedClusterId="cluster-missing"
+        isDetailLoading
+      />,
+    );
+
+    expect(screen.getByText('Loading faces…')).toBeInTheDocument();
+    expect(screen.queryByText('Unable to load face group details.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No faces found in this face group.')).not.toBeInTheDocument();
   });
 
   it('hides Move and uses honest copy when reassign is unavailable in this view', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
-        reassignUnavailableReason="Move faces between groups in the Workbench review queue."
+        reassignUnavailableReason="Face moves happen in the Workbench review queue."
       />,
     );
 
     expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
-    expect(screen.getByText('Move faces between groups in the Workbench review queue.')).toBeInTheDocument();
+    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
   });
 });

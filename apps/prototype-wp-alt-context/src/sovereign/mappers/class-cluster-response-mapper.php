@@ -300,7 +300,10 @@ class ClusterResponseMapper {
 					// Stale-low projected during truncation: observed is a
 					// lower bound, not an exact count (R2-07). Never publish
 					// identity_count below the served preview length.
-					if ( '' !== $cluster_id ) {
+					// Request repair only when projected is provably stale-low
+					// (R6-01). A healthy oversized cluster (projected > cap)
+					// is expected truncation of a cap+1 fetch, not livelock.
+					if ( $projected_count <= $preview_limit && '' !== $cluster_id ) {
 						$this->requested_repair_cluster_ids[] = $cluster_id;
 					}
 					return max( $projected_count, $preview_limit );

@@ -259,7 +259,7 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame(9, $payload[0]['identity_count']);
         $this->assertCount(4, $payload[0]['sample_identities']);
         $this->assertSame([], $GLOBALS['__ac_error_log']);
-        $this->assertContains('cluster-truncated', $this->mapper->requested_repair_cluster_ids());
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
     }
 
     public function testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit(): void
@@ -440,8 +440,79 @@ class ClusterResponseMapperTest extends TestCase
 
         $this->assertSame(9, $payload[0]['identity_count']);
         $this->assertCount(4, $payload[0]['representatives']);
-        $this->assertContains('cluster-truncated-9-5', $this->mapper->requested_repair_cluster_ids());
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
         $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    /**
+     * R6-01: projected=7, cap=4, cap+1 fetch returns 5 rows. This is a
+     * healthy oversized cluster — observed is a capped page, not a stale
+     * projection. Must keep identity_count 7 and must not request repair.
+     */
+    public function testMapTopUnlabeledHealthyOversizedTruncationDoesNotRequestRepair(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-healthy-7',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-healthy-7' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(7, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertSame(
+            [],
+            $this->mapper->requested_repair_cluster_ids(),
+            'healthy oversized cluster must not schedule truncation repair'
+        );
+    }
+
+    /**
+     * R6-01: projected=3, cap=4, fetch returns 5 rows. Projection is
+     * stale-low during truncation — repair must be requested.
+     */
+    public function testMapTopUnlabeledStaleLowTruncationRequestsRepair(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-low-3',
+                    'label' => '',
+                    'identity_count' => 3,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-low-3' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-stale-low-3', $this->mapper->requested_repair_cluster_ids());
     }
 
     /**

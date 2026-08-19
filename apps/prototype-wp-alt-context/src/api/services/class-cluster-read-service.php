@@ -191,7 +191,7 @@ class ClusterReadService {
 			$total_count = null;
 			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
 				$total_count = (int) $sovereign_data['clusters'][0]['total_count'];
-				$total = max( 0, $total_count - $dropped );
+				$total       = max( 0, $total_count );
 			}
 			$fetched_page = count( $sovereign_data['clusters'] );
 			$repair_pending = array() !== $mapper_ids || $dropped > 0 || array() !== $extra_ids;

@@ -1,6 +1,7 @@
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
+import { DEFAULT_QUEUE_STATE } from '../../hooks/workbenchQueueUrl';
 
 /**
  * E21-9 Slice 5a + E21-10 Slice 4 (lands-second): Clusters tab retired; getLegacyTab gone.
@@ -198,8 +199,10 @@ export const PERSON_ROUTE_UNMATCHED_NOTICE = __(
  * matches the landing filter. `cluster=` emission dropped (jobId precedent).
  */
 export const workbenchReviewQueueUrl = (): string => {
-  // rq stays E21-5-owned; contract supplies route base + param *names* only.
+  // Explicit default band (not serializeQueueState, which omits fully-default).
+  // Encoder vocabulary matches parseQueueState / DEFAULT_QUEUE_STATE.
   const base = toWorkbench({ tab: 'scan' });
   const separator = base.includes('?') ? '&' : '?';
-  return `${base}${separator}${APP_LINK_PARAMS.rq}=all.all.0`;
+  const rq = `${DEFAULT_QUEUE_STATE.kind}.${DEFAULT_QUEUE_STATE.band}.${DEFAULT_QUEUE_STATE.index}`;
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=${rq}`;
 };

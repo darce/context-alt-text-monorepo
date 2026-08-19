@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_QUEUE_STATE, parseQueueState } from '../../../hooks/workbenchQueueUrl';
 import type { RosterEntry } from '../../../api/rosterApi';
 import {
   ROSTER_SURFACE,
@@ -112,8 +113,10 @@ describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', (
   });
 
   it('deep-links unlabeled clusters into the workbench review queue', () => {
-    // cluster= dropped (jobId precedent): workbench has no cluster reader.
-    expect(workbenchReviewQueueUrl()).toBe('#/workbench?tab=scan&rq=all.all.0');
-    expect(workbenchReviewQueueUrl()).not.toContain('cluster=');
+    const href = workbenchReviewQueueUrl();
+    expect(href).not.toContain('cluster=');
+    const q = href.indexOf('?');
+    const params = new URLSearchParams(q === -1 ? '' : href.slice(q + 1));
+    expect(parseQueueState(params.get('rq'))).toEqual(DEFAULT_QUEUE_STATE);
   });
 });

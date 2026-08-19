@@ -224,6 +224,7 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onSelectedIdsChange={setSelectedSuggestionIds}
                 emptyStateAnchorRef={findingsDetailRef}
                 onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+                onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
                 onCardPrimaryPresenceChange={setCardPrimaryPresent}
               />
             )}

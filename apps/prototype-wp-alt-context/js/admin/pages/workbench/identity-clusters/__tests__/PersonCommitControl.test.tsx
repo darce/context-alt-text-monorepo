@@ -143,6 +143,13 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     expect(screen.queryByText(/don't add to roster/i)).not.toBeInTheDocument();
   });
 
+  it('offers a curate-group control that reports the cluster id (UXW2-3-R3-01)', async () => {
+    const onCurateGroup = vi.fn();
+    renderControl({ onCurateGroup });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
+    expect(onCurateGroup).toHaveBeenCalledWith('cluster-1');
+  });
+
   it('prefills a suggested create name and Enter commits it', async () => {
     const { onCommit } = renderControl({ suggestedCreateName: 'Pat Rivera' });
     const user = userEvent.setup();

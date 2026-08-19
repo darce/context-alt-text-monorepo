@@ -53,6 +53,7 @@ import * as useAriaAnnounceMod from '../useAriaAnnounce';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
+import { ScanTabContent } from '../../ScanTabContent';
 
 const rosterCommitFixture = (
   overrides: Partial<RosterClusterCommitResponse> = {},
@@ -164,6 +165,65 @@ vi.mock('../../../../api/rosterApi', () => ({
       projection_refreshed_at: null,
     },
   ]),
+}));
+
+vi.mock('../../../../hooks/useScrollRestoration', () => ({
+  useScrollRestoration: () => undefined,
+}));
+
+vi.mock('../../Panels', () => ({
+  ScanActionPanel: () => <div data-testid="scan-action-panel" />,
+  isClusteringActive: () => false,
+}));
+
+vi.mock('../../JobTimeline', () => ({
+  JobTimeline: () => <div data-testid="job-timeline" />,
+}));
+
+vi.mock('../WorkbenchFindingsPanel', () => ({
+  WorkbenchFindingsPanel: () => <div data-testid="findings-panel" />,
+}));
+
+vi.mock('../ClusterLabelingPanel', () => ({
+  ClusterLabelingPanel: () => <div data-testid="label-panel" />,
+}));
+
+vi.mock('../ClusterReviewPanel', () => ({
+  ClusterReviewPanel: () => <div data-testid="review-panel" />,
+}));
+
+vi.mock('../useOpenReviewTargetLifecycle', () => ({
+  useOpenReviewTargetLifecycle: () => ({ reviewClusterId: null }),
+}));
+
+vi.mock('../../JobPipelineContext', () => ({
+  useJobPipeline: () => ({
+    scanRun: { isScanning: false, progress: null },
+    status: {
+      scanProgress: null,
+      clusterProgress: null,
+      currentPhase: 'idle',
+      projectionSyncState: 'idle',
+    },
+    history: { activeJobIds: [], jobId: null },
+    cancelScan: vi.fn(),
+    retryScanStream: vi.fn(),
+  }),
+}));
+
+vi.mock('../../ClusterPanelContext', () => ({
+  useClusterPanel: () => ({
+    clusterPanel: { mode: 'none', clusterId: null },
+    dispatchClusterPanel: vi.fn(),
+  }),
+}));
+
+vi.mock('../../WorkbenchMediaContext', () => ({
+  useWorkbenchMediaContext: () => ({ mediaQueue: { hasIdentities: true } }),
+}));
+
+vi.mock('../../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
 }));
 
 interface HarnessProps {
@@ -309,6 +369,7 @@ const renderQueue = (props: HarnessProps = {}) => {
 describe('ReviewQueue', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    resetPendingSearchWritesForTests();
   });
 
   beforeEach(() => {
@@ -791,6 +852,88 @@ describe('ReviewQueue', () => {
       screen.getByRole('button', { name: 'Close matches' }).getAttribute('aria-pressed') === 'true';
     expect(loc.includes('rq=assignment')).toBe(assignmentPressed);
     expect(assignmentPressed).toBe(false);
+  });
+
+  it('kind chip on ScanTabContent dispatch writes rq=assignment.all.0 and presses the chip (UXW2-1-R3-07)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 'sugg-3',
+          identity_id: 'identity-3',
+          suggested_cluster_id: 'cluster-3',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Casey',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const LocationProbe = (): React.JSX.Element => {
+      const loc = useLocation();
+      return <output data-testid="loc">{loc.search}</output>;
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/?rq=all.all.2']}>
+        <Routes>
+          <Route
+            path="/"
+            element={withQueueProviders(
+              queryClient,
+              <>
+                <ScanTabContent />
+                <LocationProbe />
+              </>,
+            )}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('3 of 3')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    expect(loc).not.toContain('rq=assignment.all.2');
+    expect(loc).not.toContain('rq=assignment.all.1');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
   });
 
   it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {

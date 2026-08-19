@@ -54,8 +54,12 @@ Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
 | states: default | loading | empty | error | filtered         |
 |--------------------------------------------------------------|
 | TOP GROUP CARD  N faces | N of M faces shown                 |
-| Name this person | Review | (thumbs, missing hidden at 39px) |
-| states: default | loading | empty | error | filtered         |
+| Name this person | Is this <name>? | Review | Yes/No   |
+| busy disables actions | read-only demotes label/confirm     |
+| zero reps still render (Avatar, not empty)                   |
+| states: default | suggested_label | busy | read_only         |
+|         | missing_image                                      |
+| code_ref: TopClusterCard.tsx                                 |
 +--------------------------------------------------------------+
 states: default | loading | empty | error | first_time | edge_input
 ```

@@ -69,7 +69,9 @@
 |     states=[default,loading,empty,error,filtered,repair]   |
 |     code_ref=ReviewQueue.tsx                               |
 |   - Top-of-queue group card (ai_review)                    |
-|     states=[default,empty]                                 |
+|     states=[default,suggested_label,busy,read_only,        |
+|             missing_image]                                 |
+|     code_ref=TopClusterCard.tsx                            |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |

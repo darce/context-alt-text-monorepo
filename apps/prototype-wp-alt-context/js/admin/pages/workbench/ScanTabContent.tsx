@@ -16,7 +16,6 @@ import {
   WorkbenchFindingsPanel,
   type ReviewQueueHandle,
 } from './identity-clusters';
-import { REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE } from './identity-clusters/ReviewQueue';
 import { useAriaAnnounce } from './identity-clusters/useAriaAnnounce';
 import { useOpenReviewTargetLifecycle } from './identity-clusters/useOpenReviewTargetLifecycle';
 import { useJobPipeline } from './JobPipelineContext';
@@ -204,7 +203,7 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
                   dispatchClusterPanel({ type: 'close' });
-                  announceReviewLifecycle(__(REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE, 'alt-context'));
+                  announceReviewLifecycle(__('Name saved. Back to review suggestions.', 'alt-context'));
                   focusQueueRoot();
                 }}
               />

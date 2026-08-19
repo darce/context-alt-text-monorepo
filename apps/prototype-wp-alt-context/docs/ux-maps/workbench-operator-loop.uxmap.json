@@ -121,7 +121,7 @@
           "id": "z-review-suggestions-group-card",
           "label": "Top-of-queue group card",
           "role": "ai_review",
-          "states": ["default", "empty"],
+          "states": ["default", "suggested_label", "busy", "read_only", "missing_image"],
           "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx"
         }
       ]

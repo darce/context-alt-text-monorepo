@@ -895,6 +895,22 @@ class SuggestionsControllerTest extends TestCase
         $this->assertStringNotContainsString('Forwarded verbatim', $description);
         $this->assertStringContainsStringIgnoringCase('people-grain', $description);
         $this->assertStringNotContainsString('ROSTER_CANDIDATES_PYTHON_WINDOW', $description);
+        $ref = new \ReflectionClass($this->controller);
+        $this->assertStringContainsString(
+            (string) $ref->getConstant('ROSTER_CANDIDATES_TOP_K_MIN'),
+            $description,
+            'description must interpolate ROSTER_CANDIDATES_TOP_K_MIN'
+        );
+        $this->assertStringContainsString(
+            (string) $ref->getConstant('ROSTER_CANDIDATES_TOP_K_MAX'),
+            $description,
+            'description must interpolate ROSTER_CANDIDATES_TOP_K_MAX'
+        );
+        $this->assertStringContainsString(
+            (string) $ref->getConstant('ROSTER_CANDIDATES_PYTHON_WINDOW'),
+            $description,
+            'description must interpolate ROSTER_CANDIDATES_PYTHON_WINDOW'
+        );
     }
 
     /**

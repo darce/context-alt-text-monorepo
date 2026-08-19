@@ -5784,13 +5784,83 @@ _ASCII_LOCALE_ENV = {
     "PYTHONCOERCECLOCALE": "0",
 }
 
+# Drop parent locale/utf8 so `_ASCII_LOCALE_ENV` is the child's sole source
+# (MUT s is otherwise masked when the parent is already C).
+_ASCII_LOCALE_PARENT_KEYS = (
+    "LC_ALL",
+    "LANG",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LANGUAGE",
+    "PYTHONUTF8",
+    "PYTHONCOERCECLOCALE",
+)
+_ASCII_FS_ENCODINGS = frozenset({"ascii", "ansi-x3.4-1968", "us-ascii"})
+_ASCII_LOCALE_PROBE_CACHE: tuple[str, str, int] | None = None
+
+
+def _c_locale_child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in _ASCII_LOCALE_PARENT_KEYS:
+        env.pop(key, None)
+    env.update(_ASCII_LOCALE_ENV)
+    extra = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + extra if extra else "")
+    return env
+
+
+def _ascii_locale_probe() -> tuple[str, str, int]:
+    """One child process per session: observe encodings, not the env dict (TEST-15).
+
+    functools.lru_cache cannot be imported here (E402 / ownership is this region
+    only). A one-slot cache is the same session cost.
+    """
+    global _ASCII_LOCALE_PROBE_CACHE
+    if _ASCII_LOCALE_PROBE_CACHE is not None:
+        return _ASCII_LOCALE_PROBE_CACHE
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import locale,sys;"
+                "print(sys.getfilesystemencoding());"
+                "print(locale.getpreferredencoding(False));"
+                "print(int(bool(sys.flags.utf8_mode)))"
+            ),
+        ],
+        env=_c_locale_child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"C-locale encoding probe exited {proc.returncode}: {proc.stderr}")
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        raise AssertionError(f"C-locale encoding probe returned {lines!r} stderr={proc.stderr!r}")
+    _ASCII_LOCALE_PROBE_CACHE = (lines[0], lines[1], int(lines[2]))
+    return _ASCII_LOCALE_PROBE_CACHE
+
+
+def _assert_child_ascii_locale() -> None:
+    fsenc, pref, utf8_mode = _ascii_locale_probe()
+    fs_ok = fsenc.lower().replace("_", "-") in _ASCII_FS_ENCODINGS
+    pref_ok = pref.lower().replace("_", "-") in _ASCII_FS_ENCODINGS
+    if not (fs_ok and pref_ok and utf8_mode == 0):
+        raise AssertionError(
+            "C-locale child probe is not ASCII / utf8_mode=0: "
+            f"getfilesystemencoding={fsenc!r} getpreferredencoding={pref!r} "
+            f"utf8_mode={utf8_mode} (dict keys={sorted(_ASCII_LOCALE_ENV)!r})"
+        )
+
 
 def _run_score_c_locale(
     manifest_path: Path, record_path: Path, extra_argv: list[str] | None = None
 ) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    env.update(_ASCII_LOCALE_ENV)
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
     argv = [
         sys.executable,
         "-c",
@@ -5951,21 +6021,25 @@ def test_cmd_score_missing_run_record_named_exit(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def _run_score_face_c_locale(manifest_path: Path, record_path: Path) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    env.update(_ASCII_LOCALE_ENV)
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+def _run_score_face_c_locale(
+    manifest_path: Path, record_path: Path, extra_argv: list[str] | None = None
+) -> subprocess.CompletedProcess:
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+        "score-face",
+        "--manifest",
+        str(manifest_path),
+        "--run-record",
+        str(record_path),
+    ]
+    if extra_argv:
+        argv.extend(extra_argv)
     return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
-            "score-face",
-            "--manifest",
-            str(manifest_path),
-            "--run-record",
-            str(record_path),
-        ],
+        argv,
         cwd=str(_SERVICE_ROOT),
         env=env,
         capture_output=True,
@@ -6043,6 +6117,27 @@ def test_cmd_score_face_raw_utf8_run_record_under_c_locale(tmp_path):
     assert b"\xc3\xa9" in rec_path.read_bytes()
     proc = _run_score_face_c_locale(man_path, rec_path)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_cmd_score_face_check_determinism_raw_utf8_run_record_under_c_locale(tmp_path):
+    """VLM6-RV13-Q2-01 / TEST-15: score-face --check-determinism child must pin utf-8.
+
+    Parent read is already pinned; the child snippet Path(sys.argv[1]).read_text()
+    is not unless encoding='utf-8'. Under C locale a café face run-record makes
+    the child UnicodeDecodeError (rc!=0) while plain score-face exits 0.
+    MUT p: revert cli.py child read to open(sys.argv[1]).read() → this test fails.
+    """
+    record, manifest = _valid_face_manifest_and_record()
+    record["items"][0]["path"] = "celebs01/café-a.jpg"
+    manifest["entries"][0]["path"] = "celebs01/café-a.jpg"
+    rec_path = tmp_path / "face-run-det.json"
+    rec_path.write_bytes((json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8"))
+    man_path = tmp_path / "man.json"
+    man_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert b"\xc3\xa9" in rec_path.read_bytes()
+    proc = _run_score_face_c_locale(man_path, rec_path, extra_argv=["--check-determinism"])
+    assert proc.returncode == 0, proc.stderr
+    assert "determinism check passed" in proc.stdout
 
 
 def test_cmd_score_face_writes_utf8_report_under_c_locale(tmp_path):

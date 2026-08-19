@@ -76,6 +76,7 @@ export const ClusterEditForm = ({
   isAtRestMode = false,
 }: ClusterEditFormProps): React.JSX.Element => {
   const prefillRef = React.useRef(labelInput);
+  const selectedSuggestionRef = React.useRef<ComboboxOption | null>(null);
   const inputId = `acx-identity-cluster-name-${React.useId()}`;
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
@@ -83,11 +84,40 @@ export const ClusterEditForm = ({
 
   const displayedCount = React.useMemo(() => budgetRows(options).length, [options]);
 
+  const commitSelectedSuggestion = React.useCallback(
+    (option: ComboboxOption): boolean => {
+      const clusterId = unwrapClusterOptionId(String(option.value));
+      if (onConfirmSuggestion && clusterId) {
+        const suggestionId =
+          typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
+            ? option.suggestion_id
+            : undefined;
+        onConfirmSuggestion(clusterId, option.label, suggestionId);
+        return true;
+      }
+      return false;
+    },
+    [onConfirmSuggestion],
+  );
+
   // Enter / Save: exact person match routes to the person path (rename/create,
-  // never merge); anything else saves the typed label (PR-16 / FIX-1).
+  // never merge); a filled suggestion commits on this explicit control (R3-27);
+  // anything else saves the typed label (PR-16 / FIX-1).
   const handleCommit = React.useCallback(
     (resolution: NameFaceResolution) => {
       if (resolution.kind === 'ambiguous') {
+        return;
+      }
+      const selected = selectedSuggestionRef.current;
+      if (
+        selected &&
+        normalizeNameFaceLabel(selected.label) === normalizeNameFaceLabel(resolution.name)
+      ) {
+        selectedSuggestionRef.current = null;
+        if (commitSelectedSuggestion(selected)) {
+          return;
+        }
+        onSave(selected.label);
         return;
       }
       if (resolution.kind === 'roster') {
@@ -115,33 +145,37 @@ export const ClusterEditForm = ({
       }
       onSave(resolution.name);
     },
-    [onPersonSelect, onSave, options],
+    [commitSelectedSuggestion, onPersonSelect, onSave, options],
   );
 
-  // Row ✓: cluster/suggestion rows unwrap the namespaced id and thread
-  // suggestion_id (BR-16 / L1R-01). Person rows bind via onCommit.
+  // Row click fills the field. Save/Enter is the commit (INT-07 / HAI-12).
   const handleOptionConfirm = React.useCallback(
     (option: ComboboxOption) => {
-      // Namespaced cluster: values only (no bare-id fallback — FIX-10).
-      const clusterId = unwrapClusterOptionId(String(option.value));
-      if (onConfirmSuggestion && clusterId) {
-        const suggestionId =
-          typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
-            ? option.suggestion_id
-            : undefined;
-        onConfirmSuggestion(clusterId, option.label, suggestionId);
-      } else {
-        onSave(option.label);
-      }
+      selectedSuggestionRef.current = option;
+      onLabelChange(option.label);
     },
-    [onConfirmSuggestion, onSave],
+    [onLabelChange],
+  );
+
+  const handleValueChange = React.useCallback(
+    (value: string) => {
+      const selected = selectedSuggestionRef.current;
+      if (
+        selected &&
+        normalizeNameFaceLabel(selected.label) !== normalizeNameFaceLabel(value)
+      ) {
+        selectedSuggestionRef.current = null;
+      }
+      onLabelChange(value);
+    },
+    [onLabelChange],
   );
 
   return (
     <NameFaceControl
       options={options}
       value={labelInput}
-      onValueChange={onLabelChange}
+      onValueChange={handleValueChange}
       onCommit={handleCommit}
       onOptionConfirm={handleOptionConfirm}
       onRejectSuggestion={onRejectSuggestion}

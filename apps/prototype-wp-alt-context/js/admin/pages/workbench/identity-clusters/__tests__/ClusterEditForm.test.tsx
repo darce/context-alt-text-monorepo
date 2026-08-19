@@ -94,7 +94,7 @@ describe('ClusterEditForm', () => {
     expect(screen.getByText('medium')).toBeInTheDocument();
   });
 
-  it('calls onLabelChange when a suggestion is clicked, and onConfirmSuggestion when confirm is clicked', async () => {
+  it('suggestion row click fills the name and does not commit (UXW2-3-R3-27)', () => {
     const onLabelChange = vi.fn();
     const onSave = vi.fn();
     const onConfirmSuggestion = vi.fn();
@@ -108,11 +108,42 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    // Clicking the option confirms (no nested button). Namespaced cluster: ids unwrap.
+    fireEvent.click(screen.getAllByRole('option', { name: /confirm match/i })[1]);
+    expect(onLabelChange).toHaveBeenCalledWith('Person B');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('calls onLabelChange when a suggestion is clicked, and onConfirmSuggestion when confirm is clicked', async () => {
+    const onLabelChange = vi.fn();
+    const onSave = vi.fn();
+    const onConfirmSuggestion = vi.fn();
+    const { rerender } = render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        onLabelChange={onLabelChange}
+        onSave={onSave}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
     const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
     fireEvent.click(confirmOption);
-    expect(onLabelChange).not.toHaveBeenCalled();
+    expect(onLabelChange).toHaveBeenCalledWith('Person B');
     expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Person B"
+        onLabelChange={onLabelChange}
+        onSave={onSave}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
     );
@@ -232,16 +263,29 @@ describe('ClusterEditForm', () => {
 
   it('unwraps cluster: namespaced values on confirm', async () => {
     const onConfirmSuggestion = vi.fn();
-    render(
+    const onLabelChange = vi.fn();
+    const { rerender } = render(
       <ClusterEditForm
         {...defaultProps}
         labelInput="B"
         options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onLabelChange={onLabelChange}
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Bob"
+        options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onLabelChange={onLabelChange}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
     );
@@ -449,7 +493,7 @@ describe('ClusterEditForm', () => {
     // Predicted first failure on f54f7c87 production: called with (clusterId, label) only —
     // confirm branch dropped option.suggestion_id so the pending row was never resolved by id.
     const onConfirmSuggestion = vi.fn();
-    render(
+    const { rerender } = render(
       <ClusterEditForm
         {...defaultProps}
         labelInput="A"
@@ -468,6 +512,25 @@ describe('ClusterEditForm', () => {
     );
 
     fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Alice"
+        options={[
+          {
+            value: 'cluster:cluster-alice',
+            label: 'Alice',
+            source: 'cluster',
+            group: 'Suggested',
+            similarity: 0.91,
+            suggestion_id: 'sug-confirm-alice',
+          },
+        ]}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith(
         'cluster-alice',
